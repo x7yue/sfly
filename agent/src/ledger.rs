@@ -28,10 +28,8 @@ use std::sync::Mutex;
 
 use tokio::sync::{Notify, watch};
 
-use prost::Message as _;
-
-use crate::proto::{AssignTask, ErrorKind, ReferencedAgent, RunningTask, TaskResult};
-use crate::{calls, executor};
+use crate::proto::{AssignTask, ErrorKind, ReferencedAgent, RunningTask, TaskResult, TaskStatus};
+use crate::{calls, executor, result_message_size};
 
 /// 任务 ID 和尝试。
 type Key = (String, u32);
@@ -161,6 +159,54 @@ impl State {
 pub(crate) struct Settled {
     /// 它所属的运行里没有别的任务还在手上时，这次运行的 ID：运行在这台 Agent 上结束了。
     pub(crate) run_ended: Option<String>,
+}
+
+/// 换掉超过控制面一条消息上限的结果（[`Ledger::replace_results_over`]）：失败，类型 `node_error`（和控制面自己把超过
+/// 输出上限的结果换成失败一致，会照 `retries` 重跑）；写明原来是成功还是失败、整条消息多大、上限多大、怎么办。
+/// 原来是失败的，出错的位置带着，原来的文字留开头一段（只是帮着认出是哪里出的错，不是原文）。时钟读数保留：结束的时刻没变。
+fn too_big(old: &TaskResult, size: usize, limit: usize) -> TaskResult {
+    /// 原来的失败文字留下的开头。
+    const KEPT_HEAD_BYTES: usize = 2 * 1024;
+    let advice =
+        "办法：让节点的输出或失败文字小一些；这个上限是部署控制面的人设的，需要的话请他调大。";
+    let (was, head, location) = match &old.error {
+        Some(error) if old.status() != TaskStatus::Success => {
+            let head = executor::truncate_at_boundary(error.message.clone(), KEPT_HEAD_BYTES);
+            let omitted = error.message.len() - head.len();
+            let head = if omitted == 0 {
+                format!("原来的失败文字（全文）：\n{head}")
+            } else {
+                format!(
+                    "原来的失败文字，只留开头 {} 字节（共 {} 字节）：\n{head}",
+                    head.len(),
+                    error.message.len()
+                )
+            };
+            ("任务失败了，失败的结果", Some(head), error.location.clone())
+        }
+        _ => ("任务成功了，结果", None, String::new()),
+    };
+    let mut message = format!(
+        "{was}有 {size} 字节（整条消息），超过控制面接收一条消息的上限 {limit} 字节，没有送到：\
+         结果已丢弃，任务按失败处理（类型 node_error，按重试配置重跑）。{advice}"
+    );
+    if let Some(head) = head {
+        message.push_str("\n\n");
+        message.push_str(&head);
+    }
+    let mut result = executor::failure_at(
+        &AssignTask {
+            task_id: old.task_id.clone(),
+            attempt: old.attempt,
+            ..Default::default()
+        },
+        ErrorKind::NodeError,
+        message,
+        location,
+    );
+    result.agent_time_unix_ms = old.agent_time_unix_ms;
+    result.monotonic_ms = old.monotonic_ms;
+    result
 }
 
 impl Ledger {
@@ -299,10 +345,14 @@ impl Ledger {
             .collect()
     }
 
-    /// 控制面用「消息超过上限」拒绝了这条连接（上限 `limit` 字节，#674）：还没收到 Ack 的结果里，编码之后超过上限的换成失败
-    /// （`node_error`，写明原来多大、上限多大），不再原样重发——原样重发每次都被拒，Agent 一直重连，任务一直 running，
-    /// 排在后面的结果和心跳也过不去（#723）。没超过上限的不动：被拒的是别的消息（遥测）时，不能把成功的结果换成失败。
-    /// 返回换掉了几个。
+    /// 控制面用「消息超过上限」拒绝了这条连接（上限 `limit` 字节，#674）：还没收到 Ack 的结果里，作为一条消息发出时
+    /// 超过上限的换成失败（`node_error`，写明原来是成功还是失败、多大、上限多大、怎么办），不再原样重发——原样重发每次
+    /// 都被拒，Agent 一直重连，任务一直 running，排在后面的结果和心跳也过不去（#723）。
+    ///
+    /// 比的是整条 `AgentMessage` 的大小（[`result_message_size`]），和控制面比的是同一个数：只比结果自己的编码，
+    /// 差在上限边上的几个字节（字段标签和长度前缀）的那一条会被拒、不被换，永远发不出去。
+    /// 没超过上限的不动：被拒的是别的消息（遥测）时，不能把成功的结果换成失败。取消的结果也不换：文字是固定的短句，
+    /// 上限小到装不下它时连握手都过不去，到不了这里。返回换掉了几个。
     pub(crate) fn replace_results_over(&self, limit: usize) -> usize {
         let mut state = self.state.lock().unwrap();
         let mut replaced = 0;
@@ -311,26 +361,11 @@ impl Ledger {
                 Stage::Handed { finished, .. } | Stage::Unacked(finished) => finished,
                 Stage::Running(_) => continue,
             };
-            let size = finished.result.encoded_len();
-            if size <= limit {
+            let size = result_message_size(&finished.result);
+            if size <= limit || finished.result.status() == TaskStatus::Cancelled {
                 continue;
             }
-            let old = &finished.result;
-            let message = format!(
-                "任务的结果有 {size} 字节，超过控制面接收一条消息的上限 {limit} 字节，没有送到：结果已丢弃，任务按失败处理"
-            );
-            let mut result = executor::failure(
-                &AssignTask {
-                    task_id: old.task_id.clone(),
-                    attempt: old.attempt,
-                    ..Default::default()
-                },
-                ErrorKind::NodeError,
-                message,
-            );
-            result.agent_time_unix_ms = old.agent_time_unix_ms;
-            result.monotonic_ms = old.monotonic_ms;
-            finished.result = result;
+            finished.result = too_big(&finished.result, size, limit);
             replaced += 1;
         }
         replaced
@@ -425,6 +460,8 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
+
+    use prost::Message as _;
 
     use super::*;
 
@@ -897,36 +934,63 @@ mod tests {
         assert!(ledger.calls_of("unknown", 1).is_none());
     }
 
-    /// 控制面用「消息超过上限」拒绝之后：编码之后超过上限的结果（待发的、待 Ack 的）换成失败，别的不动（#723）。
+    fn success_of(task_id: &str, text: usize) -> TaskResult {
+        TaskResult {
+            status: TaskStatus::Success.into(),
+            outputs_json: "x".repeat(text),
+            agent_time_unix_ms: 111,
+            monotonic_ms: 222,
+            ..result(task_id, 1)
+        }
+    }
+
+    fn failed_of(task_id: &str, message: &str, location: &str) -> TaskResult {
+        TaskResult {
+            status: TaskStatus::Failed.into(),
+            error: Some(Box::new(crate::proto::TaskError {
+                kind: ErrorKind::EnvError.into(),
+                message: message.into(),
+                location: location.into(),
+            })),
+            agent_time_unix_ms: 111,
+            monotonic_ms: 222,
+            ..result(task_id, 1)
+        }
+    }
+
+    /// 一个台账里只有一个已经发出、没 Ack 的结果。
+    async fn unacked_with(finished: TaskResult) -> Ledger {
+        let ledger = Ledger::default();
+        start(&ledger, &finished.task_id, 1, "run");
+        ledger.finish(finished);
+        ledger.next_result().await;
+        ledger
+    }
+
+    /// 控制面用「消息超过上限」拒绝之后：整条消息超过上限的结果（待发的、待 Ack 的）换成失败，别的不动（#723）。
     #[tokio::test]
     async fn results_over_the_message_limit_are_replaced_by_a_failure_and_the_rest_are_kept() {
         let ledger = Ledger::default();
         for id in ["big-sent", "big-unsent", "small", "running"] {
             start(&ledger, id, 1, "run");
         }
-        let big = |id: &str| TaskResult {
-            outputs_json: "x".repeat(10_000),
-            agent_time_unix_ms: 111,
-            monotonic_ms: 222,
-            ..result(id, 1)
-        };
-        ledger.finish(big("big-sent"));
-        ledger.finish(result("small", 1));
+        ledger.finish(success_of("big-sent", 10_000));
+        ledger.finish(success_of("small", 10));
         // big-sent 已经发出（待 Ack），big-unsent 还没发出
         assert_eq!(ledger.next_result().await.task_id, "big-sent");
-        ledger.finish(big("big-unsent"));
+        ledger.finish(success_of("big-unsent", 10_000));
 
         assert_eq!(ledger.replace_results_over(5_000), 2);
         // 发出的顺序不变：先是没超过的 small（原样），再是换过的 big-unsent（还没发出的也换）
         let next = ledger.next_result().await;
         assert_eq!(
             next,
-            result("small", 1),
+            success_of("small", 10),
             "没超过的不动（成功的结果不能因为被拒的是别的消息就变成失败）"
         );
         let next = ledger.next_result().await;
         assert_eq!(next.task_id, "big-unsent");
-        assert_eq!(next.status(), crate::proto::TaskStatus::Failed);
+        assert_eq!(next.status(), TaskStatus::Failed);
 
         let unacked: HashMap<String, TaskResult> = ledger
             .unacked()
@@ -934,7 +998,7 @@ mod tests {
             .map(|r| (r.task_id.clone(), r))
             .collect();
         let replaced = &unacked["big-sent"];
-        assert_eq!(replaced.status(), crate::proto::TaskStatus::Failed);
+        assert_eq!(replaced.status(), TaskStatus::Failed);
         assert_eq!(replaced.outputs_json, "");
         assert_eq!(
             (replaced.agent_time_unix_ms, replaced.monotonic_ms),
@@ -945,18 +1009,115 @@ mod tests {
         assert!(
             error
                 .message
-                .contains("超过控制面接收一条消息的上限 5000 字节")
+                .contains("超过控制面接收一条消息的上限 5000 字节"),
+            "{}",
+            error.message
         );
+        // 写的是整条消息的大小，和控制面日志里的 `message size N` 同一个数
         assert!(
-            error
-                .message
-                .contains(&format!("{} 字节", big("big-sent").encoded_len()))
+            error.message.contains(&format!(
+                "有 {} 字节",
+                result_message_size(&success_of("big-sent", 10_000))
+            )),
+            "{}",
+            error.message
         );
         assert!(replaced.encoded_len() < 5_000);
         // 执行中的任务也不动
         assert_eq!(held(&ledger).len(), 4);
         // 已经够小的再换一遍：没有要换的
         assert_eq!(ledger.replace_results_over(5_000), 0);
+    }
+
+    /// 边界：整条消息正好等于上限的不换，多 1 个字节的换（控制面也是这样量的）。成功变失败是最坏的方向：上限以下的
+    /// 成功结果不论多大（离上限只差 1 个字节、一半、很远）都原样留着。
+    #[tokio::test]
+    async fn a_result_is_replaced_exactly_when_the_whole_message_is_over_the_limit() {
+        let size = result_message_size(&success_of("edge", 10_000));
+        // 结果自己的编码比整条消息小：按它比的话上限正好卡在这几个字节里的那一条就换不掉
+        assert!(success_of("edge", 10_000).encoded_len() < size);
+        for limit in [size, size + 1, size + size / 2, size * 2, size * 1000] {
+            let ledger = unacked_with(success_of("edge", 10_000)).await;
+            assert_eq!(ledger.replace_results_over(limit), 0, "上限 {limit}");
+            assert_eq!(ledger.unacked(), [success_of("edge", 10_000)]);
+        }
+        // 上限是消息的一半、一半多一点、少 1 个字节：换（它们都比这条消息小）
+        for limit in [size - 1, size - 4, size - 5, size - 6, size / 2] {
+            let ledger = unacked_with(success_of("edge", 10_000)).await;
+            assert_eq!(ledger.replace_results_over(limit), 1, "上限 {limit}");
+            assert_eq!(ledger.unacked()[0].status(), TaskStatus::Failed);
+        }
+    }
+
+    /// 换掉之后写明原来的状态：成功的写成功，失败的写失败、带着出错的位置和原来文字的开头（不是全文）；类型 node_error。
+    #[tokio::test]
+    async fn the_replacement_says_what_the_result_was_and_what_to_do() {
+        let ledger = unacked_with(success_of("was-ok", 10_000)).await;
+        ledger.replace_results_over(1_000);
+        let error = ledger.unacked()[0].error.clone().unwrap();
+        assert_eq!(error.kind(), ErrorKind::NodeError);
+        assert!(
+            error.message.starts_with("任务成功了，结果有 "),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains("按重试配置重跑"));
+        assert!(error.message.contains("办法："));
+        assert!(!error.message.contains("原来的失败文字"));
+        assert_eq!(error.location, "");
+
+        // 原来的失败：1 万个「中」（3 万字节）加开头；换掉之后只留 2 KiB 左右的开头，截在字符边界上
+        let text = format!("开头：{}", "中".repeat(10_000));
+        let ledger = unacked_with(failed_of("was-failed", &text, "mod.fn 第 7 行")).await;
+        ledger.replace_results_over(10_000);
+        let replaced = ledger.unacked()[0].clone();
+        assert_eq!(replaced.status(), TaskStatus::Failed);
+        let error = replaced.error.clone().unwrap();
+        assert_eq!(
+            error.kind(),
+            ErrorKind::NodeError,
+            "原来的类型不带过来，一律 node_error"
+        );
+        assert!(
+            error.message.starts_with("任务失败了，失败的结果有 "),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains("原来的失败文字，只留开头 "));
+        assert!(
+            error
+                .message
+                .contains(&format!("（共 {} 字节）", text.len()))
+        );
+        assert!(error.message.contains("开头：中中中"));
+        assert_eq!(error.location, "mod.fn 第 7 行", "出错的位置带着");
+        assert!(replaced.encoded_len() < 4_000, "{}", replaced.encoded_len());
+        assert_eq!(
+            (replaced.agent_time_unix_ms, replaced.monotonic_ms),
+            (111, 222)
+        );
+
+        // 失败文字本来就很短：全文带上
+        let ledger = unacked_with(failed_of("short", "boom", "")).await;
+        ledger.replace_results_over(10);
+        let error = ledger.unacked()[0].error.clone().unwrap();
+        assert!(
+            error.message.contains("原来的失败文字（全文）：\nboom"),
+            "{}",
+            error.message
+        );
+    }
+
+    /// 取消的结果文字是固定的短句：不换（换成失败会让取消的任务被当成失败去重试）。
+    #[tokio::test]
+    async fn a_cancelled_result_is_never_replaced() {
+        let cancelled = TaskResult {
+            status: TaskStatus::Cancelled.into(),
+            ..failed_of("cancelled", "任务已取消，已终止进程树", "")
+        };
+        let ledger = unacked_with(cancelled.clone()).await;
+        assert_eq!(ledger.replace_results_over(1), 0);
+        assert_eq!(ledger.unacked(), [cancelled]);
     }
 
     /// 保留期扫描：不再在手上的任务忘掉它属于哪次运行，在手上的（含结果已交出的）保留。

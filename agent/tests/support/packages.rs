@@ -48,6 +48,8 @@ struct Files {
     uploads: Vec<Upload>,
     /// PUT 的响应状态码；None 为 201。
     upload_status: Option<u16>,
+    /// PUT 失败时响应的正文；None 为 `{}`。
+    upload_body: Option<String>,
     by_path: HashMap<String, File>,
     /// 镜像中的项目（规范化名）→ wheel 文件名。
     projects: HashMap<String, Vec<String>>,
@@ -197,6 +199,13 @@ impl HttpFixture {
     pub fn reject_uploads(&self, status: u16) {
         self.files.lock().unwrap().upload_status = Some(status);
     }
+
+    /// 之后的 PUT 都回这个状态码和这段正文。
+    pub fn reject_uploads_with_body(&self, status: u16, body: &str) {
+        let mut files = self.files.lock().unwrap();
+        files.upload_status = Some(status);
+        files.upload_body = Some(body.to_string());
+    }
 }
 
 fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
@@ -241,7 +250,7 @@ async fn serve(
             }
             body.extend_from_slice(&chunk[..n]);
         }
-        let status = {
+        let (status, response_body) = {
             let mut files = files.lock().unwrap();
             files.uploads.push(Upload {
                 path: head.split_whitespace().nth(1).unwrap_or("/").to_string(),
@@ -250,10 +259,14 @@ async fn serve(
                 body,
                 at: tokio::time::Instant::now(),
             });
-            files.upload_status.unwrap_or(201)
+            (
+                files.upload_status.unwrap_or(201),
+                files.upload_body.clone().unwrap_or_else(|| "{}".into()),
+            )
         };
         let reply = format!(
-            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{response_body}",
+            response_body.len()
         );
         stream.write_all(reply.as_bytes()).await?;
         return stream.shutdown().await;

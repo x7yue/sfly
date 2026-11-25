@@ -44,10 +44,15 @@ pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_ERROR_TEXT_BYTES: usize = 1024 * 1024;
 /// 出错位置（`TaskError.location`，「模块.函数 第 N 行」）的大小上限。
 const MAX_LOCATION_BYTES: usize = 1024;
-/// 读执行器写的 `output.json` 最多读这么多字节：失败时异常的文字同时写进 `message` 和 `traceback`，一份 8 MiB 的异常文字
-/// 写出 16 MiB。更大的不读，按执行器异常退出处理，附上标准错误的尾部（那里有堆栈的末尾）。读之前不知道多大，
-/// 整份读进内存再解析，所以这个数也是一个任务结束时 Agent 在这件事上最多占的内存的量级。
+/// 读执行器写的 `output.json` 最多读这么多字节：旧版本的执行器失败时异常的文字同时写进 `message` 和 `traceback`，
+/// 一份 8 MiB 的异常文字写出 16 MiB（新版本的执行器自己限长，写出的远小于这个数，碰不到它）。更大的不读，按执行器
+/// 异常退出处理，附上标准错误的尾部（异常文字的末尾，堆栈在它前面）。读之前不知道多大，整份读进内存再解析，
+/// 所以这个数也是一个任务结束时 Agent 在这件事上最多占的内存的量级。
 const MAX_OUTPUT_FILE_BYTES: usize = 16 * 1024 * 1024;
+
+/// 失败文字太长、Agent 要省掉中间时附在末尾的一句：旧版本的 SDK（执行器）写的说明和堆栈都不限长。
+const OLDER_SDK_ADVICE: &str = "\n\n（失败的文字太长：节点包用的 SDK 是旧版本，不限长。升级 SDK 之后失败结果由执行器自己限长，\
+     留着异常的类型、出错的位置和堆栈的最后几帧；完整的堆栈在任务日志的标准错误里。）";
 
 #[derive(Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -124,14 +129,26 @@ pub fn failure_at(
     message: impl Into<String>,
     location: String,
 ) -> TaskResult {
+    result_with_error(task, TaskStatus::Failed, kind, message.into(), location)
+}
+
+/// 带错误的结果（失败、取消）：构造它的只有这一处，所以每一条结果里的文字都过上界（[`bound_error_text`]、
+/// [`MAX_LOCATION_BYTES`]），不论是哪条路径构造的。
+fn result_with_error(
+    task: &AssignTask,
+    status: TaskStatus,
+    kind: ErrorKind,
+    message: String,
+    location: String,
+) -> TaskResult {
     TaskResult {
         task_id: task.task_id.clone(),
         attempt: task.attempt,
-        status: TaskStatus::Failed.into(),
+        status: status.into(),
         outputs_json: String::new(),
         error: Some(Box::new(TaskError {
             kind: kind.into(),
-            message: bound_error_text(message.into()),
+            message: bound_error_text(message),
             location: truncate_at_boundary(location, MAX_LOCATION_BYTES),
         })),
         ..Default::default()
@@ -139,7 +156,7 @@ pub fn failure_at(
 }
 
 /// 不超过 `max` 字节、落在字符边界上的开头。
-fn truncate_at_boundary(mut text: String, max: usize) -> String {
+pub(crate) fn truncate_at_boundary(mut text: String, max: usize) -> String {
     if text.len() > max {
         let mut cut = max;
         while !text.is_char_boundary(cut) {
@@ -452,7 +469,9 @@ impl Running {
                 task,
                 ErrorKind::NodeError,
                 format!(
-                    "执行器写出的 output.json 超过 {MAX_OUTPUT_FILE_BYTES} 字节（至少 {} 字节），没有读\n\n{}",
+                    "执行器写出的 output.json 超过 {MAX_OUTPUT_FILE_BYTES} 字节（至少 {} 字节），没有读：异常的类型、\
+                     出错的位置、堆栈都看不到。新版本的 SDK 写失败结果之前自己限长，升级节点包用的 SDK 就能看到；\
+                     完整的堆栈在任务日志的标准错误里。下面是标准错误的最后一段：\n\n{}",
                     bytes.len(),
                     String::from_utf8_lossy(&stderr).trim_end()
                 ),
@@ -464,11 +483,15 @@ impl Running {
             Some(Output::Failed { error }) => {
                 let kind = error.error_kind();
                 let location = error.location.clone().unwrap_or_default();
-                let message = if error.traceback.is_empty() {
+                let mut message = if error.traceback.is_empty() {
                     error.message
                 } else {
                     format!("{}\n\n{}", error.message, error.traceback.trim_end())
                 };
+                // 旧版本的 SDK 不限长：太长要在这里把中间省掉了，写一句能照着做的话（放在末尾，省掉的是中间，它留得下来）。
+                if message.len() > MAX_ERROR_TEXT_BYTES {
+                    message.push_str(OLDER_SDK_ADVICE);
+                }
                 failure_at(task, kind, message, location)
             }
             _ => failure(
@@ -544,18 +567,13 @@ impl Running {
             (false, Ok(_)) => "已强制杀掉进程树".to_string(),
         };
         self.pump.finish().await;
-        TaskResult {
-            task_id: self.task.task_id.clone(),
-            attempt: self.task.attempt,
-            status: TaskStatus::Cancelled.into(),
-            outputs_json: String::new(),
-            error: Some(Box::new(TaskError {
-                kind: ErrorKind::Unspecified.into(),
-                message: format!("任务已取消，{how}"),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }
+        result_with_error(
+            &self.task,
+            TaskStatus::Cancelled,
+            ErrorKind::Unspecified,
+            format!("任务已取消，{how}"),
+            String::new(),
+        )
     }
 
     /// 超时（docs/SEMANTICS.md §3.3）：和取消一样先写取消标记，节点进入收尾时间（宽限期）时
@@ -656,6 +674,22 @@ mod bound_tests {
         );
     }
 
+    /// 多字节的文字：字符数在上限之下、字节数超过上限的也要截（按字节算，不是按字符数），整段仍是合法的文字。
+    #[test]
+    fn a_multibyte_text_is_bounded_by_bytes_not_by_characters() {
+        let characters = MAX_ERROR_TEXT_BYTES / 2;
+        let text = "中".repeat(characters);
+        assert!(text.chars().count() < MAX_ERROR_TEXT_BYTES);
+        assert!(text.len() > MAX_ERROR_TEXT_BYTES);
+        let bounded = bound_error_text(text);
+        assert!(
+            bounded.len() < MAX_ERROR_TEXT_BYTES + 300,
+            "{}",
+            bounded.len()
+        );
+        assert!(bounded.starts_with("中中中") && bounded.ends_with("中中中"));
+    }
+
     #[test]
     fn every_failure_result_is_bounded_whatever_built_it() {
         let result = failure_at(
@@ -711,6 +745,39 @@ mod bound_tests {
         assert_eq!(
             error.message,
             format!("节点输出超过 1 MB 上限（{} 字节）", MAX_OUTPUT_BYTES + 1)
+        );
+    }
+
+    /// 带错误的结果只有一个构造的地方：失败和取消的文字、位置都过上界，不论是哪条路径构造的（#723）。
+    #[test]
+    fn every_result_with_an_error_is_bounded_whatever_its_status() {
+        let huge = "中".repeat(MAX_ERROR_TEXT_BYTES);
+        let place = "位".repeat(5_000);
+        for status in [TaskStatus::Failed, TaskStatus::Cancelled] {
+            let result = result_with_error(
+                &task(),
+                status,
+                ErrorKind::NodeError,
+                huge.clone(),
+                place.clone(),
+            );
+            assert_eq!(result.status(), status);
+            let error = result.error.expect("带着错误");
+            assert!(
+                error.message.len() < MAX_ERROR_TEXT_BYTES + 300,
+                "{status:?}"
+            );
+            assert!(error.message.contains("失败的文字有"));
+            assert!(error.location.len() <= MAX_LOCATION_BYTES, "{status:?}");
+        }
+        // 取消、失败、超时、执行器出错：这几个公开的构造函数都经过它
+        assert!(
+            failure(&task(), ErrorKind::Timeout, huge.clone())
+                .error
+                .unwrap()
+                .message
+                .len()
+                < MAX_ERROR_TEXT_BYTES + 300
         );
     }
 }

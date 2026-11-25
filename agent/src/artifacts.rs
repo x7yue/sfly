@@ -154,7 +154,8 @@ impl Uploader {
         }
         let mut result = result;
         if let Some(e) = result.error.as_mut() {
-            e.message = format!("{}\n\n{message}", e.message);
+            // 追加之后再过一次上界：原来的文字已经限过长，追加的说明里有控制面拒绝上传时返回的响应体（没有上限）。
+            e.message = executor::bound_error_text(format!("{}\n\n{message}", e.message));
         }
         result
     }

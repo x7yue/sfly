@@ -68,7 +68,7 @@ pub const DEFAULT_SLOTS: u32 = 4;
 /// 终止任务时从优雅终止到强制杀掉进程树的默认宽限期（docs/SEMANTICS.md §3.4）。
 pub const DEFAULT_TERMINATE_GRACE: Duration = Duration::from_secs(10);
 
-/// 重连等待：从 MIN 开始翻倍，最多 MAX；成功连上后重置。
+/// 重连等待：从 MIN 开始翻倍，最多 MAX；连得稳（撑过 [`STABLE_CONNECTION`]）之后才重置，握手成功不重置。
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(10);
 /// 连上之后至少撑过这么久才算连得稳：重连的等待只在连得稳之后才回到 [`RECONNECT_MIN`]。握手一成功就重置的话，
@@ -959,6 +959,18 @@ fn result_message(result: TaskResult) -> AgentMessage {
     }
 }
 
+/// `AgentMessage.result` 的字段号（`proto/sfly/agent/v1/agent.proto`）：[`result_message_size`] 用；测试把它和真的编码对一遍。
+const RESULT_FIELD: u32 = 6;
+
+/// 这条结果作为一条 `AgentMessage`（[`result_message`]）发出时编码之后的大小：控制面的网关拿一条消息的上限比的是它
+/// （长度前缀里的长度），不是结果自己的编码长度，差一个字段标签加长度前缀（4 到 5 个字节）。不复制结果，直接算。
+pub(crate) fn result_message_size(result: &TaskResult) -> usize {
+    use prost::Message as _;
+    use prost::encoding::{encoded_len_varint, key_len};
+    let len = result.encoded_len();
+    key_len(RESULT_FIELD) + encoded_len_varint(len as u64) + len
+}
+
 /// 任务执行方发往控制面的消息。
 struct Channels<'a> {
     installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
@@ -1131,5 +1143,34 @@ mod limit_tests {
         ));
         assert_eq!(message_limit_exceeded(&other_code), None);
         assert_eq!(message_limit_exceeded(&anyhow::anyhow!("plain")), None);
+    }
+
+    /// 控制面比的是整条消息：这个数和真的编码一样，长度前缀的字节数变化的几个边界（127/128、16383/16384、2 MiB）两侧都对。
+    #[test]
+    fn the_size_of_a_result_message_is_the_size_of_the_whole_message() {
+        use prost::Message as _;
+        let sizes = [
+            0, 1, 100, 120, 124, 125, 126, 127, 128, 129, 16_380, 16_383, 16_384, 16_385,
+        ];
+        let big = [
+            2 * 1024 * 1024 - 1,
+            2 * 1024 * 1024,
+            2 * 1024 * 1024 + 1,
+            40 * 1024 * 1024,
+        ];
+        for text in sizes.into_iter().chain(big) {
+            let result = TaskResult {
+                task_id: "t".into(),
+                attempt: 1,
+                outputs_json: "x".repeat(text),
+                ..Default::default()
+            };
+            assert_eq!(
+                result_message_size(&result),
+                result_message(result.clone()).encoded_len(),
+                "输出 {text} 字节"
+            );
+            assert!(result_message_size(&result) > result.encoded_len());
+        }
     }
 }
