@@ -19289,6 +19289,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -19365,6 +19377,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -19373,6 +19397,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -19727,7 +19763,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -19747,6 +19785,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -19784,6 +19823,76 @@
           "cancel",
           "run_notification",
           "chains"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/io",
+      "key": [
+        "runs",
+        "taskIo"
+      ],
+      "kind": "endpoint",
+      "summary": "读一次尝试的输入和输出的全文（运行视图里被省略的大输入、输出在这里取）",
+      "effect": "read",
+      "resource": {
+        "kind": "task",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outputs": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "task_id",
+          "inputs",
+          "outputs"
         ]
       },
       "notes": []
@@ -20131,6 +20240,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -20207,6 +20328,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -20215,6 +20348,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -20569,7 +20714,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -20589,6 +20736,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -20973,6 +21121,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -21049,6 +21209,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -21057,6 +21229,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -21411,7 +21595,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -21431,6 +21617,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -21813,6 +22000,18 @@
                             }
                           ]
                         },
+                        "outputs_omitted_bytes": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "error": {
                           "anyOf": [
                             {
@@ -21889,6 +22088,18 @@
                                   }
                                 ]
                               },
+                              "inputs_omitted_bytes": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "outputs": {
                                 "anyOf": [
                                   {
@@ -21897,6 +22108,18 @@
                                       "type": "string"
                                     },
                                     "additionalProperties": {}
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "outputs_omitted_bytes": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
                                   },
                                   {
                                     "type": "null"
@@ -22251,7 +22474,9 @@
                               "status",
                               "agent",
                               "inputs",
+                              "inputs_omitted_bytes",
                               "outputs",
+                              "outputs_omitted_bytes",
                               "error",
                               "queued_at",
                               "started_at",
@@ -22271,6 +22496,7 @@
                         "status",
                         "agent",
                         "outputs",
+                        "outputs_omitted_bytes",
                         "error",
                         "attempts"
                       ]

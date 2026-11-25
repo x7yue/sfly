@@ -4,6 +4,7 @@ import type { RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 import type { ReactElement, ReactNode } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FOCUS, TERM } from "#/lib/copy";
 import { AnomalyNote } from "./AnomalyNote";
 import { FocusValue } from "./FocusValue";
@@ -48,10 +49,14 @@ export function FocusReadout({
 					<>
 						<span className="flex items-start gap-1.5 text-xs text-fg-2">
 							<StatusDot kind={nodeStatusView(item.source.status).kind} className="mt-1.25" />
-							<span className="line-clamp-2 wrap-anywhere">{item.title}</span>
+							<span className="line-clamp-2 wrap-anywhere">
+								<UntrustedText text={item.title} />
+							</span>
 						</span>
 						{item.unavailable ? (
-							<span className="text-xs text-fg-3">{FOCUS.chartMissing(item.chart)}</span>
+							<span className="text-xs text-fg-3">
+								<UntrustedText text={FOCUS.chartMissing(item.chart)} />
+							</span>
 						) : (
 							<FocusValue item={item} className="truncate" />
 						)}

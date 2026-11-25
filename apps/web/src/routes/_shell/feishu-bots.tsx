@@ -12,6 +12,7 @@ import { notify } from "#/components/feedback/notify";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { DeleteBotDialog, RegisterBotDialog, ReplaceWebhookDialog } from "#/feishu-bots/dialogs";
 import { apiQuery, callApi } from "#/lib/api";
 import { DELIVERY, FEISHU_BOT_SETUP, PAGE } from "#/lib/copy";
@@ -190,7 +191,11 @@ function LastDelivery({ delivery }: { delivery: FeishuLastDelivery | null }) {
 				</StatusPill>
 				<span className="font-mono text-2xs text-fg-3">{formatDateTime(delivery.at)}</span>
 			</div>
-			{delivery.message && <div className="text-fg-1">{delivery.message}</div>}
+			{delivery.message && (
+				<div className="text-fg-1">
+					<UntrustedText text={delivery.message} />
+				</div>
+			)}
 		</div>
 	);
 }
@@ -203,7 +208,13 @@ function Backlog({ count }: { count: number }) {
 
 /** 测试消息的结果：成功，或失败的中文原因、下一步和飞书的错误码。 */
 function TestResult({ result }: { result: FeishuTestResult }) {
-	if (result.ok) return <StatusPill kind="ok">{result.message}</StatusPill>;
+	if (result.ok) {
+		return (
+			<StatusPill kind="ok">
+				<UntrustedText text={result.message} />
+			</StatusPill>
+		);
+	}
 	const codes = [
 		result.feishu_code !== null && `飞书错误码 ${result.feishu_code}`,
 		result.http_status !== null && `HTTP ${result.http_status}`,
@@ -211,8 +222,15 @@ function TestResult({ result }: { result: FeishuTestResult }) {
 	return (
 		<div className="flex flex-col gap-0.5">
 			<StatusPill kind="failed">测试失败</StatusPill>
-			<div className="text-fg-1">{result.message}</div>
-			{result.next_step && <div className="text-fg-2">下一步：{result.next_step}</div>}
+			<div className="text-fg-1">
+				<UntrustedText text={result.message} />
+			</div>
+			{result.next_step && (
+				<div className="text-fg-2">
+					下一步：
+					<UntrustedText text={result.next_step} />
+				</div>
+			)}
 			{codes.length > 0 && <div className="font-mono text-2xs text-fg-3">{codes.join(" · ")}</div>}
 		</div>
 	);

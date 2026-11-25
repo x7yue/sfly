@@ -28,9 +28,11 @@ import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
 import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { runNodeName } from "#/components/node-name";
 import { SectionHeading } from "#/components/page";
 import { nodeStatusView, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusRows } from "#/focus/FocusRows";
@@ -55,6 +57,7 @@ import {
 import { formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { ACTIONS_POLL_MS } from "#/lib/polling";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { useNow } from "#/lib/use-now";
 import { runViewTransition } from "#/lib/view-transition";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -191,14 +194,14 @@ export function useRunDecorations(
 				const reason = summary.state === "failed" && error ? errorHeadline(error.message) : "";
 				if (summary.state === "failed")
 					decoration.overview = (
-						<span title={reason || undefined} className="text-danger-fg">
-							{withoutErrorClass(reason) || NODE_STATUS.failed.label}
+						<span title={reason ? untrustedPlain(reason) : undefined} className="text-danger-fg">
+							<UntrustedText text={withoutErrorClass(reason) || NODE_STATUS.failed.label} />
 						</span>
 					);
 				if (reason) {
 					decoration.detail = (
-						<span title={reason} className="min-w-0 flex-1 truncate text-danger-fg">
-							{withoutErrorClass(reason)}
+						<span title={untrustedPlain(reason)} className="min-w-0 flex-1 truncate text-danger-fg">
+							<UntrustedText text={withoutErrorClass(reason)} />
 						</span>
 					);
 				} else if (entry?.primary_metric) {
@@ -280,7 +283,7 @@ export function RunStateBadge({ state }: { state: CanvasRun }) {
 	return (
 		<span
 			data-testid="canvas-run"
-			title={state.status === "error" ? state.error.message : undefined}
+			title={state.status === "error" ? untrustedPlain(state.error.message, "text") : undefined}
 			className="flex items-center gap-1.5 px-1.5"
 		>
 			{body}
@@ -366,7 +369,15 @@ export const RunStateInspector = forwardRef<
 	);
 });
 
-function Header({ row, title, onCollapse }: { row: ReactNode; title: string; onCollapse(): void }) {
+function Header({
+	row,
+	title,
+	onCollapse,
+}: {
+	row: ReactNode;
+	title: ReactNode;
+	onCollapse(): void;
+}) {
 	return (
 		<div className="flex-none border-b border-border-soft px-3.5 pt-3 pb-2.5">
 			<div className="flex items-center gap-1.75 text-xs text-fg-3">
@@ -394,7 +405,15 @@ function Row({ label, children, testId }: { label: string; children: ReactNode; 
 }
 
 /** 摘要里的一行说明文字：可以折行，不是等宽的数据（进度的说明是节点写的一句话）。 */
-function TextRow({ label, children, testId }: { label: string; children: string; testId: string }) {
+function TextRow({
+	label,
+	children,
+	testId,
+}: {
+	label: string;
+	children: ReactNode;
+	testId: string;
+}) {
 	return (
 		<>
 			<dt className="text-fg-3">{label}</dt>
@@ -453,7 +472,7 @@ function NodeRunInspector({
 						</span>
 					</>
 				}
-				title={nodeCardText(node, info).title}
+				title={<UntrustedText text={nodeCardText(node, info).title} />}
 				onCollapse={onCollapse}
 			/>
 			<div
@@ -467,7 +486,9 @@ function NodeRunInspector({
 					<Row label="运行">
 						{shortId(run.id)} · v{run.orchestration_version}
 					</Row>
-					<Row label="Agent">{view?.agent ?? "控制面"}</Row>
+					<Row label="Agent">
+						{view?.agent == null ? "控制面" : <UntrustedText text={view.agent} />}
+					</Row>
 					<Row label={DURATION_LABEL}>
 						{elapsed === null ? "—" : formatSpan(elapsed, !view?.attempts.at(-1)?.ended_at)}
 					</Row>
@@ -479,7 +500,7 @@ function NodeRunInspector({
 					)}
 					{activity?.kind === "progress" && (
 						<TextRow label={PROGRESS_LABEL} testId="run-progress">
-							{activity.message}
+							<UntrustedText text={activity.message} />
 						</TextRow>
 					)}
 				</dl>
@@ -489,15 +510,17 @@ function NodeRunInspector({
 						className="mt-3 rounded-lg border border-danger-line bg-danger-soft px-3 py-2.5"
 					>
 						<Badge variant="danger" className="font-mono">
-							{view.error.kind}
+							<UntrustedText text={view.error.kind} />
 						</Badge>
-						<p className="m-0 mt-1.5 break-words text-xs">{errorHeadline(view.error.message)}</p>
+						<p className="m-0 mt-1.5 break-words text-xs">
+							<UntrustedText text={errorHeadline(view.error.message)} />
+						</p>
 						{view.error.location && (
 							<p
 								data-testid="run-error-location"
 								className="m-0 mt-1 break-words font-mono text-xs text-fg-2"
 							>
-								{ERROR_LOCATION_LABEL}：{view.error.location}
+								{ERROR_LOCATION_LABEL}：<UntrustedText text={view.error.location} />
 							</p>
 						)}
 					</div>
@@ -544,7 +567,7 @@ function NodeRunInspector({
 				)}
 				{actions.error && !actionSummary && (
 					<p role="alert" className="m-0 mt-3 text-xs text-danger-fg">
-						{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
+						{MESSAGE.loadFailed(TERM.action)}：<ErrorMessage error={actions.error} />
 					</p>
 				)}
 				<p className="m-0 mt-3.5 mb-2.5 text-xs text-fg-3">{HINT}</p>
@@ -631,7 +654,7 @@ function RunOverview({
 		case "error":
 			body = (
 				<p role="alert" className="m-0 text-xs text-danger-fg">
-					{MESSAGE.loadFailed(TERM.run)}：{state.error.message}
+					{MESSAGE.loadFailed(TERM.run)}：<ErrorMessage error={state.error} />
 				</p>
 			);
 			break;

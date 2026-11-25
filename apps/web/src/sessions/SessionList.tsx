@@ -65,6 +65,7 @@ export function SessionList({
 								<TableRow key={session.id} data-list-item="" data-session={session.id}>
 									<TableCell width="grow">
 										<Truncate
+											untrusted
 											render={
 												<Link
 													to="/sessions/$id"

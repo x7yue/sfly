@@ -140,6 +140,7 @@ describe("合并日志的来源节点（#222）", () => {
 		status: "running",
 		agent: "agent-a",
 		outputs: null,
+		outputs_omitted_bytes: null,
 		error: null,
 		attempts: Array.from({ length: attempts }, (_, i) => ({ attempt: i + 1 }) as AttemptView),
 	});
@@ -193,6 +194,7 @@ describe("日志页签的节点范围（#224）", () => {
 		status: "running",
 		agent: "agent-a",
 		outputs: null,
+		outputs_omitted_bytes: null,
 		error: null,
 		attempts: [],
 	});
@@ -267,6 +269,7 @@ describe("运行视图与进度推送的合并（#110）", () => {
 						status: "running",
 						agent: "agent-a",
 						outputs: null,
+						outputs_omitted_bytes: null,
 						error: null,
 						attempts: [
 							{
@@ -275,7 +278,9 @@ describe("运行视图与进度推送的合并（#110）", () => {
 								status: "running",
 								agent: "agent-a",
 								inputs: {},
+								inputs_omitted_bytes: null,
 								outputs: null,
+								outputs_omitted_bytes: null,
 								error: null,
 								queued_at: "2026-01-01T00:00:00.000Z",
 								started_at: "2026-01-01T00:00:00.000Z",
@@ -328,7 +333,9 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		status,
 		agent: "agent-a",
 		inputs: {},
+		inputs_omitted_bytes: null,
 		outputs: null,
+		outputs_omitted_bytes: null,
 		error: message ? { kind: "node_error", message, location: null } : null,
 		queued_at: "2026-01-01T00:00:00.000Z",
 		started_at: "2026-01-01T00:00:00.000Z",
@@ -346,6 +353,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 			status,
 			agent: "agent-a",
 			outputs: null,
+			outputs_omitted_bytes: null,
 			error: attempts.at(-1)?.error ?? null,
 			attempts,
 		}) satisfies NodeRunView;

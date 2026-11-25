@@ -974,10 +974,15 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 						expect(run.params, name).toEqual({ big: MASK });
 						const probe = typeof value === "string" ? value.slice(0, 200) : "kkkkkkkkkkkkkkkkkkkk";
 						expect(text, name).not.toContain(probe);
-						expect(run.chains[0]?.nodes[1]?.outputs, name).toEqual({
-							echoed: MASK,
-							text: `x ${MASK} y`,
-						});
+						// 输出很大（存着的超过 16 KiB）：运行视图只给大小（#633），全文用 /tasks/:id/io 取，读到的是打码之后的。
+						const node = run.chains[0]?.nodes[1];
+						expect(node?.outputs, name).toBeNull();
+						expect(node?.outputs_omitted_bytes ?? 0, name).toBeGreaterThan(16 * 1024);
+						const io = await api.get(`/tasks/${a.taskId}/io`);
+						expect(io.status, name).toBe(200);
+						const full = (await io.json()) as { outputs: unknown };
+						expect(full.outputs, name).toEqual({ echoed: MASK, text: `x ${MASK} y` });
+						expect(JSON.stringify(full), name).not.toContain(probe);
 						expect(run.chains[0]?.nodes[2]?.error?.message, name).toBe(`bad ${MASK}`);
 						// 其余出口：任务日志、运行日志、下载。
 						for (const path of [
