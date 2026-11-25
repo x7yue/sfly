@@ -10,6 +10,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
 import { Button } from "@/components/ui/button";
@@ -121,7 +122,8 @@ export function ConflictDialog({
 					<div className="rounded-lg border border-border-soft bg-sunk px-3 py-2.5">
 						{latest.error ? (
 							<p role="alert" className="m-0 text-sm text-danger-fg">
-								读取最新版本失败：{latest.error.message}
+								读取最新版本失败：
+								<ErrorMessage error={latest.error} />
 							</p>
 						) : loadLatestDiff && fresh ? (
 							<DocumentDiffView
@@ -163,7 +165,8 @@ export function ConflictDialog({
 				)}
 				{saveAsNew.error && (
 					<p role="alert" className="m-0 text-sm text-danger-fg">
-						另存失败：{saveAsNew.error.message}
+						另存失败：
+						<ErrorMessage error={saveAsNew.error} />
 					</p>
 				)}
 				<DialogFooter>

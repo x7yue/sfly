@@ -7,6 +7,7 @@ import {
 	type NodeRunView,
 	type RunLogLine,
 	type RunView,
+	runsApi,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
@@ -16,10 +17,12 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
 import { actionCount } from "#/actions/action-table";
 import { useActionSummary } from "#/actions/use-task-actions";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery, apiUrl } from "#/lib/api";
 import {
 	ACTION,
@@ -42,6 +45,7 @@ import { INLINE_LINK } from "#/lib/inline-link";
 import { NODE_STATUS } from "#/lib/node-status";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { shortcutText } from "#/lib/shortcuts";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -74,6 +78,7 @@ import {
 	secretInputKeys,
 	secretParams,
 	stoppedSubflowLabel,
+	stopSubflowTarget,
 } from "./run-model";
 import type { LoadedLine } from "./task-log-reader";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
@@ -364,7 +369,7 @@ export function BottomPanel({
 								<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的动作。"}</Hint>
 							))}
 						{tab === "attempts" && (
-							<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
+							<AttemptsTab run={run} node={node} selected={selected} filter={filter} doc={doc} />
 						)}
 						{tab === "io" && <IoTab node={node} attempt={attempt} doc={doc} />}
 						{tab === "artifacts" &&
@@ -630,7 +635,8 @@ function LogsView<L extends LogLineView>({
 			)}
 			{logs.error && (
 				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
-					读取日志失败：{logs.error}
+					读取日志失败：
+					<UntrustedText text={logs.error} mode="text" />
 				</p>
 			)}
 			{lines.length === 0 && !logs.hasOlder && !logs.hasNewer ? (
@@ -680,11 +686,13 @@ function AttemptsTab({
 	node,
 	selected,
 	filter,
+	doc,
 }: {
 	run: RunView;
 	node: NodeRunView | undefined;
 	selected: NodeRef | null;
 	filter: ReadonlySet<string> | null;
+	doc: StoredOrchestrationDocument | undefined;
 }) {
 	const { now } = useTimeAxis();
 	// 没选节点时列出有重试或失败的节点（有节点筛选时只列筛选中的）。
@@ -725,7 +733,8 @@ function AttemptsTab({
 							<b className="flex-none font-semibold">{attemptLabel(a.attempt)}</b>
 							<StatusPill kind={status.kind}>{status.label}</StatusPill>
 							<span className="ml-auto flex-none font-mono text-2xs text-fg-3">
-								{a.agent ?? "控制面"} · {a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}
+								<UntrustedText text={a.agent ?? "控制面"} /> ·{" "}
+								{a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}
 								{a.started_at ? formatDuration(end - Date.parse(a.started_at)) : "—"}
 							</span>
 						</header>
@@ -756,10 +765,12 @@ function AttemptsTab({
 									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.start)}）</span>
 								)}
 							</dd>
-							{n.kind === "stop_subflow" && typeof a.inputs?.subflow === "string" && (
+							{n.kind === "stop_subflow" && stopSubflowTarget(doc, n.node_id) !== undefined && (
 								<>
 									<dt>停止</dt>
-									<dd className="m-0 font-sans">{stoppedSubflowLabel(run, a.inputs.subflow)}</dd>
+									<dd className="m-0 font-sans">
+										{stoppedSubflowLabel(run, stopSubflowTarget(doc, n.node_id) as string)}
+									</dd>
 								</>
 							)}
 							<dt>结束</dt>
@@ -773,23 +784,27 @@ function AttemptsTab({
 						{a.error && error && (
 							<div className="mt-2">
 								<div className="flex items-center gap-2">
-									<Badge variant="danger" title={a.error.kind}>
-										{ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind}
-										<code className="font-mono">{a.error.kind}</code>
+									<Badge variant="danger" title={untrustedPlain(a.error.kind)}>
+										<UntrustedText text={ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind} />
+										<code className="font-mono">
+											<UntrustedText text={a.error.kind} />
+										</code>
 									</Badge>
 								</div>
-								<p className="m-0 mt-1 text-danger-fg">{error.message || "（没有错误信息）"}</p>
+								<p className="m-0 mt-1 text-danger-fg">
+									<UntrustedText mode="text" text={error.message || "（没有错误信息）"} />
+								</p>
 								{a.error.location && (
 									<p
 										data-testid="attempt-error-location"
 										className="m-0 mt-1 font-mono text-xs text-fg-2"
 									>
-										{ERROR_LOCATION_LABEL}：{a.error.location}
+										{ERROR_LOCATION_LABEL}：<UntrustedText text={a.error.location} />
 									</p>
 								)}
 								{error.stack && (
 									<pre className="m-0 mt-1.5 max-h-80 overflow-auto rounded-md bg-sunk p-2 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-2">
-										{error.stack}
+										<UntrustedText mode="text" text={error.stack} />
 									</pre>
 								)}
 							</div>
@@ -818,19 +833,26 @@ const artifactRefPath = (value: string) => {
 export const artifactDownloadPath = (taskId: string, name: string) =>
 	apiUrl(artifactsApi.download, { params: { id: taskId, "*": name } });
 
-/** JSON 展示；字符串值是产物引用时显示为下载链接。 */
+/**
+ * JSON 展示；字符串值是产物引用时显示为下载链接。字符串（键和值）是别人写的：`JSON.stringify` 只转义 U+0020 以下的控制字符，
+ * 行分隔符、改变文字方向的字符、零宽字符都留在里面，所以每个字符串各自过 `UntrustedText`（方向隔离在这个字符串里，
+ * 不带乱外面的括号和缩进）；字符串之外只有括号、冒号、逗号、数字、空白，原样显示。
+ */
 function JsonBlock({ value }: { value: unknown }) {
 	const text = JSON.stringify(value, null, 2) ?? "";
 	const parts: ReactNode[] = [];
 	let last = 0;
 	for (const m of text.matchAll(/"(?:[^"\\]|\\.)*"/g)) {
-		const path = artifactRefPath(JSON.parse(m[0]) as string);
-		if (!path) continue;
 		parts.push(text.slice(last, m.index));
+		const path = artifactRefPath(JSON.parse(m[0]) as string);
 		parts.push(
-			<a key={m.index} href={path} download className={INLINE_LINK} title="下载产物">
-				{m[0]}
-			</a>,
+			path ? (
+				<a key={m.index} href={path} download className={INLINE_LINK} title="下载产物">
+					<UntrustedText mode="text" text={m[0]} />
+				</a>
+			) : (
+				<UntrustedText key={m.index} mode="text" text={m[0]} />
+			),
 		);
 		last = m.index + m[0].length;
 	}
@@ -839,6 +861,49 @@ function JsonBlock({ value }: { value: unknown }) {
 		<pre className="m-0 overflow-auto rounded-md border border-border-soft bg-sunk p-2.5 font-mono text-xs whitespace-pre text-fg-1">
 			{parts}
 		</pre>
+	);
+}
+
+/** 运行视图里被省略的输入、输出的大小（向上取整到 KiB 的字节数）：「约 17 KB」。 */
+const omittedSize = (bytes: number) =>
+	bytes >= 1024 * 1024
+		? `约 ${(bytes / 1024 / 1024).toFixed(1)} MB`
+		: `约 ${Math.round(bytes / 1024)} KB`;
+
+/**
+ * 运行视图里被省略的大输入或输出（#633）：写明大小，点「加载」才取全文；加载中、加载失败（可以重试）各有自己的样子。
+ * 运行视图只给大小，不给内容：打开页面不会因为几十个大输出把响应撑到几十 MB。
+ */
+function OmittedValue({
+	bytes,
+	loading,
+	error,
+	onLoad,
+}: {
+	bytes: number;
+	loading: boolean;
+	error: string | null;
+	onLoad: () => void;
+}) {
+	return (
+		<div data-testid="io-omitted" className="flex flex-wrap items-center gap-2 text-xs text-fg-3">
+			{/* 不说为什么被省略（单个太大，或者整份视图里这一份放不下）：两种情况是同一句。 */}
+			<span>没有随运行一起返回（{omittedSize(bytes)}）。</span>
+			{/* 加载中用 aria-disabled 而不是 disabled：键盘按下去之后焦点还在这个按钮上，不会掉到页面上。 */}
+			<Button
+				size="sm"
+				aria-disabled={loading || undefined}
+				className="aria-disabled:cursor-wait aria-disabled:opacity-40"
+				onClick={loading ? undefined : onLoad}
+			>
+				{loading ? "加载中…" : error ? "重试" : "加载"}
+			</Button>
+			{error && (
+				<span role="alert" className="text-danger-fg">
+					无法加载：{error}
+				</span>
+			)}
+		</div>
 	);
 }
 
@@ -856,29 +921,76 @@ function IoTab({
 			node ? secretInputKeys(documentNodes(doc).get(node.node_id), secretParams(doc)) : new Set(),
 		[node, doc],
 	);
+	// 被省略的大输入、输出：点「加载」才取这次尝试的全文（输入和输出一起来）。取回的按任务缓在查询缓存里，
+	// 运行还在变（事件流推来新的视图）、切到别的尝试再回来，已经加载的都不丢。
+	// 注意：执行中的尝试，输入在派发时写下，输出到结束才写：执行中取到的全文里输出是 null。所以「取到了没有」按输入、输出各自看：
+	// 视图说这一项被省略、缓存里这一项却是空的，就是还没取到（尝试结束之后输出被省略了），照样显示占位，点「加载」重新取。
+	const [requested, setRequested] = useState<string | null>(null);
+	const taskId = attempt?.task_id;
+	const full = useQuery({
+		...apiQuery(runsApi.taskIo, { params: { id: taskId ?? "" } }),
+		enabled: taskId !== undefined && requested === taskId,
+		// 已经结束的尝试的输入输出写下就不再变；执行中取到的不算数的部分由上面「各自看」处理。
+		staleTime: Number.POSITIVE_INFINITY,
+	});
+	// 用键盘按「加载」之后，加载出来的内容取代了按钮：焦点不能落到页面上，移到那一栏的内容上。
+	const [focusAfter, setFocusAfter] = useState<{
+		taskId: string;
+		side: "inputs" | "outputs";
+	} | null>(null);
+	const inputsBox = useRef<HTMLDivElement>(null);
+	const outputsBox = useRef<HTMLDivElement>(null);
+	const fullInputs = full.data?.inputs ?? null;
+	const fullOutputs = full.data?.outputs ?? null;
+	const inputsMissing = attempt?.inputs_omitted_bytes != null && fullInputs === null;
+	const outputsMissing = attempt?.outputs_omitted_bytes != null && fullOutputs === null;
+	useEffect(() => {
+		if (!focusAfter || focusAfter.taskId !== taskId) return;
+		const missing = focusAfter.side === "inputs" ? inputsMissing : outputsMissing;
+		if (missing) return;
+		(focusAfter.side === "inputs" ? inputsBox : outputsBox).current?.focus();
+		setFocusAfter(null);
+	}, [focusAfter, taskId, inputsMissing, outputsMissing]);
 	if (!node) return <Hint>在时间线上选中一个节点，查看它已解析的输入和输出。</Hint>;
 	if (!attempt) return <Hint>{noAttempt(node)}</Hint>;
+	const load = (side: "inputs" | "outputs") => {
+		setFocusAfter({ taskId: attempt.task_id, side });
+		if (requested === attempt.task_id) void full.refetch();
+		else setRequested(attempt.task_id);
+	};
+	const loading = requested === attempt.task_id && full.isFetching;
+	const error = !full.data && full.isError ? full.error.message : null;
+	const placeholder = (bytes: number, side: "inputs" | "outputs") => (
+		<OmittedValue bytes={bytes} loading={loading} error={error} onLoad={() => load(side)} />
+	);
+	// 被省略的内容取到之后用全文；没取到之前是占位。
+	const rawInputs = attempt.inputs_omitted_bytes === null ? attempt.inputs : fullInputs;
+	const outputs = attempt.outputs_omitted_bytes === null ? attempt.outputs : fullOutputs;
 	const inputs =
-		attempt.inputs &&
+		rawInputs &&
 		Object.fromEntries(
-			Object.entries(attempt.inputs).map(([k, v]) => [k, secretKeys.has(k) ? MASK : v]),
+			Object.entries(rawInputs).map(([k, v]) => [k, secretKeys.has(k) ? MASK : v]),
 		);
 	return (
 		<div className="grid h-full grid-cols-2 gap-2.5 overflow-auto p-3">
-			<div className="min-w-0">
+			<div ref={inputsBox} tabIndex={-1} className="min-w-0">
 				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">
 					输入（已解析，secret 值已打码）
 				</h3>
-				{inputs ? (
+				{inputsMissing ? (
+					placeholder(attempt.inputs_omitted_bytes as number, "inputs")
+				) : inputs ? (
 					<JsonBlock value={inputs} />
 				) : (
 					<p className="m-0 text-xs text-fg-3">派发时才解析输入。</p>
 				)}
 			</div>
-			<div className="min-w-0">
+			<div ref={outputsBox} tabIndex={-1} className="min-w-0">
 				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">输出</h3>
-				{attempt.outputs ? (
-					<JsonBlock value={attempt.outputs} />
+				{outputsMissing ? (
+					placeholder(attempt.outputs_omitted_bytes as number, "outputs")
+				) : outputs ? (
+					<JsonBlock value={outputs} />
 				) : (
 					<p className="m-0 text-xs text-fg-3">
 						{attempt.ended_at ? "没有输出。" : "节点尚未结束。"}
@@ -895,7 +1007,13 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 	const { refetch } = query;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 状态变化时重新获取
 	useEffect(() => void refetch(), [attempt.status, refetch]);
-	if (query.error) return <Hint>无法加载产物：{query.error.message}</Hint>;
+	if (query.error)
+		return (
+			<Hint>
+				无法加载产物：
+				<ErrorMessage error={query.error} />
+			</Hint>
+		);
 	if (!query.data) return <Hint>{MESSAGE.loading}</Hint>;
 	if (query.data.expired) return <Hint>这次运行的产物已超过保留期，已被清理。</Hint>;
 	if (query.data.artifacts.length === 0) return <Hint>这次尝试没有产物。</Hint>;
@@ -907,7 +1025,9 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 					className="mb-1.5 flex items-center gap-3 rounded-lg border border-border-soft bg-bg px-3 py-2"
 				>
 					<div className="min-w-0 flex-1">
-						<div className="truncate text-sm">{a.name}</div>
+						<div className="truncate text-sm">
+							<UntrustedText text={a.name} />
+						</div>
 						<div className="truncate font-mono text-2xs text-fg-3" title={a.sha256}>
 							{formatBytes(a.size)} · sha256 {a.sha256.slice(0, 12)}
 						</div>
@@ -930,7 +1050,7 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 						className={buttonVariants({ size: "sm" })}
 						href={artifactDownloadPath(attempt.task_id, a.name)}
 						download
-						aria-label={`下载 ${a.name}`}
+						aria-label={`下载 ${untrustedPlain(a.name)}`}
 					>
 						<DownloadIcon />
 						下载

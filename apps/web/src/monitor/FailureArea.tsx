@@ -3,8 +3,10 @@ import { ChevronRightIcon, OctagonXIcon } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { NodeNameInline, runNodeName } from "#/components/node-name";
 import { StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { attemptLabel, ERROR_LOCATION_LABEL, FAILURE_AREA, moreLabel } from "#/lib/copy";
 import { formatClock } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import type { OverviewTarget } from "./Overview";
 import { allRunFailures, failureSummary, type RunFailure } from "./run-model";
@@ -133,12 +135,12 @@ export function FailureArea({
 					// 最多 4 行（见上）：更长的在末尾省略，全文在「展开全文」里。
 					className="m-0 line-clamp-4 max-w-full text-base text-pretty wrap-anywhere text-fg-1"
 				>
-					{first.message}
+					<UntrustedText text={first.message} />
 				</p>
 			)}
 			{first.location && (
 				<p data-testid="failure-location" className="m-0 font-mono text-xs text-fg-2 wrap-anywhere">
-					{ERROR_LOCATION_LABEL}：{first.location}
+					{ERROR_LOCATION_LABEL}：<UntrustedText text={first.location} />
 				</p>
 			)}
 			<div className="flex flex-wrap items-center gap-2">
@@ -170,7 +172,7 @@ export function FailureArea({
 					data-testid="failure-full"
 					className="m-0 max-h-80 overflow-auto rounded-md border border-border-soft bg-inset p-3 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-1"
 				>
-					{fullText}
+					<UntrustedText text={fullText} mode="text" />
 				</pre>
 			)}
 			{others.length > 0 && <OtherFailures failures={others} onOpen={onOpen} />}
@@ -186,7 +188,7 @@ export function FailureAnnouncer({ run }: { run: RunView }) {
 	const [first] = allRunFailures(run);
 	const text =
 		run.status === "running" && first
-			? `${FAILURE_AREA.title.running}：${failureSummary(first)}`
+			? untrustedPlain(`${FAILURE_AREA.title.running}：${failureSummary(first)}`)
 			: "";
 	return (
 		<output aria-live="polite" className="sr-only">

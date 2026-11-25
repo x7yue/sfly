@@ -14,8 +14,10 @@ import { cn } from "cn";
 import { AlertTriangleIcon, CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Banner } from "#/components/feedback/banner";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
@@ -347,8 +349,14 @@ function CheckItem({ row, onLocate }: { row: CheckRow; onLocate?: (nodeId: strin
 				<span className="sr-only">{icon.label}：</span>
 			</span>
 			<div className="min-w-0 flex-1">
-				<div>{row.title}</div>
-				{row.detail && <div className="text-xs text-fg-3">{row.detail}</div>}
+				<div>
+					<UntrustedText text={row.title} />
+				</div>
+				{row.detail && (
+					<div className="text-xs text-fg-3">
+						<UntrustedText text={row.detail} />
+					</div>
+				)}
 				{row.problems.length > 0 && <ProblemList problems={row.problems} onLocate={onLocate} />}
 			</div>
 		</li>
@@ -366,7 +374,9 @@ function ProblemList({
 		<ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0 text-xs text-fg-2">
 			{problems.map((p) => (
 				<li key={`${p.code}:${p.node_id ?? ""}:${p.message}`} className="flex items-baseline gap-2">
-					<span className="min-w-0 flex-1 whitespace-pre-line">{p.message}</span>
+					<span className="min-w-0 flex-1 whitespace-pre-line">
+						<UntrustedText text={p.message} mode="text" />
+					</span>
 					{p.node_id && onLocate && (
 						<Button
 							variant="link"
@@ -395,7 +405,7 @@ function TriggerError({ error, onLocate }: { error: Error; onLocate?: (nodeId: s
 			role="alert"
 			className="mb-3.5 whitespace-pre-line rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-fg"
 		>
-			触发失败：{problems ? "预检没有通过（场景刚刚被修改过）" : error.message}
+			触发失败：{problems ? "预检没有通过（场景刚刚被修改过）" : <ErrorMessage error={error} />}
 			{problems && <ProblemList problems={problems} onLocate={onLocate} />}
 		</div>
 	);

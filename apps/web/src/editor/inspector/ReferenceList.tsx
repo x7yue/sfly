@@ -1,4 +1,6 @@
 import { cn } from "cn";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import type { completionGroups, ReferenceChoice } from "./reference-completion";
 
 /**
@@ -63,16 +65,21 @@ export function ReferenceList({
 										>
 											{/* 名字比类型说明重要：放得下整行的名字不被类型说明挤短，类型说明放不下时换到下一行（靠右）。
 											    名字比整行还长时才截断（完整的在 title 里）。 */}
-											<span className="max-w-full min-w-0 truncate font-mono" title={c.expression}>
-												{c.expression}
+											<span
+												className="max-w-full min-w-0 truncate font-mono"
+												title={untrustedPlain(c.expression)}
+											>
+												<UntrustedText text={c.expression} />
 											</span>
-											<span className="ml-auto text-xs text-fg-3">{c.detail}</span>
+											<span className="ml-auto text-xs text-fg-3">
+												<UntrustedText text={c.detail} />
+											</span>
 											{c.description && (
 												<span
 													className="mt-0.5 line-clamp-2 basis-full text-xs text-fg-3"
-													title={c.description}
+													title={untrustedPlain(c.description, "text")}
 												>
-													{c.description}
+													<UntrustedText text={c.description} mode="text" />
 												</span>
 											)}
 										</div>
