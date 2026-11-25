@@ -50,7 +50,7 @@ export function EndSession({ id, onGone }: { id: string; onGone: (error: unknown
 				disabled={end.isPending}
 				onClick={() => setOpen(true)}
 			>
-				{end.isPending ? SESSION.page.ending2 : SESSION.page.end}
+				{end.isPending ? SESSION.page.endingButton : SESSION.page.end}
 			</Button>
 			<Dialog open={open} onOpenChange={(next) => !end.isPending && setOpen(next)}>
 				<DialogContent className="w-[460px]" showCloseButton={!end.isPending}>
@@ -80,7 +80,7 @@ export function EndSession({ id, onGone }: { id: string; onGone: (error: unknown
 							disabled={end.isPending}
 							onClick={() => !end.isPending && end.mutate()}
 						>
-							{end.isPending ? SESSION.page.ending2 : SESSION.page.endConfirm}
+							{end.isPending ? SESSION.page.endingButton : SESSION.page.endConfirm}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

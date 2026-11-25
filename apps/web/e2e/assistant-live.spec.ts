@@ -397,6 +397,53 @@ test("停止途中说了话、再点一次停止（按钮写「撤掉排着的�
 	await expect(composer(page)).toBeEnabled();
 });
 
+test("有话排在这一轮后面时按钮的字只由时间线的状态定：另一个人的标签页、刷新之后也是「撤掉排着的话」，点了就撤掉那句话，这一轮照常停", async ({
+	page,
+	assistant,
+	workbench,
+}) => {
+	void workbench;
+	const id = await startSession(page, "做第一件事");
+	assistant.stopSettleMs = 6_000;
+	await page.getByRole("button", { name: "停止" }).click();
+	await expect.poll(() => assistant.aborts).toEqual([id]);
+	await composer(page).fill("停下来之后的话");
+	await page.getByRole("button", { name: "发送插话" }).click();
+	const said = timeline(page).getByTestId("user-message").filter({ hasText: "停下来之后的话" });
+	await expect(said).toHaveAttribute("data-role", "behind");
+	const cancelButton = (target: Page) => target.getByRole("button", { name: "撤掉排着的话" });
+	const stopButton = (target: Page) => target.getByRole("button", { name: "停止", exact: true });
+	// 另一个人在另一个标签页打开这个会话：没有点过停止，看到的按钮和说明一样是「撤掉排着的话」，不是「停止」。
+	const other = await page.context().newPage();
+	await other.addInitScript(() => window.localStorage.setItem("sfly.nickname", "bob"));
+	await other.goto(`/sessions/${id}`);
+	await expect(cancelButton(other)).toBeVisible();
+	await expect(cancelButton(other)).toHaveAttribute(
+		"title",
+		"撤掉排在这一轮后面的话，不开始新的一轮",
+	);
+	await expect(stopButton(other)).toHaveCount(0);
+	await expect(other.getByTestId("composer-blocked")).toContainText("点「撤掉排着的话」");
+	// 点过停止的那个标签页刷新之后也是。
+	await page.reload();
+	await expect(cancelButton(page)).toBeVisible();
+	await expect(stopButton(page)).toHaveCount(0);
+	// 在另一个标签页点它：那句话撤掉了（两边都标「已撤掉」），这一轮照常停完、回到空闲，没有第 2 轮。
+	await cancelButton(other).click();
+	const saidThere = other
+		.getByRole("list", { name: "会话的时间线" })
+		.getByTestId("user-message")
+		.filter({ hasText: "停下来之后的话" });
+	await expect(saidThere).toHaveAttribute("data-role", "cancelled");
+	await expect(
+		timeline(page).getByTestId("user-message").filter({ hasText: "停下来之后的话" }),
+	).toHaveAttribute("data-role", "cancelled");
+	await expect(statusText(page)).toHaveText("空闲", { timeout: 15_000 });
+	await expect(statusText(other)).toHaveText("空闲");
+	expect(assistant.prompts).toHaveLength(1);
+	await other.close();
+});
+
 test("排队中点「停止」是移出队列：会话回到空闲，时间线上有「这句话排队时被取消了」，在做的那个会话不受影响", async ({
 	page,
 	assistant,

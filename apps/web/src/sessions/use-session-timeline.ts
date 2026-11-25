@@ -8,16 +8,29 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ApiError, callApi } from "#/lib/api";
 import { openEventSource } from "#/lib/sse";
 import { queueOf } from "./session-text";
-import { applyEvent, initialTimeline, prependHistory, type TimelineState } from "./timeline";
+import {
+	applyEvent,
+	applyQueuedView,
+	initialTimeline,
+	prependHistory,
+	type TimelineQueue,
+	type TimelineState,
+} from "./timeline";
 
 type Action =
 	| { type: "event"; event: SessionEvent }
-	| { type: "older"; events: readonly SessionEvent[]; hasMore: boolean };
+	| { type: "older"; events: readonly SessionEvent[]; hasMore: boolean }
+	| { type: "queued"; queue: TimelineQueue };
 
 function reduce(state: TimelineState, action: Action): TimelineState {
-	return action.type === "event"
-		? applyEvent(state, action.event)
-		: prependHistory(state, action.events, action.hasMore);
+	switch (action.type) {
+		case "event":
+			return applyEvent(state, action.event);
+		case "older":
+			return prependHistory(state, action.events, action.hasMore);
+		case "queued":
+			return applyQueuedView(state, action.queue);
+	}
 }
 
 /** 时间线上有对应渲染的事件类型；其余在开发环境下在控制台记一条（由引入它们的任务加渲染）。 */
@@ -92,5 +105,20 @@ export function useSessionTimeline(detail: SessionDetailResponse) {
 		}
 	}, [id]);
 
-	return { state, loadOlder, loadingOlder, olderError, gone };
+	/**
+	 * 空闲的会话说完话之后核对一次状态：这句话排上了队（项目里别的会话在等开始，没有会话在做）时控制面不推 `turn_queued`
+	 * （没有「在等谁」可写），页面从会话视图里得知排位。取的是 `before: 1`（比第 1 条还早的事件：没有），只要视图。读不到就算了：
+	 * 只是核对一次，事件流照常推进。
+	 */
+	const syncQueue = useCallback(async () => {
+		try {
+			const view = await callApi(sessionsApi.get, { params: { id }, query: { before: 1 } });
+			const queue = queueOf(view.queue_position, view.waiting_for);
+			if (view.status === "queued" && queue !== null) dispatch({ type: "queued", queue });
+		} catch {
+			// 事件流照常推进。
+		}
+	}, [id]);
+
+	return { state, loadOlder, loadingOlder, olderError, gone, syncQueue };
 }

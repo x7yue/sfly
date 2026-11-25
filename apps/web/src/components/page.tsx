@@ -38,7 +38,8 @@ export function PageHeader({
 	description,
 	actions,
 }: {
-	title: string;
+	/** 标题；别人写的文字（会话的标题）传一个已经隔离过方向的节点。 */
+	title: React.ReactNode;
 	/** 标题旁的数量（等宽、三级文字）。 */
 	count?: number;
 	/** 数量的文字色（缺省三级文字）：标题旁的数量或说明是页面要读的信息时（令牌页的项目名）换亮一档。 */

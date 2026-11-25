@@ -92,7 +92,8 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 					data-kind={item.noticeKind}
 					className="px-1 text-xs wrap-anywhere text-fg-3"
 				>
-					{item.message}
+					{/* 通知里可能引用了用户的话（`steer_dropped`）：别人写的文字。 */}
+					<PeerText>{item.message}</PeerText>
 				</li>
 			);
 		case "session_ended":
@@ -146,17 +147,18 @@ function UserRow({ item }: { item: UserItem }) {
 			data-delivery={item.role === "steer" ? (item.delivery ?? undefined) : undefined}
 			className={cn(
 				"rounded-lg border border-border-soft bg-raised px-3 py-2 text-sm wrap-anywhere whitespace-pre-wrap text-fg-1",
-				item.role === "cancelled" && "text-fg-3 line-through",
+				item.role === "cancelled" && "text-fg-3",
 			)}
 		>
-			<span className="text-fg-3">
+			{/* 撤掉的话划删除线只划话本身：父元素的删除线盖不住（`no-underline` 取消不了），标记「已撤掉」不能被划掉。 */}
+			<span className={cn("text-fg-3", item.role === "cancelled" && "line-through")}>
 				<PeerText>{item.author}</PeerText>：
 			</span>
-			<span>
+			<span className={cn(item.role === "cancelled" && "line-through")}>
 				<PeerText>{item.text}</PeerText>
 			</span>
 			{role !== null && (
-				<span className="mt-1 flex items-center gap-2 text-xs whitespace-normal text-fg-3 no-underline">
+				<span className="mt-1 flex items-center gap-2 text-xs whitespace-normal text-fg-3">
 					<span data-testid="message-role" className="font-medium">
 						{role}
 					</span>

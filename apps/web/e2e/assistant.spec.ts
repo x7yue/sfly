@@ -876,6 +876,12 @@ test("排队中点「停止」是移出队列：请求发给停止接口，时�
 	await expect(page.getByTestId("session-status")).toHaveText("空闲");
 	await expect(row(page, "要做的事")).toHaveAttribute("data-role", "cancelled");
 	await expect(row(page, "要做的事").getByTestId("message-role")).toHaveText("已撤掉");
+	// 删除线只划话本身（作者和文字两段），整行（`li`）和下面的「已撤掉」标记没有：父元素的删除线会把标记也划掉。
+	await expect(row(page, "要做的事")).toHaveCSS("text-decoration-line", "none");
+	await expect(row(page, "要做的事").locator(":scope > span").nth(1)).toHaveCSS(
+		"text-decoration-line",
+		"line-through",
+	);
 	await expect(page.getByTestId("notice")).toHaveText("这句话排队时被取消了，没有交给助手");
 	await expect(composer(page)).toBeEnabled();
 	await expect(stop).toHaveCount(0);
@@ -909,7 +915,7 @@ test("停止途中说的话：不是插话，标「排在这一轮后面」，�
 	await expect(composer(page)).toBeDisabled();
 	await expect(composer(page)).toHaveAttribute("placeholder", "这一轮正在停止，暂时不能说话");
 	await expect(page.getByTestId("composer-blocked")).toHaveText(
-		"这一轮正在停止，有话排在它后面（第 1 位）；再点一次停止，撤掉排着的话",
+		"这一轮正在停止，有话排在它后面（第 1 位）；不想让它开始，点「撤掉排着的话」",
 	);
 	await expect(page.getByTestId("session-status")).toHaveText("在做");
 	// 再点一次停止（请求在路上也可点）：撤掉那句话。
@@ -1050,6 +1056,277 @@ test("会话已经没有了：事件流遇到 404（真的控制面里没有这�
 	await stubSessionDetail(page, ghost, [userMessage(1), turnStarted(2), turnEnd(3, "completed")]);
 	await page.goto(`/sessions/${ghost.id}`);
 	await expect(page).toHaveURL(/\/sessions\/?$/);
+});
+
+// ---------------------------------------------------------------- #713 第一次审查之后
+
+test("有话排在这一轮后面：刷新之后（这个页面没点过停止）按钮的字也是「撤掉排着的话」，不是「停止」", async ({
+	page,
+}) => {
+	await openSession(
+		page,
+		{ status: "running", queue_position: 1, waiting_for: { ...WAITING_FOR, title: "自己" } },
+		[userMessage(1), turnStarted(2), userMessage(3, "停下来之后的话", { message_id: A })],
+	);
+	await expect(row(page, "停下来之后的话")).toHaveAttribute("data-role", "behind");
+	const cancel = page.getByRole("button", { name: "撤掉排着的话" });
+	await expect(cancel).toBeVisible();
+	await expect(cancel).toHaveAttribute("title", "撤掉排在这一轮后面的话，不开始新的一轮");
+	await expect(page.getByRole("button", { name: "停止", exact: true })).toHaveCount(0);
+	await expect(page.getByTestId("composer-blocked")).toContainText("点「撤掉排着的话」");
+	await expect(page.getByTestId("composer-blocked")).not.toContainText("再点一次");
+});
+
+test("排队说明：标题是阿拉伯文、昵称是希伯来文，「正在做」在昵称之后（控制台自己的字不进方向隔离）", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await openSession(
+		page,
+		{
+			status: "queued",
+			queue_position: 11,
+			waiting_for: {
+				session_id: WAITING_FOR.session_id,
+				title: "عنوان الجلسة الطويل جدا",
+				created_by: "שם המשתמש",
+			},
+		},
+		[userMessage(1, "要做的事")],
+	);
+	const note = page.getByTestId("composer-blocked");
+	await expect(note).toContainText("正在做");
+	const places = await note.evaluate((element) => {
+		const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+		let suffix: DOMRect | null = null;
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			const at = node.textContent?.indexOf("正在做") ?? -1;
+			if (at < 0) continue;
+			const range = document.createRange();
+			range.setStart(node, at);
+			range.setEnd(node, at + 3);
+			suffix = range.getBoundingClientRect();
+		}
+		const nickname = [...element.querySelectorAll("bdi")].at(-1)?.getBoundingClientRect();
+		return { suffixLeft: suffix?.left ?? null, nicknameRight: nickname?.right ?? null };
+	});
+	expect(places.suffixLeft).not.toBeNull();
+	expect(places.nicknameRight).not.toBeNull();
+	// 在昵称的右边（左到右排版）：「）正在做」不会被昵称的方向带到它的左边去。
+	expect(places.suffixLeft as number).toBeGreaterThanOrEqual((places.nicknameRight as number) - 1);
+});
+
+test("别人写的文字都隔离方向：页头的标题、列表里的标题和发起人、通知里引用的话", async ({
+	page,
+}) => {
+	const title = "عنوان الجلسة";
+	const author = "שם המשתמש";
+	const view = await openSession(page, { status: "running", title, created_by: author }, [
+		userMessage(1, title, { author }),
+		turnStarted(2),
+		steerMessage(3, A, "كلام المستخدم", author),
+		steerDropped(4, A, "这句插话没有送到：「كلام المستخدم」"),
+	]);
+	const direction = (locator: Locator) =>
+		locator.evaluate((element) => {
+			// 方向跟着文字走：自己是 `bdi`，或者自己（单元格）带 dir="auto"，或者里面的 `bdi` 里放着全部的文字。
+			const isolated = element.closest("bdi, [dir=auto]") ?? element.querySelector("bdi");
+			return { isolated: isolated !== null, direction: getComputedStyle(element).direction };
+		});
+	expect(await direction(page.getByRole("heading", { level: 1 }).locator("bdi"))).toMatchObject({
+		isolated: true,
+		direction: "rtl",
+	});
+	expect(await direction(page.getByTestId("notice").locator("bdi"))).toMatchObject({
+		isolated: true,
+	});
+	await stubSessionList(page, READY, [{ ...view, status: "running" }]);
+	await page.goto("/sessions");
+	const rowOfSession = page.locator(`[data-session="${view.id}"]`);
+	await expect(rowOfSession).toBeVisible();
+	const cells = rowOfSession.locator("td");
+	await expect(cells.nth(0)).toHaveAttribute("dir", "auto");
+	await expect(cells.nth(1)).toHaveAttribute("dir", "auto");
+	expect(await direction(cells.nth(0).getByRole("link"))).toMatchObject({ direction: "rtl" });
+	expect(await direction(cells.nth(1))).toMatchObject({ direction: "rtl" });
+});
+
+test("读屏：排到了、插话没有送到、会话被别人结束各播一句（页面里已有的播报区）", async ({
+	page,
+}) => {
+	await openSession(page, { status: "queued", queue_position: 1, waiting_for: WAITING_FOR }, [
+		userMessage(1, "要做的事"),
+	]);
+	const live = page.locator("output[aria-live=polite]");
+	await expect(live).toHaveText("");
+	await pushEvent(page, turnStarted(2));
+	await expect(live).toHaveText("轮到这个会话了，助手开始做");
+	await pushEvent(page, steerMessage(3, A, "先别改测试"));
+	await pushEvent(page, steerDropped(4, A, "这句插话没有送到"));
+	await expect(live).toHaveText("有一句插话没有送到，看时间线");
+	await pushEvent(page, sessionEnded(5, "bob"));
+	await expect(live).toHaveText("这个会话已经结束（bob）");
+});
+
+test("会话被别人结束时写了一半的话留在页面上：只读、可以复制，写明会话已结束", async ({ page }) => {
+	await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+	await composer(page).fill("写了一半的话，还没发出去");
+	await pushEvent(page, sessionEnded(3, "bob"));
+	await expect(page.getByTestId("session-status")).toHaveText("已结束");
+	await expect(composer(page)).toHaveCount(0);
+	const draft = page.getByTestId("ended-draft");
+	await expect(draft).toHaveValue("写了一半的话，还没发出去");
+	await expect(draft).toHaveAttribute("readonly", "");
+	await expect(page.getByText("没有发出去的话还在这里，可以复制：")).toBeVisible();
+	// 没有写过话的会话：没有这一块。
+});
+
+test("会话已结束、输入框里没有话：只有一句「已经结束」，没有只读的块", async ({ page }) => {
+	await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+	await pushEvent(page, sessionEnded(3, "bob"));
+	await expect(page.getByText("这个会话已经结束，不能再说话")).toBeVisible();
+	await expect(page.getByTestId("ended-draft")).toHaveCount(0);
+});
+
+for (const order of ["事件先到", "回应先到"] as const) {
+	test(`在做时说的插话遇到 503（${order}）：时间线上已经有这句话和「没有确认送到」，输入框清空，说明指向时间线上那一条，再点不会发第二句`, async ({
+		page,
+	}) => {
+		const view = await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+		let calls = 0;
+		await page.route(new RegExp(`/api/sessions/${view.id}/messages$`), async (route) => {
+			calls += 1;
+			const recorded = async () => {
+				await pushEvent(page, steerMessage(3, A, "先别改测试"));
+				await pushEvent(page, steerDropped(4, A, "这句插话没有确认送到"));
+			};
+			if (order === "事件先到") await recorded();
+			await apiError(route, 503, "assistant_unavailable", "助手服务没有及时回应");
+			if (order === "回应先到") setTimeout(() => void recorded(), 300);
+		});
+		await composer(page).fill("先别改测试");
+		await page.getByRole("button", { name: "发送插话" }).click();
+		await expect(page.getByTestId("send-recorded")).toHaveText(
+			"这句话已经记在时间线上，没有确认送到：看时间线上那一条",
+		);
+		await expect(composer(page)).toHaveValue("");
+		await expect(page.getByRole("alert")).toHaveCount(0);
+		await expect(row(page, "先别改测试").getByTestId("message-delivery")).toHaveText("没有送到");
+		await expect(page.getByRole("button", { name: "发送插话" })).toBeDisabled();
+		expect(calls).toBe(1);
+	});
+}
+
+test("插话遇到 503、这句话没有记在时间线上（请求在控制面写入之前就失败了）：输入框留着，写明无法发送，可以再试", async ({
+	page,
+}) => {
+	const view = await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+	await page.route(new RegExp(`/api/sessions/${view.id}/messages$`), (route) =>
+		apiError(route, 503, "assistant_unavailable", "助手没有开启"),
+	);
+	await composer(page).fill("先别改测试");
+	await page.getByRole("button", { name: "发送插话" }).click();
+	await expect(page.getByRole("alert")).toContainText("无法发送");
+	await expect(composer(page)).toHaveValue("先别改测试");
+	await expect(page.getByTestId("send-recorded")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "发送插话" })).toBeEnabled();
+});
+
+test("空闲的会话说话：这句话排上了队，可是控制面没有推 turn_queued（项目里没有会话在做）：页面从会话视图得知，是排队中、有停止按钮，再说一句不会撞上 409", async ({
+	page,
+}) => {
+	const view = await openSession(page, { status: "idle" }, [
+		userMessage(1),
+		turnStarted(2),
+		{
+			type: "turn_end",
+			seq: 3,
+			at: eventAt(),
+			turn: 1,
+			outcome: "completed",
+			reason: "",
+			duration_ms: 1000,
+		},
+	]);
+	await page.route(new RegExp(`/api/sessions/${view.id}/messages$`), async (route) => {
+		// 控制面：写 user_message，会话排队（项目里别的会话在等开始，没有会话在做，所以不推 turn_queued）。
+		await fulfillJson(route, 200, { seq: 4 });
+		await pushEvent(page, userMessage(4, "接着做", { message_id: A }));
+	});
+	// 之后读会话视图：排队中，没有在等谁。
+	await page.route(new RegExp(`/api/sessions/${view.id}\\?`), async (route) => {
+		await fulfillJson(route, 200, {
+			...view,
+			status: "queued",
+			queue_position: 1,
+			waiting_for: null,
+			events: [],
+			has_more: false,
+		});
+	});
+	await composer(page).fill("接着做");
+	await page.getByRole("button", { name: "发送" }).click();
+	await expect(page.getByTestId("session-status")).toHaveText("排队中 · 排在第 1 位");
+	await expect(page.getByRole("button", { name: "停止" })).toBeVisible();
+	await expect(composer(page)).toBeDisabled();
+	await expect(page.getByTestId("composer-blocked")).toContainText("等助手空出来");
+});
+
+test("会话已经没有了：说话遇到 404 回到列表，写一句", async ({ page }) => {
+	const view = await openSession(page, { status: "idle" }, [userMessage(1)]);
+	await page.route(new RegExp(`/api/sessions/${view.id}/messages$`), (route) =>
+		apiError(route, 404, "not_found", "session not found"),
+	);
+	await composer(page).fill("接着说");
+	await page.getByRole("button", { name: "发送" }).click();
+	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
+	).toBeVisible();
+});
+
+test("会话列表的重新查询：没有在做或排队的会话时不轮询（只在建会话和获得焦点之后刷新）", async ({
+	page,
+	controlPlane,
+}) => {
+	await seedSession(controlPlane.database.url, { title: "已经做完的", status: "idle" });
+	let lists = 0;
+	page.on("request", (request) => {
+		if (
+			request.method() === "GET" &&
+			/\/api\/projects\/[^/]+\/sessions(\?|$)/.test(request.url())
+		) {
+			lists += 1;
+		}
+	});
+	await page.goto("/sessions");
+	await expect(page.getByTestId("list-status")).toHaveText("空闲");
+	const first = lists;
+	expect(first).toBeGreaterThanOrEqual(1);
+	// 超过一个轮询周期（5 秒）还是没有新的查询。
+	// biome-ignore lint/plugin/e2e-fixed-wait: 确认「没有再查」只能等过一个轮询周期（5 秒）再数请求
+	await page.waitForTimeout(6_500);
+	expect(lists).toBe(first);
+});
+
+test("会话列表的重新查询：有在做的会话时每 5 秒查一次（排位前进、做完回到空闲才看得到）", async ({
+	page,
+	controlPlane,
+}) => {
+	await seedSession(controlPlane.database.url, { title: "在做的", status: "running" });
+	let lists = 0;
+	page.on("request", (request) => {
+		if (
+			request.method() === "GET" &&
+			/\/api\/projects\/[^/]+\/sessions(\?|$)/.test(request.url())
+		) {
+			lists += 1;
+		}
+	});
+	await page.goto("/sessions");
+	await expect(page.getByTestId("list-status")).toHaveText("在做");
+	const first = lists;
+	await expect.poll(() => lists, { timeout: 8_000 }).toBeGreaterThan(first);
 });
 
 // ---------------------------------------------------------------- 时间线的显示（#564 的审查）

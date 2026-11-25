@@ -24,13 +24,13 @@ import { EndSession, endMutationKey } from "./EndSession";
 import { PeerText } from "./peer-text";
 import { SessionTimeline } from "./SessionTimeline";
 import {
+	announcement,
 	type ComposerMode,
 	composerMode,
 	SESSION_STATUS,
 	sessionStatusText,
-	turnEndText,
 } from "./session-text";
-import { hasBehind } from "./timeline";
+import { hasBehind, type TimelineItem, type TimelineState } from "./timeline";
 import { useSessionTimeline } from "./use-session-timeline";
 import { useStickToBottom } from "./use-stick-to-bottom";
 
@@ -69,7 +69,8 @@ export function SessionPage({ id }: { id: string }) {
 }
 
 function LiveSession({ detail }: { detail: SessionDetailResponse }) {
-	const { state, loadOlder, loadingOlder, olderError, gone } = useSessionTimeline(detail);
+	const { state, loadOlder, loadingOlder, olderError, gone, syncQueue } =
+		useSessionTimeline(detail);
 	const navigate = useNavigate();
 	/** 会话已经没有了（新建会话等第一轮结局期间点了停止，没有被碰过的会话被删掉）：回到列表。是这个错误就返回 true。 */
 	const goBack = useCallback(() => {
@@ -92,12 +93,13 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 		`${state.items.length}:${last?.kind === "assistant" ? last.text.length : ""}:${state.thinking}`,
 	);
 	const status = SESSION_STATUS[state.status];
-	const lastEnd = [...state.items].reverse().find((item) => item.kind === "turn_end");
+	const said = useAnnouncement(state);
 	const mode = composerMode(state);
 	return (
 		<div className="mx-auto flex w-full max-w-208 flex-col">
 			<PageHeader
-				title={detail.title}
+				// 会话的标题是第一句话：别人写的文字，方向隔离。
+				title={<PeerText>{detail.title}</PeerText>}
 				actions={
 					<>
 						<StatusPill kind={status.kind} pulse className="text-sm">
@@ -117,9 +119,9 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 					</>
 				}
 			/>
-			{/* 一轮结束时读屏读一句（时间线是逐字更新的，不整个播报）。 */}
+			{/* 读屏读一句：一轮结束、排到了、插话没有送到、会话被结束（时间线是逐字更新的，不整个播报）。 */}
 			<output aria-live="polite" className="sr-only">
-				{lastEnd?.kind === "turn_end" ? turnEndText(lastEnd) : ""}
+				{said}
 			</output>
 			<SessionTimeline
 				state={state}
@@ -127,17 +129,40 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 				loadingOlder={loadingOlder}
 				olderError={olderError}
 			/>
-			<Composer id={detail.id} mode={mode} onGone={onGone} />
+			<Composer
+				id={detail.id}
+				mode={mode}
+				items={state.items}
+				lastSeq={state.lastSeq}
+				onSent={syncQueue}
+				onGone={onGone}
+			/>
 		</div>
 	);
+}
+
+/**
+ * 读屏的播报：状态变了、看得见却听不到的几件事（{@link announcement}）。同一句话连着出现两次时（连着两个「已停止」）在后面加一个看不见的
+ * 字符，让它再播一次。打开页面时不播：前后是同一份状态。
+ */
+function useAnnouncement(state: TimelineState): string {
+	const [said, setSaid] = useState("");
+	const previous = useRef(state);
+	useEffect(() => {
+		const next = announcement(previous.current, state);
+		previous.current = state;
+		if (next !== null) setSaid((current) => (current === next ? `${next}\u200b` : next));
+	}, [state]);
+	return said;
 }
 
 /** 会话页的输入框（「停止」的 data-focus-successor 指向它）。 */
 const COMPOSER_SELECTOR = "[data-session-composer]";
 
 /**
- * 「停止」：在做时停止这一轮；排队中是移出队列（这句话不会交给助手）；停止途中说了话、有话排在这一轮后面时，再点一次是撤掉那句话
- * （按钮这时写「撤掉排着的话」，请求在路上也可点）。
+ * 「停止」：在做时停止这一轮；排队中是移出队列（这句话不会交给助手）；**有话排在这一轮后面**（停止途中说的，时间线上标「排在这一轮后面」）
+ * 时控制面的 `stop` 做的是撤掉那句话，按钮的字和提示就写「撤掉排着的话」。这只由时间线的状态定（`behind`），和是谁、在哪个标签页点的
+ * 停止、请求还在不在路上无关：刷新之后、另一个标签页、另一个人看到的都一样。
  */
 function StopButton({
 	id,
@@ -150,35 +175,37 @@ function StopButton({
 	behind: boolean;
 	onGone: (error: unknown) => boolean;
 }) {
-	const stop = useMutation({
+	const request = {
 		mutationFn: () => callApi(sessionsApi.stop, { params: { id } }),
-		onError: (error) => {
+		onError: (error: Error) => {
 			if (onGone(error)) return;
 			notify.error(SESSION.page.stopFailed, { description: error.message });
 		},
-	});
-	const cancelBehind = behind && stop.isPending;
+	};
+	// 两个请求各自的在路上：停止的请求还没回来时有话排到了后面，这时点「撤掉排着的话」是另一个请求，不被前一个挡住。
+	const stop = useMutation(request);
+	const cancel = useMutation(request);
+	const action = behind ? cancel : stop;
 	return (
 		<Button
 			size="sm"
 			title={
-				cancelBehind
+				behind
 					? SESSION.page.cancelBehindTitle
 					: queued
 						? SESSION.page.stopQueuedTitle
 						: SESSION.page.stopTitle
 			}
 			// 请求在路上时不可点，但保留焦点（aria-disabled，不是 disabled 属性）：浏览器会让被禁用的按钮失去焦点，
-			// 之后按钮随这一轮消失时就没有焦点可交接了；停止失败后按钮恢复可点，焦点也还在它上面。有话排在后面时请求在路上也可点
-			// （再点一次是撤掉那句话）。
-			disabled={stop.isPending && !cancelBehind}
+			// 之后按钮随这一轮消失时就没有焦点可交接了；停止失败后按钮恢复可点，焦点也还在它上面。
+			disabled={action.isPending}
 			focusableWhenDisabled
 			className="aria-disabled:cursor-not-allowed aria-disabled:opacity-40"
-			onClick={() => stop.mutate()}
+			onClick={() => action.mutate()}
 			// 这一轮结束时这个按钮随之消失：焦点交给输入框（components/focus-recovery）。
 			data-focus-successor={COMPOSER_SELECTOR}
 		>
-			{cancelBehind
+			{behind
 				? SESSION.page.cancelBehind
 				: stop.isPending
 					? SESSION.page.stopping
@@ -200,21 +227,33 @@ function StopButton({
 function Composer({
 	id,
 	mode,
+	items,
+	lastSeq,
+	onSent,
 	onGone,
 }: {
 	id: string;
 	mode: ComposerMode;
+	items: readonly TimelineItem[];
+	lastSeq: number;
+	/** 空闲的会话说完话之后：核对一次状态（排上了队时控制面可能没有推 `turn_queued`）。 */
+	onSent: () => void;
 	onGone: (error: unknown) => boolean;
 }) {
 	const client = useQueryClient();
 	const [text, setText] = useState("");
+	/** 发出去、没有得到回应（503、断网）的那一句和发出时时间线的最大序号：它之后时间线上出现同样的一句，就是这句话已经记下了。 */
+	const [unconfirmed, setUnconfirmed] = useState<{ text: string; after: number } | null>(null);
+	const [recorded, setRecorded] = useState(false);
+	const sentAfter = useRef(lastSeq);
 	const field = useRef<HTMLTextAreaElement>(null);
 	const noteId = useId();
 	const ending = useIsMutating({ mutationKey: endMutationKey(id) }) > 0;
 	const send = useMutation({
 		mutationFn: (message: string) =>
 			callApi(sessionsApi.message, { params: { id }, body: { text: message } }),
-		onSuccess: (_session, message) => {
+		onSuccess: (_result, message) => {
+			if (mode.kind === "send") onSent();
 			// 只去掉发出去的那一句：请求在路上时输入框还能写（焦点就在里面），这时接着写的字不能一起清掉。输入框里开头已经
 			// 不是发出去的那一句（用户改过它）时不动：宁可留着，也不删用户的字。
 			setText((current) =>
@@ -222,10 +261,29 @@ function Composer({
 			);
 			void client.invalidateQueries({ queryKey: domainKey(sessionsApi.list) });
 		},
-		onError: (error) => {
-			onGone(error);
+		onError: (error, message) => {
+			if (onGone(error)) return;
+			// 控制面可能已经把这句话记在时间线上、回应才失败（助手服务没有确认：插话的 503，或者回应在路上断了）。
+			setUnconfirmed({ text: message, after: sentAfter.current });
 		},
 	});
+	// 时间线上出现了这句话：它已经记下了（带着「没有确认送到」的通知），输入框清空，说明指向时间线上的那一条；留着它，再点一次就成了第二句。
+	useEffect(() => {
+		if (unconfirmed === null) return;
+		const onTimeline = items.some(
+			(item) =>
+				item.kind === "user" && item.seq > unconfirmed.after && item.text === unconfirmed.text,
+		);
+		if (!onTimeline) return;
+		setText((current) =>
+			current.startsWith(unconfirmed.text)
+				? current.slice(unconfirmed.text.length).trimStart()
+				: current,
+		);
+		setUnconfirmed(null);
+		setRecorded(true);
+		send.reset();
+	}, [items, unconfirmed, send.reset]);
 	const canWrite = (mode.kind === "send" || mode.kind === "steer") && !ending;
 	const empty = text.trim() === "";
 	const canSend = canWrite && !empty && !send.isPending;
@@ -236,14 +294,33 @@ function Composer({
 		// 之后没有人再把它放回来。输入框一直在、写完下一句可以接着写；发送失败时焦点在输入框、写好的话还在。
 		// 之后用户自己把焦点移到别处就不再动它。
 		field.current?.focus();
+		sentAfter.current = lastSeq;
+		setRecorded(false);
 		send.mutate(text);
 	};
 	if (mode.kind === "ended") {
-		return <p className="mt-4 text-sm text-fg-3">{SESSION.page.ended}</p>;
+		// 会话被结束时（可能是别人结束的）输入框里还有没发出去的话：留在页面上，只读，可以复制。
+		return (
+			<div className="mt-4 flex flex-col gap-2">
+				<p className="m-0 text-sm text-fg-3">
+					{SESSION.page.ended}
+					{text.trim() === "" ? "" : `。${SESSION.page.endedDraft}`}
+				</p>
+				{text.trim() !== "" && (
+					<Textarea
+						readOnly
+						data-testid="ended-draft"
+						aria-label={SESSION.page.draftLabel}
+						value={text}
+						rows={2}
+					/>
+				)}
+			</div>
+		);
 	}
 	const hint = mode.kind === "steer" && !ending;
 	const note = ending ? (
-		SESSION.page.ending
+		SESSION.page.endingNote
 	) : mode.kind === "steer" ? (
 		SESSION.page.steerHint
 	) : mode.kind === "behind" ? (
@@ -280,7 +357,10 @@ function Composer({
 				disabled={!canWrite}
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={2}
-				onChange={(event) => setText(event.target.value)}
+				onChange={(event) => {
+					setText(event.target.value);
+					setRecorded(false);
+				}}
 				onKeyDown={(event) => {
 					// Ctrl/⌘+Enter 只在输入框里发送（登记在快捷键面板里，但不是全局快捷键）；输入法选字时的 Enter 不算
 					// （keyCode 229：Safari 在组字结束的那次按键上 isComposing 已经是 false）。
@@ -316,6 +396,11 @@ function Composer({
 					</span>
 				)}
 			</div>
+			{recorded && (
+				<output data-testid="send-recorded" className="block text-sm text-fg-2">
+					{SESSION.page.recorded}
+				</output>
+			)}
 			{send.isError && !(send.error instanceof ApiError && send.error.status === 404) && (
 				<FormAlert>
 					<SendError error={send.error} />
@@ -348,7 +433,10 @@ function QueuedNote({
 					>
 						<PeerText>{waitingFor.title}</PeerText>
 					</Link>
-					<PeerText>{SESSION.page.queuedWaitingFor(waitingFor.created_by)}</PeerText>
+					{/* 控制台自己的字（括号、「正在做」）在隔离之外：昵称是从右到左的文字时，它们不能被带到昵称的另一边。 */}
+					{SESSION.page.queuedWaitingFor.prefix}
+					<PeerText>{waitingFor.created_by}</PeerText>
+					{SESSION.page.queuedWaitingFor.suffix}
 				</>
 			)}
 		</>

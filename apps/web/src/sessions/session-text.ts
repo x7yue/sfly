@@ -196,3 +196,31 @@ export const queueOf = (
 	position: number | null,
 	waitingFor: WaitingFor | null,
 ): TimelineQueue | null => (position === null ? null : { position, waitingFor });
+
+/**
+ * 读屏要播报的一句：状态变了、看得见却听不到的几件事——这个会话轮到了、有一句插话没有送到、这一轮结束了、会话被结束了（可能是别人结束的）。
+ * 两份状态之间没有这些变化时返回 `null`。页面用它填「一轮结束」那块 `aria-live` 的区域（时间线是逐字更新的，不整个播报）。
+ */
+export function announcement(
+	before: Pick<TimelineState, "status" | "items">,
+	after: Pick<TimelineState, "status" | "items">,
+): string | null {
+	const lines: string[] = [];
+	const dropped = (state: Pick<TimelineState, "items">) =>
+		state.items.filter((item) => item.kind === "user" && item.delivery === "dropped").length;
+	const ends = (state: Pick<TimelineState, "items">) =>
+		state.items.filter((item) => item.kind === "turn_end");
+	if (dropped(after) > dropped(before)) lines.push(SESSION.page.announce.steerDropped);
+	if (before.status === "queued" && after.status === "running")
+		lines.push(SESSION.page.announce.started);
+	const endsAfter = ends(after);
+	const lastEnd = endsAfter.at(-1);
+	if (lastEnd?.kind === "turn_end" && endsAfter.length > ends(before).length) {
+		lines.push(turnEndText(lastEnd));
+	}
+	if (after.status === "ended" && before.status !== "ended") {
+		const by = after.items.find((item) => item.kind === "session_ended")?.by ?? "";
+		lines.push(SESSION.page.announce.ended(by));
+	}
+	return lines.length === 0 ? null : lines.join("。");
+}
