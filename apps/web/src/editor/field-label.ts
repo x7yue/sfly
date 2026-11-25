@@ -21,8 +21,8 @@ export function fieldLabel(node: DocNode | undefined, field: string): string {
 			if (Number.isInteger(index) && item) {
 				const name = node.params[index]?.name;
 				return name
-					? `参数 ${name}（第 ${index + 1} 个）的${item}`
-					: `第 ${index + 1} 个参数的${item}`;
+					? `参数 ${name}（第 ${index + 1} 个）的${spaced(item)}`
+					: `第 ${index + 1} 个参数的${spaced(item)}`;
 			}
 		}
 	}
@@ -32,13 +32,16 @@ export function fieldLabel(node: DocNode | undefined, field: string): string {
 	return NODE_FIELD[head] ?? field;
 }
 
+/** 英文（`secret`）和前面的中文之间留一个空格。 */
+const spaced = (item: string) => (/^[A-Za-z]/.test(item) ? ` ${item}` : item);
+
 const PARAM_ITEM: Record<string, string> = {
 	name: "名称",
 	type: "类型",
 	description: "说明",
 	default: "默认值",
 	required: "必填",
-	secret: "secret",
+	secret: TERM.secret,
 };
 
 /** 节点上的单个字段：名称与检查器里的字段标签一致。 */

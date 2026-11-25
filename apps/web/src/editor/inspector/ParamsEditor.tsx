@@ -1,6 +1,7 @@
 import { isSecretDefaultPlaceholder, type OrchestrationNode, SECRET_MASK } from "@sfly/schema";
 import { EyeIcon, EyeOffIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -142,7 +143,7 @@ export function ParamsEditor({
 								onCheckedChange={(required) => update(index, { required })}
 							/>
 							<Switch
-								label="secret"
+								label={TERM.secret}
 								checked={param.secret}
 								onCheckedChange={(secret) =>
 									secret ? update(index, { secret }) : setConfirming(index)
@@ -168,7 +169,9 @@ export function ParamsEditor({
 			<Dialog open={pending !== undefined} onOpenChange={(open) => !open && setConfirming(null)}>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>取消参数 {pending?.name} 的「secret」标记？</DialogTitle>
+						<DialogTitle>
+							取消参数 {pending?.name} 的「{TERM.secret}」标记？
+						</DialogTitle>
 						<DialogDescription>
 							取消后，它的默认值和每次运行传入的值会在编辑器、触发表单、运行监控和日志里明文显示。
 							{pending &&
@@ -178,7 +181,7 @@ export function ParamsEditor({
 					</DialogHeader>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => setConfirming(null)}>
-							保持 secret
+							保留 {TERM.secret} 标记
 						</Button>
 						<Button
 							variant="danger"
@@ -195,7 +198,7 @@ export function ParamsEditor({
 								setConfirming(null);
 							}}
 						>
-							取消 secret 标记
+							取消 {TERM.secret} 标记
 						</Button>
 					</DialogFooter>
 				</DialogContent>

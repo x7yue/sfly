@@ -215,7 +215,7 @@ export class SessionManager {
 
 	/**
 	 * 上次（被强行结束时）留下的东西：每个 pi 进程的设置目录（里面有模型文件的副本）、每一轮的配置文件（里面有
-	 * secret 值的原文）、pi 的临时目录。正常退出时这些都已经删了；被 SIGKILL、容器被杀时会留下，启动时清掉。
+	 * secret 环境变量的值的原文）、pi 的临时目录。正常退出时这些都已经删了；被 SIGKILL、容器被杀时会留下，启动时清掉。
 	 */
 	#cleanLeftovers(): void {
 		const { dataDir } = this.options;
@@ -227,7 +227,7 @@ export class SessionManager {
 	}
 
 	/**
-	 * 一段原文（上游的错误、工作台连接上的报错）写进日志之前：按这个会话的 secret 值和模型文件引用的环境变量的值打码，
+	 * 一段原文（上游的错误、工作台连接上的报错）写进日志之前：按这个会话的 secret 环境变量的值和模型文件引用的环境变量的值打码，
 	 * 再按形状打码（`Authorization`、`Bearer`、地址里的用户名密码），截到上限（redact.ts 的 `forLog`）。
 	 */
 	#forLog(session: Session, text: string): string {

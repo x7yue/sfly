@@ -41,7 +41,7 @@ export async function secretLeafWarnings(
 				warnings.push({
 					code: "secret_short_leaf",
 					node_id: node.id,
-					message: `参数 ${param.name}（${node.kind === "entry" ? "入口节点" : "子流程入口节点"} ${node.id}）是 secret 的对象，默认值里有 ${count} 个短于 ${MIN_LEAF_CHARS} 个字符的字符串或数字：${HOW}`,
+					message: `参数 ${param.name}（${node.kind === "entry" ? "入口节点" : "子流程入口节点"} ${node.id}）是值为对象的 secret 参数，默认值里有 ${count} 个短于 ${MIN_LEAF_CHARS} 个字符的字符串或数字：${HOW}`,
 				});
 			}
 		}

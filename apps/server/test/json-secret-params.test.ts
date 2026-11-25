@@ -728,7 +728,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 		});
 	}, 60_000);
 
-	it("规则 5：预检时，secret 的对象里有短于 4 个字符的字符串或数字叶子：给一条警告，写明是哪个参数（入口节点还是子流程入口节点）、有几个，不写出值", async () => {
+	it("规则 5：预检时，值为对象的 secret 参数里有短于 4 个字符的字符串或数字叶子：给一条警告，写明是哪个参数（入口节点还是子流程入口节点）、有几个，不写出值", async () => {
 		await withPlane(async ({ api }) => {
 			const main = chainScenario([
 				{
@@ -782,8 +782,8 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			);
 			const short = preflight.warnings.filter((w) => w.code === "secret_short_leaf");
 			expect(short.map((w) => w.message)).toEqual([
-				"参数 cfg（入口节点 entry）是 secret 的对象，默认值里有 2 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
-				"参数 deep（子流程入口节点 sub）是 secret 的对象，默认值里有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
+				"参数 cfg（入口节点 entry）是值为对象的 secret 参数，默认值里有 2 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
+				"参数 deep（子流程入口节点 sub）是值为对象的 secret 参数，默认值里有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
 				"运行预设「预设一」里 secret 参数 cfg 的值有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
 			]);
 			expect(short.map((w) => w.node_id)).toEqual(["entry", "sub", undefined]);

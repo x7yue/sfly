@@ -45,7 +45,7 @@ export function referenceChoices(
 		switch (o.kind) {
 			case "param": {
 				const p = params.get(o.key);
-				return { ...o, detail: `${p?.type ?? ""}${p?.secret ? " · secret" : ""}` };
+				return { ...o, detail: `${p?.type ?? ""}${p?.secret ? ` · ${TERM.secret}` : ""}` };
 			}
 			case "run_state":
 				return { ...o, detail: RUN_STATE_DETAIL, description: RUN_STATE_DESCRIPTION };

@@ -2,6 +2,7 @@ import type { ParamDeclView } from "@sfly/schema";
 import { cn } from "cn";
 import { EyeIcon, EyeOffIcon, LockIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -235,7 +236,7 @@ export function ParamField({
 				{locked && <LockIcon aria-hidden className="ml-1 inline size-3 align-baseline text-fg-3" />}
 				<span className="block font-mono text-xs text-fg-3">
 					{param.type}
-					{param.secret && " · secret"}
+					{param.secret && ` · ${TERM.secret}`}
 				</span>
 			</label>
 			<div className="flex min-w-0 flex-col gap-1.25">

@@ -12,7 +12,7 @@ import { describeUpstreamError, type UpstreamError } from "./upstream-error.js";
  * {@link TurnTranslator}：它也数这一轮的模型调用（`turn_start`）、工具调用和用量，`turn_end` 由看管这一轮的代码决定结局。
  *
  * - 工具名翻成平台的叫法（pi 的 `bash` 是 `command`）；认不出的工具不外传（`unknown`）。
- * - 文字和工具输出的增量先过 secret 值的打码（{@link Redactor}，一个值跨两条增量也认得出）；完整的消息、工具结果按整段打码。
+ * - 文字和工具输出的增量先过 secret 环境变量的值的打码（{@link Redactor}，一个值跨两条增量也认得出）；完整的消息、工具结果按整段打码。
  * - `assistant_message` 的文字以 pi 的 `message_end` 为准；没有文字的助手消息（只调了工具）不发。
  * - 认不出的 pi 事件返回 `unknown`，由调用方记一条日志，不抛错，不外传。
  */

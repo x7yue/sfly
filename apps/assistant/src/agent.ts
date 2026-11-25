@@ -118,7 +118,7 @@ export interface AgentOptions {
 	pingTimeoutMs?: number;
 	/**
 	 * 认不出、不放行的错误的原文写到哪里（带工作台的地址）。默认整行写到标准错误（output.ts 的 `writeLog`，不截断）：
-	 * 在 pi 里（远程工具扩展）它进 pi 的标准错误，助手服务按这个会话的 secret 值打码后存下（先截断会把一个值切成认不出的
+	 * 在 pi 里（远程工具扩展）它进 pi 的标准错误，助手服务按这个会话的 secret 环境变量的值打码后存下（先截断会把一个值切成认不出的
 	 * 半截）；助手服务自己用时传它的日志出口（会话里先过 `#forLog`，别处是 `writeRawLog`）。
 	 */
 	log?: (line: string) => void;

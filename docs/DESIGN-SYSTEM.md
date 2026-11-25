@@ -2,7 +2,7 @@
 
 前端（`apps/web`）的设计 token、配色规则、组件清单、各状态的样式，以及写页面时要遵守的约定（HTTP 契约、query key、快捷键、CSS layer）。实现与评审都以本文为依据；信息架构、布局与交互以定稿原型 `docs/prototype/frontend-v2.html` 为准，原型里的演示数据不是规格。相关决定：ADR 0005（E2E 优先）、0006（SPA）、0007（HTTP 契约用 zod）、0008（shadcn/ui + Base UI）。
 
-定位：内网专业工具，只做深色主题、只支持桌面（最小宽度 1280；运行监控页窄到 1024 仍可用，顶栏按钮收成图标）、界面只用中文（`GLOSSARY.md` 里照契约原样写的词除外：Agent、always 节点、secret 参数、API 客户端、AI 编程助手，其中的英文原样写，和中文之间留一个空格）。
+定位：内网专业工具，只做深色主题、只支持桌面（最小宽度 1280；运行监控页窄到 1024 仍可用，顶栏按钮收成图标）、界面只用中文（`GLOSSARY.md` 里照契约原样写的词除外：Agent、always 节点、secret 参数、API 客户端、AI 编程助手、Webhook 等，以 `GLOSSARY.md` 为准，其中的英文原样写，和中文之间留一个空格）。
 
 与定稿原型不同、以本文为准的交互：取消运行的确认弹窗列出影响后直接确认，不要求输入运行编号（只做测试的平台，取消可以用相同参数再跑一次；2026-11 设计评审决定）。
 
@@ -382,7 +382,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 界面只用中文（例外见文首），不引入 i18n 框架；多处共用的文字集中在 `src/lib/copy.ts`：
 
-- `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X），手上只有子流程名称（主链为 null）时用 `namedChainLabel()`。
+- `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词；照契约原样写的英文词也在这里，如 `TERM.secret`：参数面板的开关、各处标出一个参数是 secret 的字都引用它，不再各写各的）；`chainLabel()`：链实例名称（主链 / 子流程 X），手上只有子流程名称（主链为 null）时用 `namedChainLabel()`。
 - `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）；`FOCUS`：关注项共用的句子；`INSPECTOR_PAGE`：检查器的页名（页签、页面标题，以及「先在场景设置的「关注项」页移除一项」这类指路的提示：都引用它，改名不会漏）。
 - `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字（控制台页头的计数「运行中」「成功」「失败」也取自它，「取消」按规格写原文，不是状态词「已取消」）；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选、展开、收起……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「加载中」（行内的加载提示也只写它，不写「正在加载…」）「无法加载X」（`loadFailed(X)`，X 以字母或数字开头时前面隔一个空格：「无法加载 Agent」）「还没有数据」「这次尝试没有上报数据」，`noMatch(X)`：筛选之后什么都没有的「没有符合条件的X」，日志、运行、动作共用）。

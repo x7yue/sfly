@@ -442,7 +442,7 @@ describe("工作台这条连接上的错误：认得的才放行，原文只进�
 	});
 });
 
-describe("secret 值在源头打码：交给 pi 之前", () => {
+describe("secret 环境变量的值在源头打码：交给 pi 之前", () => {
 	const secret = "sekret-value-0123";
 
 	it("命令的输出（值被拆在两块里也认得出）、读到的文件：交给 pi 的都是打过码的", async () => {

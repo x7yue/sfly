@@ -6,7 +6,7 @@ import { forLog } from "./redact.js";
 // `process.stdout`、`process.stderr` 的写法，这个文件除外；**它是方便，不是保证**（认的写法见规则文件开头的清单）。
 // 这个文件自己由 test/output.test.ts 守：直接往终端写的声明只有登记的那几个。
 //
-// 会话里的 secret 值（`secret_env`）和模型的密钥要按值打码，只有 sessions.ts 知道它们：那里写日志之前先过 `#forLog`，再交给这里。
+// 会话里 secret 环境变量（`secret_env`）的值和模型的密钥要按值打码，只有 sessions.ts 知道它们：那里写日志之前先过 `#forLog`，再交给这里。
 
 /** 写一行日志：标准错误，行首是时间。收字符串；要打印错误用 {@link printError}。 */
 export function writeLog(message: string): void {

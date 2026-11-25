@@ -947,7 +947,7 @@ test("secret 参数的默认值读不回来：显示「已设置」，替换成�
 	await secret.click();
 	const confirm = page.getByRole("dialog", { name: "取消参数 api_token 的「secret」标记？" });
 	await expect(confirm).toBeVisible();
-	await confirm.getByRole("button", { name: "保持 secret" }).click();
+	await confirm.getByRole("button", { name: "保留 secret 标记" }).click();
 	await expect(confirm).toHaveCount(0);
 	await expect(secret).toBeChecked();
 

@@ -1372,7 +1372,15 @@ test("编排画布：引用补全里输出的说明", async ({ page, controlPlan
 	await nodeCard(page, "ping").click();
 	await page.getByRole("combobox", { name: "输入 host" }).fill("");
 	await page.keyboard.type("$");
-	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+	const list = page.getByRole("listbox", { name: "可引用的值" });
+	await expect(list).toBeVisible();
+	// 列表有最大高度，前面的入口参数（secret 参数那一行类型说明换行，更高）会把输出挤到可见区以下：
+	// 先把要拍的输出滚进可见区，并断言它的说明在视口里看得见，不然这张图拍不到它要守的东西。
+	await list
+		.getByRole("option", { name: /nodes\.fetch\.outputs\.report/ })
+		.scrollIntoViewIfNeeded();
+	await expect(list.getByText("检查报告的文字，包含每一步的耗时")).toBeInViewport({ ratio: 1 });
+	await expect(list.getByText("HTTP 状态码")).toBeInViewport({ ratio: 1 });
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-reference-output-docs.png");
 });
