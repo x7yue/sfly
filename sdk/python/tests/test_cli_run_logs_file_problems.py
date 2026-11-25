@@ -27,12 +27,13 @@ TASK_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 TASK_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 
-def _run_view() -> dict[str, Any]:
+def _run_view(failed_tasks: frozenset[str] = frozenset()) -> dict[str, Any]:
     def node(node_id: str, task: str) -> dict[str, Any]:
+        status = "failed" if task in failed_tasks else "success"
         return {
             "node_id": node_id,
             "kind": "package",
-            "attempts": [{"task_id": task, "status": "success"}],
+            "attempts": [{"task_id": task, "status": status}],
         }
 
     return {
@@ -96,13 +97,14 @@ def _page(
 class FakeClient:
     """`/runs/<id>` 给运行视图，`/runs/<id>/logs` 按顺序给定好的页。"""
 
-    def __init__(self, *pages: dict[str, Any]) -> None:
+    def __init__(self, *pages: dict[str, Any], failed_tasks: frozenset[str] = frozenset()) -> None:
         self.pages = list(pages)
+        self.failed_tasks = failed_tasks
         self.calls: list[dict[str, Any]] = []
 
     def get(self, path: str, query: dict[str, Any] | None = None) -> dict[str, Any]:
         if path == f"/runs/{RUN}":
-            return _run_view()
+            return _run_view(self.failed_tasks)
         assert path == f"/runs/{RUN}/logs", path
         self.calls.append(dict(query or {}))
         return self.pages.pop(0)
@@ -122,12 +124,12 @@ def _args(**over: Any) -> argparse.Namespace:
     return argparse.Namespace(**{**options, **over})
 
 
-def _run_logs(client: FakeClient, *, json_mode: bool) -> tuple[str, str]:
+def _run_logs(client: FakeClient, *, json_mode: bool, failed: bool = False) -> tuple[str, str]:
     stdout, stderr = io.StringIO(), io.StringIO()
     session = SimpleNamespace(
         client=client, out=Output(json_mode=json_mode, stdout=stdout, stderr=stderr)
     )
-    _logs(session, _args())  # type: ignore[arg-type]
+    _logs(session, _args(failed=failed))  # type: ignore[arg-type]
     return stdout.getvalue(), stderr.getvalue()
 
 
@@ -203,17 +205,56 @@ def test_no_log_lines_is_not_reported_as_no_logs() -> None:
     assert "不在了" in stderr
 
 
-def test_json_mode_keeps_stdout_to_log_lines_and_writes_the_problems_as_one_json_line() -> None:
+def test_json_mode_keeps_stdout_to_log_lines_and_writes_one_warning_envelope_to_stderr() -> None:
     client = FakeClient(_page([_line(TASK_A, "a", 1)], [_problem(TASK_B, "b", "short")], total=4))
 
     stdout, stderr = _run_logs(client, json_mode=True)
 
     rows = [json.loads(line) for line in stdout.splitlines()]
     assert [row["task_id"] for row in rows] == [TASK_A]
-    notes = [json.loads(line) for line in stderr.splitlines() if line.startswith("{")]
-    assert notes == [
-        {"file_problems": [_problem(TASK_B, "b", "short")], "file_problems_total": 4},
-    ]
+    # 标准错误只有这一行，和命令行的错误同一种形状，键是 `warning`；退出码不变（这里没有抛错）。
+    warnings = [json.loads(line) for line in stderr.splitlines()]
+    assert len(warnings) == 1
+    body = warnings[0]["warning"]
+    assert set(body) == {"code", "message", "next", "details"}
+    assert body["code"] == "log_file_problems"
+    assert "main:b" in body["message"]
+    assert body["details"] == {
+        "file_problems": [_problem(TASK_B, "b", "short")],
+        "file_problems_total": 4,
+    }
+    # 要确认日志完整用 --all，下一步里写明。
+    assert "--all" in body["next"]
+
+
+def test_failed_only_lists_the_selected_attempts() -> None:
+    # `--failed` 只看失败的那一次尝试（TASK_A）；没选上的 TASK_B 的文件不在了，不列、总数也不数它。
+    client = FakeClient(
+        _page(
+            [_line(TASK_A, "a", 1)],
+            [_problem(TASK_A, "a", "short"), _problem(TASK_B, "b", "missing")],
+            total=2,
+        ),
+        failed_tasks=frozenset({TASK_A}),
+    )
+
+    _, stderr = _run_logs(client, json_mode=False, failed=True)
+
+    assert "main:a" in stderr
+    assert "main:b" not in stderr
+    assert "1 个任务" in stderr
+
+
+def test_json_failed_selection_counts_only_the_selected() -> None:
+    client = FakeClient(
+        _page([], [_problem(TASK_B, "b", "missing")], total=1),
+        failed_tasks=frozenset({TASK_A}),
+    )
+
+    _, stderr = _run_logs(client, json_mode=True, failed=True)
+
+    # 选中的里没有有问题的：什么也不说。
+    assert stderr == ""
 
 
 def test_nothing_is_written_when_there_is_no_problem() -> None:

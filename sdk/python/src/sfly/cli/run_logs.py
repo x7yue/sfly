@@ -287,8 +287,11 @@ def read_logs(
             result.before, result.reached_start = page["before"], page["reached_start"]
         for task in page["truncated_tasks"]:
             truncated.setdefault(task["task_id"], task)
-        for problem in page.get("file_problems", []):  # 旧控制面的页里没有这个字段
-            problems.setdefault(problem["task_id"], problem)
+        # 旧控制面的页里没有这个字段；`--failed`、`--node` 只列选中的尝试
+        # （控制面按节点范围筛，不认第几次尝试）。
+        for problem in page.get("file_problems", []):
+            if selection.keep(problem):
+                problems.setdefault(problem["task_id"], problem)
         result.file_problems_total = max(
             result.file_problems_total, page.get("file_problems_total", 0)
         )
@@ -307,7 +310,13 @@ def read_logs(
     result.lines = [line for chunk in ordered for line in chunk]
     result.truncated_tasks = list(truncated.values())
     result.file_problems = list(problems.values())
-    result.file_problems_total = max(result.file_problems_total, len(problems))
+    # 控制面给的总数是范围内的、不分第几次尝试；筛掉没选上的之后，总数不再可信，
+    # 以选中的个数为准（控制面最多列 20 个，超出的看不到是哪些，只能按列出的算）。
+    result.file_problems_total = (
+        len(problems)
+        if selection.task_ids is not None
+        else max(result.file_problems_total, len(problems))
+    )
     return result
 
 
@@ -367,18 +376,31 @@ def _file_problems_note(index: RunIndex, problems: Sequence[Mapping[str, Any]], 
     )
 
 
-def _report_file_problems(out: Output, index: RunIndex, read: LogRead) -> None:
-    """说明写到标准错误（标准输出里只有日志行），退出码不变；`--json` 时标准错误里是一行 JSON。"""
+def _report_file_problems(out: Output, index: RunIndex, read: LogRead, run: str) -> None:
+    """说明写到标准错误，退出码不变。
+
+    不写到标准输出：不带 `--json` 时标准输出里本来还有继续读的提示和截断提示，
+    `--json` 时只有日志行。
+    `--json` 时标准错误里是一行 `{"warning": {code, message, next, details}}`。"""
     if not read.file_problems:
         return
-    if out.json_mode:
-        value = {
-            "file_problems": read.file_problems,
-            "file_problems_total": read.file_problems_total,
-        }
-        print(dump_json(value), file=out.stderr)
-        return
     note = _file_problems_note(index, read.file_problems, read.file_problems_total)
+    if out.json_mode:
+        # 和命令行的错误同一种形状（`{"error": {code, message, next, details}}`），键是 `warning`：
+        # 脚本分得出哪一行是什么。不加让退出码非 0 的开关——读到的是真的、剩下的内容，
+        # 要确认日志完整用 `--all`（下载在文件有问题时报错、退出码非 0）。
+        warning = {
+            "code": "log_file_problems",
+            "message": note,
+            "next": f"sfly run logs {shlex.quote(run)} --all <文件>"
+            "（下载在文件有问题时报错、退出码非 0，用它确认日志完整）",
+            "details": {
+                "file_problems": read.file_problems,
+                "file_problems_total": read.file_problems_total,
+            },
+        }
+        print(dump_json({"warning": warning}), file=out.stderr)
+        return
     print(printable(note), file=out.stderr)
 
 
@@ -429,10 +451,10 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
         for line in read.lines:
             print(dump_json(line), file=out.stdout)
         print_notes(out, notes)
-        _report_file_problems(out, index, read)
+        _report_file_problems(out, index, read, args.run)
         return
     rendered = [format_line(index, line) for line in read.lines]
-    _report_file_problems(out, index, read)
+    _report_file_problems(out, index, read, args.run)
     if not rendered and not notes:
         if read.file_problems:
             return  # 不是没有日志：日志文件有问题，上面已经说了
