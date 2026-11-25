@@ -336,6 +336,9 @@ UNDER_PATH = "https://cp.example.com:8443/sfly/tasks/t1/artifacts/"
         ("https://cp.example.com:8443/sfly/tasks/t1/artifacts/../../x", UNDER_PATH, False),
         # 不带：路径里有歧义的写法。
         ("http://127.0.0.1:8080/tasks/..;/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2eb", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2Eb", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%252eb", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%3b/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%3B/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%253b/x", ARTIFACTS, False),
