@@ -65,6 +65,12 @@ export function toolResultSummary(tool: SessionTool | null, result: ToolResultIn
 }
 
 /**
+ * 连续的空白（含换行、制表符）压成一个空格：结局的原因是上游给的原文，可能有好几行；分隔行和读屏播报是单行的写法，
+ * 交给不可信文字组件之前先压平（组件的单行写法会把换行写成「⟨U+000A⟩」）。别的看不见的字符照旧由组件写出来。
+ */
+export const oneLine = (text: string): string => text.replace(/[\t\n\r\f\v ]+/g, " ").trim();
+
+/**
  * 一轮结束的分隔行：六种结局各一句；到了上限按 `limit_kind` 写是哪一种，不看 `reason` 的文字。
  * **「已停止」不写 `reason`**：结局的原因是助手服务写的「用户停止了这一轮」，而这一轮不一定是用户点了停止才停的（控制面发给助手服务的
  * 中止命令超时、随后补发的中止让助手服务马上结束了这一轮，用户其实没有点过停止），页面不把它原样说成用户的操作。
@@ -87,11 +93,11 @@ export function turnEndText(item: Extract<TimelineItem, { kind: "turn_end" }>): 
 					: t.modelCalls(item.modelCalls),
 			);
 		case "interrupted":
-			return t.interrupted(item.reason);
+			return t.interrupted(oneLine(item.reason));
 		case "model_unavailable":
-			return t.modelUnavailable(item.reason);
+			return t.modelUnavailable(oneLine(item.reason));
 		case "failed":
-			return t.failed(item.reason);
+			return t.failed(oneLine(item.reason));
 	}
 }
 

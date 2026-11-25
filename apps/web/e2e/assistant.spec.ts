@@ -1248,6 +1248,19 @@ test("读屏：往前翻页读进来的更早的一页里有结局和没送到�
 	await expect(liveRegion(page)).toHaveText("");
 });
 
+test("一轮出错、原因有好几行：分隔行和播报里换行压成一个空格，不写出「U+000A」", async ({
+	page,
+}) => {
+	await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+	await pushEvent(page, {
+		...turnEnd(3, "failed"),
+		reason: "上游返回：\n第一行\n第二行",
+	} as SessionEvent);
+	await expect(page.getByTestId("turn-end")).toHaveText("出错：上游返回： 第一行 第二行");
+	await expect(liveRegion(page)).toHaveText("出错：上游返回： 第一行 第二行");
+	await expect(page.getByTestId("turn-end").locator("[data-slot=hidden-character]")).toHaveCount(0);
+});
+
 test("读屏：连着两个「已停止」都播（同一句话再播一次，读屏才会再读）", async ({ page }) => {
 	await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
 	// 记下播报区每一次的文字变化（文字没有变化就不会有变化记录）。

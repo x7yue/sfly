@@ -224,6 +224,24 @@ describe("会话页：输入框、标记、排位的文字", () => {
 	});
 });
 
+describe("一轮结束的那一行：结局原因里的换行", () => {
+	it("中断、模型不可用、出错的原因有好几行：连续的空白压成一个空格，分隔行和播报里不出现换行", () => {
+		const reason = "上游返回：\n第一行\n\n  第二行\t结尾  ";
+		for (const outcome of ["interrupted", "model_unavailable", "failed"] as const) {
+			const text = turnEndText(turnEnd({ outcome, reason }));
+			expect(text).toContain("上游返回： 第一行 第二行 结尾");
+			expect(text).not.toMatch(/[\n\t]/);
+		}
+	});
+
+	it("别的看不见的字符不动（由不可信文字组件写出来）；没有换行的原因原样", () => {
+		expect(turnEndText(turnEnd({ outcome: "failed", reason: "模型报错\u202e" }))).toContain(
+			"\u202e",
+		);
+		expect(turnEndText(turnEnd({ outcome: "failed", reason: "模型报错" }))).toBe("出错：模型报错");
+	});
+});
+
 describe("读屏的播报", () => {
 	const ID = "a0000000-0000-4000-8000-00000000000a";
 	const base = (n: number) => ({ seq: n, at: "2026-01-01T00:00:00.000Z" });
