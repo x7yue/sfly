@@ -352,7 +352,7 @@ export interface AttemptView {
 	inputs: Record<string, unknown> | null;
 	/**
 	 * 输入被省略时，存着的大小（打码之前的字节数）**向上取整到 KiB（1024 的倍数）**，不给精确值：读取时要打码，精确的大小和打码之后的内容
-	 * 一减就露出保密值的长度。**只在内容被省略时不是 null**（内容内联着、或者本来就没有输入时都是 null）。全文用 `GET /tasks/:id/io` 取。
+	 * 一减就露出保密值的长度。取整只是让大小变粗，不能完全藏住长度。**只在内容被省略时不是 null**（内容内联着、或者本来就没有输入时都是 null）。全文用 `GET /tasks/:id/io` 取。
 	 */
 	inputs_omitted_bytes: number | null;
 	/** 输出；没有输出（还没结束、失败、被跳过）为 null，**内容被省略时也是 null**，规矩同 `inputs`。 */

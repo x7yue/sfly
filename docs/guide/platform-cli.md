@@ -371,6 +371,7 @@ sfly api POST /runs/<运行 id>/cancel
 ```
 
 - **运行视图里大的输入、输出只给大小**（`sfly api GET /runs/<运行 id>`、`sfly run show --json` 都是）：单个输入或输出超过 16 KiB，或者整份视图里内联的输入输出合计已经超过 1 MiB 之后，`inputs`、`outputs`（和节点层的 `outputs`）是 `null`，旁边的 `inputs_omitted_bytes`、`outputs_omitted_bytes` 写着存着的大小（打码之前的字节数，向上取整到 KiB；**只在内容被省略时不是 `null`**，判断是不是被省略了只看它，不要假定小的一定内联）。读全文：`sfly run show <运行> --outputs --node 链:节点 --json`（节点的输出），或者 `sfly api GET /tasks/<任务 id>/io`（每一次尝试的输入和输出，任务 id 是运行视图里每次尝试的 `task_id`；节点层被省略的输出是它最后一次尝试的）。例如把运行视图里的输出换成命令：`sfly run show <运行> --outputs --json | jq '.[] | select(.node == "fetch") | .outputs'`。
+  **命令行和控制面要一起升级**：旧的命令行（不认识 `outputs_omitted_bytes`）连新的控制面时，`sfly run show --outputs` 不会取全文，被省略输出的节点悄悄不在列表里，退出码 0，只有标准错误上那句版本不一致的提示；先升级命令行。
 - 路径是带实际 id 的路径，不含 `/api` 前缀；`--query 名=值` 给查询参数（可以重复，也可以直接写在路径后面，`/runs?limit=5`），`--body` 给请求体：JSON 文本，或 `@文件` 从文件读（`@-` 从标准输入读）。
 - 发请求前按随 SDK 打包的路由清单校验方法、路径、查询参数和请求体；对不上时报错并列出最接近的路由，不发请求。上传节点包的接口会被拒绝，上传用 `sfly publish`。
 - `sfly api --list [关键字…]` 列出全部接口：方法、路径、种类（普通、SSE、下载、上传）、效果、一句话说明和参数（带 `*` 的必填）；后面的关键字筛选接口（要同时出现在「方法 路径 说明」里，可以按用途找，例如 `输出`、`日志`、`产物`、`预设`、`取消`），加 `--json` 看匹配接口完整的 JSON Schema。
