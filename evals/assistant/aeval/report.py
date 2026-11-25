@@ -116,9 +116,12 @@ def render(results: Path) -> str:
         head.append(f"- 作废（模型端点、评测环境的故障，不计入）：{len(invalid)} 次")
     body = "\n".join(head) + "\n\n" + models_table(counted) + "\n\n" + table(records) + "\n"
     body += "\n" + endpoint_table(records) + "\n"
-    faults = platform_fault_table(counted)
-    if faults:
-        body += "\n" + faults + "\n"
+    for table_text in (
+        platform_fault_table(counted, "platform"),
+        platform_fault_table(records, "unclassified"),
+    ):
+        if table_text:
+            body += "\n" + table_text + "\n"
     for model in sorted({r["model"] for r in counted if arm_of(r) == "a"}):
         body += "\n" + render_gate(counted, model) + "\n"
     all_for_decision = [r for r in records if r.get("task") != "toolcheck"]
@@ -157,20 +160,26 @@ def comparison_notes(remote: str) -> list[str]:
     ]
 
 
-def platform_fault_table(records: list[dict[str, Any]]) -> str:
-    """平台故障（有效的失败，算进通过率和判定）逐次列出：哪道题、哪次会话、原始的问题文字。"""
+FAULT_TABLES = {
+    "platform": "平台故障（算作做题失败，计入平台臂的通过率和判定）",
+    "unclassified": "未归类（认不出是平台还是评测环境的问题：作废，不计入，判定只作参考）",
+}
+
+
+def platform_fault_table(records: list[dict[str, Any]], kind: str = "platform") -> str:
+    """平台故障（有效的失败）或未归类（作废的）逐次列出：哪道题、哪次会话、原始的问题文字。"""
     rows = []
     for record in sorted(records, key=lambda r: str(r.get("session"))):
         fault = record.get("platform_fault") or {}
-        if fault.get("kind") == "platform":
+        if fault.get("kind") == kind:
             reason = str(fault.get("reason") or "")[:200].replace("|", "\\|")
             rows.append(
                 f"| {record['model']} | {record['task']} | {record['session']} | {reason} |"
             )
     if not rows:
         return ""
-    head = ["| 模型 | 题目 | 会话 | 平台这一侧的问题 |", "|---|---|---|---|"]
-    return "平台故障（算作做题失败，计入平台臂的通过率和判定）：\n\n" + "\n".join(head + rows)
+    head = ["| 模型 | 题目 | 会话 | 问题 |", "|---|---|---|---|"]
+    return f"{FAULT_TABLES[kind]}：\n\n" + "\n".join(head + rows)
 
 
 def endpoint_table(records: list[dict[str, Any]]) -> str:

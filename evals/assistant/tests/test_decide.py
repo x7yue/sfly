@@ -139,3 +139,48 @@ def test_arm_b_decision_does_not_count_platform_sessions() -> None:
     records = [session("a", "write", True, 10)] * 5 + [session("b", "write", True, 10)] * 5
     with_platform = records + [session("p", "write", False, 99, "平台故障")] * 5
     assert decide(with_platform, "m", "b") == decide(records, "m", "b")
+
+
+def test_platform_faults_count_only_failures_whose_primary_class_is_a_platform_fault() -> None:
+    from aeval.decide import render_decision
+
+    records = [session("a", "write", True, 10)] * 5
+    records += [session("p", "write", False, 10, "平台故障")] * 2
+    records += [session("p", "write", False, 10, "超时"), session("p", "write", False, 10, "其他")]
+    records += [session("p", "write", True, 10)]
+    result = decide(records, "m", "p")
+    assert result["platform_faults"] == 2
+    assert "有 2 次是平台故障" in render_decision(result)
+
+
+LIMITS = {"max_turns": 40, "max_seconds": 1200.0}
+
+
+def limited(arm: str, limits: dict[str, Any] | None = None) -> dict[str, Any]:
+    record = session(arm, "write", True, 10)
+    return {**record, "driver": {**record["driver"], **({"limits": limits} if limits else {})}}
+
+
+def test_a_session_without_recorded_limits_does_not_make_the_verdict_a_reference_only() -> None:
+    from aeval.decide import render_decision
+
+    # 臂 A 的一次会话被宿主机超时结束、没写 driver.json，记录里没有上限。
+    records = [limited("a", LIMITS)] * 4 + [limited("a")] + [limited("p", LIMITS)] * 5
+    result = decide(records, "m", "p")
+    assert result["limits_match"] is True
+    verdict = next(x for x in render_decision(result).splitlines() if "按事先定下的标准" in x)
+    assert "只作参考" not in verdict
+
+
+def test_unclassified_sessions_are_void_and_make_the_verdict_a_reference_only() -> None:
+    from aeval.decide import render_decision
+
+    records = [limited("a", LIMITS)] * 3 + [limited("p", LIMITS)] * 3
+    odd = {**limited("p", LIMITS), "invalid": True, "failure": {"primary": "未归类"}}
+    voided = {**limited("p", LIMITS), "invalid": True, "failure": {"primary": "环境故障"}}
+    result = decide([*records, odd, voided], "m", "p")
+    assert result["unclassified"] == 1 and result["passed"]["p"] == 3
+    verdict = next(x for x in render_decision(result).splitlines() if "按事先定下的标准" in x)
+    assert "只作参考" in verdict and "平台臂有 1 次会话未归类" in verdict
+    plain = render_decision(decide(records, "m", "p"))
+    assert "只作参考" not in next(x for x in plain.splitlines() if "按事先定下的标准" in x)

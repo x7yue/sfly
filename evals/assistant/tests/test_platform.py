@@ -4,27 +4,36 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
 import pytest
-from aeval.classify import INFRA, PLATFORM_FAULT
+from aeval.classify import INFRA, PLATFORM_FAULT, UNCLASSIFIED
 from aeval.platform import (
+    DEADLINE_SLACK_SECONDS,
     ENVIRONMENT,
     PI_PROCESS_NAME,
     PLATFORM,
+    PLATFORM_MAX_SECONDS,
     SESSION_FILES,
     PeakSampler,
     classify_platform,
     copy_session_files,
+    driver_argv,
+    driver_budget,
+    driver_pattern,
     driver_summary,
     exit_reason,
     parse_hwm,
     platform_record,
     read_driver,
+    run_driver,
+    summarize_platform,
 )
+from aeval.platform import UNCLASSIFIED as UNCLASSIFIED_KIND
 from aeval.session import judge
 from aeval.tasks import GOAL, Check
 
@@ -37,18 +46,54 @@ OK: dict[str, Any] = {
 }
 
 
+def told(*pairs: tuple[str, str]) -> dict[str, list[str]]:
+    """驱动记下的问题：（种类，文字）。"""
+    return {"problem_kinds": [k for k, _ in pairs], "problems": [t for _, t in pairs]}
+
+
+SIGNAL = ("signal", "会话驱动被结束了（SIGTERM、SIGINT）")
+DEADLINE = ("deadline", "在时限内没有等到 turn_end")
+
+
 @pytest.mark.parametrize(
     ("platform", "want"),
     [
         ({}, (ENVIRONMENT, "会话驱动没有给出结果")),
         ({"precheck": "助手此刻不能用：工作台不在线"}, (ENVIRONMENT, "开始前的检查没过")),
-        ({**OK, "problems": ["会话驱动被结束了（SIGTERM、SIGINT）"]}, (ENVIRONMENT, "被结束了")),
-        ({**OK, "session": None, "problems": ["POST … 返回 503"]}, (PLATFORM, "没有建成会话")),
-        ({**OK, "deadline_passed": True}, (PLATFORM, "评测停下了它")),
-        ({**OK, "turn_end": None, "problems": ["停止之后没有等到结局"]}, (PLATFORM, "没有等到")),
+        ({**OK, **told(SIGNAL)}, (ENVIRONMENT, "评测自己的问题：会话驱动被结束了")),
+        (
+            {**OK, "turn_end": None, **told(("evaluator", "会话驱动出错：KeyError: 'x'"))},
+            (ENVIRONMENT, "评测自己的问题：会话驱动出错"),
+        ),
+        (
+            {**OK, **told(("evaluator", "写不进事件记录：磁盘满了"))},
+            (ENVIRONMENT, "评测自己的问题：写不进事件记录"),
+        ),
+        (
+            {**OK, "session": None, **told(("control_plane", "POST … 返回 503"))},
+            (PLATFORM, "没有建成会话"),
+        ),
+        ({**OK, "deadline_passed": True, **told(DEADLINE)}, (PLATFORM, "评测停下了它")),
+        # 「过了时限」先于「驱动被结束了」判：不被宿主机发的信号盖掉。
+        (
+            {**OK, "deadline_passed": True, **told(DEADLINE, SIGNAL)},
+            (PLATFORM, "评测停下了它"),
+        ),
+        (
+            {**OK, "turn_end": None, **told(("no_outcome_after_stop", "停止之后没有等到结局"))},
+            (PLATFORM, "没有等到"),
+        ),
         ({**OK, "turn_end": {**END, "outcome": "failed", "reason": "x"}}, (PLATFORM, "failed")),
         ({**OK, "turn_end": {**END, "outcome": "interrupted"}}, (PLATFORM, "interrupted")),
-        ({**OK, "problems": ["结束会话：… 返回 500"]}, (PLATFORM, "结束会话")),
+        ({**OK, "turn_end": {**END, "outcome": "stopped"}}, (PLATFORM, "评测没有让它停")),
+        (
+            {**OK, **told(("control_plane", "结束会话：… 返回 500"))},
+            (PLATFORM, "结束会话"),
+        ),
+        ({**OK, "turn_end": {**END, "outcome": "paused"}}, (UNCLASSIFIED_KIND, "不是契约里的值")),
+        ({**OK, **told(("disk", "别的问题"))}, (UNCLASSIFIED_KIND, "认不出的问题：别的问题")),
+        # 有文字没有种类（旧的驱动）：认不出，不靠兜底归到平台。
+        ({**OK, "problems": ["结束会话：… 返回 500"]}, (UNCLASSIFIED_KIND, "认不出的问题")),
     ],
 )
 def test_classify_platform_puts_each_case_in_its_class(
@@ -58,9 +103,14 @@ def test_classify_platform_puts_each_case_in_its_class(
     assert got is not None and got[0] == want[0] and want[1] in got[1]
 
 
-@pytest.mark.parametrize("outcome", ["completed", "limit", "stopped", "model_unavailable"])
+@pytest.mark.parametrize("outcome", ["completed", "limit", "model_unavailable"])
 def test_outcomes_the_platform_gives_itself_are_not_faults(outcome: str) -> None:
     assert classify_platform({**OK, "turn_end": {**END, "outcome": outcome}}) is None
+
+
+def test_a_stopped_outcome_the_evaluator_asked_for_is_not_a_fault_by_itself() -> None:
+    stopped = {**OK, "stopped": True, "turn_end": {**END, "outcome": "stopped"}}
+    assert classify_platform(stopped) is None
 
 
 @pytest.mark.parametrize(
@@ -97,6 +147,12 @@ def test_judge_platform_faults_are_valid_failures_even_when_the_task_was_done() 
     assert failure is not None and failure["primary"] == PLATFORM_FAULT
     assert checks[-1].name == "平台这一侧没有出问题" and checks[-1].passed is False
     assert "平台以 failed 结束" in checks[-1].detail
+
+
+def test_judge_unclassified_sessions_are_void_and_say_so() -> None:
+    invalid, failure, checks = judge(CLASSIFIED, GOAL_OK, (UNCLASSIFIED_KIND, "认不出的问题"))
+    assert invalid is True and failure is not None and failure["primary"] == UNCLASSIFIED
+    assert checks == GOAL_OK
 
 
 def test_judge_an_endpoint_failure_wins_over_a_platform_fault() -> None:
@@ -170,7 +226,8 @@ def test_only_the_whitelisted_session_files_are_copied(tmp_path: Path) -> None:
     copied: list[tuple[str, str]] = []
     copy_session_files(lambda src, dest: copied.append((src, dest)), "s1", tmp_path)
     assert [src for src, _ in copied] == [f"/data/sessions/s1/{name}" for name in SESSION_FILES]
-    # turn.json 是这一轮的配置，带着环境变量（含保密的）：结果目录里不能有它，也不整个目录复制。
+    # turn.json 是这一轮的配置，带着环境变量（含 secret 环境变量）：
+    # 结果目录里不能有它，也不整个目录复制。
     assert "turn.json" not in SESSION_FILES
     assert "/data/sessions/s1" not in [src for src, _ in copied]
 
@@ -189,6 +246,78 @@ def test_read_driver_stops_the_driver_when_the_total_time_is_up() -> None:
     found, log = read_driver(lines(), 0.3, lambda: stopped.append(time.monotonic()))
     assert stopped and stopped[0] - started < 1
     assert found["session"] == "s1" and log[0] == "starting\n"
+
+
+def test_the_driver_pattern_finds_this_drivers_command_line_and_no_other() -> None:
+    argv = driver_argv("mirror", "/r/run-7/prompt.md", "/r/run-7", 1260.0)
+    pattern = re.compile(driver_pattern("/r/run-7"))
+    # pkill -f 对着容器里驱动的命令行（`python3 <驱动> …`）匹配。
+    assert pattern.search(" ".join(argv[3:]))
+    assert not pattern.search(" ".join(driver_argv("mirror", "/r/run-8/p.md", "/r/run-8", 1)[3:]))
+    # 发 pkill 的那个 shell 自己的命令行里有这个模式本身，不能匹配上。
+    assert not pattern.search(f"sh -c pkill -TERM -f '{driver_pattern('/r/run-7')}'")
+
+
+class _Driver:
+    """会话驱动的替身：输出给定的几行，或者读的时候被打断。"""
+
+    def __init__(self, lines: Any) -> None:
+        self.stdout = lines
+        self.waited = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.waited = True
+        return 0
+
+    def kill(self) -> None:
+        pass
+
+
+def test_run_driver_ends_the_driver_in_the_container_when_the_host_is_interrupted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aeval import platform
+
+    def interrupted(*args: Any) -> Any:
+        raise KeyboardInterrupt  # 宿主机这边 Ctrl-C，正在等驱动的输出
+
+    monkeypatch.setattr(platform, "read_driver", interrupted)
+    ended: list[bool] = []
+    driver = _Driver(iter([]))
+    start = lambda argv: driver  # noqa: E731
+    with pytest.raises(KeyboardInterrupt):
+        run_driver(["x"], 5, lambda: ended.append(True), start=start)  # type: ignore[arg-type]
+    assert ended == [True] and driver.waited
+
+
+def test_run_driver_returns_what_the_driver_said() -> None:
+    done = json.dumps({"event": "done", "session": "s1"}) + "\n"
+    ended: list[bool] = []
+    found, log = run_driver(
+        ["x"],
+        5,
+        lambda: ended.append(True),
+        start=lambda argv: _Driver(iter([done])),  # type: ignore[arg-type,return-value]
+    )
+    assert found["session"] == "s1" and ended == []
+
+
+def test_the_driver_waits_past_the_platforms_own_limit() -> None:
+    assert DEADLINE_SLACK_SECONDS > 0
+    assert driver_budget() == PLATFORM_MAX_SECONDS + DEADLINE_SLACK_SECONDS
+    argv = driver_argv("mirror", "p", "r", driver_budget())
+    assert argv[argv.index("--max-seconds") + 1] == str(
+        PLATFORM_MAX_SECONDS + DEADLINE_SLACK_SECONDS
+    )
+
+
+def test_the_time_is_the_drivers_from_asking_to_the_outcome_not_the_hosts() -> None:
+    platform = {**OK, "seconds": 2.5}
+    assert summarize_platform(platform, [], MEMORY, host_seconds=40.0)["wall_seconds"] == 2.5
+    # 驱动没给出用时（没走到建会话、或者没有结果）时才用宿主机量的。
+    no_time = {**OK, "seconds": None}
+    assert summarize_platform(no_time, [], MEMORY, host_seconds=40.0)["wall_seconds"] == 40.0
+    assert summarize_platform({}, [], MEMORY, host_seconds=41.0)["wall_seconds"] == 41.0
 
 
 def test_parse_hwm() -> None:
@@ -299,3 +428,24 @@ def test_report_shows_the_platform_decision_faults_limits_and_missing_memory(
     # 一个 pi 进程都没认出来的不当成 0。
     row = next(line for line in text.splitlines() if "| 平台 |" in line)
     assert "| 0.0 |" not in row
+
+
+def test_report_lists_unclassified_sessions_and_the_verdict_is_only_a_reference(
+    tmp_path: Path,
+) -> None:
+    from aeval.report import render
+
+    odd = {"kind": "unclassified", "reason": "结局不是契约里的值：'paused'"}
+    records = [
+        _session("a", "write", True, 1),
+        _session("p", "write", True, 1),
+        _session("p", "write", True, 2, invalid=True, platform_fault=odd),
+    ]
+    records[-1]["failure"] = {"primary": UNCLASSIFIED}
+    for record in records:
+        (tmp_path / record["session"]).mkdir()
+        (tmp_path / record["session"] / "session.json").write_text(json.dumps(record))
+    text = render(tmp_path)
+    assert "未归类（认不出是平台还是评测环境的问题" in text and "'paused'" in text
+    verdict = next(line for line in text.splitlines() if "按事先定下的标准" in line)
+    assert "只作参考" in verdict and "1 次会话未归类" in verdict

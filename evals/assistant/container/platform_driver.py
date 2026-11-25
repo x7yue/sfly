@@ -45,12 +45,36 @@ STOP_WAIT_SECONDS = 40.0
 READ_TIMEOUT_SECONDS = 45.0
 # 两次重连之间至少隔这么久（控制面重启之类的连不上时不空转）。
 RECONNECT_PAUSE_SECONDS = 1.0
-# 控制面的心跳事件名（apps/server/src/sse/sse.ts）：不是会话的事件，不写进记录。
-HEARTBEAT_EVENT = "control-plane-time"
+# 控制面的心跳事件名（`packages/schema` 的 `CONTROL_PLANE_TIME_EVENT`，
+# apps/server/src/sse/sse.ts 每 15 秒发一次）：不是会话的事件，不写进记录。
+HEARTBEAT_EVENT = "time"
+# 记下的每个问题是哪一种（`problem_kinds`，和 `problems` 一一对应），宿主机据此归类
+# （aeval/platform.py 的 `classify_platform`）：
+# - `control_plane`：控制面的接口回了错误、回应不对、连不上（建会话、停止、结束）；
+# - `deadline`：时限内没有等到结局；`no_outcome_after_stop`：停止之后也没有等到；
+# - `evaluator`：评测自己的问题（驱动出错、写不进自己的事件记录）；`signal`：驱动被结束了。
+CONTROL_PLANE = "control_plane"
+DEADLINE = "deadline"
+NO_OUTCOME_AFTER_STOP = "no_outcome_after_stop"
+EVALUATOR = "evaluator"
+SIGNAL = "signal"
+
+
+def shut(sock: socket.socket | None) -> None:
+    """关掉连接的两个方向：另一个线程里卡在读上的马上返回。"""
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
 
 class ControlPlaneError(RuntimeError):
     """控制面的接口回了错误（状态码和返回的内容在消息里），回应不对，或者连不上。"""
+
+
+class RecordError(Exception):
+    """写不进自己的事件记录（`platform-events.jsonl`，例如磁盘满了）：评测自己的问题，不当成事件流断了。"""
 
 
 class Interrupted(BaseException):
@@ -124,26 +148,34 @@ class Client:
         """连一次事件流，从序号 `after` 之后收（先补发、再接实时），到 `turn_end` 为止。
         返回 None 表示等到了，
         否则是这次断开的原因。到了 `deadline` 计时器关掉连接，读不会超出时限。"""
-        conn = self._connection(READ_TIMEOUT_SECONDS)
-        timer: threading.Timer | None = None
+        # 建立连接也不超出时限：连接的超时取读的超时和剩下的时间里小的那个。
+        conn = self._connection(max(min(READ_TIMEOUT_SECONDS, deadline - time.monotonic()), 0.05))
+
+        # 计时器在建立连接之前就开始：时限那一刻关掉连接，读不会超出时限。连接要在发出请求之后
+        # 记下来（事件流的响应没有长度，`getresponse` 之后 `conn.sock` 就是 None 了）；
+        # 计时器先到了、连接还没建好的，建好之后马上关。
+        lock = threading.Lock()
+        held: list[socket.socket | None] = [None]
+        expired = threading.Event()
+
+        def cut() -> None:
+            with lock:
+                expired.set()
+                shut(held[0])
+
+        timer = threading.Timer(max(deadline - time.monotonic(), 0), cut)
+        timer.daemon = True
+        timer.start()
         try:
             conn.request(
                 "GET",
                 f"/sessions/{session_id}/events?after={after}",
                 headers={"accept": "text/event-stream", "x-sfly-nickname": self.nickname},
             )
-            sock = conn.sock
-
-            def cut() -> None:
-                if sock is not None:
-                    try:
-                        sock.shutdown(socket.SHUT_RDWR)
-                    except OSError:
-                        pass
-
-            timer = threading.Timer(max(deadline - time.monotonic(), 0), cut)
-            timer.daemon = True
-            timer.start()
+            with lock:
+                held[0] = conn.sock
+                if expired.is_set():
+                    shut(held[0])
             response = conn.getresponse()
             if response.status != 200:
                 return f"事件流返回 {response.status}"
@@ -159,8 +191,11 @@ class Client:
                 if name == HEARTBEAT_EVENT:
                     continue
                 received.append(event)
-                sink.write(json.dumps(event, ensure_ascii=False) + "\n")
-                sink.flush()
+                try:
+                    sink.write(json.dumps(event, ensure_ascii=False) + "\n")
+                    sink.flush()
+                except OSError as error:
+                    raise RecordError(f"写不进事件记录：{error}") from error
                 if is_turn_end(event):
                     return None
             return "事件流结束了"
@@ -169,8 +204,7 @@ class Client:
         except (OSError, ValueError, http.client.HTTPException) as error:
             return f"事件流断了：{error}"
         finally:
-            if timer is not None:
-                timer.cancel()
+            timer.cancel()
             conn.close()
 
     def follow(
@@ -183,7 +217,9 @@ class Client:
             why = self.stream_once(session_id, last_seq(received), deadline, sink, received)
             if why is None:
                 return True, breaks
-            breaks.append(why)
+            # 到了时限是计时器关的连接，不算一次断开。
+            if time.monotonic() < deadline:
+                breaks.append(why)
             pause = min(RECONNECT_PAUSE_SECONDS, deadline - time.monotonic())
             if pause > 0:
                 time.sleep(pause)
@@ -214,7 +250,8 @@ def precheck(client: Client, project: str) -> str | None:
 def run(
     client: Client, project: str, prompt: str, max_seconds: float, out: Path, say: Any
 ) -> dict[str, Any]:
-    started = time.monotonic()
+    """一次会话，见文件开头。`seconds` 是评测这一侧量的用时：
+    从发出题目（建会话）到看到这一轮的结局，不含开始前的检查和结束会话；没等到结局时量到不再等为止。"""
     record: dict[str, Any] = {
         "precheck": None,
         "session": None,
@@ -224,14 +261,24 @@ def run(
         "stopped": False,
         "stream_breaks": [],
         "problems": [],
+        "problem_kinds": [],
+        "seconds": None,
     }
+
+    def problem(kind: str, text: str) -> None:
+        record["problems"].append(text)
+        record["problem_kinds"].append(kind)
+
     events: list[dict[str, Any]] = []
+    asked: float | None = None
+    waited: float | None = None
     out.mkdir(parents=True, exist_ok=True)
     with (out / "platform-events.jsonl").open("w") as sink:
         try:
             failed = precheck(client, project)
             record["precheck"] = "ok" if failed is None else failed
             if failed is None:
+                asked = time.monotonic()
                 session = client.request("POST", f"/projects/{project}/sessions", {"text": prompt})
                 created = session.get("id") if isinstance(session, dict) else None
                 if not isinstance(created, str) or not created:
@@ -239,37 +286,42 @@ def run(
                     raise ControlPlaneError(f"建会话的回应里没有会话 ID：{text}")
                 record["session"] = session_id = created
                 record["queued"] = session.get("status") == "queued"
-                got, breaks = client.follow(session_id, started + max_seconds, sink, events)
+                got, breaks = client.follow(session_id, asked + max_seconds, sink, events)
+                waited = time.monotonic()
                 record["stream_breaks"] += breaks
                 if not got:
                     record["deadline_passed"] = True
                     why = "（这一轮在排队）" if record["queued"] else ""
-                    record["problems"].append(f"在时限内没有等到 turn_end{why}")
-                    client.request("POST", f"/sessions/{session_id}/stop")
+                    problem(DEADLINE, f"在时限内没有等到 turn_end{why}")
                     record["stopped"] = True
+                    client.request("POST", f"/sessions/{session_id}/stop")
                     got, breaks = client.follow(
                         session_id, time.monotonic() + STOP_WAIT_SECONDS, sink, events
                     )
+                    waited = time.monotonic()
                     record["stream_breaks"] += [f"停止之后：{b}" for b in breaks]
                     if not got:
-                        record["problems"].append("停止之后没有等到结局")
+                        problem(NO_OUTCOME_AFTER_STOP, "停止之后没有等到结局")
         except ControlPlaneError as error:
-            record["problems"].append(str(error))
+            problem(CONTROL_PLANE, str(error))
+        except RecordError as error:
+            problem(EVALUATOR, str(error))
         except Interrupted:
-            record["problems"].append("会话驱动被结束了（SIGTERM、SIGINT）")
+            problem(SIGNAL, "会话驱动被结束了（SIGTERM、SIGINT）")
         except Exception as error:  # 意外也收尾：写记录、发 end
-            record["problems"].append(f"会话驱动出错：{type(error).__name__}: {error}")
+            problem(EVALUATOR, f"会话驱动出错：{type(error).__name__}: {error}")
         finally:
+            if asked is not None:
+                record["seconds"] = round((waited or time.monotonic()) - asked, 1)
             if record["session"]:
                 try:
                     client.request("POST", f"/sessions/{record['session']}/end")
                 except ControlPlaneError as error:
-                    record["problems"].append(f"结束会话：{error}")
+                    problem(CONTROL_PLANE, f"结束会话：{error}")
                 except Interrupted:
-                    record["problems"].append("结束会话时会话驱动被结束了")
+                    problem(SIGNAL, "结束会话时会话驱动被结束了")
     ends = [e for e in events if is_turn_end(e)]
     record["turn_end"] = ends[-1] if ends else None
-    record["seconds"] = round(time.monotonic() - started, 1)
     (out / "platform.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
     say({"event": "done", **record})
     return record

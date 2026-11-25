@@ -68,35 +68,67 @@ ASSISTANT_PI_PACKAGE = "/app/node_modules/@earendil-works/pi-coding-agent/packag
 
 ENVIRONMENT = "environment"
 PLATFORM = "platform"
+# 认不出是哪一边的问题：作废，但 `report` 单独列出，判定那一行写明「结论只作参考」
+# （既不藏掉，也不冤枉平台）。
+UNCLASSIFIED = "unclassified"
 # 平台以这两种结局结束一轮，是平台这一侧的问题（连不上工作台、开始这一轮失败、旧的 pi 进程没有退出；
 # pi 进程在这一轮里退出了、助手服务重启了），不是助手没把题做出来。
 PLATFORM_OUTCOMES = ("failed", "interrupted")
+# 契约里一轮的结局（`packages/schema` 的 `TurnOutcome`）。
+TURN_OUTCOMES = ("completed", "stopped", "limit", "model_unavailable", "interrupted", "failed")
+# 驱动记下的问题是哪一种（container/platform_driver.py 的 `problem_kinds`）归哪一类。
+# `deadline`、`no_outcome_after_stop` 只在评测停下了它之后出现，那一条先判了，这里列出来是为了
+# 「认得出」：表里没有的种类是「未归类」。
+PROBLEM_CLASSES = {
+    "control_plane": PLATFORM,
+    "deadline": PLATFORM,
+    "no_outcome_after_stop": PLATFORM,
+    "evaluator": ENVIRONMENT,
+    "signal": ENVIRONMENT,
+}
 
 
 def classify_platform(platform: dict[str, Any]) -> tuple[str, str] | None:
-    """这次会话里平台和评测环境有没有出问题：（`ENVIRONMENT` 或 `PLATFORM`，原因），都没有是 None。
+    """这次会话里平台和评测环境有没有出问题：（`ENVIRONMENT`、`PLATFORM` 或 `UNCLASSIFIED`，原因），
+    都没有是 None。每一种情况明确列出来归哪一类，不靠兜底：
 
-    模型端点的故障不在这里认：`classify` 从 pi 的事件里认，认出来的也是环境故障，优先于这里的结果
-    （平台以 `failed` 结束、原因是模型端点的，算端点的）。"""
+    - 环境故障：会话驱动没给出结果、开始前的检查没过、评测自己的问题（驱动出错、
+      写不进自己的事件记录、驱动被结束了）；
+    - 平台故障：评测停下了它（平台在自己的上限上没给结局；先于「驱动被结束了」判，不被它盖掉）、
+      建会话或停止、结束回了错误、没有等到结局、结局是 `failed`、`interrupted`，或者平台自己给了
+      `stopped` 而评测没有让它停；
+    - 未归类：结局不是契约里的值，或者驱动记下了认不出的问题。
+
+    模型端点的故障不在这里认：`classify` 从 pi 的事件里认，认出来的也是环境故障，
+    优先于这里的结果。"""
     if not platform:
         return ENVIRONMENT, "会话驱动没有给出结果"
     listed = [str(p) for p in platform.get("problems") or []]
+    kinds = [str(k) for k in platform.get("problem_kinds") or []]
     problems = "；".join(listed)
     check = platform.get("precheck")
     if check != "ok":
         return ENVIRONMENT, f"开始前的检查没过：{check or problems or '没有做'}"
-    if any("会话驱动被结束了" in p for p in listed):
-        return ENVIRONMENT, f"会话驱动被结束了：{problems}"
-    if not platform.get("session"):
-        return PLATFORM, f"没有建成会话：{problems}"
+    if len(kinds) != len(listed) or any(k not in PROBLEM_CLASSES for k in kinds):
+        return UNCLASSIFIED, f"认不出的问题：{problems}"
     if platform.get("deadline_passed"):
         return PLATFORM, f"平台在自己的上限上没有给出结局，评测停下了它：{problems}"
+    evaluator = [p for p, k in zip(listed, kinds, strict=True) if PROBLEM_CLASSES[k] == ENVIRONMENT]
+    if evaluator:
+        return ENVIRONMENT, f"评测自己的问题：{'；'.join(evaluator)}"
+    if not platform.get("session"):
+        return PLATFORM, f"没有建成会话：{problems}"
     turn_end = platform.get("turn_end")
     if not isinstance(turn_end, dict):
         return PLATFORM, f"没有等到这一轮的结局：{problems}"
-    if turn_end.get("outcome") in PLATFORM_OUTCOMES:
-        return PLATFORM, f"平台以 {turn_end.get('outcome')} 结束了这一轮：{turn_end.get('reason')}"
-    if problems:
+    outcome = turn_end.get("outcome")
+    if outcome not in TURN_OUTCOMES:
+        return UNCLASSIFIED, f"结局不是契约里的值：{outcome!r}"
+    if outcome in PLATFORM_OUTCOMES:
+        return PLATFORM, f"平台以 {outcome} 结束了这一轮：{turn_end.get('reason')}"
+    if outcome == "stopped" and not platform.get("stopped"):
+        return PLATFORM, f"评测没有让它停，平台自己停下了这一轮：{turn_end.get('reason')}"
+    if listed:
         return PLATFORM, problems
     return None
 
@@ -362,7 +394,82 @@ def platform_record(platform: dict[str, Any], summary: dict[str, Any]) -> dict[s
         "deadline_passed": bool(platform.get("deadline_passed")),
         "stream_breaks": platform.get("stream_breaks") or [],
         "problems": list(platform.get("problems") or []) if platform else ["会话驱动没有给出结果"],
+        "problem_kinds": list(platform.get("problem_kinds") or []),
     }
+
+
+def driver_argv(mirror: str, prompt: str, run_dir: str, budget: float) -> list[str]:
+    """宿主机起会话驱动的命令（在镜像站容器里）。"""
+    return [
+        "docker",
+        "exec",
+        mirror,
+        "python3",
+        DRIVER,
+        "--nickname",
+        NICKNAME,
+        "--prompt-file",
+        prompt,
+        "--max-seconds",
+        str(budget),
+        "--out",
+        run_dir,
+    ]
+
+
+def driver_pattern(run_dir: str) -> str:
+    """在镜像站容器里认出这一次的会话驱动（`pkill -f` 的扩展正则）：
+    驱动的脚本名，加上这一次的结果目录。开头的 `[p]` 让 pkill 所在的 shell 自己的命令行不匹配。"""
+    return f"[p]latform_driver.py .*{run_dir}"
+
+
+def run_driver(
+    argv: list[str],
+    timeout: float,
+    end_driver: Callable[[], None],
+    start: Callable[[list[str]], subprocess.Popen[str]] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """起会话驱动，读它的输出（总时限 `timeout`，到了结束容器里的驱动）。
+    宿主机这边被打断（Ctrl-C）时也结束容器里的驱动，不让它和 pi 在工作台上接着做。"""
+    proc = (start or _popen_driver)(argv)
+    try:
+        return read_driver(proc.stdout or [], timeout, end_driver)
+    except BaseException:
+        end_driver()
+        raise
+    finally:
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def _popen_driver(argv: list[str]) -> subprocess.Popen[str]:
+    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+
+def driver_budget() -> float:
+    """会话驱动等结局的时限：平台自己的上限再加 `DEADLINE_SLACK_SECONDS`
+    （平台到了上限还要停一轮、发结局）。"""
+    return PLATFORM_MAX_SECONDS + DEADLINE_SLACK_SECONDS
+
+
+def summarize_platform(
+    platform: dict[str, Any],
+    raw_events: list[dict[str, Any]],
+    memory: dict[str, Any],
+    host_seconds: float,
+) -> dict[str, Any]:
+    """`driver.json`：用时取驱动量的（从发出题目到看到结局），驱动没给出时才用宿主机量的。"""
+    turn_end = platform.get("turn_end")
+    seconds = platform.get("seconds")
+    return driver_summary(
+        turn_end if isinstance(turn_end, dict) else None,
+        raw_events,
+        memory,
+        deadline_passed=bool(platform.get("deadline_passed")),
+        seconds=float(seconds) if isinstance(seconds, (int, float)) else host_seconds,
+    )
 
 
 def run_platform_session(
@@ -405,44 +512,20 @@ def run_platform_session(
     )
     seeded_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
-    budget = PLATFORM_MAX_SECONDS + DEADLINE_SLACK_SECONDS
-    argv = [
-        "docker",
-        "exec",
-        mirror,
-        "python3",
-        DRIVER,
-        "--nickname",
-        NICKNAME,
-        "--prompt-file",
-        prompt,
-        "--max-seconds",
-        str(budget),
-        "--out",
-        run_dir,
-    ]
+    budget = driver_budget()
 
     def end_driver() -> None:
         # docker exec 断开不会结束容器里的驱动：直接给它发 SIGTERM，它照常收尾（写记录、发 end）。
-        pattern = shlex.quote(f"[p]latform_driver.py .*{run_dir}")
-        d.sh(mirror, f"pkill -TERM -f {pattern}", check=False)
+        d.sh(mirror, f"pkill -TERM -f {shlex.quote(driver_pattern(run_dir))}", check=False)
 
     sampler = PeakSampler(stack.assistant_container)
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert proc.stdout is not None
     try:
-        platform, log = read_driver(
-            proc.stdout, budget + DRIVER_STOP_WAIT_SECONDS + HOST_SLACK_SECONDS, end_driver
+        platform, log = run_driver(
+            driver_argv(mirror, prompt, run_dir, budget),
+            budget + DRIVER_STOP_WAIT_SECONDS + HOST_SLACK_SECONDS,
+            end_driver,
         )
-    except BaseException:
-        # 宿主机这边被打断（Ctrl-C）：容器里的驱动也结束掉，不让它和 pi 在工作台上接着做。
-        end_driver()
-        raise
     finally:
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
         memory = sampler.stop()
     host_seconds = time.monotonic() - started
     (out / "driver-stdout.log").write_text("".join(log))
@@ -454,14 +537,8 @@ def run_platform_session(
             str(platform_id),
             out,
         )
-    turn_end = platform.get("turn_end")
-    summary = driver_summary(
-        turn_end if isinstance(turn_end, dict) else None,
-        read_events(out / "events.jsonl") if (out / "events.jsonl").exists() else [],
-        memory,
-        deadline_passed=bool(platform.get("deadline_passed")),
-        seconds=float(platform.get("seconds") or host_seconds),
-    )
+    raw = read_events(out / "events.jsonl") if (out / "events.jsonl").exists() else []
+    summary = summarize_platform(platform, raw, memory, host_seconds)
     (out / "driver.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
     return finish_record(
         stack,

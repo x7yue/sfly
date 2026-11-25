@@ -19,10 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from aeval import docker as d
-from aeval.classify import INFRA, PLATFORM_FAULT, classify, is_assistant_run
+from aeval.classify import INFRA, PLATFORM_FAULT, UNCLASSIFIED, classify, is_assistant_run
 from aeval.env import OPT, Stack
 from aeval.models import PROVIDER, Model
-from aeval.platform import ENVIRONMENT
+from aeval.platform import ENVIRONMENT, PLATFORM
 from aeval.tasks import GUARD, Check, Task, stage_reference, summarize
 
 DRIVER = f"{OPT}/session_driver.py"
@@ -188,6 +188,8 @@ def run_session(
         driver_summary = json.loads((out / "driver.json").read_text())
     if timed_out:
         driver_summary["exit_reason"] = "time_limit"
+    # 会话驱动被宿主机超时结束、没写 driver.json 时，上限照这次给它的记（判定按上限核对两臂）。
+    driver_summary.setdefault("limits", {"max_turns": max_turns, "max_seconds": max_seconds})
     return finish_record(
         stack,
         task,
@@ -269,19 +271,21 @@ def judge(
     """这次会话作不作废、失败记成什么。返回（作废没有，失败分类，判分的检查项）。
 
     - 环境故障作废，不论判分，主类「环境故障」：模型端点的故障（`classify` 认的，优先）、
-      平台臂开始前的检查没过、会话驱动没给出结果。重跑，不计入结果。重试成功的端点故障照常算。
+      平台臂开始前的检查没过、评测自己的问题。重跑，不计入结果。重试成功的端点故障照常算。
     - 平台故障（只有平台臂）是**有效的失败**：判分加一条没过的守护项「平台这一侧没有出问题」
       （写明原因），所以不算通过，主类「平台故障」。
+    - 未归类（只有平台臂）：作废，主类「未归类」；`report` 单独列出，判定写明只作参考。
     - 其余没通过的照 `classify`。
     """
     endpoint = bool(classified["invalid"])
     if not endpoint and platform_fault is not None:
         kind, reason = platform_fault
-        if kind == ENVIRONMENT:
-            classified = {**classified, "primary": INFRA, "invalid": True, "environment": reason}
-        else:
+        if kind == PLATFORM:
             classified = {**classified, "primary": PLATFORM_FAULT, "platform": reason}
             checks = [*checks, Check("平台这一侧没有出问题", False, reason, kind=GUARD)]
+        else:
+            primary = INFRA if kind == ENVIRONMENT else UNCLASSIFIED
+            classified = {**classified, "primary": primary, "invalid": True, "environment": reason}
     invalid = bool(classified["invalid"])
     passed = summarize(checks)["passed"]
     return invalid, classified if invalid or not passed else None, checks

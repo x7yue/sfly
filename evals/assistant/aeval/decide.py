@@ -51,11 +51,14 @@ def _arm(records: list[dict[str, Any]], model: str, arm: str) -> list[dict[str, 
 
 
 def limits_of(records: list[dict[str, Any]]) -> list[str]:
-    """这些会话实际用的上限（各自 `driver.json` 里记的），去重排序。"""
+    """这些会话实际用的上限（各自 `driver.json` 里记的），去重排序。
+    没记上限的会话（很早以前的记录、被结束了没写 `driver.json` 的）不算，不让它把两臂的上限变成
+    「不一样」。"""
     found = set()
     for record in records:
         given = (record.get("driver") or {}).get("limits") or {}
-        found.add(f"{given.get('max_turns', '?')} 轮、{given.get('max_seconds', '?')} 秒")
+        if given:
+            found.add(f"{given.get('max_turns', '?')} 轮、{given.get('max_seconds', '?')} 秒")
     return sorted(found)
 
 
@@ -103,10 +106,14 @@ def decide(records: list[dict[str, Any]], model: str, remote: str = "b") -> dict
         good, bad = VERDICTS[remote]
         verdict = good if all(criteria.values()) else bad
     limits = {"a": limits_of(a), remote: limits_of(b)}
+    # 远程那一臂没通过的会话里，主类是平台故障的有几次（有效的会话）；未归类的会话作废了，另数。
     platform_faults = sum(
         1
         for r in b
         if not r["grade"]["passed"] and (r.get("failure") or {}).get("primary") == "平台故障"
+    )
+    unclassified = sum(
+        1 for r in all_b if r.get("invalid") and (r.get("failure") or {}).get("primary") == "未归类"
     )
     enough = len(tasks) >= REQUIRED_TASKS and all(n >= REQUIRED_PER_TASK for n in counts_b.values())
     return {
@@ -124,6 +131,7 @@ def decide(records: list[dict[str, Any]], model: str, remote: str = "b") -> dict
         "limits": limits,
         "limits_match": limits["a"] == limits[remote],
         "platform_faults": platform_faults,
+        "unclassified": unclassified,
         "criteria": criteria,
         "verdict": verdict,
     }
@@ -145,7 +153,7 @@ def render_decision(result: dict[str, Any]) -> str:
         f"| | {ARM_NAMES['a']} | {ARM_NAMES[b]} |",
         "|---|---|---|",
         f"| 有效会话数 | {sum(sessions['a'].values())} | {sum(sessions[b].values())} |",
-        f"| 作废（端点故障） | {result['invalid']['a']} | {result['invalid'][b]} |",
+        f"| 作废（环境故障、未归类） | {result['invalid']['a']} | {result['invalid'][b]} |",
         f"| 通过 | {result['passed']['a']} | {result['passed'][b]} |",
         f"| 轮数中位数 | {result['turns_median']['a']} | {result['turns_median'][b]} |",
         f"| 失败分类 | {_counts(result['failures']['a'])} | {_counts(result['failures'][b])} |",
@@ -156,12 +164,18 @@ def render_decision(result: dict[str, Any]) -> str:
     if result["verdict"] is None:
         lines.append("- 两臂每道题的有效会话数不一样，判定不成立，先补齐")
     else:
-        caveat = ""
+        caveats = []
         if not result["limits_match"]:
-            caveat = (
-                f"（只作参考：两臂的上限不一样，臂 A {'、'.join(result['limits']['a'])}，"
-                f"{SHORT_NAMES[b]} {'、'.join(result['limits'][b])}，轮数和超时不可比）"
+            caveats.append(
+                f"两臂的上限不一样，臂 A {'、'.join(result['limits']['a'])}，"
+                f"{SHORT_NAMES[b]} {'、'.join(result['limits'][b])}，轮数和超时不可比"
             )
+        if result["unclassified"]:
+            caveats.append(
+                f"{SHORT_NAMES[b]}有 {result['unclassified']} 次会话未归类"
+                "（作废，见上面的未归类表）"
+            )
+        caveat = f"（只作参考：{'；'.join(caveats)}）" if caveats else ""
         lines.append(f"- 按事先定下的标准：{result['verdict']}{caveat}")
         if result["platform_faults"]:
             lines.append(
