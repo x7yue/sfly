@@ -7,7 +7,7 @@
 //! - 标准输出 → 来源 stdout、级别 info；标准错误 → 来源 stderr、级别 error；
 //! - 事件管道里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；消息超过 [`MAX_LINE_BYTES`] 字节时和标准输出的超长行一样
 //!   拆成几条、每条带上下文（[`LineSplitter::split_whole`]）；一行超过 [`MAX_EVENT_LINE_BYTES`] 字节整行丢弃，
-//!   Agent 写一行警告（来源 agent、级别 warn）说明丢了多少字节；
+//!   Agent 写一行警告（来源 agent、级别 warn）说明丢了多少字节、丢的是哪一种事件（[`EventKind`]）、后果是什么；
 //! - 任务执行中途 Agent 时间跳变（[`crate::time_jump`]）→ Agent 自己写一行提示，来源 agent、级别 warn；
 //! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
 //! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 单调时钟秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
@@ -17,7 +17,7 @@
 //! - `{"type":"action_summary"}`（`ctx.action`、`ctx.mark` 的摘要，规格 #345，格式见 sdk/python/src/sfly/context.py）：
 //!   和进度一样只保留最新一份，每个任务每秒最多发一次 `ActionSummary`（这一行原文，Agent 不解析内容），
 //!   任务结束前补发最后一份；断线期间每个任务只排队最新的一份（[`Telemetry::send_action_summary`]）。
-//!   摘要再长也整行转发，但事件管道的一行超过 [`MAX_EVENT_LINE_BYTES`] 时整行丢弃（[`read_events`]）；
+//!   摘要不超过 [`MAX_EVENT_LINE_BYTES`] 时整行转发，超过时整份丢弃，控制面上的摘要停在之前的一份（[`read_events`]）；
 //! - `{"type":"action_start"}`、`{"type":"action_end"}`、`{"type":"mark"}`（动作和标记的明细，规格 #345）：解析成
 //!   `ActionEvent`，和日志一样约每 100 毫秒一批（一批最多 [`MAX_BATCH_ACTIONS`] 个、[`MAX_BATCH_BYTES`] 字节）以 `ActionBatch` 转发，
 //!   任务结束前发完；
@@ -36,7 +36,7 @@
 //! 读出、还没转发的内容有上限（[`LINE_CHUNKS`]、[`EVENT_CHUNKS`]）：转发跟不上时暂停读取，管道写满后节点的写入等待，
 //! 不丢日志，Agent 内存不随节点的输出量增长（#75）。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -72,12 +72,18 @@ const LINE_CHUNKS: usize = 16;
 /// 标准输出 / 标准错误一行的最大字节数；更长的行被拆成多行。事件管道里的日志（SDK 日志的消息、不认识的内容）也一样，
 /// 一条超过它就拆成几条（[`LineSplitter::split_whole`]）。
 const MAX_LINE_BYTES: usize = 64 * 1024;
-/// 事件管道一行的最大字节数（含 JSON 的引号和转义）；更长的一行整行丢弃，Agent 写一行警告日志说明丢了多少字节（[`read_events`]）。
+/// 事件管道一行的最大字节数（含 JSON 的引号和转义）；更长的一行整行丢弃，Agent 写一行警告日志说明丢了多少字节、丢的是哪一种事件
+/// （[`read_events`]、[`Forwarder::dropped_line`]）。
 /// 不丢的话，一行没有换行的内容会让 `read_events` 的缓冲区一直涨，Agent 的内存跟着节点写的量走；一行日志整条发给控制面，
-/// 也会超过网关一条消息的上限（80 MiB，#674）。SDK 文档里的上限都取满时，最长的一行是动作摘要，约 1.4 MiB，
-/// 这个数是它的近三倍；节点写出超过文档上限的内容（取到传输余量、全是 3 字节的字符）时一份摘要可以到约 16 MiB，那样的一行也被丢弃。
+/// 也会超过网关一条消息的上限（80 MiB，#674）。
+///
+/// 这个数够不够用要看动作摘要（SDK 能写出的最长的一行）：摘要里每种动作名称一项，名称的种类没有上限的时候（这个 PR 的基点，
+/// 旧版本的 SDK 也一样），名称每种都在文档上限以内（64 个字符）、种类够多（约 2.5 万种，审查实测）就超过 4 MiB，这时整份摘要被丢弃，
+/// 控制面上的摘要停在之前的一份，警告里写明丢的是动作摘要；名称的种类有上限之后（#726 限到 1000 种），
+/// SDK 文档上限以内最长的一行约 1.7 MiB（1000 种最长的名称加三个列表列满），4 MiB 够用。
+/// 节点写出超过文档上限的内容（取到传输余量、全是 3 字节的字符）时一份摘要可以到约 16 MiB，那样的一行也被丢弃。
 /// 读取这边攒着的一行因此不超过它，排队的块最多 [`EVENT_CHUNKS`] 块；没有量出事件管道在 Agent 里占的内存的整体上界
-/// （一口气写出一批接近上限的行时，Agent 的峰值内存实测涨约 90 到 210 MiB，见 docs/ARCHITECTURE.md §5.4）。
+/// （没超过上限的行一口气写出一批时，Agent 的峰值内存审查实测涨约 266 MiB：40 行、每行 4 MiB 的不认识的内容，见 docs/ARCHITECTURE.md §5.4）。
 const MAX_EVENT_LINE_BYTES: usize = 4 * 1024 * 1024;
 /// 一行被拆开时，每一段带的上下文（前一段的结尾、后一段的开头，只用来打码，见 `LogLine.before` / `after`）最多这么多字节。
 /// 每种写法的长度都不超过它的 secret 值，跨在拆分处也认得出。
@@ -407,6 +413,7 @@ impl Pump {
             metrics: Merger::default(),
             throttle: Throttle::new(forward_rate),
             time_jumps: time_jump::Watch::start(),
+            too_long: BTreeMap::new(),
         };
         let handle = tokio::spawn(forwarder.run(lines_rx, events_rx, exited_rx));
         Pump {
@@ -454,9 +461,141 @@ struct EventChunk {
     /// 读到这一块时的单调时钟读数：这一块里的每个事件（日志、进度、指标）都用它，不逐行读时钟。
     /// 事件的 Agent 时间是 SDK 记的（[`sdk_time_ms`]），这里不读。
     monotonic_ms: i64,
-    /// 这一块里读到结尾、因为超过 [`MAX_EVENT_LINE_BYTES`] 被丢弃的行：（这一行原来在 `bytes` 里的位置，这一行的字节数（不含换行）），
-    /// 位置之前的内容先处理、再写这一行的警告，警告就排在被丢弃的行原来所在的地方。管道在一行中间关闭时，这一行也算（位置是 0）。
-    oversized: Vec<(usize, u64)>,
+    /// 这一块里读到结尾、被丢弃的行（[`Dropped`]）：位置之前的内容先处理、再写这一行的警告，警告就排在被丢弃的行原来所在的地方。
+    /// 管道在一行中间关闭时，这一行也算（位置是 0）。
+    dropped: Vec<Dropped>,
+}
+
+/// 事件管道里被丢弃的一行：只留下大小和开头的一小段，不留内容。
+struct Dropped {
+    /// 这一行原来在 [`EventChunk::bytes`] 里的位置。
+    at: usize,
+    /// 这一行的字节数（不含换行）。
+    size: u64,
+    /// 为什么丢。
+    reason: DropReason,
+    /// 这一行开头最多 [`EVENT_HEAD_BYTES`] 个字节（固定大小，不随行的长度变），只用来认出事件的种类（[`EventKind::of_head`]），
+    /// 不写进日志。[`DropReason::Unfinished`] 不认种类，不留。
+    head: Vec<u8>,
+}
+
+/// 事件管道的一行为什么被丢弃。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DropReason {
+    /// 超过 [`MAX_EVENT_LINE_BYTES`]（包括还没读到的后半截，一直丢到这一行的换行；管道在这一行中间关闭也算）。
+    TooLong,
+    /// 管道关闭时最后一行没有写完（没有换行结尾）：和超长的行一样不处理，只是原来不吭声。
+    Unfinished,
+}
+
+/// 被丢弃的一行开头留下的字节数：认出 `type` 够了（SDK 写的事件 `type` 是第一个字段，最长的 `action_summary` 也只在开头几十个字节里）。
+const EVENT_HEAD_BYTES: usize = 256;
+
+/// 事件的种类（事件里的 `type`，[`Event`]）：丢弃一行时用它说明丢的是什么、后果是什么。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum EventKind {
+    Log,
+    Progress,
+    Metric,
+    Notify,
+    ActionSummary,
+    ActionStart,
+    ActionEnd,
+    Mark,
+}
+
+/// 事件里的 `type` 和它对应的种类（[`Event`] 的各个变体）：两端和用例表里的 `event_types` 一致。
+const EVENT_KINDS: [(&str, EventKind); 8] = [
+    ("log", EventKind::Log),
+    ("progress", EventKind::Progress),
+    ("metric", EventKind::Metric),
+    ("notify", EventKind::Notify),
+    ("action_summary", EventKind::ActionSummary),
+    ("action_start", EventKind::ActionStart),
+    ("action_end", EventKind::ActionEnd),
+    ("mark", EventKind::Mark),
+];
+
+impl EventKind {
+    /// 从一行开头的一小段认出事件的种类：`{"type": "名字"` 开头（`type` 是第一个字段，前后可以有 JSON 允许的空白），
+    /// 名字是认识的种类。认不出（不是对象、`type` 不是第一个字段、种类不认识、开头被截断）是 `None`。
+    /// 不解析整行：这一行被丢了，也不是一个能解析的完整 JSON。
+    fn of_head(head: &[u8]) -> Option<EventKind> {
+        fn skip(bytes: &[u8]) -> &[u8] {
+            let start = bytes
+                .iter()
+                .position(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+                .unwrap_or(bytes.len());
+            &bytes[start..]
+        }
+        let rest = skip(head).strip_prefix(b"{")?;
+        let rest = skip(rest).strip_prefix(b"\"type\"")?;
+        let rest = skip(rest).strip_prefix(b":")?;
+        let rest = skip(rest).strip_prefix(b"\"")?;
+        let end = rest.iter().position(|&b| b == b'"')?;
+        let name = &rest[..end];
+        EVENT_KINDS
+            .iter()
+            .find(|(type_name, _)| type_name.as_bytes() == name)
+            .map(|&(_, kind)| kind)
+    }
+}
+
+/// 认出的种类（`None` = 认不出）叫什么：写在警告里，只用固定的名字，不用被丢的内容。
+fn kind_name(kind: Option<EventKind>) -> &'static str {
+    match kind {
+        Some(EventKind::Log) => "日志",
+        Some(EventKind::Progress) => "进度",
+        Some(EventKind::Metric) => "指标",
+        Some(EventKind::Notify) => "通知",
+        Some(EventKind::ActionSummary) => "动作摘要",
+        Some(EventKind::ActionStart) => "动作开始的明细",
+        Some(EventKind::ActionEnd) => "动作结束的明细",
+        Some(EventKind::Mark) => "标记",
+        None => "认不出种类的内容",
+    }
+}
+
+/// 超过上限的一行被丢弃时写的警告：只写种类、大小和上限，不写这一行的内容；认得出种类时写这一种丢了以后会怎样。
+fn too_long_warning(kind: Option<EventKind>, size: u64) -> String {
+    let what = match kind {
+        Some(EventKind::Log) => "这条日志没有记下来。日志写得太长，请拆开写",
+        Some(EventKind::ActionSummary) => {
+            "动作摘要没有更新，停在之前的一份（动作名称的种类太多，摘要太大了）"
+        }
+        Some(EventKind::Progress) => "进度没有更新，停在之前的一次",
+        Some(EventKind::Notify) => "这条通知没有发出",
+        Some(EventKind::Metric) => "这个指标点没有记下来",
+        Some(EventKind::ActionStart | EventKind::ActionEnd | EventKind::Mark) => {
+            "这条动作明细没有记下来"
+        }
+        None => "这一行开头认不出是哪一种事件，说不清丢掉的是什么",
+    };
+    format!(
+        "事件管道里的一行有 {size} 字节，超过上限 {MAX_EVENT_LINE_BYTES} 字节，已丢弃：这一行是{}，{what}",
+        kind_name(kind)
+    )
+}
+
+/// 管道关闭时最后一行没有写完的警告。
+fn unfinished_warning(size: u64) -> String {
+    format!("事件管道关闭时最后一行没有写完（没有换行结尾，有 {size} 字节），已丢弃")
+}
+
+/// 任务里同一种事件超过上限被丢弃的合计：这一种第一次丢弃时写完整的警告，之后只计数，任务结束时写一行合计。
+#[derive(Default)]
+struct DropTotal {
+    lines: u64,
+    largest: u64,
+}
+
+fn drop_total_warning(kind: Option<EventKind>, total: &DropTotal) -> String {
+    format!(
+        "这个任务事件管道里超过上限的{}一共被丢弃了 {} 行，最大的一行有 {} 字节",
+        kind_name(kind),
+        total.lines,
+        total.largest
+    )
 }
 
 /// SDK 事件的 Agent 时间：事件带时间戳时用它（SDK 读的是系统时钟，经 [`clock::to_agent_time_ms`] 换算），
@@ -863,16 +1002,19 @@ fn detail(
     }
 }
 
-/// 读取事件管道，把以换行结尾的完整内容按块交给 `chunks`，直到所有写端关闭（最后不完整的一行丢弃）。
+/// 读取事件管道，把以换行结尾的完整内容按块交给 `chunks`，直到所有写端关闭。
 /// 每块带上读到它的那一刻的单调时钟读数：SDK 不改，事件的单调时钟读数由 Agent 在这里打上。
 /// 通道有界：处理跟不上时不再读管道，写满后 SDK 的写入等待（背压），Agent 内存里不会越积越多。
 ///
-/// 一行超过 [`MAX_EVENT_LINE_BYTES`] 时整行丢弃（包括还没读到的后半截，一直丢到这一行的换行），丢弃的字节数记在
-/// 读到这一行结尾的那一块的 [`EventChunk::oversized`] 里；不是读到什么就先攒着，攒到换行才发现太长。
+/// 丢弃的行记在读到这一行结尾的那一块的 [`EventChunk::dropped`] 里（大小、开头一小段、原因），不留内容：
+/// - 一行超过 [`MAX_EVENT_LINE_BYTES`] 时整行丢弃（包括还没读到的后半截，一直丢到这一行的换行）；
+///   不是读到什么就先攒着，攒到换行才发现太长；
+/// - 管道关闭时最后一行没有换行结尾（没写完）：丢弃，原因 [`DropReason::Unfinished`]；
+///   管道在超长行的中间关闭时，这一行按超长算。
 async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<EventChunk>) {
     let mut partial = Vec::new();
-    // 正在丢弃一行：这一行到现在为止的字节数。
-    let mut discarding: Option<u64> = None;
+    // 正在丢弃一行：到现在为止的字节数，和这一行开头的一小段。
+    let mut discarding: Option<(u64, Vec<u8>)> = None;
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         let n = match pipe.read(&mut buf).await {
@@ -881,7 +1023,7 @@ async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<Even
         };
         let monotonic_ms = clock::monotonic_ms();
         let mut bytes = Vec::new();
-        let mut oversized: Vec<(usize, u64)> = Vec::new();
+        let mut dropped: Vec<Dropped> = Vec::new();
         let mut rest = &buf[..n];
         while !rest.is_empty() {
             let (piece, ended) = match rest.iter().position(|&b| b == b'\n') {
@@ -889,20 +1031,32 @@ async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<Even
                 None => (rest, false),
             };
             rest = &rest[(piece.len() + usize::from(ended)).min(rest.len())..];
-            if let Some(size) = discarding.as_mut() {
+            if let Some((size, head)) = discarding.as_mut() {
                 *size += piece.len() as u64;
                 if ended {
-                    oversized.push((bytes.len(), *size));
+                    dropped.push(Dropped {
+                        at: bytes.len(),
+                        size: *size,
+                        reason: DropReason::TooLong,
+                        head: std::mem::take(head),
+                    });
                     discarding = None;
                 }
                 continue;
             }
             partial.extend_from_slice(piece);
             if partial.len() > MAX_EVENT_LINE_BYTES {
+                let size = partial.len() as u64;
+                let head = partial[..EVENT_HEAD_BYTES].to_vec();
                 if ended {
-                    oversized.push((bytes.len(), partial.len() as u64));
+                    dropped.push(Dropped {
+                        at: bytes.len(),
+                        size,
+                        reason: DropReason::TooLong,
+                        head,
+                    });
                 } else {
-                    discarding = Some(partial.len() as u64);
+                    discarding = Some((size, head));
                 }
                 partial.clear();
             } else if ended {
@@ -910,14 +1064,14 @@ async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<Even
                 bytes.push(b'\n');
             }
         }
-        if bytes.is_empty() && oversized.is_empty() {
+        if bytes.is_empty() && dropped.is_empty() {
             continue;
         }
         if chunks
             .send(EventChunk {
                 bytes,
                 monotonic_ms,
-                oversized,
+                dropped,
             })
             .await
             .is_err()
@@ -925,12 +1079,28 @@ async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<Even
             return;
         }
     }
-    if let Some(size) = discarding {
+    // 管道关闭：还在丢弃的超长行、没有写完的最后一行都要说一声。
+    let last = match discarding {
+        Some((size, head)) => Some(Dropped {
+            at: 0,
+            size,
+            reason: DropReason::TooLong,
+            head,
+        }),
+        None if !partial.is_empty() => Some(Dropped {
+            at: 0,
+            size: partial.len() as u64,
+            reason: DropReason::Unfinished,
+            head: Vec::new(),
+        }),
+        None => None,
+    };
+    if let Some(last) = last {
         let _ = chunks
             .send(EventChunk {
                 bytes: Vec::new(),
                 monotonic_ms: clock::monotonic_ms(),
-                oversized: vec![(0, size)],
+                dropped: vec![last],
             })
             .await;
     }
@@ -965,6 +1135,8 @@ struct Forwarder {
     throttle: Throttle,
     /// Agent 时间跳变的检测。
     time_jumps: time_jump::Watch,
+    /// 事件管道里超过上限被丢弃的行，按种类（`None` = 认不出）合计：每一种只在第一次写警告，任务结束时写合计（[`Forwarder::drop_totals`]）。
+    too_long: BTreeMap<Option<EventKind>, DropTotal>,
 }
 
 /// 只保留最新值、每秒最多发一次的上报（进度、动作摘要）。
@@ -1074,6 +1246,7 @@ impl Forwarder {
                 () = tokio::time::sleep_until(deadline) => break,
             }
         }
+        self.drop_totals();
         self.poll(true);
     }
 
@@ -1111,23 +1284,13 @@ impl Forwarder {
     /// 处理事件管道里的一块完整内容。
     async fn events(&mut self, chunk: &EventChunk) {
         self.throttle.pace(chunk.bytes.len()).await;
-        let mut dropped = chunk.oversized.iter().copied().peekable();
+        let mut dropped = chunk.dropped.iter().peekable();
         let mut rest = chunk.bytes.as_slice();
         let mut offset = 0;
         loop {
             // 被丢弃的行原来所在的位置：它前面的行都处理完了，这里写它的警告（只写大小，不带内容）。
-            while let Some((_, size)) = dropped.next_if(|&(at, _)| at <= offset) {
-                self.push_pending(Pending {
-                    before: String::new(),
-                    after: String::new(),
-                    time_unix_ms: clock::agent_time_ms(),
-                    monotonic_ms: chunk.monotonic_ms,
-                    source: LogSource::Agent,
-                    level: LogLevel::Warn,
-                    text: format!(
-                        "事件管道里的一行有 {size} 字节，超过上限 {MAX_EVENT_LINE_BYTES} 字节，已丢弃（日志写得太长，请拆开写）"
-                    ),
-                });
+            while let Some(line) = dropped.next_if(|line| line.at <= offset) {
+                self.dropped_line(line, chunk.monotonic_ms);
                 self.flush_full_batch();
             }
             if rest.is_empty() {
@@ -1143,6 +1306,48 @@ impl Forwarder {
                 self.flush_full_batch();
             }
         }
+    }
+
+    /// 一行被丢弃：写一行 Agent 警告（来源 agent、级别 warn）。超过上限的行认出种类，写这一种丢了以后会怎样；
+    /// 同一种在这个任务里第一次丢时写完整的警告，之后只计数，任务结束时写一行合计（[`Forwarder::drop_totals`]）：
+    /// 摘要每秒一份，节点跑一小时不会写出几千行同样的警告。
+    fn dropped_line(&mut self, line: &Dropped, monotonic_ms: i64) {
+        let text = match line.reason {
+            DropReason::Unfinished => unfinished_warning(line.size),
+            DropReason::TooLong => {
+                let kind = EventKind::of_head(&line.head);
+                let total = self.too_long.entry(kind).or_default();
+                total.lines += 1;
+                total.largest = total.largest.max(line.size);
+                if total.lines > 1 {
+                    return;
+                }
+                too_long_warning(kind, line.size)
+            }
+        };
+        self.warn(text, monotonic_ms);
+    }
+
+    /// 任务结束：这一种事件被丢弃过不止一行的，写一行合计（丢了几行、最大的一行多大）。
+    fn drop_totals(&mut self) {
+        for (kind, total) in std::mem::take(&mut self.too_long) {
+            if total.lines > 1 {
+                self.warn(drop_total_warning(kind, &total), clock::monotonic_ms());
+            }
+        }
+    }
+
+    /// Agent 自己写一行警告日志（来源 agent、级别 warn）。
+    fn warn(&mut self, text: String, monotonic_ms: i64) {
+        self.push_pending(Pending {
+            before: String::new(),
+            after: String::new(),
+            time_unix_ms: clock::agent_time_ms(),
+            monotonic_ms,
+            source: LogSource::Agent,
+            level: LogLevel::Warn,
+            text,
+        });
     }
 
     /// 事件里的一段文字记成日志：超过 [`MAX_LINE_BYTES`] 就拆成几条，每条带上下文（和标准输出的超长行一样）；
@@ -1704,6 +1909,7 @@ mod batch_tests {
             metrics: Merger::default(),
             throttle: Throttle::new(0),
             time_jumps: time_jump::Watch::start(),
+            too_long: BTreeMap::new(),
         };
         (forwarder, drain)
     }
@@ -1824,7 +2030,7 @@ mod batch_tests {
             let chunk = EventChunk {
                 bytes: longest_action_event(i, ch),
                 monotonic_ms: i as i64,
-                oversized: Vec::new(),
+                dropped: Vec::new(),
             };
             forwarder.events(&chunk).await;
             tokio::task::yield_now().await;
@@ -1974,6 +2180,7 @@ mod long_event_tests {
             metrics: Merger::default(),
             throttle: Throttle::new(0),
             time_jumps: time_jump::Watch::start(),
+            too_long: BTreeMap::new(),
         };
         (forwarder, drain)
     }
@@ -2011,7 +2218,7 @@ mod long_event_tests {
         EventChunk {
             bytes,
             monotonic_ms: 5,
-            oversized: Vec::new(),
+            dropped: Vec::new(),
         }
     }
 
@@ -2136,6 +2343,18 @@ mod long_event_tests {
         assert_eq!(joined, message.len());
     }
 
+    /// 一行被丢弃的记录：超过上限、开头是 `head`。
+    fn too_long(at: usize, size: u64, head: &[u8]) -> Dropped {
+        Dropped {
+            at,
+            size,
+            reason: DropReason::TooLong,
+            head: head.to_vec(),
+        }
+    }
+
+    const OVER: u64 = MAX_EVENT_LINE_BYTES as u64 + 7;
+
     #[tokio::test]
     async fn a_dropped_line_leaves_one_agent_warning_with_its_size_and_nothing_of_its_content() {
         let mut bytes = log_event("before");
@@ -2144,7 +2363,7 @@ mod long_event_tests {
         let batches = batches_of(vec![EventChunk {
             bytes,
             monotonic_ms: 9,
-            oversized: vec![(at, MAX_EVENT_LINE_BYTES as u64 + 7)],
+            dropped: vec![too_long(at, OVER, br#"{"type": "log", "message": "SECRET"#)],
         }])
         .await;
         let lines = lines_of(&batches);
@@ -2157,36 +2376,173 @@ mod long_event_tests {
         let warning = &lines[1].text;
         assert!(warning.len() < 300, "警告只写大小：{warning}");
         assert!(
-            warning.contains(&(MAX_EVENT_LINE_BYTES + 7).to_string())
+            warning.contains(&OVER.to_string())
                 && warning.contains(&MAX_EVENT_LINE_BYTES.to_string()),
             "{warning}"
+        );
+        assert!(!warning.contains("SECRET"), "不写这一行的内容：{warning}");
+    }
+
+    /// 每种事件被丢弃时的警告：认得出种类就写种类和后果；日志才说「拆开写」；认不出种类的不说是日志、也不猜。
+    #[test]
+    fn the_warning_for_a_dropped_line_says_what_was_dropped_and_what_follows() {
+        let size = OVER;
+        let warning = |kind| too_long_warning(kind, size);
+        let log = warning(Some(EventKind::Log));
+        assert!(log.contains("日志") && log.contains("拆开写"), "{log}");
+        let summary = warning(Some(EventKind::ActionSummary));
+        assert!(
+            summary.contains("动作摘要") && summary.contains("停在之前的一份"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("名称的种类太多") && !summary.contains("拆开写"),
+            "{summary}"
+        );
+        for (kind, name, consequence) in [
+            (EventKind::Progress, "进度", "停在之前的一次"),
+            (EventKind::Notify, "通知", "没有发出"),
+            (EventKind::Metric, "指标", "没有记下来"),
+            (EventKind::ActionStart, "动作开始的明细", "没有记下来"),
+            (EventKind::ActionEnd, "动作结束的明细", "没有记下来"),
+            (EventKind::Mark, "标记", "没有记下来"),
+        ] {
+            let text = warning(Some(kind));
+            assert!(
+                text.contains(name) && text.contains(consequence) && !text.contains("拆开写"),
+                "{text}"
+            );
+        }
+        let unknown = warning(None);
+        assert!(
+            unknown.contains("认不出") && !unknown.contains("日志") && !unknown.contains("拆开写"),
+            "{unknown}"
+        );
+        for text in [&log, &summary, &unknown] {
+            assert!(
+                text.contains(&size.to_string())
+                    && text.contains(&MAX_EVENT_LINE_BYTES.to_string()),
+                "{text}"
+            );
+        }
+    }
+
+    /// 同一种事件每个任务只在第一次写警告，之后只计数，任务结束时补一行合计；只丢了一行的不补。
+    #[tokio::test]
+    async fn the_same_kind_of_dropped_line_warns_once_per_task_and_is_totalled_at_the_end() {
+        let summary = br#"{"type": "action_summary", "ts": 1, "names": {"#;
+        let (mut forwarder, drain) = forwarder();
+        for (i, size) in [5_000_000_u64, 9_000_000, 7_000_000]
+            .into_iter()
+            .enumerate()
+        {
+            let mut dropped = vec![too_long(0, size, summary)];
+            if i == 1 {
+                dropped.push(too_long(0, OVER, br#"{"type": "log", "message": "x"#));
+            }
+            forwarder
+                .events(&EventChunk {
+                    bytes: Vec::new(),
+                    monotonic_ms: i as i64,
+                    dropped,
+                })
+                .await;
+        }
+        forwarder.drop_totals();
+        forwarder.poll(true);
+        drop(forwarder);
+        let batches: Vec<LogBatch> = drain
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|m| match m.body {
+                Some(agent_message::Body::Logs(batch)) => Some(batch),
+                _ => None,
+            })
+            .collect();
+        let texts: Vec<&str> = lines_of(&batches).iter().map(|l| l.text.as_str()).collect();
+        let with = |needle: &str| texts.iter().filter(|t| t.contains(needle)).count();
+        assert_eq!(texts.len(), 3, "{texts:#?}");
+        assert_eq!(with("停在之前的一份"), 1, "动作摘要只写第一次：{texts:#?}");
+        assert_eq!(
+            with("拆开写"),
+            1,
+            "日志只丢了一行：只有它自己的警告：{texts:#?}"
+        );
+        let total = texts
+            .iter()
+            .find(|t| t.contains("一共被丢弃了"))
+            .expect("合计");
+        assert!(
+            total.contains("动作摘要")
+                && total.contains("3 行")
+                && total.contains(&format!("{} 字节", 9_000_000)),
+            "{total}"
         );
     }
 
     /// 管道 `data` 读完之后 `read_events` 交出的全部块：内容接起来，丢弃的行（位置按接起来之后的内容算）。
-    async fn read_all(data: &[u8]) -> (Vec<u8>, Vec<(usize, u64)>) {
+    async fn read_all(data: &[u8]) -> (Vec<u8>, Vec<Dropped>) {
         let (tx, mut rx) = mpsc::channel(1024);
         read_events(data, tx).await;
         let mut bytes = Vec::new();
-        let mut oversized = Vec::new();
+        let mut dropped = Vec::new();
         while let Some(chunk) = rx.recv().await {
             let base = bytes.len();
-            oversized.extend(
-                chunk
-                    .oversized
-                    .into_iter()
-                    .map(|(at, size)| (base + at, size)),
-            );
+            dropped.extend(chunk.dropped.into_iter().map(|mut line| {
+                line.at += base;
+                line
+            }));
             bytes.extend(chunk.bytes);
         }
-        (bytes, oversized)
+        (bytes, dropped)
+    }
+
+    /// 丢弃的行的（位置，字节数，原因）。
+    fn shape(dropped: &[Dropped]) -> Vec<(usize, u64, DropReason)> {
+        dropped.iter().map(|d| (d.at, d.size, d.reason)).collect()
     }
 
     #[tokio::test]
-    async fn read_events_hands_over_whole_lines_and_drops_the_unfinished_last_one() {
-        let (bytes, oversized) = read_all(b"one\n\ntwo\nthree-without-newline").await;
+    async fn read_events_hands_over_whole_lines_and_reports_the_unfinished_last_one() {
+        let (bytes, dropped) = read_all(b"one\n\ntwo\nthree-without-newline").await;
         assert_eq!(bytes, b"one\n\ntwo\n");
-        assert!(oversized.is_empty());
+        assert_eq!(
+            shape(&dropped),
+            vec![(b"one\n\ntwo\n".len(), 21, DropReason::Unfinished)]
+        );
+        assert!(
+            dropped[0].head.is_empty(),
+            "没写完的一行不认种类，也不留内容"
+        );
+        let (bytes, dropped) = read_all(b"one\n").await;
+        assert_eq!(bytes, b"one\n");
+        assert!(dropped.is_empty(), "最后一行写完了：没有警告");
+    }
+
+    /// 没写完的最后一行写一行警告：只有大小，没有内容。
+    #[tokio::test]
+    async fn the_unfinished_last_line_leaves_one_warning_with_its_size_only() {
+        let batches = batches_of(vec![EventChunk {
+            bytes: Vec::new(),
+            monotonic_ms: 9,
+            dropped: vec![Dropped {
+                at: 0,
+                size: 21,
+                reason: DropReason::Unfinished,
+                head: Vec::new(),
+            }],
+        }])
+        .await;
+        let lines = lines_of(&batches);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].source(), LogSource::Agent);
+        assert_eq!(lines[0].level(), LogLevel::Warn);
+        assert!(
+            lines[0].text.contains("没有写完") && lines[0].text.contains("21 字节"),
+            "{}",
+            lines[0].text
+        );
     }
 
     #[tokio::test]
@@ -2195,13 +2551,17 @@ mod long_event_tests {
         data.push(b'\n');
         data.extend(vec![b'b'; MAX_EVENT_LINE_BYTES + 1]);
         data.extend(b"\nnext\n");
-        let (bytes, oversized) = read_all(&data).await;
+        let (bytes, dropped) = read_all(&data).await;
         let mut expected = vec![b'a'; MAX_EVENT_LINE_BYTES];
         expected.extend(b"\nnext\n");
         assert!(bytes == expected, "留下的内容不对：{} 字节", bytes.len());
         assert_eq!(
-            oversized,
-            vec![(MAX_EVENT_LINE_BYTES + 1, MAX_EVENT_LINE_BYTES as u64 + 1)],
+            shape(&dropped),
+            vec![(
+                MAX_EVENT_LINE_BYTES + 1,
+                MAX_EVENT_LINE_BYTES as u64 + 1,
+                DropReason::TooLong
+            )],
             "位置是它前面那一行（连换行）之后"
         );
     }
@@ -2215,24 +2575,55 @@ mod long_event_tests {
         data.extend(b"\nsecond\n");
         data.extend(vec![b'y'; MAX_EVENT_LINE_BYTES + 1]);
         data.extend(b"\nthird\n");
-        let (bytes, oversized) = read_all(&data).await;
+        let (bytes, dropped) = read_all(&data).await;
         assert_eq!(bytes, b"first\nsecond\nthird\n");
         assert_eq!(
-            oversized,
+            shape(&dropped),
             vec![
-                (b"first\n".len(), junk as u64),
-                (b"first\nsecond\n".len(), MAX_EVENT_LINE_BYTES as u64 + 1)
+                (b"first\n".len(), junk as u64, DropReason::TooLong),
+                (
+                    b"first\nsecond\n".len(),
+                    MAX_EVENT_LINE_BYTES as u64 + 1,
+                    DropReason::TooLong
+                )
             ]
         );
+    }
+
+    /// 被丢弃的行留下开头固定大小的一小段，不随行的长度变；认种类看的就是它。
+    #[tokio::test]
+    async fn a_dropped_line_keeps_a_fixed_size_head_whatever_its_length() {
+        let head = br#"{"type": "action_summary", "ts": 1, "names": {"#;
+        for filler in [MAX_EVENT_LINE_BYTES, MAX_EVENT_LINE_BYTES * 3 + 5] {
+            let mut data = head.to_vec();
+            data.extend(vec![b'x'; filler]);
+            data.extend(b"\nafter\n");
+            let (bytes, dropped) = read_all(&data).await;
+            assert_eq!(bytes, b"after\n");
+            assert_eq!(dropped.len(), 1);
+            assert_eq!(
+                dropped[0].head.len(),
+                EVENT_HEAD_BYTES,
+                "留下的开头大小固定"
+            );
+            assert_eq!(&dropped[0].head[..head.len()], head);
+            assert_eq!(
+                EventKind::of_head(&dropped[0].head),
+                Some(EventKind::ActionSummary)
+            );
+        }
     }
 
     #[tokio::test]
     async fn a_dropped_line_that_the_pipe_ends_in_the_middle_of_is_still_reported() {
         let mut data = b"ok\n".to_vec();
+        data.extend(br#"{"type": "log", "message": ""#);
         data.extend(vec![b'x'; MAX_EVENT_LINE_BYTES + 100]);
-        let (bytes, oversized) = read_all(&data).await;
+        let (bytes, dropped) = read_all(&data).await;
         assert_eq!(bytes, b"ok\n");
-        assert_eq!(oversized.len(), 1);
-        assert_eq!(oversized[0].1, MAX_EVENT_LINE_BYTES as u64 + 100);
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].reason, DropReason::TooLong);
+        assert_eq!(dropped[0].size, MAX_EVENT_LINE_BYTES as u64 + 100 + 28);
+        assert_eq!(EventKind::of_head(&dropped[0].head), Some(EventKind::Log));
     }
 }

@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use super::{
-    DEFAULT_TELEMETRY_QUEUE_BYTES, DRAIN_TIMEOUT, Event, MAX_EVENT_LINE_BYTES, MAX_LINE_BYTES,
+    DEFAULT_TELEMETRY_QUEUE_BYTES, DRAIN_TIMEOUT, EVENT_KINDS, Event, EventKind,
+    MAX_EVENT_LINE_BYTES, MAX_LINE_BYTES,
 };
 use crate::executor::{self, Settings};
 use crate::metrics::DEFAULT_METRIC_QUEUE_POINTS;
@@ -102,10 +103,12 @@ async fn run(case: &Value) -> Observed {
     let files = [
         (
             "events.jsonl",
-            case.get("events").map(|_| {
+            (case.get("events").is_some() || case.get("events_tail").is_some()).then(|| {
+                // events_tail：最后一段没有换行（执行器没写完就退出了）。
                 lines
                     .iter()
                     .map(|line| format!("{line}\n"))
+                    .chain(text("events_tail"))
                     .collect::<String>()
             }),
         ),
@@ -590,6 +593,31 @@ fn every_event_type_has_a_case() {
         .map(|t| t.as_str().unwrap().to_string())
         .collect();
     assert_eq!(covered, in_file);
+}
+
+/// 被丢弃的一行从开头的一小段认出事件的种类：和用例表里的 `dropped_head_cases` 一致，种类的名字就是 `event_types`。
+#[test]
+fn the_kind_of_a_dropped_line_is_read_from_its_head_as_in_the_case_file() {
+    let file = cases();
+    for case in file["dropped_head_cases"].as_array().unwrap() {
+        let head = case["head"].as_str().unwrap();
+        let kind = EventKind::of_head(head.as_bytes()).map(|kind| {
+            EVENT_KINDS
+                .iter()
+                .find(|(_, k)| *k == kind)
+                .map(|(name, _)| *name)
+                .unwrap()
+        });
+        assert_eq!(kind, case["kind"].as_str(), "{head:?}");
+    }
+    let names: BTreeSet<&str> = EVENT_KINDS.iter().map(|(name, _)| *name).collect();
+    let in_file: BTreeSet<&str> = file["event_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(names, in_file, "认得出的种类就是事件类型的集合");
 }
 
 #[test]

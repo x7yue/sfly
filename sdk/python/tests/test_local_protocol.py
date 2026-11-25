@@ -25,10 +25,13 @@ EXECUTOR = TESTDATA / "local-protocol-executor.sh"
 
 
 def expand(value: Any) -> Any:
-    """用例里的字符串可以写成 {"$repeat": 单元, "times": 次数, ...}（见用例表的说明），先展开。"""
+    """用例里的字符串可以写成 {"$repeat": 单元, "times": 次数, ...} 或 {"$char": "码点 ..."}
+    （见用例表的说明），先展开。"""
     if isinstance(value, list):
         return [expand(v) for v in value]
     if isinstance(value, dict):
+        if "$char" in value:
+            return "".join(chr(int(code, 16)) for code in value["$char"].split())
         if "$repeat" in value:
             return (
                 value.get("prefix", "")
@@ -182,8 +185,10 @@ def run(case: dict[str, Any], tmp_path: Path) -> tuple[Observed, tuple[int, int]
     (root / "case").mkdir()
     (root / "bin" / "python").symlink_to(EXECUTOR)
     files = {
-        "events.jsonl": "".join(line + "\n" for line in case["events"])
-        if "events" in case
+        # events_tail：最后一段没有换行（执行器没写完就退出了）。
+        "events.jsonl": "".join(line + "\n" for line in case.get("events", []))
+        + case.get("events_tail", "")
+        if "events" in case or "events_tail" in case
         else None,
         "stdout": case.get("stdout"),
         "stderr": case.get("stderr"),
@@ -524,3 +529,14 @@ def test_a_short_sdk_message_is_not_changed_by_the_splitting(tmp_path: Path) -> 
     event = '{"type":"log","ts":1700000000000,"level":"info","message":"a\\ud800b\\n"}'
     observed, _ = run({"events": [event]}, tmp_path)
     assert [line.message for line in observed.execution.logs] == ["a\ud800b\n"]
+
+
+@pytest.mark.parametrize("case", FILE["dropped_head_cases"], ids=lambda c: repr(c["head"])[:40])
+def test_the_kind_of_a_dropped_line_is_read_from_its_head_as_in_the_case_file(
+    case: dict[str, Any],
+) -> None:
+    assert local._kind_of_head(case["head"].encode()) == case["kind"]
+
+
+def test_the_kinds_a_dropped_line_is_told_apart_by_are_the_event_types() -> None:
+    assert set(local._DROPPED_KINDS) == set(FILE["event_types"]) == set(local._EVENT_HANDLERS)
