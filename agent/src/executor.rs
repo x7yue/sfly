@@ -8,6 +8,7 @@
 //! | `SFLY_OUTPUT` | `output.json`：执行器写入的结果 |
 //! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录（任务结束后由 [`crate::artifacts`] 上传） |
 //! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
+//! | `SFLY_TASK_TOKEN` | 任务凭据（`AssignTask.task_token`，为空即旧版本控制面没带时不设置）：只在这次任务尝试有效，只能下载本项目任务的产物；SDK 下载产物时只对以控制面的前缀（`SFLY_ARTIFACTS_URL` 去掉结尾的 `tasks/<任务 ID>/artifacts/`）开头、后面接着 `tasks/` 的地址带它。不写进 `task.json`、不写日志、不落在任务目录里（#492） |
 //! | `SFLY_ARTIFACT_LIMIT_BYTES` | 这个任务的产物合计上限（字节，`AssignTask.artifact_limit_bytes`，0 即旧版本控制面没带时不设置；SDK 的 `ctx.artifacts.limit_bytes`，#477） |
 //! | `SFLY_EVENTS` | `events.fifo`：结构化日志、进度与指标（命名管道，启动执行器前由 Agent 创建并打开读端，ADR 0015） |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
@@ -278,6 +279,10 @@ fn spawn_process(
         .stderr(Stdio::piped());
     if !task.artifact_upload_url.is_empty() {
         command.env("SFLY_ARTIFACTS_URL", &task.artifact_upload_url);
+    }
+    // 任务凭据（#492）：只放进执行器的环境变量，不写 task.json、不写日志。
+    if !task.task_token.is_empty() {
+        command.env("SFLY_TASK_TOKEN", &task.task_token);
     }
     // 产物合计的上限：节点在保存时就知道，不用等任务结束、传了很多之后才被拒绝（#477）。
     if task.artifact_limit_bytes > 0 {
