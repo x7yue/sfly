@@ -1,11 +1,20 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { failedRun } from "./monitor-failure-scenario";
-import { openMonitor, runningScenario } from "./monitor-scenario";
+import { largeScenario, openMonitor, runningScenario } from "./monitor-scenario";
 import { createScenario, publishPackage, triggerRun } from "./support";
 
 // 运行监控详情和概览的几处（#655）：同一个节点的用时两处写的是同一个数，概览链路里节点的状态除了颜色和形状还有文字
 // （图例、悬停提示），选中带图表的节点时第一排图表露出来、没有被底部面板盖住（先加载骨架、后出图表时也一样）。
+
+/** 线路上一个节点的站：圆点所在的一行悬停写「名字 · 状态」，旁边的读屏文字是「（状态）」。 */
+async function expectStation(page: Page, name: string, status: string) {
+	const dots = page.locator(`[title="${name} · ${status}"]`).first();
+	await expect(dots, `${name} 的圆点悬停写「${name} · ${status}」`).toBeAttached();
+	await expect(dots.locator("xpath=ancestor::li[1]").locator(".sr-only")).toHaveText(
+		`（${status}）`,
+	);
+}
 
 const workspace = (page: Page) => page.getByRole("region", { name: "图表工作区" });
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
@@ -42,11 +51,15 @@ test("节点的用时：时间线的节点行和选中节点的摘要是同一�
 			await expect(summary.getByTestId("node-timing-note")).toHaveCount(0);
 		}
 	}
-	// 没有选中节点：平台图表「节点耗时 Top 10」里同一个节点的数和时间线行一样（控制面按同样的口径算）。
+	// 没有选中节点：平台图表「节点耗时 Top 10」里同一个节点的数和时间线行一样（控制面按同样的口径算：各次尝试从排队到结束）。
 	await openMonitor(page, clock, runId);
-	const top = page.getByRole("figure", { name: "节点耗时 Top 10" });
-	await expect(top).toContainText("6.0s");
-	await expect(top).toContainText("8.0s");
+	await workspace(page).getByRole("button", { name: "全部展开" }).click();
+	const top = workspace(page)
+		.getByRole("region", { name: "平台自带图表" })
+		.getByRole("figure", { name: "节点耗时 Top 10" });
+	await expect(top.locator("li", { hasText: "fetch" })).toContainText("6.0s");
+	await expect(top.locator("li", { hasText: "verify" })).toContainText("8.0s");
+	await expect(top.locator("li", { hasText: "probe" })).toContainText("8.0s");
 });
 
 test("概览链路里节点的状态：图例写出每个圆点的意思（只列这次运行里出现过的状态），圆点所在的一行悬停写「名字 · 状态」；图例的行高固定", async ({
@@ -74,18 +87,12 @@ test("概览链路里节点的状态：图例写出每个圆点的意思（只�
 		await expect(dot).toHaveAttribute("aria-hidden", "true");
 	}
 	// 线路上每个节点：圆点所在的一行悬停写出「名字 · 状态」，读屏的状态文字照旧。
-	const lines = page.getByRole("list", { name: "各链进度" }).first();
 	for (const [name, status] of [
 		["fetch", "成功"],
 		["verify", "执行中"],
 		["cleanup", "待执行"],
 	] as const) {
-		const station = lines.locator("li", { has: page.getByText(name, { exact: true }) }).first();
-		await expect(station.locator("[title]").first()).toHaveAttribute(
-			"title",
-			`${name} · ${status}`,
-		);
-		await expect(station.locator(".sr-only")).toHaveText(`（${status}）`);
+		await expectStation(page, name, status);
 	}
 	// 行高固定：图例是一行（20px），出现的状态不同的另一次运行里，线路离区块顶端的距离一样（下面的版面不跳）。
 	const legendBox = await legend.boundingBox();
@@ -138,10 +145,7 @@ test("准备中和执行中是同一个圆点：图例合成一项，节点的�
 	await page.goto(`/runs/${runId}?view=overview`);
 	const legend = page.getByTestId("status-legend");
 	await expect(legend.getByRole("listitem")).toHaveText(["成功", "准备中"]);
-	const lines = page.getByRole("list", { name: "各链进度" }).first();
-	const probe = lines.locator("li", { has: page.getByText("probe", { exact: true }) }).first();
-	await expect(probe.locator("[title]").first()).toHaveAttribute("title", "probe · 准备中");
-	await expect(probe.locator(".sr-only")).toHaveText("（准备中）");
+	await expectStation(page, "probe", "准备中");
 	// 开始执行之后：圆点没变（都是在跑），图例写执行中，提示和读屏文字也变了。
 	await agent.started(task);
 	await agent.sync();
@@ -152,42 +156,56 @@ test("准备中和执行中是同一个圆点：图例合成一项，节点的�
 		"成功",
 		"执行中",
 	]);
-	const running = page
-		.getByRole("list", { name: "各链进度" })
-		.first()
-		.locator("li", { has: page.getByText("probe", { exact: true }) })
-		.first();
-	await expect(running.locator("[title]").first()).toHaveAttribute("title", "probe · 执行中");
+	await expectStation(page, "probe", "执行中");
 });
 
 /**
- * 选中带图表的节点：第一排图表在图表工作区里露出的高度、和底部面板重叠的高度、面板上沿的元素是不是盖在图表上。
- * 面板上沿有一条拖动条（`separator`）压着图表最下面的几像素，不算盖住。
+ * 选中节点的第一张图表在图表工作区里的位置：它自己的高度、在工作区里露出来的高度、露出来的最下面一点上最上面的元素是不是这张图表
+ * （没有被别的东西盖住）；再带上时间线、图表工作区、底部面板的高度，失败时写在消息里。
+ * 面板上沿有一条拖动条（`separator`）压着图表最下面的几像素，不算盖住（取点在露出部分的最下面往上 12px）。
  */
-const firstRowOf = (page: Page, node: string) =>
+const measureFirstChart = (page: Page, node: string) =>
 	page.evaluate((nodeId) => {
+		const rectOf = (selector: string) =>
+			document.querySelector(selector)?.getBoundingClientRect() ?? null;
 		const ws = document.querySelector('[aria-label="图表工作区"]') as HTMLElement;
-		const bottomPanel = document.querySelector('[aria-label="底部面板"]') as HTMLElement;
 		const group = ws.querySelector(`[data-group$=":${nodeId}"]`);
-		const figures = [...(group?.querySelectorAll("[data-chart]") ?? [])] as HTMLElement[];
-		const first = figures[0];
+		const first = group?.querySelector<HTMLElement>("[data-chart]");
 		if (!first) return null;
 		const wsRect = ws.getBoundingClientRect();
-		const panelRect = bottomPanel.getBoundingClientRect();
+		const panelRect = rectOf('[aria-label="底部面板"]');
+		const timelineRect = rectOf('[aria-label="链路时间线"]');
 		const r = first.getBoundingClientRect();
 		const top = Math.max(r.top, wsRect.top);
 		const bottom = Math.min(r.bottom, wsRect.bottom);
-		// 图表在工作区里露出来的最下面一点（往上 12px）的位置上，最上面的元素是不是这张图表自己（里面的元素）。
-		const probeY = Math.min(bottom - 12, panelRect.top - 12);
+		const probeY = Math.max(top + 1, bottom - 12);
 		const hit = document.elementFromPoint(r.left + r.width / 2, probeY);
+		const round = (n: number) => Math.round(n * 10) / 10;
 		return {
-			height: r.height,
-			visible: Math.max(0, bottom - top),
-			workspaceHeight: wsRect.height,
-			panelTop: panelRect.top,
+			ratio: (bottom - top) / r.height,
 			hitIsChart: hit ? first.contains(hit) : false,
+			chart: { top: round(r.top), bottom: round(r.bottom), height: round(r.height) },
+			workspace: { top: round(wsRect.top), bottom: round(wsRect.bottom) },
+			panelTop: panelRect ? round(panelRect.top) : null,
+			panelHeight: panelRect ? round(panelRect.height) : null,
+			timelineHeight: timelineRect ? round(timelineRect.height) : null,
+			hit: hit ? `${hit.tagName}.${String(hit.getAttribute("class")).slice(0, 60)}` : null,
 		};
 	}, node);
+
+/** 第一张图表露出 `share` 以上、没有被盖住；不满足时消息里是量到的数。 */
+async function expectFirstChartShown(page: Page, node: string, share = 0.95) {
+	await expect
+		.poll(
+			async () => {
+				const m = await measureFirstChart(page, node);
+				if (m === null) return "没有图表";
+				return m.ratio >= share && m.hitIsChart ? "ok" : JSON.stringify(m);
+			},
+			{ message: `${node} 的第一张图表露出 ${share * 100}% 以上`, timeout: 10_000 },
+		)
+		.toBe("ok");
+}
 
 const CHART_VIEWPORTS = [
 	[1280, 720],
@@ -200,7 +218,7 @@ const CHART_VIEWPORTS = [
 ] as const;
 
 for (const [width, height] of CHART_VIEWPORTS) {
-	test(`选中带图表的节点：第一排图表露出 95% 以上、面板没有盖在上面（${width}×${height}）`, async ({
+	test(`选中带图表的节点：第一张图表露出 95% 以上、面板没有盖在上面（${width}×${height}）`, async ({
 		page,
 		controlPlane,
 		connectAgent,
@@ -211,21 +229,11 @@ for (const [width, height] of CHART_VIEWPORTS) {
 		await openMonitor(page, clock, runId, "fetch", "logs");
 		await expect(panel(page)).toBeVisible();
 		await expect(workspace(page).locator("[data-group]").first()).toBeVisible();
-		await expect(workspace(page).getByText("加载中")).toHaveCount(0);
-		let seen: Awaited<ReturnType<typeof firstRowOf>> = null;
-		await expect
-			.poll(
-				async () => {
-					seen = await firstRowOf(page, "fetch");
-					return seen !== null && seen.visible / seen.height >= 0.95 && seen.hitIsChart;
-				},
-				{ message: `第一排图表：${JSON.stringify(seen)}` },
-			)
-			.toBe(true);
+		await expectFirstChartShown(page, "fetch");
 	});
 }
 
-test("图表是后加载出来的（运行还在进行）：骨架先排好、面板先长大也不压住图表，加载完第一排图表露出 95% 以上", async ({
+test("图表是后加载出来的（运行还在进行）：骨架先排好、面板先长大也不压住图表，加载完第一张图表露出 95% 以上", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -240,7 +248,7 @@ test("图表是后加载出来的（运行还在进行）：骨架先排好、�
 	});
 	await openMonitor(page, clock, runId, "fetch", "logs");
 	await expect(panel(page)).toBeVisible();
-	// 加载中：图表工作区和面板的位置，量几个时刻，面板上沿不能高过工作区的下沿（不重叠）。
+	// 加载中：图表工作区和面板的位置，面板上沿不能高过工作区的下沿（不重叠）。
 	const during = await page.evaluate(() => {
 		const ws = document.querySelector('[aria-label="图表工作区"]') as HTMLElement;
 		const bottomPanel = document.querySelector('[aria-label="底部面板"]') as HTMLElement;
@@ -252,14 +260,35 @@ test("图表是后加载出来的（运行还在进行）：骨架先排好、�
 	expect(during.panelTop).toBeGreaterThanOrEqual(during.workspaceBottom - 1);
 	await expect(workspace(page).locator("[data-chart]").first()).toBeVisible({ timeout: 15_000 });
 	await expect(workspace(page).getByText("加载中")).toHaveCount(0, { timeout: 15_000 });
-	let seen: Awaited<ReturnType<typeof firstRowOf>> = null;
-	await expect
-		.poll(
-			async () => {
-				seen = await firstRowOf(page, "fetch");
-				return seen !== null && seen.visible / seen.height >= 0.95 && seen.hitIsChart;
-			},
-			{ message: `加载完之后第一排图表：${JSON.stringify(seen)}` },
-		)
-		.toBe(true);
+	await expectFirstChartShown(page, "fetch");
+});
+
+// 审查量到的情形（#655）：900 高的窗口，时间线里节点展开了九行以上（大型运行），选中一个节点、底部面板开着「输入输出」、
+// 面板是默认高度：节点摘要在图表上面（失败的节点还有错误），图表区只有 300px 时第一张图表的下半截被图表区的下沿截掉。
+// 现在图表区预留到第一张图表露出 96%，时间线和底部面板先让；窗口再矮，让到时间线最矮 120px、面板的下限 190px 为止。
+test("大型运行（时间线九行以上）选中失败、执行中、重试的节点，面板默认高度：第一张图表整张露出来，时间线和面板先让", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	test.setTimeout(120_000);
+	const { runId } = await largeScenario(controlPlane, connectAgent, clock);
+	for (const [width, height] of [
+		[1440, 900],
+		[1280, 800],
+		[1536, 864],
+	] as const) {
+		await page.setViewportSize({ width, height });
+		for (const node of ["s08", "m15", "m07"]) {
+			await openMonitor(page, clock, runId, node, "io");
+			await expect(panel(page)).toBeVisible();
+			await expect(workspace(page).locator(`[data-group$=":${node}"]`)).toBeVisible();
+			await expectFirstChartShown(page, node, 0.95);
+			// 面板不低于它的下限，时间线不低于最矮的主体（加标题行）。
+			const m = await measureFirstChart(page, node);
+			expect(m?.panelHeight, `${width}×${height} ${node} 底部面板`).toBeGreaterThanOrEqual(190);
+			expect(m?.timelineHeight, `${width}×${height} ${node} 时间线`).toBeGreaterThanOrEqual(160);
+		}
+	}
 });

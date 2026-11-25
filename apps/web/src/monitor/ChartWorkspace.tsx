@@ -49,6 +49,13 @@ import {
 	isFailed,
 } from "./chart-groups";
 import { balancedColumns, chartLines, chartWindow } from "./charts";
+import {
+	CHARTS_FIRST_VISIBLE,
+	CHARTS_MIN_HEIGHT,
+	CHARTS_RESERVED_HEIGHT,
+	chartsReservedHeight,
+	type FirstChart,
+} from "./detail-layout";
 import { MetricChart } from "./MetricChart";
 import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
@@ -67,45 +74,44 @@ const PLATFORM_TEXT = "平台自带图表 节点耗时 槽位 并发 重试";
 const PLATFORM_CHARTS = 4;
 const MIN_COLUMN = { standard: 340, compact: 230 };
 type Density = keyof typeof MIN_COLUMN;
-/**
- * 图表工作区最少的高度（px，大约是工具栏）：窗口矮到连 {@link CHARTS_RESERVED_HEIGHT} 也放不下时，图表最后让到这里，
- * 滚动查看，时间线、图表、底部面板总在窗口里。
- */
-export const CHARTS_MIN_HEIGHT = 48;
-
-/**
- * 图表工作区预留的高度（px）：窗口变矮（1280×800 带失败横幅）、底部面板被拖高时，先压底部面板，图表工作区至少有这么高
- * （内容不够这么高时只留内容的高度，不留空白）。够放下工具栏、一个图表组的标题和节点摘要，加上一张 136px 高的图表
- * 的绝大部分，能看清曲线。依据和实测写在 docs/DESIGN-SYSTEM.md 的「运行监控详情的竖直分配」。
- */
-export const CHARTS_RESERVED_HEIGHT = 300;
-
-/** 能看清曲线的图表高度（px）：一张图表（绘图区 136px 高）的绘图区至少露出这么多。 */
-export const CHARTS_VISIBLE_FIGURE = 120;
-
-/**
- * 图表工作区要预留的高度（px）：{@link CHARTS_RESERVED_HEIGHT} 是 1280px 及以上窗口里的数。窗口窄于 1280px 时工具栏折成
- * 几行、节点摘要折行，第一张图表的上沿被推下去，300px 里只露出一小截（1024×768 里露出 72/136px），所以预留的高度至少是
- * 第一张图表的上沿加 {@link CHARTS_VISIBLE_FIGURE}：第一张图表露出能看清曲线的高度。宽窗口里仍是 300px，不随内容变：
- * 选中节点时它的摘要在图表上面，也会把图表推下去，这时加预留会让底部面板在常用的窗口里变矮（面板的下限是 190px，
- * 1440×900、1280×800 里的分配是量过的）。
- */
-export const chartsReservedHeight = (firstChartTop: number, narrow: boolean): number =>
-	narrow
-		? Math.max(CHARTS_RESERVED_HEIGHT, firstChartTop + CHARTS_VISIBLE_FIGURE)
-		: CHARTS_RESERVED_HEIGHT;
-
 /** 窄窗口的界限：和运行监控页别处（`max-xl`）一样，窄于 1280px。 */
 export const NARROW_WINDOW = "(max-width: 1279.98px)";
 
-/** 第一张图表的上沿离内容顶部（滚动区域的内边距上沿）的距离（px）；没有图表时为 0。 */
-function firstChartTop(inner: HTMLElement, outer: HTMLElement): number {
-	const chart = inner.querySelector<HTMLElement>("[data-chart]");
-	if (!chart) return 0;
-	return Math.ceil(
-		chart.getBoundingClientRect().top - outer.getBoundingClientRect().top + outer.scrollTop,
-	);
+/**
+ * 第一张图表的位置（没有图表时为 null）：选中的节点在组里有图表时是它的那一张——选中节点会把它的组滚到工具栏下面
+ * （`scrollTo`），所以上沿是工具栏的高度加上边距加上这张图表在组里的位置（组标题和节点摘要在图表上面）；
+ * 别的情形是页面里第一张图表，上沿是它离内容顶部的距离。
+ */
+function firstChartBox(
+	inner: HTMLElement,
+	outer: HTMLElement,
+	toolbar: HTMLElement | null,
+	selectedKey: string | null,
+): FirstChart | null {
+	const first = inner.querySelector<HTMLElement>("[data-chart]");
+	if (!first) return null;
+	const group =
+		selectedKey === null
+			? null
+			: ([...inner.querySelectorAll<HTMLElement>("[data-group]")].find(
+					(el) => el.dataset.group === selectedKey,
+				) ?? null);
+	const chart = group?.querySelector<HTMLElement>("[data-chart]") ?? first;
+	const height = Math.ceil(chart.getBoundingClientRect().height);
+	if (group && chart !== first && !group.contains(first)) {
+		const inGroup = chart.getBoundingClientRect().top - group.getBoundingClientRect().top;
+		return { top: Math.ceil((toolbar?.offsetHeight ?? 0) + SCROLL_GAP + inGroup), height };
+	}
+	return {
+		top: Math.ceil(
+			chart.getBoundingClientRect().top - outer.getBoundingClientRect().top + outer.scrollTop,
+		),
+		height,
+	};
 }
+
+/** 选中的组滚到工具栏下面时和工具栏之间的空隙（px）。 */
+const SCROLL_GAP = 8;
 
 /** 分组内外的水平留白（px）：工作区 12×2、分组 10×2、描边。 */
 const GROUP_INSET = 48;
@@ -132,15 +138,16 @@ export function ChartWorkspace({
 	catalog: ReturnType<typeof useMetricCatalog>;
 	compact: boolean;
 	/**
-	 * 报告内容（含工作区自己的内边距）排出来的高度（px），和第一张图表的上沿离内容顶部有多远（px，没有图表时为 0）：
+	 * 报告内容（含工作区自己的内边距）排出来的高度（px），和第一张图表的位置（没有图表时为 null）：
 	 * 底部面板据此留出图表需要的那一截，见 {@link CHARTS_RESERVED_HEIGHT}、{@link chartsReservedHeight}。
 	 */
-	onContentHeight?: (height: number, firstChartTop: number) => void;
+	onContentHeight?: (height: number, first: FirstChart | null) => void;
 }) {
 	const { range, live, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
 	const selected = useMonitor((s) => s.scope.selected);
+	const selectedKey = selected ? nodeKey(selected) : null;
 	const actions = useMonitorActions();
 	const signature = useMemo(() => attemptsSignature(run), [run]);
 	const platform = usePlatformMetrics(run.id, signature, live);
@@ -167,7 +174,7 @@ export function ChartWorkspace({
 		[measure],
 	);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: compact 变了内边距就变了，要重新报告一次，只用来触发重新量
+	// biome-ignore lint/correctness/useExhaustiveDependencies: compact 变了内边距就变了、选中的节点换了第一张图表就换了，要重新报告一次，只用来触发重新量
 	useLayoutEffect(() => {
 		const inner = content.current;
 		const outer = scroller.current;
@@ -176,13 +183,16 @@ export function ChartWorkspace({
 		const report = () => {
 			const style = getComputedStyle(outer);
 			const padding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
-			onContentHeight(Math.ceil(inner.offsetHeight + padding), firstChartTop(inner, outer));
+			onContentHeight(
+				Math.ceil(inner.offsetHeight + padding),
+				firstChartBox(inner, outer, toolbar.current, selectedKey),
+			);
 		};
 		report();
 		const observer = new ResizeObserver(report);
 		observer.observe(inner);
 		return () => observer.disconnect();
-	}, [onContentHeight, compact]);
+	}, [onContentHeight, compact, selectedKey]);
 
 	const query = search.trim().toLowerCase();
 	const matches = (text: string) => text.toLowerCase().includes(query);
@@ -268,7 +278,6 @@ export function ChartWorkspace({
 
 	// 打开页面时滚到选中节点或第一个执行中 / 失败的组；之后选中节点时展开它的组并滚到可见处。
 	const [scrollTo, setScrollTo] = useState<string | null>(null);
-	const selectedKey = selected ? nodeKey(selected) : null;
 	const lastSelected = useRef<string | null | undefined>(undefined);
 	const groupKeys = groups.map((g) => g.key).join("|");
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在目录与选中节点变化时定位
@@ -293,12 +302,15 @@ export function ChartWorkspace({
 		const el = box?.querySelector<HTMLElement>(`[data-group="${CSS.escape(scrollTo)}"]`);
 		if (!box || !el) return;
 		const top = el.offsetTop - (toolbar.current?.offsetHeight ?? 0) - 8;
-		// 看得见：组的上沿在工具栏下面，第一张图表露出大半（组标题和节点摘要在图表上面，只露出它们看不到曲线）。
+		// 看得见：组的上沿在工具栏下面，第一张图表露出 96% 以上（组标题和节点摘要在图表上面，只露出它们看不到曲线）。
 		// 图表还没有渲染出来时（组刚展开）只要求露出组标题那一截。
 		const chart = el.querySelector<HTMLElement>("[data-chart]");
 		const boxTop = box.getBoundingClientRect().top;
 		const needed = chart
-			? chart.getBoundingClientRect().top - boxTop + box.scrollTop + chart.offsetHeight * 0.75
+			? chart.getBoundingClientRect().top -
+				boxTop +
+				box.scrollTop +
+				chart.offsetHeight * CHARTS_FIRST_VISIBLE
 			: el.offsetTop + 40;
 		const visible = top >= box.scrollTop && needed <= box.scrollTop + box.clientHeight;
 		if (!visible) box.scrollTop = Math.max(0, top);

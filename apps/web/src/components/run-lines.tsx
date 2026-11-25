@@ -10,6 +10,7 @@ import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOLDED_LABEL, LIST_LABEL, moreLabel } from "#/lib/copy";
 import { nodeStatusDisplay } from "#/lib/node-status";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Truncate } from "@/components/ui/truncate";
 
 /**
@@ -318,7 +319,7 @@ function StationCell({
 				title={
 					station.kind === "fold"
 						? foldLabel(station)
-						: `${runNodeName(station.node)} · ${nodeStatusView(station.node.status).label}`
+						: `${untrustedPlain(runNodeName(station.node))} · ${nodeStatusView(station.node.status).label}`
 				}
 				className="relative flex h-5 items-center"
 			>

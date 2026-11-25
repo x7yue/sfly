@@ -18,14 +18,14 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
 import { BottomPanel } from "./BottomPanel";
+import { ChartWorkspace, NARROW_WINDOW } from "./ChartWorkspace";
+import { chartsCompact } from "./chart-groups";
 import {
 	CHARTS_MIN_HEIGHT,
-	ChartWorkspace,
 	chartsReservedHeight,
-	NARROW_WINDOW,
-} from "./ChartWorkspace";
-import { chartsCompact } from "./chart-groups";
-import { timelineBodyMax } from "./detail-layout";
+	type FirstChart,
+	timelineBodyMax,
+} from "./detail-layout";
 import { useLiveRun } from "./live-run";
 import { MonitorTopBar } from "./MonitorTopBar";
 import { openedScope } from "./monitor-scope";
@@ -217,29 +217,34 @@ function DetailView({
 }) {
 	const catalog = useMetricCatalog(run.id, attemptsSignature(run));
 	const compact = chartsCompact(run, catalog.data);
-	// 图表工作区内容排出来的高度：留给它的是预留的高度（`chartsReservedHeight`：宽窗口里 300px，窄窗口里第一张图表被推下去时
-	// 跟着加）和内容高度里小的那个（内容少时不留空白）。
+	// 详情的可用高度（失败横幅以下，时间线、图表工作区、底部面板共用）：窗口矮的时候时间线主体最高是剩下的高度，
+	// 图表和底部面板的位置才留得出来（`timelineBodyMax`）；窗口高时它比视口的 30% 大，不起作用。
+	const [rootRef, rootHeight] = useElementHeight<HTMLDivElement>();
+	const [bannerRef, bannerHeight] = useElementHeight<HTMLDivElement>();
+	const available = rootHeight === 0 ? 0 : rootHeight - bannerHeight;
+	// 图表工作区内容排出来的高度和第一张图表的位置：留给图表工作区的是预留的高度（`chartsReservedHeight`：至少 300px，
+	// 第一张图表被推到下面时跟着加，加到它露出 96% 为止，时间线和底部面板先让）和内容高度里小的那个（内容少时不留空白）。
 	const narrow = useMediaQuery(NARROW_WINDOW);
-	const [charts, setCharts] = useState({ content: 0, firstChartTop: 0 });
+	const [charts, setCharts] = useState<{ content: number; first: FirstChart | null }>({
+		content: 0,
+		first: null,
+	});
 	const setChartsHeights = useCallback(
-		(content: number, firstChartTop: number) =>
+		(content: number, first: FirstChart | null) =>
 			setCharts((was) =>
-				was.content === content && was.firstChartTop === firstChartTop
+				was.content === content &&
+				was.first?.top === first?.top &&
+				was.first?.height === first?.height
 					? was
-					: { content, firstChartTop },
+					: { content, first },
 			),
 		[],
 	);
 	const chartsReserved = Math.max(
 		CHARTS_MIN_HEIGHT,
-		Math.min(chartsReservedHeight(charts.firstChartTop, narrow), charts.content),
+		Math.min(chartsReservedHeight(charts.first, available, narrow), charts.content),
 	);
-	// 详情的可用高度（失败横幅以下，时间线、图表工作区、底部面板共用）：窗口矮的时候时间线主体最高是剩下的高度，
-	// 图表和底部面板的位置才留得出来（`timelineBodyMax`）；窗口高时它比视口的 30% 大，不起作用。
-	const [rootRef, rootHeight] = useElementHeight<HTMLDivElement>();
-	const [bannerRef, bannerHeight] = useElementHeight<HTMLDivElement>();
-	const bodyMax =
-		rootHeight === 0 ? undefined : timelineBodyMax(rootHeight - bannerHeight, chartsReserved);
+	const bodyMax = rootHeight === 0 ? undefined : timelineBodyMax(available, chartsReserved);
 	useEscapeClearsSelection();
 	useNextFailureShortcut(run);
 	return (

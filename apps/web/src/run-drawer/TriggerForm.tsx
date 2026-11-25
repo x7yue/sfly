@@ -332,7 +332,13 @@ const CHECK_ICON: Record<
 	blocked: { icon: <XIcon />, className: "bg-danger-soft text-danger-fg", label: "不通过" },
 };
 
-function CheckItem({ row, onLocate }: { row: CheckRow; onLocate?: (nodeId: string) => void }) {
+export function CheckItem({
+	row,
+	onLocate,
+}: {
+	row: CheckRow;
+	onLocate?: (nodeId: string) => void;
+}) {
 	const icon = CHECK_ICON[row.state];
 	return (
 		<li
@@ -349,12 +355,13 @@ function CheckItem({ row, onLocate }: { row: CheckRow; onLocate?: (nodeId: strin
 				<span className="sr-only">{icon.label}：</span>
 			</span>
 			<div className="min-w-0 flex-1">
-				<div>
-					<UntrustedText text={row.title} />
+				{/* 标题和说明里有换行（控制面的警告可以是多行，`title: p.message`）：按多行文字显示，换行保留。 */}
+				<div className="whitespace-pre-line">
+					<UntrustedText text={row.title} mode="text" />
 				</div>
 				{row.detail && (
-					<div className="text-xs text-fg-3">
-						<UntrustedText text={row.detail} />
+					<div className="whitespace-pre-line text-xs text-fg-3">
+						<UntrustedText text={row.detail} mode="text" />
 					</div>
 				)}
 				{row.problems.length > 0 && <ProblemList problems={row.problems} onLocate={onLocate} />}
