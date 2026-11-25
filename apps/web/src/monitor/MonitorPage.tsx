@@ -292,7 +292,7 @@ function FailureBanner({ run, onClose }: { run: RunView; onClose: () => void }) 
 			{failure && (
 				<span data-testid="run-failure" className="block min-w-0">
 					{/* 一行放不下时截断在末尾，悬停或聚焦看全文。 */}
-					<Truncate>{failureSummary(failure)}</Truncate>
+					<Truncate untrusted>{failureSummary(failure)}</Truncate>
 				</span>
 			)}
 		</Banner>

@@ -345,9 +345,20 @@ export interface AttemptView {
 	attempt: number;
 	status: TaskStatus;
 	agent: string | null;
-	/** 已解析的输入；派发前为 null。 */
+	/**
+	 * 已解析的输入；派发前为 null。**内容被省略时也是 null**（单个大于 `RUN_VIEW_IO_VALUE_LIMIT_BYTES`，或者整份视图合计已经用完
+	 * `RUN_VIEW_IO_TOTAL_LIMIT_BYTES`）：判断是不是被省略了只看 `inputs_omitted_bytes`，不要假定「小的一定内联」。
+	 */
 	inputs: Record<string, unknown> | null;
+	/**
+	 * 输入被省略时，存着的大小（打码之前的字节数）**向上取整到 KiB（1024 的倍数）**，不给精确值：读取时要打码，精确的大小和打码之后的内容
+	 * 一减就露出 secret 值的长度。取整只是让大小变粗，不能完全藏住长度。**只在内容被省略时不是 null**（内容内联着、或者本来就没有输入时都是 null）。全文用 `GET /tasks/:id/io` 取。
+	 */
+	inputs_omitted_bytes: number | null;
+	/** 输出；没有输出（还没结束、失败、被跳过）为 null，**内容被省略时也是 null**，规矩同 `inputs`。 */
 	outputs: Record<string, unknown> | null;
+	/** 输出被省略时存着的大小，向上取整到 KiB；只在内容被省略时不是 null，规矩同 `inputs_omitted_bytes`。 */
+	outputs_omitted_bytes: number | null;
 	error: ErrorView | null;
 	queued_at: Timestamp;
 	/** 执行器启动的时间；排队、准备中为 null。 */
@@ -1462,7 +1473,16 @@ export interface NodeRunView {
 	status: NodeStatus;
 	/** 包节点派发到的 Agent；内置节点为 null。 */
 	agent: string | null;
+	/**
+	 * 节点的输出：最后一次尝试的输出（同那次尝试的 `outputs`）；没有输出时为 null，**被省略时也是 null**（这一份也算整份视图的合计），
+	 * 判断只看 `outputs_omitted_bytes`。
+	 */
 	outputs: Record<string, unknown> | null;
+	/**
+	 * 节点的输出被省略时，存着的大小（最后一次尝试输出的大小，打码之前）向上取整到 KiB；只在被省略时不是 null。
+	 * 全文用 `GET /tasks/:id/io` 取，任务是 `attempts` 里最后一次尝试（`task_id`）。
+	 */
+	outputs_omitted_bytes: number | null;
 	error: ErrorView | null;
 	attempts: AttemptView[];
 }
@@ -1922,6 +1942,19 @@ export interface PreflightProblem {
 	code: string;
 	message: string;
 	node_id?: string;
+	/**
+	 * `secret_params_too_large` 的警告说的是哪一组值：场景里的默认值（`defaults`），或某个运行预设（`preset`，`preset_id` 是它的 ID）。
+	 * 触发表单据此只显示和当前选择有关的那一条（没选预设是默认值的，选了预设是这个预设的）。别的问题没有这个字段。
+	 * 默认值的这一条的 `preset_ids` 是 secret 值和只用默认值时完全相同的运行预设（它们没有改变 secret 值）：
+	 * 选了其中一个预设触发，用的也是这些默认值，这一条对它们同样适用。
+	 */
+	origin?: {
+		kind: "defaults";
+		preset_ids: string[];
+	} | {
+		kind: "preset";
+		preset_id: string;
+	};
 }
 
 /**
@@ -3137,6 +3170,13 @@ export interface SubflowEntryNodeInput {
 	 */
 	name?: string;
 	params?: ParamDeclarationInput[];
+}
+
+/** 一次尝试的输入和输出的全文（`GET /tasks/:id/io`）：同运行视图里的 `inputs`、`outputs`，不省略；没有的为 null。 */
+export interface TaskIoView {
+	task_id: string;
+	inputs: Record<string, unknown> | null;
+	outputs: Record<string, unknown> | null;
 }
 
 /** 一个任务（一次尝试）的指标摘要。 */

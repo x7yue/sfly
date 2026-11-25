@@ -1,5 +1,6 @@
 import { cn } from "cn";
-import { useId } from "react";
+import { Children, useId } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 
 /**
  * 表单字段：标签、控件、帮助文字、错误（docs/DESIGN-SYSTEM.md「表单与校验」）。错误与帮助用 `aria-describedby`
@@ -70,7 +71,10 @@ export function FormField({
 	);
 }
 
-/** 提交失败（服务端错误）：写在弹窗或表单里、提交按钮上方，出现时读屏读一次。 */
+/**
+ * 提交失败（服务端错误）：写在弹窗或表单里、提交按钮上方，出现时读屏读一次。**里面的文字（字符串）一律经 `UntrustedText`**（#699）：
+ * 接口的错误信息里可能拼着 Agent 报的原文（名称、原因），而这一句是读屏立刻读的；不再逐条判断哪条里有别人的文字。
+ */
 export function FormAlert({
 	children,
 	className,
@@ -80,7 +84,9 @@ export function FormAlert({
 }) {
 	return (
 		<p role="alert" data-slot="form-alert" className={cn("m-0 text-sm text-danger-fg", className)}>
-			{children}
+			{Children.map(children, (child) =>
+				typeof child === "string" ? <UntrustedText text={child} mode="text" /> : child,
+			)}
 		</p>
 	);
 }

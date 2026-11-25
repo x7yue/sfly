@@ -253,6 +253,68 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			);
 		});
 
+		it("运行视图里超过 16 KiB 的输出只给大小：--outputs 自动取全文（文本、--json、--node），读到的和原文一样；sfly api 读到 null 加大小，/tasks/<任务>/io 读到全文（#633）", async () => {
+			const big = "z".repeat(40_000);
+			const runId = await trigger(
+				await scenario("省略场景", [echo("a", { retries: 1 }), echo("b"), echo("c")]),
+			);
+			await agent.fail(await assign(), "第一次失败");
+			await agent.succeed(await assign(), { text: big, n: 1 });
+			await agent.succeed(await assign(), { small: true });
+			await agent.succeed(await assign(), { text: big.slice(0, 20_000) });
+
+			// 运行视图：a 和 c 的输出大，内容是 null、只给大小（向上取整到 KiB）；b 内联。
+			const raw = await cli("api", "GET", `/runs/${runId}`);
+			expect(raw.code, raw.stderr).toBe(0);
+			const view = JSON.parse(raw.stdout) as {
+				chains: Array<{
+					nodes: Array<{
+						node_id: string;
+						outputs: unknown;
+						outputs_omitted_bytes: number | null;
+						attempts: Array<{ outputs: unknown; outputs_omitted_bytes: number | null }>;
+					}>;
+				}>;
+			};
+			const nodes = new Map((view.chains[0]?.nodes ?? []).map((n) => [n.node_id, n]));
+			const a = nodes.get("a");
+			expect(a?.outputs).toBeNull();
+			expect(a?.outputs_omitted_bytes).toBe(40 * 1024);
+			expect(a?.attempts.at(-1)?.outputs_omitted_bytes).toBe(40 * 1024);
+			expect(nodes.get("b")?.outputs).toEqual({ small: true });
+			expect(nodes.get("b")?.outputs_omitted_bytes).toBeNull();
+			expect(nodes.get("c")?.outputs).toBeNull();
+
+			// --outputs 自动取全文。
+			const json = await cli("run", "show", runId, "--outputs", "--json");
+			expect(json.code, json.stderr).toBe(0);
+			const rows = JSON.parse(json.stdout) as Array<{
+				node: string;
+				task: string;
+				outputs: { text?: string; small?: boolean; n?: number };
+			}>;
+			expect(rows.map((r) => r.node)).toEqual(["a", "b", "c"]);
+			expect(rows[0]?.outputs).toEqual({ text: big, n: 1 });
+			expect(rows[1]?.outputs).toEqual({ small: true });
+			expect(rows[2]?.outputs.text).toBe(big.slice(0, 20_000));
+			const only = await cli("run", "show", runId, "--outputs", "--node", "main:a", "--json");
+			expect((JSON.parse(only.stdout) as typeof rows)[0]?.outputs).toEqual({ text: big, n: 1 });
+			const text = await cli("run", "show", runId, "--outputs", "--node", "main:a");
+			expect(text.stdout).toContain("main:a#2  成功");
+			expect(text.stdout).toContain("……（输出共 ");
+			expect(text.stdout).toContain(
+				`完整的输出用 sfly run show ${runId} --outputs --node main:a --json）`,
+			);
+
+			// 取全文的路由：任务是节点最后一次尝试。
+			const io = await cli("api", "GET", `/tasks/${rows[0]?.task}/io`);
+			expect(JSON.parse(io.stdout)).toEqual({
+				task_id: rows[0]?.task,
+				inputs: expect.anything(),
+				outputs: { text: big, n: 1 },
+			});
+		});
+
 		it("--node 需要和 --outputs 一起用，--state 不能和它们一起用", async () => {
 			const runId = await trigger(await scenario("选项场景", [echo("a")]));
 			const a = await cli("run", "show", runId, "--node", "main:a");
