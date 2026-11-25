@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -13,12 +13,19 @@ import {
 	taskActions,
 	tasks,
 } from "../db/schema.js";
+import { isLockTimeout } from "../sessions/session-store.js";
 
 /** 日志和产物的默认保留期：30 天。 */
 export const DEFAULT_RETENTION_DAYS = 30;
 
 /** 每次清理最多处理的运行数（剩下的下次扫描继续）。 */
 const BATCH = 100;
+
+/**
+ * {@link Retention.isPurgedAfterWait} 最多等多久（毫秒）：清理删一个大目录要几秒，读日志的请求在认出文件有问题之后才会等；
+ * 等不到就按「正在清理」处理，所以这个数只决定最多拖慢这一种请求多久，不影响回答。
+ */
+export const DEFAULT_PURGE_WAIT_MS = 3_000;
 
 /**
  * 日志和产物的保留期清理（#18）：运行结束超过保留期后，删除它的日志目录 `logs/<run_id>/`、
@@ -29,6 +36,8 @@ const BATCH = 100;
  */
 export class Retention {
 	#sweeping: Promise<number> | undefined;
+	/** 正在等清理提交的核对（{@link isPurgedAfterWait}）：同一个运行同时只发一次。 */
+	readonly #waiting = new Map<string, Promise<boolean>>();
 
 	constructor(
 		private readonly deps: {
@@ -37,6 +46,8 @@ export class Retention {
 			dataDir: string;
 			/** 保留天数，默认 {@link DEFAULT_RETENTION_DAYS}。 */
 			retentionDays?: number;
+			/** {@link Retention.isPurgedAfterWait} 最多等多久（毫秒），默认 {@link DEFAULT_PURGE_WAIT_MS}。 */
+			purgeWaitMs?: number;
 		},
 	) {}
 
@@ -64,6 +75,46 @@ export class Retention {
 			.from(runs)
 			.where(and(eq(runs.id, runId), isNotNull(runs.purgedAt)));
 		return row !== undefined;
+	}
+
+	/**
+	 * 日志文件有问题（不见了、变短了）时，核对它是不是保留期清理正在删（#734 的审查）：清理在一个事务里先锁住运行的行（`FOR UPDATE`）、
+	 * 再删这个运行的日志目录、最后写 `purged_at` 提交，删大目录要几秒；这期间 {@link isPurged} 读不到还没提交的 `purged_at`，
+	 * 读日志的请求会把「正在被清理」说成「日志文件不在了」。所以只在**认出了问题之后**用 `FOR KEY SHARE` 再读一次（产物上传核对运行有没有被
+	 * 清理用的是同一个办法）：它只和清理的 `FOR UPDATE` 冲突，引擎对运行行的普通更新不等它；清理提交之后读到的是已清理，等到了就按它回；
+	 * 没有问题的请求不多查任何东西。
+	 *
+	 * **等待有上界**（`lock_timeout`，{@link DEFAULT_PURGE_WAIT_MS}）：等不到就是还有事务持着运行行的 `FOR UPDATE`，控制面里这样锁运行行的只有
+	 * 两处——保留期清理（删着目录，几秒）和 {@link Engine.cancel}（几个查询，毫秒）；取消在已经结束的运行上马上以 409 返回，而清理只处理结束超过
+	 * 保留期的运行，两者不会同时拿着同一个到期运行的锁很久，所以等不到就是清理还在删：按「已清理」处理（回 `expired`，正是接下来要变成的样子）。
+	 * 清理出错回滚、`purged_at` 没有写上时，读到的是「没清理」，文件真的不在了，照常说文件的问题（下一次扫描会重新清理它）。
+	 */
+	isPurgedAfterWait(runId: string): Promise<boolean> {
+		// 同一个运行同时有很多读日志的请求在等时共用一次核对：每个等着的核对占着一个数据库连接（连接池只有 10 个），清理删目录的
+		// 几秒里一批请求各占一个，会把连接池占满、挡住别的请求。后来的请求拿到的是这一次核对的结果（等清理提交之后读到的）。
+		const running = this.#waiting.get(runId);
+		if (running) return running;
+		const check = this.#purgedAfterWait(runId).finally(() => this.#waiting.delete(runId));
+		this.#waiting.set(runId, check);
+		return check;
+	}
+
+	async #purgedAfterWait(runId: string): Promise<boolean> {
+		const waitMs = this.deps.purgeWaitMs ?? DEFAULT_PURGE_WAIT_MS;
+		try {
+			return await this.deps.db.transaction(async (tx) => {
+				await tx.execute(sql`select set_config('lock_timeout', ${`${waitMs}ms`}, true)`);
+				const [row] = await tx
+					.select({ purgedAt: runs.purgedAt })
+					.from(runs)
+					.where(eq(runs.id, runId))
+					.for("key share");
+				return row?.purgedAt != null;
+			});
+		} catch (error) {
+			if (isLockTimeout(error)) return true;
+			throw error;
+		}
 	}
 
 	async #sweep(): Promise<number> {

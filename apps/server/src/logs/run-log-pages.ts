@@ -93,6 +93,11 @@ export interface RunLogFollow {
 	filter: LogFilter;
 	/** 已经读到（或推送过）的位置：只推送每个任务更大的序号。 */
 	after: TaskSeqs;
+	/**
+	 * 连上时范围内日志文件有问题的任务（#721，和下载是同一个判断）：在补发之前、和补发同一步里查，复用 `follow` 本来就要做的那一次列任务
+	 * （连上之前再读一遍运行视图和每个文件会让连接变慢，#734 的审查）；没有问题时不调用。它返回之后才补发，所以事件在第一批 `logs` 之前。
+	 */
+	onProblems?: (problems: FileProblem[]) => Promise<void>;
 }
 
 /** 实时推送的一次推送，`at` 是推送到的位置。 */
@@ -187,22 +192,6 @@ export class RunLogs {
 	}
 
 	/**
-	 * 范围内日志文件有问题的任务（#721：分页和实时流连上时说明；和下载是同一个判断，{@link logFileProblem}），按运行视图里的顺序；
-	 * 运行不存在时为 undefined。
-	 */
-	async fileProblems(
-		runId: string,
-		scope: RunLogScope | undefined,
-	): Promise<FileProblem[] | undefined> {
-		const streams = await this.#streams(runId, scope);
-		if (!streams) return undefined;
-		return (await problemsOf(streams)).map(({ task, reason }) => ({
-			origin: task.origin,
-			problem: reason,
-		}));
-	}
-
-	/**
 	 * 范围内的全部日志，按合并视图的顺序从头到尾，一批一批（最多 {@link DOWNLOAD_BATCH} 行）；运行不存在时为 undefined。
 	 * 读到的内容固定在这个方法返回的那一刻：之后写入的行不会出现，整个下载共用这一份快照。
 	 *
@@ -289,6 +278,14 @@ export class RunLogs {
 		// 先排上补发再订阅（同步完成，中间不会有发布）：补发时取的快照之后写入的行，都排在补发之后按序号去重。
 		serial(async () => {
 			const streams = await learn();
+			if (request.onProblems) {
+				const found = await problemsOf(streams);
+				if (found.length > 0) {
+					await request.onProblems(
+						found.map(({ task, reason }) => ({ origin: task.origin, problem: reason })),
+					);
+				}
+			}
 			const sentSeq = (s: TaskStream) => sent.get(s.log.order) ?? 0;
 			const behind = streams.filter((s) => s.log.seq > sentSeq(s));
 			const missed = behind.reduce((n, s) => n + s.log.seq - sentSeq(s), 0);

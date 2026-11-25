@@ -15,6 +15,7 @@ import {
 	focusNode,
 	initialSelection,
 	latestRunView,
+	logFileProblemsNote,
 	logOrigin,
 	logScope,
 	nextFailure,
@@ -631,5 +632,75 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		expect(runDocumentTitle(view("running", true), "日终数据处理")).toBe(
 			"○ 取消中 · 日终数据处理 · sfly",
 		);
+	});
+});
+
+describe("logFileProblemsNote（合并视图里日志文件有问题的任务的说明）", () => {
+	const node = (id: string, attempts: number): NodeRunView => ({
+		node_id: id,
+		kind: "package",
+		status: "running",
+		agent: "agent-a",
+		outputs: null,
+		outputs_omitted_bytes: null,
+		error: null,
+		attempts: Array.from({ length: attempts }, (_, i) => ({ attempt: i + 1 }) as AttemptView),
+	});
+	const mainChain: ChainRunView = {
+		id: "main",
+		chain_id: "entry",
+		name: null,
+		parent_chain_instance_id: null,
+		async_node_id: null,
+		depth: 0,
+		status: "running",
+		params: {},
+		started_at: "2026-01-01T00:00:00.000Z",
+		ended_at: null,
+		nodes: [node("fetch", 1), node("verify", 2), node("probe", 1)],
+	};
+	const run: RunView = { ...view("running"), chains: [mainChain] };
+	const problem = (nodeId: string, kind: "missing" | "short", attempt = 1) => ({
+		task_id: `t-${nodeId}`,
+		chain_instance_id: "main",
+		subflow: null,
+		node_id: nodeId,
+		attempt,
+		problem: kind,
+	});
+
+	it("没有问题时为 null", () => {
+		expect(logFileProblemsNote(run, [], 0)).toBeNull();
+	});
+
+	it("每个任务写明是不在了还是比记录的短，总数写在前面，下载也会失败、只能从备份恢复", () => {
+		const note = logFileProblemsNote(
+			run,
+			[problem("fetch", "missing"), problem("verify", "short", 2)],
+			2,
+		);
+
+		expect(note).toContain("2 个任务的日志文件有问题");
+		expect(note).toContain("fetch（不在了）");
+		expect(note).toContain("verify #2（比记录的短）");
+		expect(note).toContain("下载整个运行的日志也会失败");
+		expect(note).toContain("备份");
+		expect(note).not.toContain("等共");
+	});
+
+	it("最多列 5 个，总数大于列出的写「等共 N 个」（控制面一次给 20 个，总数在 file_problems_total）", () => {
+		const many = Array.from({ length: 20 }, (_, i) => problem(`n${i}`, "missing"));
+
+		const note = logFileProblemsNote(run, many, 25) as string;
+
+		expect(note).toContain("25 个任务的日志文件有问题");
+		expect(note.match(/n\d+（不在了）/g)).toHaveLength(5);
+		expect(note).toContain("n0（不在了）");
+		expect(note).not.toContain("n5（不在了）");
+		expect(note).toContain("等共 25 个");
+	});
+
+	it("总数小于列出的个数时（旧数据）以列出的为准", () => {
+		expect(logFileProblemsNote(run, [problem("fetch", "missing")], 0)).toContain("1 个任务");
 	});
 });

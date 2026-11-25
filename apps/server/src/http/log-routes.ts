@@ -82,6 +82,11 @@ export function registerLogRoutes(
 		runLogs: RunLogs;
 		sse: Sse;
 		isPurged: (runId: string) => Promise<boolean>;
+		/**
+		 * 日志文件有问题时再核对一次保留期清理有没有在删（`Retention.isPurgedAfterWait`，#734 的审查）：两种页、两种流、两种下载认出问题之后
+		 * 都先问它，是「保留期清理」就按 `expired` 说，不当成「文件不在了」。没有问题的请求不调用。
+		 */
+		isPurgedAfterWait: (runId: string) => Promise<boolean>;
 	},
 ): void {
 	contractRoute(app, logsApi.runPage, async ({ params, query }, reply) => {
@@ -102,7 +107,9 @@ export function registerLogRoutes(
 			: undefined;
 		if (!page) return sendError(reply, 404, "not_found", "run not found");
 		// 清理之后文件已经不在，读出来本来就是空的；判断放在读取之后，读取期间被清理也不会返回半页。
-		const expired = await deps.isPurged(params.id);
+		let expired = await deps.isPurged(params.id);
+		// 认出了文件的问题：保留期清理正在删（删着目录、还没提交 `purged_at`）的话，是 `expired`，不是「文件不在了」。
+		if (!expired && page.fileProblems.length > 0) expired = await deps.isPurgedAfterWait(params.id);
 		const start = new Map<number, number>();
 		// 日志文件不在了、变短了（#721）：页里说明，不当成「没有日志」；已过保留期的运行文件本来就被清理了，`expired` 已经说了。
 		const problems = expired ? [] : page.fileProblems;
@@ -134,8 +141,8 @@ export function registerLogRoutes(
 			first = await rows.next();
 		} catch (error) {
 			if (!(error instanceof LogFilesGoneError)) throw error;
-			// 过了保留期的运行文件本来就被清理了：这是「保留期清理」，说明不变，不是异常，先判断。
-			if (await deps.isPurged(params.id)) return sendError(reply, 410, "expired", PURGED);
+			// 过了保留期的运行文件本来就被清理了（清理正在删、还没提交的也算）：这是「保留期清理」，说明不变，不是异常，先判断。
+			if (await deps.isPurgedAfterWait(params.id)) return sendError(reply, 410, "expired", PURGED);
 			// 范围内有任务的日志文件不见了、变短了：不能照常 200 给一份缺内容的下载（#669）。
 			request.log.warn({ run: params.id, tasks: error.tasks }, error.message);
 			return sendError(reply, 410, "expired", GONE_RUN, error.details);
@@ -161,16 +168,8 @@ export function registerLogRoutes(
 				return sendError(reply, 404, "not_found", "run not found");
 			}
 			const purged = await deps.isPurged(runId);
-			// 连上时说一次范围内有哪些任务的日志文件有问题（#721）。
-			const problems = purged ? [] : ((await deps.runLogs.fileProblems(runId, query.nodes)) ?? []);
 			open((stream) => {
 				if (purged) return undefined;
-				if (problems.length > 0) {
-					stream.send("file_problems", {
-						file_problems: listedProblems(problems),
-						file_problems_total: problems.length,
-					});
-				}
 				const from = new Map(after);
 				const resumed = stream.lastEventId && decodeRunLogLiveCursor(stream.lastEventId);
 				for (const [order, seq] of resumed || []) {
@@ -178,7 +177,20 @@ export function registerLogRoutes(
 				}
 				return deps.runLogs.follow(
 					runId,
-					{ scope: query.nodes, filter: levelFilter(query), after: from },
+					{
+						scope: query.nodes,
+						filter: levelFilter(query),
+						after: from,
+						// 连上时说一次范围内有哪些任务的日志文件有问题（#721）：在 `follow` 的第一步里查（复用它列任务的那一次），
+						// 在补发之前发；保留期清理正在删的不说（#734 的审查）。
+						onProblems: async (problems) => {
+							if (await deps.isPurgedAfterWait(runId)) return;
+							stream.send("file_problems", {
+								file_problems: listedProblems(problems),
+								file_problems_total: problems.length,
+							});
+						},
+					},
 					(event) => {
 						const id = encodeRunLogLiveCursor(event.at);
 						if (event.kind === "lines") stream.send("logs", { lines: event.lines }, id);
@@ -215,7 +227,13 @@ export function registerLogRoutes(
 					: { direction: "backward", before, limit, filter, mask },
 			));
 		// 文件不在了、变短了（#721）：页里说明，不当成「没有日志」；已过保留期的运行文件本来就被清理了，`expired` 已经说了。
-		const expired = await deps.isPurged(info.runId);
+		let expired = await deps.isPurged(info.runId);
+		let fileProblem = expired ? null : await taskFileProblem(info);
+		// 认出了文件的问题：保留期清理正在删（删着目录、还没提交 `purged_at`）的话，是 `expired`，不是「文件不在了」。
+		if (fileProblem && (await deps.isPurgedAfterWait(info.runId))) {
+			expired = true;
+			fileProblem = null;
+		}
 		return {
 			task_id: params.id,
 			lines: page.lines,
@@ -225,7 +243,7 @@ export function registerLogRoutes(
 			last_seq: info.seq,
 			truncated: info.truncated,
 			expired,
-			file_problem: expired ? null : await taskFileProblem(info),
+			file_problem: fileProblem,
 			locate: located ? { at_offset: located.atOffset, exact_seq: located.exactSeq } : null,
 		};
 	});
@@ -237,7 +255,9 @@ export function registerLogRoutes(
 		if (await deps.isPurged(info.runId)) return sendError(reply, 410, "expired", PURGED);
 		const stats = await stat(info.file).catch(() => undefined);
 		const size = stats?.size;
-		const gone = (reason: "missing" | "short") => {
+		const gone = async (reason: "missing" | "short") => {
+			// 保留期清理正在删（删着目录、还没提交 `purged_at`）：是「保留期清理」，说明不变，不是「文件不见了」。
+			if (await deps.isPurgedAfterWait(info.runId)) return sendError(reply, 410, "expired", PURGED);
 			const error = new LogFilesGoneError([
 				{ taskId, nodeId: info.nodeId, attempt: info.attempt, reason },
 			]);
@@ -280,7 +300,9 @@ export function registerLogRoutes(
 		}
 		// 连上时说一次日志文件有没有问题（#721）；已过保留期的运行不说，连着期间才出的问题也不报。
 		const info = await deps.logs.describe(taskId);
-		const problem = info && !(await deps.isPurged(info.runId)) ? await taskFileProblem(info) : null;
+		let problem = info && !(await deps.isPurged(info.runId)) ? await taskFileProblem(info) : null;
+		// 保留期清理正在删（删着目录、还没提交 `purged_at`）的不说（#734 的审查）。
+		if (info && problem && (await deps.isPurgedAfterWait(info.runId))) problem = null;
 		open((stream) => {
 			if (problem) stream.send("file_problem", { file_problem: problem });
 			const resume = Number(stream.lastEventId);
