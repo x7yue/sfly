@@ -116,6 +116,8 @@ docker compose up -d
   }
   ```
 
+- 日志下载（`GET /runs/:id/logs/download`、`GET /tasks/:id/logs/download`）靠 `proxy_http_version 1.1` 才分得出「没下完」：控制面在下载的过程中发现日志文件被删除、被截短，会断开连接。代理用 HTTP/1.0 连控制面时（nginx 1.29.7 之前 `proxy_http_version` 的默认值就是 1.0）响应靠关闭连接来结束，断开和正常结束分不出来，客户端拿到的文件只有断开之前的行，也不报错；用上面的示例（`proxy_http_version 1.1`）就看得出来（curl 退出码非 0，命令行 `sfly run logs --all` 报 `download_incomplete`）。
+
 - **登录与反向代理**（ADR 0029）：
   - **浏览器要用 `SFLY_PUBLIC_URL` 打开控制台。** 登录 Cookie 只认同源的请求；内网用 http 访问时浏览器不发 `Sec-Fetch-Site`，控制面看请求的 `Origin`：配了 `SFLY_PUBLIC_URL` 就和它比，没配就和请求的 `Host` 比。对不上（主机名对 IP、端口不同、反向代理改写了 `Host` 又没配公开地址）时，页面看起来登录着，写请求却被当作没有登录，登出也不生效。登录页和控制台顶部会提示「请用 <公开地址> 打开」。所以反向代理后面要配 `SFLY_PUBLIC_URL`（浏览器看到的地址），或者让代理原样传 `Host`（nginx 的 `proxy_set_header Host $host`）。
   - **来源地址（登录限速用）和 `SFLY_TRUST_PROXY`**：来源地址默认取 TCP 对端的地址。反向代理把它看到的客户端地址追加在 `X-Forwarded-For` 的最后，客户端自己写的在前面，所以要取「可信代理之前的那一个」，最左边的一段不作数（每次换一个就能绕过限速）。每个取值的意思：

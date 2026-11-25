@@ -483,6 +483,17 @@ def _terminal_stream_line(text: str) -> str:
     return printable(text)
 
 
+def _require_complete(response: Any) -> None:
+    """带长度的响应读到的比声明的少（连接中途断了）：`read` 不报错、返回空，要自己看还差多少。
+    不完整的输出不能当成功（退出码 0）：管道里已经写出去的收不回来，所以说明里写明输出不完整。"""
+    if getattr(response, "length", None):
+        raise CliError(
+            "read_failed",
+            "控制面的响应读到一半断开了（声明的长度没有读满）：标准输出里的内容不完整，"
+            "已经写进管道或文件里的收不回来，不要当作完整的结果用",
+        )
+
+
 def _copy_body(session: Session, response: Any) -> int:
     """响应体原样写到 stdout（二进制写 buffer，没有 buffer 时按 UTF-8 解码）；
     JSON 响应没有结尾换行时补一个。"""
@@ -498,6 +509,7 @@ def _copy_body(session: Session, response: Any) -> int:
         while chunk := response.read(READ_CHUNK):
             body += chunk
         last = bytes(body[-1:])
+        _require_complete(response)
         text = bytes(body).decode("utf-8", "replace")
         # JSON 是一行，记录之间没有换行：任何「整段去掉」都能删掉夹在中间的别人的记录（#691 复审），
         # 所以 JSON 只转义；不是 JSON 的才按普通文字处理。
@@ -512,6 +524,7 @@ def _copy_body(session: Session, response: Any) -> int:
             last = chunk
         if buffer is not None:
             buffer.flush()
+        _require_complete(response)
     if (
         last
         and not last.endswith(b"\n")
