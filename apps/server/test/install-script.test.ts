@@ -513,6 +513,31 @@ esac
 			expect(await readFile(join(dir, "uv.log"), "utf8")).toContain("sfly[cli]==1.2.3");
 		});
 
+		it("--dev-host 作为 --host 交给 register-dev（名字里「主机」那一段）；不合格的、没有 --dev 不给 --name 的都拒绝", async () => {
+			let run = await install(["--dev", "--dev-host", "lab-2", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(await sflyCalls()).toEqual([
+				`agent register-dev --server ${cp.httpUrl} --host lab-2 --env`,
+			]);
+			await rm(sflyLog);
+			for (const [args, message] of [
+				[["--dev", "--dev-host", "Lab_2"], "--dev-host 只能是小写字母、数字和连字符"],
+				[["--dev", "--dev-host", "-lab"], "--dev-host 只能是小写字母、数字和连字符"],
+				[["--dev", "--dev-host", "lab-"], "--dev-host 只能是小写字母、数字和连字符"],
+				[["--dev", "--dev-host", "a".repeat(33)], "--dev-host 最长 32 个字符"],
+				[["--dev-host", "lab", "--name", "x"], "--dev-host 只用于 --dev 不给 --name 时"],
+				[["--dev", "--name", "x", "--dev-host", "lab"], "--dev-host 只用于 --dev 不给 --name 时"],
+			] as const) {
+				run = await install([...args, "--no-service"], { SFLY_HOME: sflyHome });
+				expect(run.code, JSON.stringify(args)).toBe(1);
+				expect(run.stderr, JSON.stringify(args)).toContain(message);
+			}
+			expect(await sflyCalls()).toEqual([]);
+		});
+
 		it("不加 --dev 时不装 sfly CLI、不注册；缺 --name 照旧报错", async () => {
 			const run = await install(["--no-service"], { SFLY_HOME: sflyHome });
 			expect(run.code).toBe(1);
