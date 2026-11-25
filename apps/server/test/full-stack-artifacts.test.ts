@@ -188,6 +188,7 @@ describeWithAgent("全栈：产物与完整日志", () => {
 			"..env": "点点",
 			"覆盖率 95%.png": "中文",
 			"top%25.csv": "字面上的 25",
+			"https%3A%2F%2Fexample.com%2Fpage.html": "存下来的页面",
 		};
 		const id = await api.orchestrationWith({
 			default_agent: "art-agent",

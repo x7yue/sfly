@@ -126,32 +126,45 @@ def _is_tidy(url: str) -> bool:
 _MAX_DECODE_PASSES = 5
 #: 编码过的点、斜杠、反斜杠（不分大小写）。
 _ENCODED_SEPARATORS = ("%2e", "%2f", "%5c")
+#: `%uXXXX` 写法（有的实现认它）。
+_PERCENT_U = re.compile(r"%u[0-9a-f]{4}")
 
 
 def _is_ambiguous_path(path: str) -> bool:
-    """路径写法有歧义：不同的实现可能把它解析成不同的路径。
+    """这个路径会不会被某一层当成上一级目录：不同的实现解码的遍数、认的分隔符不一样。
 
-    原文和有限遍解码之后的文字都要过检查，任何一遍有歧义（或到了次数还在变）就算。
-    控制面允许的产物名称（含 `%`、以 `..` 开头的名称）按路径段编码之后都不算有歧义。
+    原文里有非 ASCII 字符、编码过的点、斜杠、反斜杠、`%uXXXX` 的不带：控制面和 SDK 生成的
+    引用里没有这些（点不编码，斜杠是分段，`%` 写成 `%25`）。然后解码若干遍，原文和每一遍的
+    结果按 `/` 和反斜杠分段，每段去掉第一个分号起的部分之后等于 `.` 或 `..` 的不带
+    （Unicode 兼容归一化之后再看一次）；解码一遍得到的是名称本身，必须是合法的 UTF-8，
+    更深的几遍按字节看；到了次数还在变的不带。
+    只看「会不会被当成上一级」，不因为名称里有 `%` 或编码过的文字就拒绝。
+    接受的例外：名称的某一段解码之后是 `.` 或 `..`（比如 `%2e%2e`、`..;x`）的产物，
+    引用不带凭据。
     """
     if not path.isascii():
         return True
-    text = path
-    for _ in range(_MAX_DECODE_PASSES + 1):
-        lowered = text.lower()
-        if any(escape in lowered for escape in _ENCODED_SEPARATORS):
-            return True
-        for segment in text.split("/"):
-            base = segment.split(";", 1)[0]
-            if base in (".", "..") or unicodedata.normalize("NFKC", base) in (".", ".."):
-                return True
+    lowered = path.lower()
+    if any(escape in lowered for escape in _ENCODED_SEPARATORS) or _PERCENT_U.search(lowered):
+        return True
+    data = path.encode("ascii")
+    for depth in range(_MAX_DECODE_PASSES + 1):
+        forms = [data]
         try:
-            decoded = unquote_to_bytes(text).decode("utf-8")
+            text = data.decode("utf-8")
         except UnicodeDecodeError:
-            return True
-        if decoded == text:
+            if depth == 1:
+                return True
+        else:
+            forms.append(unicodedata.normalize("NFKC", text).encode("utf-8"))
+        for form in forms:
+            for segment in re.split(rb"[/\\]", form):
+                if segment.split(b";", 1)[0] in (b".", b".."):
+                    return True
+        decoded = unquote_to_bytes(data)
+        if decoded == data:
             return False
-        text = decoded
+        data = decoded
     return True
 
 

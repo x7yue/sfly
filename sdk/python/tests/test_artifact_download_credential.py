@@ -336,9 +336,11 @@ UNDER_PATH = "https://cp.example.com:8443/sfly/tasks/t1/artifacts/"
         ("https://cp.example.com:8443/sfly/tasks/t1/artifacts/../../x", UNDER_PATH, False),
         # 不带：路径里有歧义的写法。
         ("http://127.0.0.1:8080/tasks/..;/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%u002e%u002e/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%U002E%U002E/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%u4e2d.txt", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2eb", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2Eb", ARTIFACTS, False),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%252eb", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%3b/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%3B/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%253b/x", ARTIFACTS, False),
@@ -347,8 +349,6 @@ UNDER_PATH = "https://cp.example.com:8443/sfly/tasks/t1/artifacts/"
         ("http://127.0.0.1:8080/tasks/%5C..%5Cx", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%5cb", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/%252e%252e/x", ARTIFACTS, False),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/%252fx", ARTIFACTS, False),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/%255cx", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/%25252e%25252e/x", ARTIFACTS, False),
         # 解码到次数用完还在变：不带。
         ("http://127.0.0.1:8080/tasks/t1/artifacts/%" + "25" * 7, ARTIFACTS, False),
@@ -369,6 +369,10 @@ UNDER_PATH = "https://cp.example.com:8443/sfly/tasks/t1/artifacts/"
         ("http://127.0.0.1:8080/tasks/t1/artifacts/dir/a.b..c", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%3Bb;c", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/100%25.txt", ARTIFACTS, True),
+        # 名称里字面上有编码过的文字：解码两遍之后没有点段，没法被当成上一级。
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%252eb", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%252fx", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%255cx", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/100%.txt", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%25", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/%2525", ARTIFACTS, True),
@@ -428,6 +432,62 @@ ALLOWED_NAMES = [
     "#1?.txt",
     "图/截图 (1).png",
     "~tmp",
+    # 名称里字面上有编码过的文字（按地址存下来的页面、截图常常就这么叫）。
+    "https%3A%2F%2Fexample.com%2Fpage.html",
+    "x%2fy",
+    "x%2ey",
+    "x%5cy",
+    "x%2Fy%2Ez%5Cw",
+    "a%2Fb%2Fc.json",
+    "q%3Fx%3D1.html",
+    "caf%E9.html",
+    "%ff",
+    "%41",
+    "%2525",
+    "%u4e2d.txt",
+    "a%zzb",
+]
+
+#: 接受的例外：名称的某一段解码之后是 `.` 或 `..`，会被某些实现当成上一级目录，引用不带凭据
+#: （下载得到 401，改个名字）。
+EXCEPTION_NAMES = [
+    "..;x",
+    ".;x",
+    "%2e%2e",
+    "．．",
+    "a/%2e%2e/b",
+    "https%3A%2F%2Fx.com%2F..%2Fy",
+]
+
+#: 会被某一层当成上一级目录的写法（`tasks/` 之后接着的部分）。
+ATTACKS = [
+    "tasks/..;/x",
+    "tasks/..%3b/x",
+    "tasks/%5c..%5cx",
+    "tasks/%252e%252e/x",
+    "tasks/%25252e%25252e/x",
+    "tasks/%c0%ae%c0%ae/x",
+    "tasks/．．/x",
+    "tasks/‥/x",
+    "tasks/%EF%BC%8E%EF%BC%8E/x",
+    "tasks/%E2%80%A5/x",
+    "tasks/%u002e%u002e/x",
+    "tasks/t1/artifacts/%252e%252e%252f%252e%252e%252f%252e%252e%252fother",
+    "tasks/t1/artifacts/..%252f..%252fother",
+    "tasks/t1/artifacts/%252e%252e%255c%252e%252e%255cother",
+    "tasks/x/../../other",
+    "tasks/.;x/y",
+    "tasks/..%253b/x",
+    "tasks/t1/artifacts/a/%2E",
+    "tasks/t1/artifacts/%2e%2e/x",
+    "tasks/t1/artifacts/%" + "25" * 7,
+    "tasks/%252e%252e%253b/x",
+    # 三层编码的点段，编码过的点段后面跟编码过的斜杠或反斜杠。
+    "tasks/t1/artifacts/%25252e%25252e/x",
+    "tasks/t1/artifacts/%2e%2e%2fother",
+    "tasks/t1/artifacts/%2e%2e%5cother",
+    "tasks/t1/artifacts/%252e%252e%252fother",
+    "tasks/t1/artifacts/%25252e%25252e%25252fother",
 ]
 
 
@@ -454,12 +514,31 @@ def test_every_name_the_control_plane_allows_gets_the_token_in_both_encodings(
     assert _is_control_plane_download(other, artifacts_url), other
 
 
+@pytest.mark.parametrize("encode", [_encode_like_the_sdk, _encode_like_the_control_plane])
+@pytest.mark.parametrize("name", EXCEPTION_NAMES)
+@pytest.mark.parametrize("artifacts_url", [ARTIFACTS, UNDER_PATH])
+def test_the_accepted_exceptions_are_not_given_the_token(
+    name: str, encode: Callable[[str], str], artifacts_url: str
+) -> None:
+    """接受的例外：名称的某一段解码之后是 `.` 或 `..` 的产物，引用不带凭据。"""
+    assert not _is_control_plane_download(artifacts_url + encode(name), artifacts_url)
+
+
+@pytest.mark.parametrize("attack", ATTACKS)
+@pytest.mark.parametrize("artifacts_url", [ARTIFACTS, UNDER_PATH])
+def test_a_path_that_some_layer_would_take_for_the_parent_directory_is_not_given_the_token(
+    attack: str, artifacts_url: str
+) -> None:
+    prefix = artifacts_url[: artifacts_url.index("tasks/")]
+    assert not _is_control_plane_download(prefix + attack, artifacts_url)
+
+
 def test_a_name_with_a_percent_sign_or_leading_dots_is_downloaded_with_the_token(
     control_plane: _Server, tmp_path: Path
 ) -> None:
     """请求真的发出去：路径照原样到了控制面，带着凭据。"""
     prefix = _prefix(control_plane)
-    for name in ("100%.txt", "..env", "...", "覆盖率 95%.png", "top%25.csv"):
+    for name in ("100%.txt", "..env", "...", "覆盖率 95%.png", "top%25.csv", "x%2fy"):
         control_plane.requests.clear()
         got = _fetch(prefix + _encode_like_the_sdk(name), tmp_path / "got", prefix)
         assert got.read_bytes() == b"content", name
