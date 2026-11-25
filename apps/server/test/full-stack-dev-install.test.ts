@@ -4,11 +4,13 @@
 // 环境变量覆盖镜像时（单台机器的本地覆盖），uv 和 sfly CLI 的依赖从覆盖的地址安装，覆盖值写进 agent.env。
 import { execFile } from "node:child_process";
 import { cp as copy, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { arch, tmpdir } from "node:os";
+import { arch, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import pg from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { TestAccounts } from "./support/credentials.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { dependencyWheel, type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
@@ -113,14 +115,15 @@ describeWithAgent("全栈：install.sh --dev", () => {
 
 	async function installDev(
 		plane: TestControlPlane,
-		options: { home?: string; env?: Record<string, string> } = {},
+		options: { home?: string; env?: Record<string, string>; args?: string[] } = {},
 	) {
 		const { stdout } = await run(
 			"sh",
 			[
 				"-c",
-				'curl -fsSL "$0/install.sh" | sh -s -- --name dev-agent --no-service --dev',
+				'curl -fsSL "$0/install.sh" | sh -s -- "$@"',
 				plane.httpUrl,
+				...(options.args ?? ["--name", "dev-agent", "--no-service", "--dev"]),
 			],
 			{
 				env: {
@@ -204,6 +207,65 @@ describeWithAgent("全栈：install.sh --dev", () => {
 		} finally {
 			await localMirror.close();
 			await localPypi.close();
+		}
+	}, 300_000);
+
+	/** 本机的主机名规整成开发 Agent 名字里「主机」那一段（和 `sfly agent register-dev` 的默认一样）。 */
+	const hostSegment = () =>
+		hostname()
+			.split(".")[0]
+			?.toLowerCase()
+			.replace(/[^a-z0-9-]/g, "-")
+			.slice(0, 32)
+			.replace(/^-+|-+$/g, "") as string;
+
+	// 不给 --name：装好真的 sfly CLI 之后，用 SFLY_API_TOKEN 向真的控制面注册自己的开发 Agent（#492）。
+	it("不给 --name：注册自己的开发 Agent，名字是 dev-<登录名>-<主机>，凭据写进 agent.env；重新运行沿用，不再注册", async () => {
+		const [plane] = planes as [TestControlPlane];
+		const accounts = new TestAccounts(plane.database.url);
+		try {
+			const userId = await accounts.user("devowner", { displayName: "开发者" });
+			await accounts.member("default", userId, "editor");
+			const token = await accounts.personalToken(userId, { name: "装开发机" });
+			const registerHome = join(dir, "home-register");
+			const args = ["--no-service", "--dev"];
+
+			const stdout = await installDev(plane, {
+				home: registerHome,
+				args,
+				env: { SFLY_API_TOKEN: token },
+			});
+			const name = `dev-devowner-${hostSegment()}`;
+			const envFile = join(registerHome, ".sfly/agent.env");
+			const text = await readFile(envFile, "utf8");
+			expect(text).toContain(`SFLY_AGENT_NAME=${name}\n`);
+			const credential = /^SFLY_TOKEN=(sfly_agt_[0-9a-f]{48})$/m.exec(text)?.[1] as string;
+			expect(credential, text).toBeDefined();
+			// 凭据只在 agent.env 里：没有打印，也不在个人令牌的命令行输出里。
+			expect(stdout).not.toContain(credential);
+			expect(stdout).toContain(`已注册开发 Agent ${name}`);
+			// 控制面上这个名字只有一个有效的凭据（库里直接数）。
+			const db = new pg.Client({ connectionString: plane.database.url });
+			await db.connect();
+			const count = async () =>
+				Number(
+					(
+						await db.query(
+							"select count(*)::int as n from agent_credentials where agent_name = $1 and revoked_at is null",
+							[name],
+						)
+					).rows[0]?.n,
+				);
+			expect(await count()).toBe(1);
+
+			// 重新运行（没有令牌也行）：沿用 agent.env 里的名字和凭据，不再注册。
+			const again = await installDev(plane, { home: registerHome, args });
+			expect(again).toContain(`沿用`);
+			expect(await readFile(envFile, "utf8")).toContain(`SFLY_TOKEN=${credential}\n`);
+			expect(await count()).toBe(1);
+			await db.end();
+		} finally {
+			await accounts.close();
 		}
 	}, 300_000);
 });

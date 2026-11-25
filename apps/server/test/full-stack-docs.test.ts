@@ -8,13 +8,12 @@
 // PyPI 镜像桩里是测试环境里已安装的 pytest、ruff、jsonschema 和 sfly-std 的依赖重新打成的 wheel，不访问外网。
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { arch, tmpdir } from "node:os";
+import { arch, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { docsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { TestAccounts } from "./support/credentials.js";
@@ -121,6 +120,8 @@ const isForegroundAgent = (block: string) => block.trim() === "~/.sfly/bin/sfly-
 
 const PACKAGE = "demo";
 const NODE = "countdown";
+/** 读者的账号：平台管理员（要签发 Agent 凭据、往公共项目发布 sfly-std），登录名同时是开发 Agent 名字里的一段。 */
+const READER = "root";
 
 describeWithAgent("全栈：开发文档里的命令", () => {
 	let dir: string;
@@ -160,9 +161,14 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 		// uv 和 Agent 用测试机上 uv 管理的 Python（Python 从镜像下载的路径由 agent/tests/environment.rs 覆盖）。
 		const version = (await readFile(join(repoRoot, ".python-version"), "utf8")).trim();
 		python = (await run("uv", ["python", "find", "--no-project", version])).stdout.trim();
-		// install.sh --dev 的默认名称：dev-<用户名>-<主机名>（不带域名）。
-		devAgent = (await run("sh", ["-c", 'printf %s "dev-$(id -un)-$(uname -n | cut -d. -f1)"']))
-			.stdout;
+		// install.sh --dev 注册的开发 Agent：名字由控制面按登录生成 dev-<登录名>-<主机>（主机是本机的主机名，不带域名，
+		// 规整成小写字母、数字、连字符；和 `sfly agent register-dev` 的默认一样）。读者是下面的管理员账号 root。
+		const host = (hostname().split(".")[0] ?? "")
+			.toLowerCase()
+			.replace(/[^a-z0-9-]/g, "-")
+			.slice(0, 32)
+			.replace(/^-+|-+$/g, "");
+		devAgent = `dev-${READER}-${host}`;
 	}, 600_000);
 
 	afterAll(async () => {
@@ -181,6 +187,11 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 			pypiMirror: pypi.indexUrl,
 		});
 		const api = new ApiClient(cp);
+		// 读者的账号：平台管理员和他的个人令牌（控制台「令牌」页签发的那种，这里直接写库造一个）。读者在文档要求的地方
+		// （注册开发 Agent 之前）把它放进环境变量 SFLY_API_TOKEN；发布 sfly-std 时也用它（文档里写作 $SFLY_ADMIN_TOKEN）。
+		const accounts = new TestAccounts(cp.database.url);
+		const readerId = await accounts.user(READER, { displayName: "平台管理员", admin: true });
+		const readerToken = await accounts.personalToken(readerId, { name: "文档里的命令" });
 		const home = join(dir, route, "home");
 		const work = join(dir, route, "blocks");
 		await mkdir(home, { recursive: true });
@@ -210,23 +221,12 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 				);
 			}, 180_000);
 
-		/**
-		 * 没有凭据的 Agent 只接受已登记过的名字（#492）：读者按文档向平台管理员要一个 Agent 凭据，经环境变量 `SFLY_TOKEN`
-		 * 交给 Agent（文档里「用环境变量传令牌」那一段）。凭据只对签发时的那个名字有效，而 `agent.env` 里的名字随安装命令
-		 * 变（先是主机名、`--dev` 之后是 `dev-<用户名>-<主机名>`），所以每次前台启动 Agent 之前，按 `agent.env` 里此刻的名字签发一个。
-		 */
-		async function agentCredential(): Promise<string> {
-			const text = await readFile(join(home, ".sfly", "agent.env"), "utf8");
-			const name = /^SFLY_AGENT_NAME=(.+)$/m.exec(text)?.[1];
-			if (name === undefined) throw new Error(`agent.env 里没有 SFLY_AGENT_NAME：\n${text}`);
-			return (await cp.current.agentCredentials.issue(DEFAULT_PROJECT, name)).token;
-		}
-
 		async function startForeground(block: string) {
 			foregroundLog = "";
 			const child = spawn("bash", ["-c", block], {
 				cwd: home,
-				env: { ...env, SFLY_TOKEN: await agentCredential() },
+				// Agent 的凭据在 agent.env 里：`install.sh --dev` 注册开发 Agent 时写进去的（#492）。
+				env,
 				stdio: ["ignore", "pipe", "pipe"],
 				detached: true,
 			});
@@ -234,7 +234,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 				foregroundLog += chunk.toString();
 			});
 			const welcome = new Promise<void>((resolve, reject) => {
-				// 连不上（被控制面拒绝时 Agent 一直重连）不能永远等下去：写明 Agent 打出来的信息。
+				// 连不上（被控制面拒绝时 Agent 不退出、一直重试）不能永远等下去：写明 Agent 打出来的信息。
 				const timer = setTimeout(
 					() => reject(new Error(`Agent 5 分钟内没有连上控制面：\n${foregroundLog}`)),
 					300_000,
@@ -318,15 +318,8 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 			const sum = (await run("sha256sum", [std.file], { cwd: downloads })).stdout;
 			await writeFile(join(downloads, "SHA256SUMS"), sum);
 			// 发布到公共项目要平台管理员的个人令牌（文档里写作 $SFLY_ADMIN_TOKEN）：读者在控制台账号菜单的「令牌」页
-			// 签发（或 `sfly login`）；这里像别的访问检查的测试一样直接写库造一个，放进读者终端的环境变量。
-			const accounts = new TestAccounts(cp.database.url);
-			try {
-				const admin = await accounts.user("root", { displayName: "平台管理员", admin: true });
-				const token = await accounts.personalToken(admin, { name: "发布 sfly-std" });
-				await shell.run(`export SFLY_ADMIN_TOKEN=${token}`);
-			} finally {
-				await accounts.close();
-			}
+			// 签发（或 `sfly login`）；就是上面这个管理员的个人令牌，放进读者终端的环境变量。
+			await shell.run(`export SFLY_ADMIN_TOKEN=${readerToken}`);
 		}
 
 		/** 读者在场景里用上传的 sfly-std 的 shell 节点（本机 Agent）。 */
@@ -357,7 +350,29 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 			});
 		}
 
+		/** 签发的凭据：输出里单独一行的 sfly_agt_ 开头的原值。 */
+		let issued: string | undefined;
+
 		async function after(block: string, result: BlockResult) {
+			if (block.includes("sfly agent credentials issue worker-1")) {
+				// 文档里的签发命令：原值单独一行，只显示这一次；控制面上 worker-1 有一个有效的凭据。
+				issued = result.stdout.split("\n").find((l) => /^sfly_agt_[0-9a-f]{48}$/.test(l));
+				expect(issued, result.stdout).toBeDefined();
+				expect(result.stdout).toContain("read -rs SFLY_TOKEN && export SFLY_TOKEN");
+				expect(result.stdout.split(issued as string).length - 1).toBe(1);
+				expect(result.stderr).not.toContain(issued as string);
+				const res = await cp.fetch("/agents/worker-1/credentials", {
+					headers: { authorization: `Bearer ${readerToken}` },
+				});
+				const listed = (await res.json()) as { credentials: unknown[] };
+				expect(listed.credentials).toHaveLength(1);
+			}
+			if (block.includes("sfly agent credentials list worker-1")) {
+				expect(issued).toBeDefined();
+				expect(result.stdout).toContain(`${(issued as string).slice(0, 13)}…`);
+				expect(result.stdout).toContain("有效");
+				expect(result.stdout).not.toContain(issued as string);
+			}
 			if (block.includes("/install.sh | sh")) {
 				// 有 systemd 时 install.sh 会重启服务；这里没有，读者重新运行前台启动的命令。
 				if (foreground && foreground.exitCode === null) {
@@ -414,6 +429,10 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 						if (block.includes("/agents") || /\bsfly dev\b/.test(block)) {
 							await agentOnline(devAgent);
 						}
+						// 注册开发 Agent 要读者自己的身份：文档让读者先设置个人令牌（SFLY_API_TOKEN）。
+						if (block.includes("/install.sh | sh -s -- --dev")) {
+							await shell.run(`export SFLY_API_TOKEN=${readerToken}`);
+						}
 						await after(block, await shell.run(block));
 					}
 					executed.add(block);
@@ -422,6 +441,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 		} finally {
 			await stopForeground();
 			await shell.close();
+			await accounts.close();
 			await cp.close();
 		}
 	}

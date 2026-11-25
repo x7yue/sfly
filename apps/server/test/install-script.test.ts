@@ -66,17 +66,29 @@ describe("install.sh", () => {
 
 	/** `curl -fsSL <控制面>/install.sh | sh -s -- <参数>`。 */
 	async function install(args: string[], env: Record<string, string> = {}): Promise<Run> {
-		try {
-			const { stdout, stderr } = await promisify(execFile)(
-				"sh",
-				["-c", 'curl -fsSL "$0/install.sh" | sh -s -- "$@"', cp.httpUrl, ...args],
-				{ env: { PATH: `${stubs}:${process.env.PATH}`, HOME: home, ...env } },
-			);
-			return { code: 0, stdout, stderr };
-		} catch (error) {
-			const e = error as { code: number; stdout: string; stderr: string };
-			return { code: e.code, stdout: e.stdout, stderr: e.stderr };
-		}
+		// 新的会话、没有控制终端（detached）：在开发者自己的终端里跑测试时，install.sh 也看不到 /dev/tty
+		// （--dev 没有登录时有终端就让人登录，没有就失败：这里要的是没有终端）。
+		const child = spawn(
+			"sh",
+			["-c", 'curl -fsSL "$0/install.sh" | sh -s -- "$@"', cp.httpUrl, ...args],
+			{
+				env: { PATH: `${stubs}:${process.env.PATH}`, HOME: home, ...env },
+				detached: true,
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		);
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString();
+		});
+		child.stderr.on("data", (chunk: Buffer) => {
+			stderr += chunk.toString();
+		});
+		const code = await new Promise<number>((resolve) =>
+			child.once("close", (c) => resolve(c ?? -1)),
+		);
+		return { code, stdout, stderr };
 	}
 
 	const systemctlCalls = async () =>
@@ -294,23 +306,210 @@ describe("install.sh", () => {
 		expect((await stat(env)).mode & 0o777).toBe(0o600);
 	});
 
-	it("--dev 时 --name 可以省略，默认 dev-<用户名>-<主机名>", async () => {
-		await stub("id", "case $1 in -u) echo 1000 ;; -un) echo alice ;; esac");
-		await stub(
-			"uname",
-			"case $1 in -m) echo x86_64 ;; -n) echo lab.example.com ;; *) echo Linux ;; esac",
-		);
-		// 开发用的 uv：记录参数，tool dir --bin 给出 sfly 所在的目录。
-		await stub(
-			"uv",
-			`echo "$*" >> '${join(dir, "uv.log")}'; [ "$1 $2" = 'tool dir' ] && echo '${join(home, ".local/bin")}'; exit 0`,
-		);
-		const run = await install(["--dev", "--no-service"]);
-		expect(run.code, run.stderr).toBe(0);
-		expect(await readFile(join(home, ".sfly", "agent.env"), "utf8")).toContain(
-			"SFLY_AGENT_NAME=dev-alice-lab\n",
-		);
-		expect(await readFile(join(dir, "uv.log"), "utf8")).toContain("sfly[cli]==1.2.3");
+	// ---- --dev：注册自己的开发 Agent（#492）。sfly CLI 用 PATH 上的桩代替：记录收到的参数（凭据不能出现在参数里），
+	// 没有登录时（没有 SFLY_API_TOKEN、没有 credentials.json）`agent register-dev` 以退出码 5 结束，和真的命令行一致。
+	describe("--dev 注册开发 Agent", () => {
+		const TOKEN = "sfly_agt_stubstubstub0123456789abcdef";
+		let sflyLog: string;
+		let sflyHome: string;
+
+		beforeEach(async () => {
+			sflyHome = join(dir, "sfly");
+			sflyLog = join(dir, "sfly.log");
+			await stub(
+				"uname",
+				"case $1 in -m) echo x86_64 ;; -n) echo lab.example.com ;; *) echo Linux ;; esac",
+			);
+			// 开发用的 uv：记录参数；`tool dir --bin` 给出 sfly 所在的目录（下面的桩放在那里）。
+			await stub(
+				"uv",
+				`echo "$*" >> '${join(dir, "uv.log")}'; [ "$1 $2" = 'tool dir' ] && echo '${join(home, ".local/bin")}'; exit 0`,
+			);
+			await mkdir(join(home, ".local/bin"), { recursive: true });
+			const sfly = join(home, ".local/bin/sfly");
+			await writeFile(
+				sfly,
+				`#!/bin/sh
+echo "$*" >> '${sflyLog}'
+case "$1 $2" in
+"agent register-dev")
+	if [ -z "\${SFLY_API_TOKEN:-}" ] && [ ! -f "$SFLY_HOME/credentials.json" ]; then
+		echo "错误：没有登录凭据" >&2
+		exit 5
+	fi
+	echo "SFLY_AGENT_NAME=dev-alice-lab"
+	echo "SFLY_TOKEN=${TOKEN}"
+	echo "已注册开发 Agent dev-alice-lab" >&2
+	;;
+"login --server")
+	[ -t 0 ] && echo tty >> '${join(dir, "login-tty.log")}'
+	mkdir -p "$SFLY_HOME" && echo '{}' > "$SFLY_HOME/credentials.json"
+	;;
+esac
+`,
+			);
+			await chmod(sfly, 0o755);
+		});
+
+		const agentEnv = () => readFile(join(sflyHome, "agent.env"), "utf8");
+		const sflyCalls = async () =>
+			(await readFile(sflyLog, "utf8").catch(() => "")).split("\n").filter(Boolean);
+
+		/** 和 `install` 一样，但在有控制终端的会话里（`support/pty-session.py`）。 */
+		async function installInTerminal(
+			args: string[],
+			env: Record<string, string> = {},
+		): Promise<Run> {
+			try {
+				const { stdout, stderr } = await promisify(execFile)(
+					"python3",
+					[
+						join(import.meta.dirname, "support/pty-session.py"),
+						"sh",
+						"-c",
+						'curl -fsSL "$0/install.sh" | sh -s -- "$@"',
+						cp.httpUrl,
+						...args,
+					],
+					{ env: { PATH: `${stubs}:${process.env.PATH}`, HOME: home, ...env } },
+				);
+				return { code: 0, stdout, stderr };
+			} catch (error) {
+				const e = error as { code: number; stdout: string; stderr: string };
+				return { code: e.code, stdout: e.stdout, stderr: e.stderr };
+			}
+		}
+
+		it("有 SFLY_API_TOKEN：装好 sfly CLI 之后注册，名字（控制面生成的）和凭据写进 agent.env；凭据不在任何命令行参数里，也没有打印", async () => {
+			const run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(await readFile(join(dir, "uv.log"), "utf8")).toContain("sfly[cli]==1.2.3");
+			const env = await agentEnv();
+			expect(env).toContain("SFLY_AGENT_NAME=dev-alice-lab\n");
+			expect(env).toContain(`SFLY_TOKEN=${TOKEN}\n`);
+			// 注册用 --env（两行 KEY=值 写到标准输出，只放在 shell 变量里），控制面地址显式给出。
+			expect(await sflyCalls()).toEqual([`agent register-dev --server ${cp.httpUrl} --env`]);
+			expect(run.stdout + run.stderr).not.toContain(TOKEN);
+			expect(run.stdout).toContain("已注册开发 Agent dev-alice-lab");
+			expect((await stat(join(sflyHome, "agent.env"))).mode & 0o777).toBe(0o600);
+		});
+
+		it("没有登录也没有终端：直接失败并写明怎么办，不登录、不等输入；Agent 二进制和 sfly CLI 已经装好，没有写 agent.env", async () => {
+			const run = await install(["--dev", "--no-service"], { SFLY_HOME: sflyHome });
+			expect(run.code).toBe(1);
+			expect(run.stderr).toContain("SFLY_API_TOKEN");
+			expect(run.stderr).toContain(`sfly login --server ${cp.httpUrl}`);
+			expect(run.stderr).toContain("重新运行同一条命令");
+			expect(await sflyCalls()).toEqual([`agent register-dev --server ${cp.httpUrl} --env`]);
+			expect((await stat(join(sflyHome, "bin", "sfly-agent"))).isFile()).toBe(true);
+			expect(await readFile(join(dir, "uv.log"), "utf8")).toContain("sfly[cli]==1.2.3");
+			expect(await agentEnv().catch(() => "没有这个文件")).toBe("没有这个文件");
+		});
+
+		it("没有登录、有终端：运行 sfly login（stdin 是终端），再注册一次", async () => {
+			const run = await installInTerminal(["--dev", "--no-service"], { SFLY_HOME: sflyHome });
+			expect(run.code, run.stdout).toBe(0);
+			expect(await sflyCalls()).toEqual([
+				`agent register-dev --server ${cp.httpUrl} --env`,
+				`login --server ${cp.httpUrl}`,
+				`agent register-dev --server ${cp.httpUrl} --env`,
+			]);
+			expect(await readFile(join(dir, "login-tty.log"), "utf8")).toBe("tty\n");
+			expect(run.stdout).toContain(`先登录 ${cp.httpUrl}`);
+			expect(await agentEnv()).toContain("SFLY_AGENT_NAME=dev-alice-lab\n");
+			expect(run.stdout).not.toContain(TOKEN);
+		});
+
+		it("登录了但还是被拒绝（不是没有登录凭据）：失败，不再让人登录", async () => {
+			await stub("uname", "case $1 in -m) echo x86_64 ;; -n) echo lab ;; *) echo Linux ;; esac");
+			const sfly = join(home, ".local/bin/sfly");
+			await writeFile(
+				sfly,
+				`#!/bin/sh\necho "$*" >> '${sflyLog}'\n[ "$1 $2" = 'agent register-dev' ] && { echo '错误：已经有一台叫 dev-alice-lab 的 Agent' >&2; exit 2; }\n`,
+			);
+			const run = await installInTerminal(["--dev", "--no-service"], { SFLY_HOME: sflyHome });
+			expect(run.code).toBe(1);
+			expect(run.stdout).toContain("已经有一台叫 dev-alice-lab");
+			expect(run.stdout).toContain("注册开发 Agent 失败");
+			expect(await sflyCalls()).toEqual([`agent register-dev --server ${cp.httpUrl} --env`]);
+		});
+
+		it("重新运行（升级）：agent.env 里已有开发 Agent 的名字和凭据就沿用，不再注册", async () => {
+			let run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			await rm(sflyLog);
+			// 第二次没有登录也没有终端：照样成功（沿用）。
+			run = await install(["--dev", "--no-service"], { SFLY_HOME: sflyHome });
+			expect(run.code, run.stderr).toBe(0);
+			expect(run.stdout).toContain("沿用");
+			expect(await sflyCalls()).toEqual([]);
+			const env = await agentEnv();
+			expect(env).toContain("SFLY_AGENT_NAME=dev-alice-lab\n");
+			expect(env).toContain(`SFLY_TOKEN=${TOKEN}\n`);
+			// 删掉那两行：重新注册。
+			await writeFile(
+				join(sflyHome, "agent.env"),
+				env
+					.split("\n")
+					.filter((l) => !l.startsWith("SFLY_AGENT_NAME=") && !l.startsWith("SFLY_TOKEN="))
+					.join("\n"),
+			);
+			run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(await sflyCalls()).toEqual([`agent register-dev --server ${cp.httpUrl} --env`]);
+		});
+
+		it("agent.env 里的名字是 dev- 开头但没有凭据（旧版本装的）：重新注册，换成控制面生成的名字", async () => {
+			await mkdir(sflyHome, { recursive: true });
+			await writeFile(join(sflyHome, "agent.env"), "SFLY_AGENT_NAME=dev-bob-oldhost\n");
+			const run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(await agentEnv()).toContain("SFLY_AGENT_NAME=dev-alice-lab\n");
+			expect(await agentEnv()).not.toContain("dev-bob-oldhost");
+		});
+
+		it("--dev 不给 --name 时不能给 --token（名字和凭据都由控制面生成）；SFLY_TOKEN 环境变量也一样", async () => {
+			for (const run of [
+				await install(["--dev", "--token", "x", "--no-service"], { SFLY_HOME: sflyHome }),
+				await install(["--dev", "--no-service"], { SFLY_HOME: sflyHome, SFLY_TOKEN: "x" }),
+			]) {
+				expect(run.code).toBe(1);
+				expect(run.stderr).toContain("同时给 --name 和 --token");
+			}
+			expect(await sflyCalls()).toEqual([]);
+		});
+
+		it("--dev 同时给 --name 和 --token（管理员签发的 Agent 凭据）：不注册，名字和凭据照写，sfly CLI 照装", async () => {
+			const run = await install(
+				["--dev", "--name", "bench-1", "--token", "sfly_agt_issued", "--no-service"],
+				{ SFLY_HOME: sflyHome },
+			);
+			expect(run.code, run.stderr).toBe(0);
+			expect(await sflyCalls()).toEqual([]);
+			const env = await agentEnv();
+			expect(env).toContain("SFLY_AGENT_NAME=bench-1\n");
+			expect(env).toContain("SFLY_TOKEN=sfly_agt_issued\n");
+			expect(await readFile(join(dir, "uv.log"), "utf8")).toContain("sfly[cli]==1.2.3");
+		});
+
+		it("不加 --dev 时不装 sfly CLI、不注册；缺 --name 照旧报错", async () => {
+			const run = await install(["--no-service"], { SFLY_HOME: sflyHome });
+			expect(run.code).toBe(1);
+			expect(run.stderr).toContain("缺少 --name");
+			expect(await sflyCalls()).toEqual([]);
+		});
 	});
 
 	it("下载时 curl 带 sfly 的 User-Agent；SFLY_USER_AGENT 覆盖它并写进 agent.env，不合法时报错", async () => {

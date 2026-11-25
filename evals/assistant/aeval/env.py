@@ -51,7 +51,10 @@ ADMIN_LOGIN = "aeval_admin"
 ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
 # 两台 Agent 的配置文件（install.sh 写的）：凭据换了要改这里的 SFLY_TOKEN。
 AGENT_ENV_FILE = "/root/.sfly/agent.env"
-# install.sh --dev 的默认名称是 dev-<用户名>-<主机名>：容器里是 root、主机名 dev。
+# 开发环境容器里 Agent 的名称：沿用以前 `install.sh --dev` 默认的 dev-<用户名>-<主机名>
+# （容器里是 root、主机名 dev）。`install.sh --dev` 不给 --name 时现在向控制面注册，
+# 名字是 dev-<登录名>-<主机>、凭据记在登录的人名下（#492）；评测里不要换了名字就改了题目的前提，
+# 所以自己起名字：`--dev --name` 照旧可用，凭据是下面给这个名字签发的 Agent 凭据。
 DEV_AGENT = "dev-root-dev"
 SERVICE_PORT = 9000
 # 开发环境容器和被测机里放评测脚本（container/ 下的文件）的目录。
@@ -662,7 +665,7 @@ class Stack:
         sut_token = self._agent_credential(self.sut, SUT_AGENT)
         d.sh(
             self.dev,
-            f"curl -fsSL {url} | sh -s -- --dev --no-service",
+            f"curl -fsSL {url} | sh -s -- --dev --name {DEV_AGENT} --no-service",
             secret_env={"SFLY_TOKEN": dev_token},
             timeout=600,
         )

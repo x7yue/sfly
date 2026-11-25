@@ -182,10 +182,12 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level …] [--tail N] [--before/--after 游标] [--all 文件]` | 整次运行按控制面时间合并后的日志，默认最后 200 行，截断时写明用游标继续读；`--all` 下载 JSONL |
 | `sfly run artifacts <运行> [--task …] [--download 目录]` | 列出各任务的产物，按 sha256 校验后下载 |
 | `sfly agent list` | 在线状态（准备环境中的写明已多久，时长用响应的 `x-sfly-time` 作为「现在」）、版本、是否与控制面一致、运行中的任务数、对外地址、开发包 |
+| `sfly agent credentials issue <名称> [--token-only]` / `list <名称>` / `revoke <名称> <id>` | Agent 凭据（`agents/:name/credentials`，#492，要「管理」范围）：签发的原值只在这一次的输出里出现，文本输出里单独一行，`--token-only` 只往 stdout 写原值一行、说明写 stderr（管道交给远程机器上的 `read`，不经过命令行参数和 shell 历史），`--json` 带 `token`，三种格式互斥；`list` 没有原值 |
+| `sfly agent register-dev [--host] [--env]` / `revoke-dev <名称>` | 我的开发 Agent（`projects/default/dev-agents`）：名字由控制面按登录生成，请求里只有主机（默认本机主机名规整成合格的一段）；`--env` 往 stdout 写 `SFLY_AGENT_NAME=`、`SFLY_TOKEN=` 两行（`install.sh --dev` 读它，原值只放在 shell 变量里）；没有登录凭据时不发请求，退出码 5（`EXIT_NOT_LOGGED_IN`），安装脚本据此决定走 `sfly login` 还是失败 |
 | `sfly package list` / `sfly package show <包>[@版本]` | 节点包的版本；节点类型的标题、输入（类型、默认值、是否必填）和输出 |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` / `sfly api --describe <METHOD> <路径>` | 直接调用上面没有覆盖的接口，发请求前按随 SDK 打包的路由清单校验；`--list` 列出路由清单（含只读还是有副作用和一句话说明），`--describe` 说明一个接口（作用、资源、请求与响应的字段） |
 
-`sfly run` 的退出码：0 成功，1 运行失败，3 运行被取消，124 等待超时，130 Ctrl-C，2 命令本身出错（操作平台的其余命令只有 0 和 2，`sfly api` 按 Ctrl-C 停止时也是 130）。旧写法 `sfly run <节点>` 报错并提示改用 `sfly debug`（退出码 2）。
+`sfly run` 的退出码：0 成功，1 运行失败，3 运行被取消，124 等待超时，130 Ctrl-C，2 命令本身出错（操作平台的其余命令只有 0 和 2，`sfly api` 按 Ctrl-C 停止时也是 130；`sfly agent register-dev` 没有登录凭据时是 5）。旧写法 `sfly run <节点>` 报错并提示改用 `sfly debug`（退出码 2）。
 
 **给 AI 编程助手的 skill**：`sfly init` 把两份 skill 写进项目的 `.agents/skills/`（`.claude/skills/` 下是软链接）：节点开发 `sfly-node-dev`（`reference.md` 是 SDK 参考页），和操作平台 `sfly-platform`（联调闭环的步骤和操作规则，`reference.md` 是「用命令行操作平台」页）。两份的源文件都在 `docs/guide/`（ADR 0013），控制面经 `/docs/skills/<名称>/…` 提供原文并列在 `/llms.txt`，SDK 里 `sfly/cli/skills/` 下是指向源文件的软链接。`sfly skill update` 把两份换成当前 SDK 版本的内容，每份各自做哈希检查，改过的不覆盖（`--force` 才覆盖）。
 
@@ -228,6 +230,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
   - **Hello 的回应不透露别的项目里的事**：连接的一方对这个名字所在的项目没有有效凭据时，「还没有登记」「登记在别的项目」「在别的项目里被停用」「这个名字有 Agent 凭据而来的是旧方式」是**同一个回应、同一句话**（`notRegisteredHere`，gRPC `Unauthenticated`），**先比项目、后看停用**；「已被停用」只对登记在自己项目里的名字说（和 #610 对别的项目的 Agent 的口径一致：和没有注册过一样）。
   - **给 Agent 签发凭据现在就要登录**（不等 #494）：签发、列出、吊销 Agent 凭据，停用、恢复 Agent 这五个接口不带凭据是 401（共享令牌 403），范围照常要「管理」（`REQUIRES_CREDENTIAL_ROUTES`）；它们是新这一套信任的根，不带凭据的请求能给任意名字签发凭据、再用它连上来顶掉用共享令牌连着的那一台。所以**第一次给 Agent 签发凭据之前要先有管理员账号**（`SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD` 建第一个平台管理员，或初始化码，见「用户」）；打包的控制面、`install.sh`、评测环境里签发凭据的地方都先登录。
   - **新 Agent 连旧控制面**：带 Agent 凭据的新 Agent 连一个**配了共享令牌**的旧控制面会被拒绝（旧控制面只认共享令牌），连一个没配共享令牌的旧控制面照旧能连（旧控制面把任何令牌当没有凭据）；`AssignTask.task_token` 旧控制面不带，Agent 读到空值时不带任务凭据（SDK 不带 `Authorization`）。写进版本说明。
+  - **装 Agent 时怎么拿到凭据**（`apps/server/src/agent-binaries/install.sh`，#492）：测试机上的 Agent 由管理员用 `sfly agent credentials issue` 签发、经环境变量 `SFLY_TOKEN` 传给安装脚本（写进 `agent.env`，只有当前用户可读）。开发机上 `--dev` 不给 `--name` 时脚本先装好 uv 和 sfly CLI，再用 `sfly agent register-dev --env` 向控制面注册自己的开发 Agent（名字、凭据只放在 shell 变量里，之后才写 `agent.env`）；身份来自 `SFLY_API_TOKEN` 或 `sfly login`：命令行没有登录凭据时退出码 5，脚本据此在有终端（`/dev/tty` 打得开，`curl | sh` 时 stdin 是脚本，所以用 `sfly login </dev/tty`）时让人登录再注册一次，没有终端就直接失败并写明怎么办，不挂着等输入；重新运行时 `agent.env` 里已有开发 Agent 的名字（`dev-` 开头）和凭据就沿用，不再注册（同一个人同一个主机名只能注册一次）；`--dev --name <名称>` 不注册，用给这个名字签发的凭据。
   - **停用的 Agent**（`agents.disabled_at`）不论带不带凭据都不能连接，不参与派发（预检阻断并写明原因）；停用一台正连着的 Agent 立即断开，它手上的任务按失联处理（租约过期后 `agent_lost`，走现有的重试规则）；**它手上任务的任务凭据立刻不认**（不等租约过期，`taskIsActive`：这台 Agent 停用了，或者派发这次尝试时那条连接用的那一个 Agent 凭据被吊销了；不看这个名字此刻有没有别的有效凭据，轮换时新连接上派发的任务凭据不受影响，详见「任务凭据」）。凭据被吊销时，用它连着的连接同样断开。
   - 每条连接是以哪种方式认的身份记在连接上，也记在 `agents.last_auth_kind`（none / shared / agent）。
 - 供其它 Agent 连接的端口（ADR 0019，`agent/src/peer.rs`）：Agent 在所有网卡上监听 `--listen-port`（默认 50052），提供 gRPC 服务 `AgentPeer`（`proto/sfly/agent/v1/peer.proto` 的 `Describe`：名称、版本、能力）和每项 Agent 能力各自的服务（例如 `files.proto` 的 `AgentFiles`）；没有认证，只应在内网使用。监听不了（端口被占用等）时照常执行任务，原因随 Hello 上报。Hello 带上能力列表（`agent/src/capabilities/`）、端口和安装时显式配置的对外地址 `--public-address`；控制面另记连接来源地址，对外地址取显式配置的，否则取来源地址（`apps/server/src/agents/agent-endpoint.ts`），Agent 页显示。
