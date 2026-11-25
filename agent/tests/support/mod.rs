@@ -87,6 +87,43 @@ pub fn assert_quiet_termination(logs: &[LogLine]) {
     assert_eq!(terminated, vec![LogLevel::Info], "{texts:?}");
 }
 
+/// 这个测试进程里假控制面用过的端口（关掉的也算）。
+fn used_ports() -> std::sync::MutexGuard<'static, HashSet<u16>> {
+    static USED: OnceLock<Mutex<HashSet<u16>>> = OnceLock::new();
+    USED.get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 这个端口是不是这个测试进程里某个假控制面用过的（关掉的也算）。
+pub fn port_was_used_by_a_fake_control_plane(port: u16) -> bool {
+    used_ports().contains(&port)
+}
+
+/// 挑一个随机端口，跳过 `used` 里已有的：`bind` 每次绑定一个新的随机端口，返回端口和监听器；撞上用过的就放掉重绑，
+/// 挑到的记进 `used`。
+///
+/// 为什么不让系统随便给：假控制面关掉之后，测试常常等一会儿在同一个端口上再起一个（模拟控制面下线又恢复），
+/// Agent 在这期间每隔一阵重连。同一个测试进程里的测试并行跑，别的测试起假控制面时系统可能把这个刚空出来的端口
+/// 给了它（CI 里出现过：#718），Agent 就连上了别人的假控制面——握手成功、被当成那边的会话，下线期间的指标和日志发给了
+/// 不相干的测试；那边的 Agent 也被挤掉会话，两边轮流重连。用过的端口在整个进程里不再发给别的假控制面，
+/// 只有显式 [`FakeControlPlane::start_on`] 才会重新绑它。
+pub fn pick_unused_port<T>(
+    used: &mut HashSet<u16>,
+    mut bind: impl FnMut() -> std::io::Result<(u16, T)>,
+) -> std::io::Result<(u16, T)> {
+    // 用过的端口总共也就几十个，一千次里挑不出没用过的，说明 bind 给的不是随机端口。
+    for _ in 0..1000 {
+        let (port, listener) = bind()?;
+        if used.insert(port) {
+            return Ok((port, listener));
+        }
+    }
+    Err(std::io::Error::other(
+        "1000 次都撞上这个进程里用过的端口：bind 给的不像是随机端口",
+    ))
+}
+
 /// 收到的一条消息：第几个会话（从 0 开始）+ 消息本身。
 #[derive(Debug, Clone)]
 pub struct Received {
@@ -120,6 +157,11 @@ struct State {
     agent_binary: Mutex<(String, String)>,
     /// 这些会话（序号从 0 开始）里的 Hello 不回 Welcome，直接结束会话（握手失败）。
     reject_sessions: Mutex<HashSet<usize>>,
+    /// 非空时每个新会话都以这个 gRPC 状态被拒绝（和真的控制面认证失败一样：流一打开就是错误，不读 Hello）。
+    /// 被拒绝的连接不占会话序号，也不记进 `received`。
+    reject_status: Mutex<Option<(tonic::Code, String)>>,
+    /// 被拒绝的每次连接的时间（[`FakeControlPlane::rejection_times`]）。
+    rejections: Mutex<Vec<tokio::time::Instant>>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -132,11 +174,19 @@ pub struct FakeControlPlane {
 }
 
 impl FakeControlPlane {
+    /// 在一个随机端口上启动，端口不是这个测试进程里任何假控制面用过的（见 [`pick_unused_port`]）。
     pub async fn start() -> Self {
-        Self::start_on(0).await
+        let (_, listener) = pick_unused_port(&mut used_ports(), || {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+            Ok((listener.local_addr()?.port(), listener))
+        })
+        .expect("bind a port for the fake control plane");
+        listener.set_nonblocking(true).unwrap();
+        Self::serve(TcpListener::from_std(listener).unwrap())
     }
 
-    /// 在指定端口（0 为随机）上启动。端口还被刚关掉的上一个假控制面占着时（关闭是异步的），等它释放。
+    /// 在指定端口上启动（先 [`FakeControlPlane::start`] 起一个、记下 `port`、关掉，再在同一端口上起一个，就是模拟控制面下线又恢复）。
+    /// 端口还被刚关掉的上一个假控制面占着时（关闭是异步的），等它释放。
     pub async fn start_on(port: u16) -> Self {
         let deadline = tokio::time::Instant::now() + WAIT;
         let listener = loop {
@@ -152,6 +202,11 @@ impl FakeControlPlane {
                 Err(error) => panic!("bind 127.0.0.1:{port}: {error}"),
             }
         };
+        used_ports().insert(listener.local_addr().unwrap().port());
+        Self::serve(listener)
+    }
+
+    fn serve(listener: TcpListener) -> Self {
         let addr: SocketAddr = listener.local_addr().unwrap();
         let state = Arc::new(State::default());
         let service = Gateway {
@@ -360,6 +415,22 @@ impl FakeControlPlane {
         self.state.reject_sessions.lock().unwrap().extend(sessions);
     }
 
+    /// 之后每个新连接都以 `code`（`Unauthenticated` 或 `PermissionDenied`）和说明 `message` 被拒绝，直到
+    /// [`stop_rejecting`](Self::stop_rejecting)；再调用一次可以换成别的原因。
+    pub fn reject_every_connection(&self, code: tonic::Code, message: &str) {
+        *self.state.reject_status.lock().unwrap() = Some((code, message.to_string()));
+    }
+
+    /// 不再拒绝，之后的连接照常回 Welcome。
+    pub fn stop_rejecting(&self) {
+        *self.state.reject_status.lock().unwrap() = None;
+    }
+
+    /// 被拒绝的每次连接的时间（按到达顺序）。
+    pub fn rejection_times(&self) -> Vec<tokio::time::Instant> {
+        self.state.rejections.lock().unwrap().clone()
+    }
+
     /// 等到一条带更新状态、且 `pick` 接受的 Heartbeat，返回其中的更新状态。
     pub async fn update_status(
         &self,
@@ -419,6 +490,15 @@ impl AgentGateway for Gateway {
     ) -> Result<Response<Self::SessionStream>, Status> {
         let mut inbound = request.into_inner();
         let state = self.state.clone();
+        let rejected = state.reject_status.lock().unwrap().clone();
+        if let Some((code, message)) = rejected {
+            state
+                .rejections
+                .lock()
+                .unwrap()
+                .push(tokio::time::Instant::now());
+            return Err(Status::new(code, message));
+        }
         let session = state.sessions.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel(16);
         *state.current.lock().unwrap() = Some(tx.clone());
@@ -779,3 +859,26 @@ pub const NUMBERS: [f64; 12] = [
     5e-324,
     1.7976931348623157e308,
 ];
+
+/// 记录环境里 `SFLY_TOKEN` 的 uv：每次调用把「`SFLY_TOKEN` 的值（没有时写 unset） 参数」写进 `log` 一行，然后转给
+/// 测试机的 uv。
+pub fn credential_logging_uv(dir: &Path, log: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let host = std::process::Command::new("sh")
+        .args(["-c", "command -v uv"])
+        .output()
+        .unwrap();
+    let host = String::from_utf8(host.stdout).unwrap();
+    let path = dir.join("credential-logging-uv");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"${{SFLY_TOKEN-unset}} $*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            host.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}

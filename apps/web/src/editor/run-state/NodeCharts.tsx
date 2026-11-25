@@ -13,6 +13,7 @@ import {
 import { type UseQueryResult, useQueries } from "@tanstack/react-query";
 import { type ReactNode, useId } from "react";
 import { SectionHeading } from "#/components/page";
+import { UntrustedText } from "#/components/untrusted-text";
 import { AnomalyNote } from "#/focus/AnomalyNote";
 import { FocusPlot } from "#/focus/FocusPlot";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
@@ -28,6 +29,7 @@ import {
 	TERM,
 	ZOOM_IN_DETAIL_LABEL,
 } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { useNow } from "#/lib/use-now";
 import { attemptWindow } from "#/monitor/charts";
 import { seriesQuery } from "#/monitor/use-run-metrics";
@@ -212,7 +214,9 @@ export function NodeCharts({
 												enabled={enabled === true}
 											/>
 										</header>
-										<p className="m-0 text-xs text-fg-3">{FOCUS.chartMissing(row.title)}</p>
+										<p className="m-0 text-xs text-fg-3">
+											<UntrustedText text={FOCUS.chartMissing(row.title)} />
+										</p>
 									</>
 								)}
 							</article>
@@ -230,7 +234,7 @@ export function NodeCharts({
 function ChartTitle({ id, children }: { id: string; children: string }) {
 	return (
 		<h4 id={id} className="m-0 line-clamp-2 min-w-0 text-xs font-normal wrap-anywhere text-fg-2">
-			{children}
+			<UntrustedText text={children} />
 		</h4>
 	);
 }
@@ -303,7 +307,7 @@ function DeclaredChart({
 					label={
 						reading
 							? readingLabel(reading.item, reading.at, runEnded)
-							: `${chart.title} ${readingValue(value)}`
+							: `${untrustedPlain(chart.title)} ${untrustedPlain(readingValue(value))}`
 					}
 					empty={empty}
 					gapText={reading ? staleText(reading.item, reading.at) : null}

@@ -1,5 +1,6 @@
 import type { AgentView } from "@sfly/schema";
 import { AGENT_STATUS_LABEL } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import type { FieldControl } from "./fields";
 
@@ -35,12 +36,12 @@ export function AgentSelect({
 			<NativeSelectOption value="">{emptyLabel}</NativeSelectOption>
 			{agents.map((a) => (
 				<NativeSelectOption key={a.name} value={a.name}>
-					{a.name} · {AGENT_STATUS_LABEL[a.status]}
+					{untrustedPlain(a.name)} · {AGENT_STATUS_LABEL[a.status]}
 					{slots && ` · ${a.running_tasks.length}/${a.info.slots} 槽位`}
 				</NativeSelectOption>
 			))}
 			{value && !names.includes(value) && (
-				<NativeSelectOption value={value}>{value}（未注册）</NativeSelectOption>
+				<NativeSelectOption value={value}>{untrustedPlain(value)}（未注册）</NativeSelectOption>
 			)}
 		</NativeSelect>
 	);

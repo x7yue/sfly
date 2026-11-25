@@ -9,6 +9,8 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -18,6 +20,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
  *   <Truncate>{scenario.name}</Truncate>                                   // 普通文字：截断时可以 Tab 到它
  *   <Truncate render={<Link to=… data-list-primary />}>{name}</Truncate>   // 链接、按钮本身截断：聚焦它就弹出
  *   <Truncate keepEnd={6}>{"sfly-stub/metric_rate@0.1.0"}</Truncate>       // 结尾 6 个字符始终可见（版本号）
+ *   <Truncate untrusted>{agent.name}</Truncate>                            // 别人写的、不保证内容的文字：见下面
+ *
+ * **别人写的文字（Agent 报的名称和版本、节点的元信息、产物的名称……）传 `untrusted`**：和 `UntrustedText` 一样，文字方向隔离在自己的范围里，
+ * 看不见的字符和控制字符写成看得见的样子（提示里的全文也是）；没传 `untrusted` 的 `Truncate` 不处理文字（docs/DESIGN-SYSTEM.md「不可信的文字」）。
+ * 带 `keepEnd` 时写出来的字符是 `⟨U+202E⟩` 这样的一小段字（按字符数截，放不了组件），否则是和 `UntrustedText` 一样的一小块。
  *
  * 按钮、链接里除了文字还有图标、徽标，或者有好几段文字都可能被截断时，传 `render` 和 `label`（提示里的全文）：
  * 按钮本身是提示的触发器，里面嵌套的 `Truncate` 只负责截断，不再自己弹提示、不多一个可聚焦的元素。
@@ -35,6 +42,8 @@ type TruncateProps = { className?: string } & (
 			children: string;
 			/** 结尾始终显示的字符数：版本号、扩展名这类最有区分度的部分。 */
 			keepEnd?: number;
+			/** 别人写的、不保证内容的文字：方向隔离，看不见的字符和控制字符写出来（见上）。 */
+			untrusted?: boolean;
 			/** 截断的是交互元素本身（链接、按钮）时传入它，提示跟着它的悬停与聚焦出现。 */
 			render?: ReactElement<Record<string, unknown>>;
 			label?: undefined;
@@ -42,6 +51,7 @@ type TruncateProps = { className?: string } & (
 	| {
 			children: ReactNode;
 			keepEnd?: undefined;
+			untrusted?: undefined;
 			/** 交互元素本身：里面有别的内容，被截断的文字用嵌套的 `Truncate`。 */
 			render: ReactElement<Record<string, unknown>>;
 			/** 提示里的全文。 */
@@ -59,28 +69,49 @@ export function Truncate(props: TruncateProps) {
 	return <TextTruncate {...props} />;
 }
 
-/** 截断的那一层：`data-truncate-clip` 让外层的交互元素找到它、量它有没有被截断。 */
+/**
+ * 截断的那一层：`data-truncate-clip` 让外层的交互元素找到它、量它有没有被截断。`untrusted`：别人写的文字，方向隔离
+ * （`dir="ltr"` 加 `unicode-bidi: isolate`：**基准方向一律是从左到右**，和整个控制台一样；不用 `dir="auto"`，那样以从右到左的字母开头的
+ * 混排文字会整行翻过来，省略号也跑到另一头，和不经过这里时的显示不一样）；
+ * 不带 `keepEnd` 时 `children` 可以是组件（`UntrustedText`），带 `keepEnd` 时必须是字符串（按字符数拆成两段）。
+ */
 function Clipped({
 	children,
 	keepEnd = 0,
 	clipRef,
+	untrusted = false,
 }: {
-	children: string;
+	children: ReactNode;
 	keepEnd?: number;
 	clipRef?: Ref<HTMLSpanElement>;
+	untrusted?: boolean;
 }) {
-	const split = keepEnd > 0 && keepEnd < children.length;
+	const isolate = untrusted ? { dir: "ltr" as const, className: "[unicode-bidi:isolate]" } : {};
+	const split = keepEnd > 0 && typeof children === "string" && keepEnd < children.length;
 	// 拆成两段画时读屏会在两段之间读出一个停顿（「sub _ping」）：看得见的两段对读屏隐藏，读屏读完整的一段。
 	return split ? (
 		<span className="flex min-w-0 whitespace-nowrap">
 			<span className="sr-only">{children}</span>
-			<span aria-hidden ref={clipRef} data-truncate-clip="" className="truncate">
+			<span
+				aria-hidden
+				ref={clipRef}
+				data-truncate-clip=""
+				{...isolate}
+				className={cn("truncate", isolate.className)}
+			>
 				{children.slice(0, -keepEnd)}
 			</span>
-			<span aria-hidden>{children.slice(-keepEnd)}</span>
+			<span aria-hidden {...isolate}>
+				{children.slice(-keepEnd)}
+			</span>
 		</span>
 	) : (
-		<span ref={clipRef} data-truncate-clip="" className="block truncate">
+		<span
+			ref={clipRef}
+			data-truncate-clip=""
+			{...isolate}
+			className={cn("block truncate", isolate.className)}
+		>
 			{children}
 		</span>
 	);
@@ -91,14 +122,18 @@ function TextTruncate({
 	keepEnd = 0,
 	render,
 	className,
+	untrusted = false,
 }: {
 	children: string;
 	keepEnd?: number;
 	render?: ReactElement<Record<string, unknown>> | undefined;
 	className?: string | undefined;
+	untrusted?: boolean | undefined;
 }) {
 	const clipped = useRef<HTMLSpanElement>(null);
 	const [truncated, setTruncated] = useState(false);
+	// 别人写的文字：带 keepEnd（按字符数拆开）时先把看不见的字符换成纯文字，不带时用组件。
+	const shown = untrusted ? untrustedShown(children, keepEnd) : children;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: ResizeObserver 只在尺寸变化时回调，文字变了要重新量
 	useLayoutEffect(() => {
 		const element = clipped.current;
@@ -118,13 +153,22 @@ function TextTruncate({
 				render={render ?? <span tabIndex={truncated ? 0 : undefined} className="block min-w-0" />}
 				className={cn("min-w-0", className)}
 			>
-				<Clipped keepEnd={keepEnd} clipRef={clipped}>
-					{children}
+				<Clipped keepEnd={keepEnd} clipRef={clipped} untrusted={untrusted}>
+					{shown}
 				</Clipped>
 			</TooltipTrigger>
-			<TooltipContent className="max-w-md wrap-anywhere">{children}</TooltipContent>
+			<TooltipContent className="max-w-md wrap-anywhere">
+				{untrusted ? <UntrustedText text={children} /> : children}
+			</TooltipContent>
 		</Tooltip>
 	);
+}
+
+/** 别人写的文字在 `Truncate` 里的样子：不拆开的是组件（一小块写出来的字符），按字符数拆开的是纯文字。 */
+function untrustedShown(text: string, keepEnd: number): ReactNode {
+	// 截断层自己就是从左到右的隔离元素（`dir="ltr"`、`unicode-bidi: isolate`），里面不再包 `<bdi>`：文字直接放在截断层里，
+	// 和不经过组件时的 DOM 只差这两个属性（截断层的方向因此是起作用的，不是被里面的 `<bdi>` 挡住的）。
+	return keepEnd > 0 ? untrustedPlain(text) : <UntrustedText text={text} isolated />;
 }
 
 /** 在交互元素里面：只截断，和单独的 Truncate 一样的版面，没有提示、不能聚焦。 */
@@ -132,15 +176,19 @@ function PlainTruncate({
 	children,
 	keepEnd = 0,
 	className,
+	untrusted = false,
 }: {
 	children: string;
 	keepEnd?: number;
 	render?: unknown;
 	className?: string | undefined;
+	untrusted?: boolean | undefined;
 }) {
 	return (
 		<span className={cn("block min-w-0", className)}>
-			<Clipped keepEnd={keepEnd}>{children}</Clipped>
+			<Clipped keepEnd={keepEnd} untrusted={untrusted}>
+				{untrusted ? untrustedShown(children, keepEnd) : children}
+			</Clipped>
 		</span>
 	);
 }

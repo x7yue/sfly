@@ -8,6 +8,7 @@ import { PreparingBadge } from "#/agents/PreparingBadge";
 import { ErrorState } from "#/components/feedback/states";
 import { IdleSlots, idleSlotCount, SlotCell } from "#/components/slot-cell";
 import { STATUS, StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery } from "#/lib/api";
 import { AGENT_STATUS_LABEL, MESSAGE, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
@@ -80,9 +81,11 @@ function AgentSlots({ agent }: { agent: AgentView }) {
 			<div className="flex items-center gap-2">
 				<StatusDot kind={status.kind} />
 				<h3 id={headingId} className="m-0 font-mono text-sm font-medium">
-					{agent.name}
+					<UntrustedText text={agent.name} />
 				</h3>
-				<span className="font-mono text-xs text-fg-3">{agent.info.agent_version || "—"}</span>
+				<span className="font-mono text-xs text-fg-3">
+					<UntrustedText text={agent.info.agent_version || "—"} />
+				</span>
 				{status.kind === "ok" ? (
 					<span className="sr-only">{status.label}</span>
 				) : (

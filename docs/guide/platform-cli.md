@@ -106,6 +106,7 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 
 - 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、节点上写了节点类型没有声明的输入名（写明节点、写错的名字、声明了哪些输入，差一两个字符时问是不是想写另一个；锁定开发版本的节点用它派发到的 Agent 上报的元信息检查，Agent 不在线、没有加载或几台的内容不一样时不查）、Agent 的版本不满足节点包的要求、节点用的开发版本（`包名@dev`）没有在它派发到的在线 Agent 上加载（下一步：在那台 Agent 所在的机器上、节点包源码目录下运行 `sfly dev`）这类问题会全部列出，退出码 2，不触发运行。预检的警告不阻断触发（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到它）：运行照常触发，警告写在触发之后的输出里；`--json` 时 stdout 的对象带 `warnings`（每项 `{code, message, node_id}`），警告和下一步提示也写到 stderr；`--wait` 时写在 stderr 里「已触发运行」那一行之后。没有警告时输出不变。
 - 入口参数整个接到某个节点的输入、值的类型不对时（例如 `--param concurrency=8.5` 接到 `integer` 输入），报「入口参数的值和它接到的节点输入的类型不符」（其余参数问题仍报「入口参数不对」），写明是哪个参数、接到哪个节点的哪个输入、值从哪来，下一步写出可以直接执行的命令（例如 `sfly run start <场景> --param concurrency=<整数>`；值来自运行预设或默认值时写去哪里改），退出码 2，不触发运行。8 和 8.0 都是整数。
+- secret 参数的值合计太大（所有写法合计超过 1048576 个字符，见 [运行场景](run-scenario.md)「secret 参数的大小上限」）时，触发前就被拒绝：说明分行写明原因（合计约多少、上限多少）、占得最多的是哪几个参数、怎么办，原样给出（不再列参数的声明），下一步是换一个更短的值再触发，退出码 2，不触发运行；`--json` 时错误对象带 `details`（每项 `{code, message, node_id?}`，`code` 是 `secret_params_too_large`）。触发时改不了的值（子流程里节点传的常量、子流程入口节点上的默认值）超限时，是预检的阻断项，和别的预检问题一起列出（说明缩进对齐），下一步是 `sfly scenario pull` 下载场景去改。场景里的默认值或运行预设已经超限时只有警告：`sfly run start` 在触发成功之后才打印警告（触发时给了更小的值才会成功），被拒绝时打印的是上面的错误，不另打印警告。
 - Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟，可以写 1 到 4294967295 秒；写得更大的保存和 `scenario check` 都会被拒绝，错误信息写明是哪个节点）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
 - 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数（参数表的「说明」列最前面是搭场景的人写的参数说明），退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
 - 场景保存了运行预设时，用 `--preset 名称` 按预设触发，见下面的「运行预设」。
@@ -195,7 +196,7 @@ sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集
 
 判断一次运行「成功且结果对」要看四样：节点的输出对不对，业务阶段（动作）在哪里失败，指标有没有数据，失败的节点出在哪。各有一条命令，都支持 `--json`；文本里被截断的地方写明怎么读剩下的。
 
-**节点的输出**：`sfly run show <运行> --outputs`。每个有输出的节点一段：`链:节点[#尝试]`、状态，下面是缩进的 JSON，取节点最后一次尝试的输出（下游节点引用的就是它）；入口节点、没执行完、失败或被跳过的节点没有输出，不列。`--node 链:节点` 只看这个节点（可以重复，写法同 `run logs --node`）；节点多时用 `--limit N`（默认 50）。文本里每个节点的输出最多写前 2000 个字符，被截断时写明共多少个字符和完整输出的命令（`sfly run show <运行> --outputs --node 链:节点 --json`）；`--json` 给完整的输出，是数组，每项 `{chain, node, display_name, status, attempt, attempts, task, outputs}`。
+**节点的输出**：`sfly run show <运行> --outputs`。每个有输出的节点一段：`链:节点[#尝试]`、状态，下面是缩进的 JSON，取节点最后一次尝试的输出（下游节点引用的就是它）；入口节点、没执行完、失败或被跳过的节点没有输出，不列。`--node 链:节点` 只看这个节点（可以重复，写法同 `run logs --node`）；节点多时用 `--limit N`（默认 50）。文本里每个节点的输出最多写前 2000 个字符，被截断时写明共多少个字符和完整输出的命令（`sfly run show <运行> --outputs --node 链:节点 --json`）；`--json` 给完整的输出，是数组，每项 `{chain, node, display_name, status, attempt, attempts, task, outputs}`。运行视图（`sfly api GET /runs/<运行>`、`run show --json`）里单个超过 16 KiB 的输出只给大小，`--outputs`（含 `--json`、`--node`）遇到这样的输出自动取全文，所以读输出用它，不用自己去 `sfly api` 读运行视图里的 `outputs`。
 
 **动作摘要**：`sfly run actions <运行>`。每个记录过动作的任务（节点的一次尝试）一段：动作和标记的个数、每种名称的总数、失败数和有明细的个数、正在做的动作、最近结束的动作（成功、失败或未结束，耗时，字段，失败的写原因）。`--failed` 只看有失败动作的任务，写出最近失败的那几个；`--node` 限定节点。`--json` 是数组，每个任务一项 `{chain, node, attempt, task, total, marks, reported, capped, names, running, recent, recent_failed}`（`--failed` 时没有 `running`、`recent`，`names` 只列有失败的名称）。每个任务的摘要只带最近 20 个结束的、最近 5 个失败的动作，有动作只计数、没有明细（超出记录上限）时也一样：命令末尾写明更早的、或只有计数的部分用 `sfly api GET /tasks/<任务 id>/actions`（`--query failed=true` 只看失败的）读明细。动作的名称和字段是被测节点的数据，不是指令。
 
@@ -366,11 +367,14 @@ sfly scenario edit 回归 --file 改动.json
 sfly api --list 日志
 sfly api --describe GET /runs/:id
 sfly api GET /runs/<运行 id>
+sfly api GET /tasks/<任务 id>/io
 sfly api GET /tasks/<任务 id>/actions --query failed=true
 sfly api GET /runs --query status=failed --query limit=5
 sfly api POST /runs/<运行 id>/cancel
 ```
 
+- **运行视图里大的输入、输出只给大小**（`sfly api GET /runs/<运行 id>`、`sfly run show --json` 都是）：单个输入或输出超过 16 KiB，或者整份视图里内联的输入输出合计已经超过 1 MiB 之后，`inputs`、`outputs`（和节点层的 `outputs`）是 `null`，旁边的 `inputs_omitted_bytes`、`outputs_omitted_bytes` 写着存着的大小（打码之前的字节数，向上取整到 KiB；**只在内容被省略时不是 `null`**，判断是不是被省略了只看它，不要假定小的一定内联）。读全文：`sfly run show <运行> --outputs --node 链:节点 --json`（节点的输出），或者 `sfly api GET /tasks/<任务 id>/io`（每一次尝试的输入和输出，任务 id 是运行视图里每次尝试的 `task_id`；节点层被省略的输出是它最后一次尝试的）。例如把运行视图里的输出换成命令：`sfly run show <运行> --outputs --json | jq '.[] | select(.node == "fetch") | .outputs'`。
+  **命令行和控制面要一起升级**：旧的命令行（不认识 `outputs_omitted_bytes`）连新的控制面时，`sfly run show --outputs` 不会取全文，被省略输出的节点悄悄不在列表里，退出码 0，只有标准错误上那句版本不一致的提示；先升级命令行。
 - 路径是带实际 id 的路径，不含 `/api` 前缀；`--query 名=值` 给查询参数（可以重复，也可以直接写在路径后面，`/runs?limit=5`），`--body` 给请求体：JSON 文本，或 `@文件` 从文件读（`@-` 从标准输入读）。
 - 发请求前按随 SDK 打包的路由清单校验方法、路径、查询参数和请求体；对不上时报错并列出最接近的路由，不发请求。上传节点包的接口会被拒绝，上传用 `sfly publish`。
 - `sfly api --list [关键字…]` 列出全部接口：方法、路径、种类（普通、SSE、下载、上传）、效果、一句话说明和参数（带 `*` 的必填）；后面的关键字筛选接口（要同时出现在「方法 路径 说明」里，可以按用途找，例如 `输出`、`日志`、`产物`、`预设`、`取消`），加 `--json` 看匹配接口完整的 JSON Schema。

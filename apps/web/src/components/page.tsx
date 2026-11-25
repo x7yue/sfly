@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useState } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { MESSAGE } from "#/lib/copy";
 import {
 	type KeyLabel,
@@ -33,12 +34,15 @@ export function Page({ className, ...props }: React.ComponentProps<"div">) {
 
 export function PageHeader({
 	title,
+	untrustedTitle = false,
 	count,
 	countClassName,
 	description,
 	actions,
 }: {
 	title: string;
+	/** 标题是别人写的、不保证内容的文字（会话的标题是第一句话）：方向隔离，看不见的字符写出来。 */
+	untrustedTitle?: boolean;
 	/** 标题旁的数量（等宽、三级文字）。 */
 	count?: number;
 	/** 数量的文字色（缺省三级文字）：标题旁的数量或说明是页面要读的信息时（令牌页的项目名）换亮一档。 */
@@ -52,7 +56,7 @@ export function PageHeader({
 		<div className="mb-3.5 flex min-h-7.5 items-center gap-2.5">
 			{/* focus-recovery 的兜底落点 */}
 			<h1 tabIndex={-1} className="m-0 text-lg font-semibold">
-				{title}
+				{untrustedTitle ? <UntrustedText text={title} /> : title}
 			</h1>
 			{count !== undefined && (
 				<span className={cn("font-mono text-xs", countClassName ?? "text-fg-3")}>{count}</span>
