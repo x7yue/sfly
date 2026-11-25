@@ -6,6 +6,7 @@ import { useState } from "react";
 import { listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { ACTION, attemptLabel, DURATION_LABEL, PAGE } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
@@ -103,7 +104,7 @@ function EndedRow({ run, generatedAt }: { run: DashboardEndedRun; generatedAt: s
 				<div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-fg-3">
 					{failure?.error && (
 						<Badge variant="danger" className="font-mono">
-							{failure.error.kind}
+							<UntrustedText text={failure.error.kind} />
 						</Badge>
 					)}
 					{failure && <FailureWhere failure={failure} />}
@@ -111,7 +112,7 @@ function EndedRow({ run, generatedAt }: { run: DashboardEndedRun; generatedAt: s
 				</div>
 				{failure?.error?.message && (
 					<p className="m-0 mt-1.5 line-clamp-2 rounded-md bg-inset px-2.5 py-1.5 font-mono text-xs wrap-anywhere whitespace-pre-line text-fg-2">
-						{errorHeadline(failure.error.message)}
+						<UntrustedText text={errorHeadline(failure.error.message)} mode="text" />
 					</p>
 				)}
 				{run.focus.length > 0 && (

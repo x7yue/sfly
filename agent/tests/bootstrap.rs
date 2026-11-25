@@ -11,7 +11,8 @@ use sfly_agent::AGENT_VERSION;
 use sfly_agent::proto::TaskStatus;
 use support::packages::{HttpFixture, package_task, publish, sha256_hex};
 use support::{
-    AgentOptions, AgentProcess, FakeControlPlane, python_version, repo_root, spawn_agent,
+    AgentOptions, AgentProcess, FakeControlPlane, credential_logging_uv, python_version, repo_root,
+    spawn_agent,
 };
 
 /// 构建 SDK 运行时 wheel（sdk/python），返回 (文件名, 内容)。
@@ -110,4 +111,50 @@ async fn sdk_wheel_with_a_wrong_sha256_is_not_installed() {
     // 没有 SDK：列不出已安装的包，也没有下载地址，任务以 env_error 失败。
     assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
     assert!(venv.join("bin/python").exists(), "venv 仍然创建了");
+}
+
+/// Agent 凭据经环境变量 `SFLY_TOKEN` 交给 Agent 时（#492），装 SDK 运行时 wheel 的 uv 进程的环境里没有它。
+#[tokio::test]
+async fn the_agent_credential_is_not_in_the_environment_of_the_uv_that_installs_the_sdk() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("uv-cache").to_string_lossy().into_owned();
+    let fixture = HttpFixture::start().await;
+    let (name, wheel) = sdk_wheel(&dir.path().join("sdk"));
+    let url = fixture.put(
+        &format!("/sdk/python/{AGENT_VERSION}/{name}"),
+        wheel.clone(),
+    );
+    let cp = FakeControlPlane::start().await;
+    cp.set_sdk_wheel(&url, &sha256_hex(&wheel));
+    let log = dir.path().join("uv-calls.log");
+    let uv = credential_logging_uv(dir.path(), &log);
+    let venv: PathBuf = dir.path().join("empty/venv");
+    let uv = uv.to_string_lossy().into_owned();
+
+    let mut options = AgentOptions::new(&cp.url, "agent-sdk-env");
+    options.venv = &venv;
+    options.args = vec![
+        "--index-url".into(),
+        fixture.index_url(),
+        "--python".into(),
+        python_version(),
+        "--uv".into(),
+        uv,
+    ];
+    options.env = vec![
+        ("UV_CACHE_DIR", &cache),
+        ("SFLY_TOKEN", "sfly_agt_0123456789abcdef0123456789abcdef"),
+    ];
+    let _agent = spawn_agent(options);
+    // 空目录：Agent 创建 venv（`uv venv`），再装 SDK 运行时（`uv pip install … sfly`）；两个 uv 进程的环境里都没有凭据。
+    cp.hello(0).await;
+    support::wait_until("SDK 运行时装好", || {
+        venv.join("bin/python").exists()
+            && std::fs::read_to_string(&log)
+                .is_ok_and(|log| log.lines().any(|l| l.contains("--reinstall-package sfly")))
+    })
+    .await;
+    let log = std::fs::read_to_string(&log).unwrap();
+    assert!(log.lines().any(|l| l.contains(" venv ")), "{log}");
+    assert!(log.lines().all(|l| l.starts_with("unset ")), "{log}");
 }

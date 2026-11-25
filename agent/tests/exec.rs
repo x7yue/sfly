@@ -13,8 +13,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use sfly_agent::proto::{CancelTask, agent_message, server_message};
-use support::calls::{AgentPair, Reply, call, hold_task, open_call, read_reply, referenced};
-use support::{stub_task, wait_until};
+use support::calls::{
+    AgentPair, Reply, call, hold_task, open_call, read_reply, referenced, socket_of,
+};
+use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task, wait_until};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
@@ -457,4 +459,66 @@ async fn a_command_takes_no_slot_and_makes_no_task_on_the_agent_it_runs_on() {
         "the command showed up as a task on source"
     );
     drop(stream);
+}
+
+/// Agent 凭据可以经环境变量 `SFLY_TOKEN` 交给 Agent（#492）：节点经 `exec.run` 让 Agent 执行的命令，以及它留下的
+/// 后台进程，环境里没有它；调用方自己在 `env` 里给的同名变量是他们自己的值，照常生效。
+#[tokio::test]
+async fn the_agent_credential_is_not_in_the_environment_of_a_command_or_of_the_processes_it_leaves()
+{
+    const AGENT_TOKEN: &str = "sfly_agt_0123456789abcdef0123456789abcdef";
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-exec-credential");
+    options.env = vec![("SFLY_TOKEN", AGENT_TOKEN)];
+    let agent = spawn_agent(options);
+    // Agent 自己拿到了凭据（Hello 里带着它）。
+    assert_eq!(cp.hello(0).await.token, AGENT_TOKEN);
+    let socket = socket_of(&agent);
+    wait_until("the agent's socket", || socket.exists()).await;
+    hold_task(&cp, "task-exec-credential", vec![]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let background = dir.path().join("background");
+
+    // 命令自己，和它在后台起的进程（写进文件，命令等它写完再退出）：都没有。
+    let script =
+        r#"echo "command:${SFLY_TOKEN-unset}"; sh -c 'echo "${SFLY_TOKEN-unset}" > "$OUT"' & wait"#;
+    let reply = call(
+        &socket,
+        json!({
+            "task_id": "task-exec-credential",
+            "attempt": 1,
+            "agent": "",
+            "method": "exec.run",
+            "args": { "argv": ["sh", "-c", script], "env": { "OUT": background } },
+            "timeout_ms": 20_000,
+        }),
+    )
+    .await;
+    assert_eq!(reply.result(), &json!({ "exit_code": 0 }), "{reply:?}");
+    assert_eq!(
+        lines(&reply, "stdout"),
+        ["[Agent agent-exec-credential] command:unset"]
+    );
+    assert_eq!(std::fs::read_to_string(&background).unwrap(), "unset\n");
+
+    // 调用方给的同名变量是他们自己的值。
+    let reply = call(
+        &socket,
+        json!({
+            "task_id": "task-exec-credential",
+            "attempt": 1,
+            "agent": "",
+            "method": "exec.run",
+            "args": {
+                "argv": ["sh", "-c", r#"echo "${SFLY_TOKEN-unset}""#],
+                "env": { "SFLY_TOKEN": "the-callers-own-value" },
+            },
+            "timeout_ms": 20_000,
+        }),
+    )
+    .await;
+    assert_eq!(
+        lines(&reply, "stdout"),
+        ["[Agent agent-exec-credential] the-callers-own-value"]
+    );
 }

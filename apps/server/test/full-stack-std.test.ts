@@ -238,7 +238,11 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 			expect((await api.run(runId)).status).toBe("success");
 			const produce = await api.node(runId, "produce");
 			expect(produce.agent).toBe(AGENT);
-			const outputs = produce.outputs as { stdout: string; stdout_file: string };
+			// stdout 的尾部超过 16 KiB，运行视图里只给大小（#633）：全文用 /tasks/:id/io 取。
+			const outputs = (await api.nodeOutputs(runId, "produce")) as {
+				stdout: string;
+				stdout_file: string;
+			};
 			expect(Buffer.byteLength(full)).toBeGreaterThan(64 * 1024);
 			expect(outputs.stdout.length).toBeLessThan(full.length);
 			expect(full.endsWith(outputs.stdout)).toBe(true);

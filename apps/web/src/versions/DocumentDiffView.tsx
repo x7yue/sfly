@@ -2,6 +2,7 @@ import type { AnnotationChange, DocumentDiff, FieldChange } from "@sfly/orchestr
 import { isEmptyDiff } from "@sfly/orchestration";
 import { ANNOTATION_DEFAULT_COLOR, type AnnotationColor } from "@sfly/schema";
 import { KIND_META } from "#/components/canvas/node-display";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ANNOTATION_COLOR_LABEL, ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 
 /**
@@ -162,12 +163,18 @@ function ChangeRow({
 	indent?: boolean;
 	label?: string;
 }) {
+	// 注释框的字段（传了 `label`）是场景里自己写的；节点和设置里这几项的值来自节点包和 Agent。
+	const foreign = label === undefined && isForeignValue(change.path);
+	const value = (v: unknown) => {
+		const text = formatValue(v);
+		return foreign ? <UntrustedText text={text} /> : text;
+	};
 	return (
 		<Row indent={indent}>
-			<span className="text-fg-2">{label ?? fieldLabel(change.path)}</span>{" "}
-			{change.before !== undefined && <Del>{formatValue(change.before)}</Del>}
+			<span className="text-fg-2">{label ?? <FieldLabel path={change.path} />}</span>{" "}
+			{change.before !== undefined && <Del>{value(change.before)}</Del>}
 			{change.before !== undefined && change.after !== undefined && " → "}
-			{change.after !== undefined && <Ins>{formatValue(change.after)}</Ins>}
+			{change.after !== undefined && <Ins>{value(change.after)}</Ins>}
 			{change.after === undefined && <span className="text-fg-3">（删除）</span>}
 			{change.before === undefined && <span className="text-fg-3">（新增）</span>}
 		</Row>
@@ -204,11 +211,37 @@ const FIELD_LABEL: Record<string, string> = {
 	note: TERM.note,
 };
 
-function fieldLabel(path: string): string {
+/**
+ * 值是节点包或 Agent 报的、不保证内容的字段：默认 Agent 和节点的 Agent、节点的包和节点类型、锁定的包版本。
+ * 前后值并排对比时，版本号前后看起来互换、两个名字看起来一样，都会让人看错改了什么，所以前后两边都经 `UntrustedText`。
+ * 输入的值是场景里自己填的，不在这里。
+ */
+const isForeignValue = (path: string): boolean =>
+	path === "default_agent" ||
+	path === "agent" ||
+	path === "package" ||
+	path === "node" ||
+	path.startsWith("packages.");
+
+/** 字段名：包名（锁定版本）和输入键是节点包声明的，不限字符，单独过 `UntrustedText`；参数名是场景自己声明的。 */
+function FieldLabel({ path }: { path: string }) {
 	const [head, ...rest] = path.split(".");
 	const tail = rest.join(".");
-	if (head === "packages") return `包 ${tail} 的锁定版本`;
-	if (head === "inputs" || head === "params") return `参数 ${tail}`;
+	if (head === "packages") {
+		return (
+			<>
+				包 <UntrustedText text={tail} /> 的锁定版本
+			</>
+		);
+	}
+	if (head === "inputs") {
+		return (
+			<>
+				参数 <UntrustedText text={tail} />
+			</>
+		);
+	}
+	if (head === "params") return `参数 ${tail}`;
 	return FIELD_LABEL[path] ?? path;
 }
 

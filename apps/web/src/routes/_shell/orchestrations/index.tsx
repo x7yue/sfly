@@ -17,6 +17,7 @@ import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { useSearchInput } from "#/lib/use-search-input";
 import { ScenarioCards, ScenarioRunDrawer, ScenarioTable } from "#/scenarios/ScenarioList";
 import { Button } from "@/components/ui/button";
@@ -117,7 +118,7 @@ function ScenariosPage() {
 					<option value="">全部 Agent</option>
 					{agents.data?.agents.map((a) => (
 						<option key={a.name} value={a.name}>
-							{a.name}
+							{untrustedPlain(a.name)}
 						</option>
 					))}
 				</NativeSelect>

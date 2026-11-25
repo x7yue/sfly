@@ -8,15 +8,16 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useId, useRef, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
 import { Page, PageHeader } from "#/components/page";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
-import { errorText } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -72,6 +73,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 		<div className="mx-auto flex w-full max-w-208 flex-col">
 			<PageHeader
 				title={detail.title}
+				untrustedTitle
 				actions={
 					<>
 						<StatusPill kind={status.kind} pulse className="text-sm">
@@ -85,7 +87,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 			/>
 			{/* 一轮结束时读屏读一句（时间线是逐字更新的，不整个播报）。 */}
 			<output aria-live="polite" className="sr-only">
-				{lastEnd?.kind === "turn_end" ? turnEndText(lastEnd) : ""}
+				{lastEnd?.kind === "turn_end" ? untrustedPlain(turnEndText(lastEnd)) : ""}
 			</output>
 			<SessionTimeline
 				state={state}
@@ -223,10 +225,21 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
  * 其余（包括助手没有开启、连不上的 503）写接口给的那句话。
  */
 function SendError({ error, sessionId }: { error: Error; sessionId: string }) {
-	if (!(error instanceof ApiError)) return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
+	// 接口的错误信息一律经组件（里面可能拼着 Agent 报的原文）：`FormAlert` 只处理直接放进去的字符串。
+	if (!(error instanceof ApiError)) {
+		return (
+			<>
+				{SESSION.page.sendFailed}：<ErrorMessage error={error} />
+			</>
+		);
+	}
 	if (error.code === "turn_running") return <>{SESSION.page.turnRunning}</>;
 	if (error.code === "project_busy") return <ProjectBusy sessionId={sessionId} />;
-	return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
+	return (
+		<>
+			{SESSION.page.sendFailed}：<ErrorMessage error={error} />
+		</>
+	);
 }
 
 /** 同一个项目另一个会话在做：写明原因，找得到是哪一个时给出它的链接（列表只在这时才读）。 */

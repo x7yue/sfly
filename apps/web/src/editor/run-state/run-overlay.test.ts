@@ -19,7 +19,9 @@ const attempt = (over: Partial<AttemptView>): AttemptView => ({
 	status: "success",
 	agent: "agent-a",
 	inputs: null,
+	inputs_omitted_bytes: null,
 	outputs: null,
+	outputs_omitted_bytes: null,
 	error: null,
 	queued_at: at(0),
 	started_at: at(0),
@@ -39,6 +41,7 @@ const node = (node_id: string, status: NodeRunView["status"], attempts: AttemptV
 		status,
 		agent: attempts.at(-1)?.agent ?? null,
 		outputs: null,
+		outputs_omitted_bytes: null,
 		error: null,
 		attempts,
 	}) satisfies NodeRunView;

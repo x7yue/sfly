@@ -163,6 +163,11 @@ struct State {
     /// 收到的一条消息编码之后超过这么多字节（0 = 不限）：这一条不记，会话以 `resource_exhausted` 结束，
     /// 状态说明和真实控制面的网关一样（`message size <大小> is larger than configured readMaxBytes <上限>`，#674）。
     message_limit: AtomicUsize,
+    /// 非空时每个新会话都以这个 gRPC 状态被拒绝（和真的控制面认证失败一样：流一打开就是错误，不读 Hello）。
+    /// 被拒绝的连接不占会话序号，也不记进 `received`。
+    reject_status: Mutex<Option<(tonic::Code, String)>>,
+    /// 被拒绝的每次连接的时间（[`FakeControlPlane::rejection_times`]）。
+    rejections: Mutex<Vec<tokio::time::Instant>>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -430,6 +435,22 @@ impl FakeControlPlane {
         self.state.reject_sessions.lock().unwrap().extend(sessions);
     }
 
+    /// 之后每个新连接都以 `code`（`Unauthenticated` 或 `PermissionDenied`）和说明 `message` 被拒绝，直到
+    /// [`stop_rejecting`](Self::stop_rejecting)；再调用一次可以换成别的原因。
+    pub fn reject_every_connection(&self, code: tonic::Code, message: &str) {
+        *self.state.reject_status.lock().unwrap() = Some((code, message.to_string()));
+    }
+
+    /// 不再拒绝，之后的连接照常回 Welcome。
+    pub fn stop_rejecting(&self) {
+        *self.state.reject_status.lock().unwrap() = None;
+    }
+
+    /// 被拒绝的每次连接的时间（按到达顺序）。
+    pub fn rejection_times(&self) -> Vec<tokio::time::Instant> {
+        self.state.rejections.lock().unwrap().clone()
+    }
+
     /// 等到一条带更新状态、且 `pick` 接受的 Heartbeat，返回其中的更新状态。
     pub async fn update_status(
         &self,
@@ -489,6 +510,15 @@ impl AgentGateway for Gateway {
     ) -> Result<Response<Self::SessionStream>, Status> {
         let mut inbound = request.into_inner();
         let state = self.state.clone();
+        let rejected = state.reject_status.lock().unwrap().clone();
+        if let Some((code, message)) = rejected {
+            state
+                .rejections
+                .lock()
+                .unwrap()
+                .push(tokio::time::Instant::now());
+            return Err(Status::new(code, message));
+        }
         let session = state.sessions.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel(16);
         *state.current.lock().unwrap() = Some(tx.clone());
@@ -867,3 +897,26 @@ pub const NUMBERS: [f64; 12] = [
     5e-324,
     1.7976931348623157e308,
 ];
+
+/// 记录环境里 `SFLY_TOKEN` 的 uv：每次调用把「`SFLY_TOKEN` 的值（没有时写 unset） 参数」写进 `log` 一行，然后转给
+/// 测试机的 uv。
+pub fn credential_logging_uv(dir: &Path, log: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let host = std::process::Command::new("sh")
+        .args(["-c", "command -v uv"])
+        .output()
+        .unwrap();
+    let host = String::from_utf8(host.stdout).unwrap();
+    let path = dir.join("credential-logging-uv");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"${{SFLY_TOKEN-unset}} $*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            host.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
