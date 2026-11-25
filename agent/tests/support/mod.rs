@@ -88,6 +88,43 @@ pub fn assert_quiet_termination(logs: &[LogLine]) {
     assert_eq!(terminated, vec![LogLevel::Info], "{texts:?}");
 }
 
+/// 这个测试进程里假控制面用过的端口（关掉的也算）。
+fn used_ports() -> std::sync::MutexGuard<'static, HashSet<u16>> {
+    static USED: OnceLock<Mutex<HashSet<u16>>> = OnceLock::new();
+    USED.get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 这个端口是不是这个测试进程里某个假控制面用过的（关掉的也算）。
+pub fn port_was_used_by_a_fake_control_plane(port: u16) -> bool {
+    used_ports().contains(&port)
+}
+
+/// 挑一个随机端口，跳过 `used` 里已有的：`bind` 每次绑定一个新的随机端口，返回端口和监听器；撞上用过的就放掉重绑，
+/// 挑到的记进 `used`。
+///
+/// 为什么不让系统随便给：假控制面关掉之后，测试常常等一会儿在同一个端口上再起一个（模拟控制面下线又恢复），
+/// Agent 在这期间每隔一阵重连。同一个测试进程里的测试并行跑，别的测试起假控制面时系统可能把这个刚空出来的端口
+/// 给了它（CI 里出现过：#718），Agent 就连上了别人的假控制面——握手成功、被当成那边的会话，下线期间的指标和日志发给了
+/// 不相干的测试；那边的 Agent 也被挤掉会话，两边轮流重连。用过的端口在整个进程里不再发给别的假控制面，
+/// 只有显式 [`FakeControlPlane::start_on`] 才会重新绑它。
+pub fn pick_unused_port<T>(
+    used: &mut HashSet<u16>,
+    mut bind: impl FnMut() -> std::io::Result<(u16, T)>,
+) -> std::io::Result<(u16, T)> {
+    // 用过的端口总共也就几十个，一千次里挑不出没用过的，说明 bind 给的不是随机端口。
+    for _ in 0..1000 {
+        let (port, listener) = bind()?;
+        if used.insert(port) {
+            return Ok((port, listener));
+        }
+    }
+    Err(std::io::Error::other(
+        "1000 次都撞上这个进程里用过的端口：bind 给的不像是随机端口",
+    ))
+}
+
 /// 收到的一条消息：第几个会话（从 0 开始）+ 消息本身。
 #[derive(Debug, Clone)]
 pub struct Received {
@@ -138,11 +175,19 @@ pub struct FakeControlPlane {
 }
 
 impl FakeControlPlane {
+    /// 在一个随机端口上启动，端口不是这个测试进程里任何假控制面用过的（见 [`pick_unused_port`]）。
     pub async fn start() -> Self {
-        Self::start_on(0).await
+        let (_, listener) = pick_unused_port(&mut used_ports(), || {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+            Ok((listener.local_addr()?.port(), listener))
+        })
+        .expect("bind a port for the fake control plane");
+        listener.set_nonblocking(true).unwrap();
+        Self::serve(TcpListener::from_std(listener).unwrap())
     }
 
-    /// 在指定端口（0 为随机）上启动。端口还被刚关掉的上一个假控制面占着时（关闭是异步的），等它释放。
+    /// 在指定端口上启动（先 [`FakeControlPlane::start`] 起一个、记下 `port`、关掉，再在同一端口上起一个，就是模拟控制面下线又恢复）。
+    /// 端口还被刚关掉的上一个假控制面占着时（关闭是异步的），等它释放。
     pub async fn start_on(port: u16) -> Self {
         let deadline = tokio::time::Instant::now() + WAIT;
         let listener = loop {
@@ -158,6 +203,11 @@ impl FakeControlPlane {
                 Err(error) => panic!("bind 127.0.0.1:{port}: {error}"),
             }
         };
+        used_ports().insert(listener.local_addr().unwrap().port());
+        Self::serve(listener)
+    }
+
+    fn serve(listener: TcpListener) -> Self {
         let addr: SocketAddr = listener.local_addr().unwrap();
         let state = Arc::new(State::default());
         let service = Gateway {
