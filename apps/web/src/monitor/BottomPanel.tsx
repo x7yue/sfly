@@ -457,9 +457,23 @@ function Segmented({
 	);
 }
 
-/** 日志读完了、一行也没有：面板按内容自动收起的依据。筛选了级别时不算（筛掉的是用户自己要的）；没读、还在读也不算。 */
-const hasNoLogs = (logs: LogPaging & { lines: unknown[]; loaded: boolean }, filtered: boolean) =>
-	!filtered && logs.loaded && logs.lines.length === 0 && !logs.hasOlder && !logs.hasNewer;
+/**
+ * 日志读完了、一行也没有：面板按内容自动收起的依据。筛选了级别时不算（筛掉的是用户自己要的）；没读、还在读也不算；
+ * 日志文件不在了、变短了（#721）也不算：这时没有行不是「没有日志」，面板要开着，里面说明原因。
+ */
+const hasNoLogs = (
+	logs: LogPaging & { lines: unknown[]; loaded: boolean } & (
+			| { fileProblem: unknown }
+			| { fileProblemsTotal: number }
+		),
+	filtered: boolean,
+) =>
+	!filtered &&
+	logs.loaded &&
+	logs.lines.length === 0 &&
+	!logs.hasOlder &&
+	!logs.hasNewer &&
+	!("fileProblem" in logs ? logs.fileProblem !== null : logs.fileProblemsTotal > 0);
 
 function TaskLogsTab({
 	attempt,
