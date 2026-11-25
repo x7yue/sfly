@@ -20,7 +20,6 @@ import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
 import {
 	attemptLabel,
-	DURATION_LABEL,
 	ERROR_LOCATION_LABEL,
 	MESSAGE,
 	noDataLabel,
@@ -51,8 +50,9 @@ import { MetricChart } from "./MetricChart";
 import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
 import { nodeKey } from "./node-ref";
+import { NODE_TOTAL_HINT, NODE_TOTAL_LABEL, timingNote } from "./node-timing";
 import { chainLabel, documentNodes, findNode } from "./run-model";
-import type { TimeRange } from "./timeline-model";
+import { nodeSegments, type TimeRange, timingOf } from "./timeline-model";
 import {
 	attemptsSignature,
 	seriesQuery,
@@ -776,17 +776,21 @@ function LossNotes({ loss }: { loss: MetricDataLoss }) {
 	);
 }
 
-/** 选中节点的摘要（组内顶部）：状态、节点类型、Agent、耗时、尝试、进度、错误。 */
+/** 选中节点的摘要（组内顶部）：状态、节点类型、Agent、总耗时（和时间线的节点行是同一个数）、尝试、进度、错误。 */
 function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 	const { node, entry, status } = group;
-	const latest = node.attempts.at(-1);
-	const started = latest?.started_at ? Date.parse(latest.started_at) : null;
-	const ended = latest?.ended_at ? Date.parse(latest.ended_at) : now;
-	const progress = latest?.progress;
-	const item = (label: string, value: React.ReactNode) => (
-		<div className="min-w-0">
+	const timing = timingOf(nodeSegments(node, now));
+	const timingNoteText = timingNote(timing);
+	const progress = node.attempts.at(-1)?.progress;
+	const item = (label: string, value: React.ReactNode, note?: string | null, hint?: string) => (
+		<div className="min-w-0" title={hint}>
 			<div className="text-xs text-fg-3">{label}</div>
 			<div className="font-mono text-xs">{value}</div>
+			{note && (
+				<div data-testid="node-timing-note" className="text-xs text-fg-3">
+					{note}
+				</div>
+			)}
 		</div>
 	);
 	return (
@@ -794,7 +798,12 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
 			{item("节点类型", `${entry.package}/${entry.node}@${entry.version}`)}
 			{item("Agent", node.agent ?? "—")}
-			{item(DURATION_LABEL, started === null ? "—" : formatDuration(ended - started))}
+			{item(
+				NODE_TOTAL_LABEL,
+				timing.total === null ? "—" : formatDuration(timing.total),
+				timingNoteText,
+				NODE_TOTAL_HINT,
+			)}
 			{item("尝试", node.attempts.length)}
 			{progress && (
 				<div className="min-w-45">
@@ -955,7 +964,7 @@ const platformNode = (run: RunView, n: { chain_instance_id: string; node_id: str
 const platformNodeName = (run: RunView, n: { chain_instance_id: string; node_id: string }) =>
 	runNodeName(platformNode(run, n));
 
-/** 节点耗时 Top 10：条长为总耗时（含排队与等待）。 */
+/** 节点耗时 Top 10：条长为总耗时（各次尝试从排队到结束的合计，含排队与等待；和时间线的节点行、选中节点的摘要是同一个口径）。 */
 function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | undefined }) {
 	const statusOf = new Map(
 		run.chains.flatMap((c) => c.nodes.map((n) => [`${c.id}:${n.node_id}`, n.status])),
@@ -972,7 +981,9 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 		>
 			<figcaption className="flex items-baseline gap-2 text-xs">
 				<span className="text-fg-2">节点耗时 Top 10</span>
-				<span className="text-xs text-fg-3">含排队与等待</span>
+				<span className="text-xs text-fg-3" title={NODE_TOTAL_HINT}>
+					含排队与等待
+				</span>
 			</figcaption>
 			{nodes.length === 0 ? (
 				<p className="m-0 mt-1.5 text-xs text-fg-3">

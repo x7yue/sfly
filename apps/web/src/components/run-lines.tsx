@@ -313,7 +313,15 @@ function StationCell({
 	const kind = nodeStatusView(station.kind === "fold" ? station.status : station.node.status).kind;
 	return (
 		<li style={{ gridColumnStart: column + 1 }} className="relative min-w-0">
-			<span className="relative flex h-5 items-center">
+			<span
+				// 悬停圆点所在的这一行：写出「名字 · 状态」（圆点只有颜色和形状；下面站名的提示只在名字被截断时才有，两处不在同一个元素上，不会叠在一起）。
+				title={
+					station.kind === "fold"
+						? foldLabel(station)
+						: `${runNodeName(station.node)} · ${nodeStatusView(station.node.status).label}`
+				}
+				className="relative flex h-5 items-center"
+			>
 				{next && (
 					<span
 						aria-hidden
