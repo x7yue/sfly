@@ -1228,10 +1228,12 @@ async fn starts_failing_because_the_control_plane_is_unreachable_are_not_counted
     assert!(home.join("bin/sfly-agent.prev").exists());
 }
 
-/// 试用中的新版本被控制面明确拒绝（凭据无效、被停用……，#492）：不是新版本的错，换回旧版本也一样会被拒绝，所以不计入
-/// 失败次数、不回滚；Agent 也不退出，被拒绝很多次（超过 [`MAX_ATTEMPTS`] 次）之后管理员改好，新版本照常连上。
+/// 试用中的新版本被控制面明确拒绝（凭据无效、被停用……，#492）：算新版本的失败，和连上控制面却握手失败一样。
+/// 自更新在旧版本握手成功之后才开始，所以新版本一启动就被拒绝多半是它自己的毛病（握手写错了、没带上凭据）；
+/// 不算的话它永远不回滚，也收不到修好的下一个版本。连续 [`MAX_ATTEMPTS`] 次之后在同一个进程里回滚到旧版本；
+/// 回滚之后的旧版本被拒绝时不退出，退避重试（不在试用中），管理员改好之后连上，并上报「更新失败」。
 #[tokio::test]
-async fn starts_rejected_by_the_control_plane_are_not_counted_and_do_not_roll_back() {
+async fn a_new_version_rejected_by_the_control_plane_counts_as_a_failure_and_is_rolled_back() {
     let dir = scratch();
     let home = dir.path().join("home");
     let exe = install_into(&home);
@@ -1249,24 +1251,40 @@ async fn starts_rejected_by_the_control_plane_are_not_counted_and_do_not_roll_ba
     assert_eq!(std::fs::read(&exe).unwrap(), new_binary());
     write_config(&home);
 
-    // 控制面拒绝每一条连接：新版本一直在重试（退避改成 50 毫秒），6 次被拒绝（失败次数的上限是 3）之后
-    // 没有回滚、没有退出。
+    // 控制面拒绝每一条连接（退避改成 50 毫秒起）：新版本被拒绝 2 次，各计 1 次失败，连同前面的 1 次共 3 次，
+    // 之后在同一个进程里回滚到旧版本。
     let sessions = hello_versions(&cp).len();
     cp.reject_every_connection(tonic::Code::PermissionDenied, "Agent 被停用");
     let mut child = real_agent(&exe, &home, &cp)
         .env("SFLY_REJECTED_RETRY_MIN_MS", "50")
         .env("SFLY_REJECTED_RETRY_MAX_MS", "100")
+        .env("SFLY_REJECTED_RETRY_JITTER", "0")
         .start();
-    support::wait_until("6 次被拒绝", || cp.rejection_times().len() >= 6).await;
-    assert!(child.try_wait().unwrap().is_none(), "没有退出");
-    assert_eq!(std::fs::read(&exe).unwrap(), new_binary(), "没有回滚");
-    assert!(home.join("bin/sfly-agent.prev").exists());
+    let pid = child.id();
+    support::wait_until("回滚到旧版本", || {
+        std::fs::read(&exe).is_ok_and(|bytes| bytes == original_binary())
+    })
+    .await;
 
-    // 管理员改好：同一个进程连上，试用结束。
+    // 旧版本也被拒绝：不退出，继续退避重试（Agent 进程还是原来那个，execve 没有换进程）。
+    let rejected_before = cp.rejection_times().len();
+    support::wait_until("旧版本被拒绝并重试", || {
+        cp.rejection_times().len() >= rejected_before + 3
+    })
+    .await;
+    assert!(child.try_wait().unwrap().is_none(), "没有退出");
+    assert_eq!(child.id(), pid);
+
+    // 管理员改好：旧版本连上，上报「更新失败」。
     cp.stop_rejecting();
     cp.hello(sessions).await;
-    assert_eq!(std::fs::read(&exe).unwrap(), new_binary(), "没有回滚");
-    assert!(child.try_wait().unwrap().is_none());
+    let (failed, _) = update_after(&cp, "update failed", 0, |u| {
+        u.state() == AgentUpdateState::Failed
+    })
+    .await;
+    assert!(failed.reason.contains(NEW_VERSION), "{failed:?}");
+    assert!(failed.reason.contains("3 次"), "{failed:?}");
+    assert_eq!(std::fs::read(&exe).unwrap(), original_binary());
 }
 
 fn is_root() -> bool {

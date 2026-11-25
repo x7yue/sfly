@@ -553,15 +553,17 @@ def artifacts(
     return {"refs": refs}
 
 
-@node(title="任务凭据", outputs=["token_env", "artifacts_url_env"])
+@node(title="任务凭据", outputs=["token_env", "artifacts_url_env", "agent_token_env"])
 def task_credential(ctx: Context) -> dict[str, Any]:
     """任务凭据测试用（#492）：输出执行器环境变量 `SFLY_TASK_TOKEN` 的原文（没有时为 None）。
 
     测试用它确认 Agent 把任务凭据放进了环境变量，并拿它去核对任务目录和日志里没有原值。
+    `agent_token_env` 是 `SFLY_TOKEN`（Agent 凭据经环境变量交给 Agent 时的名字）：节点的环境里不该有。
     """
     return {
         "token_env": os.environ.get("SFLY_TASK_TOKEN"),
         "artifacts_url_env": os.environ.get("SFLY_ARTIFACTS_URL"),
+        "agent_token_env": os.environ.get("SFLY_TOKEN"),
     }
 
 

@@ -197,6 +197,8 @@ impl Installer {
             .arg("-r")
             .arg(&requirements_path)
             .env_remove("VIRTUAL_ENV")
+            // 安装依赖会运行第三方包的构建脚本：Agent 凭据不交给它。
+            .env_remove(crate::secret::CREDENTIAL_ENV)
             .stdin(Stdio::null());
         let line = format!("$ {:?}", command.as_std());
         let output = command.output().await.map_err(|e| {

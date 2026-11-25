@@ -364,6 +364,7 @@ impl Setup<'_> {
     ) -> Result<String, EnvironmentError> {
         let line = command_line(command.as_std());
         let output = command
+            .env_remove(crate::secret::CREDENTIAL_ENV)
             .stdin(Stdio::null())
             .output()
             .await

@@ -94,9 +94,11 @@ pub struct Config {
     /// Agent 凭据（`sfly_agt_` 开头，按台签发，管理员在控制台或命令行签发）；过渡期里也可以是共享注册令牌或没有。
     /// 用 [`secret::Secret`] 包着：配置被 `{:?}` 打印时不会把它写出去。
     pub token: Option<secret::Secret>,
-    /// 被控制面拒绝之后的重试等待的起点和封顶（[`REJECTED_RETRY_MIN`]、[`REJECTED_RETRY_MAX`]）。
+    /// 被控制面拒绝之后的重试等待的起点和封顶（[`REJECTED_RETRY_MIN`]、[`REJECTED_RETRY_MAX`]），
+    /// 以及加不加抖动（默认加：每次等待取算出来的时长的一半到全部）。
     pub rejected_retry_min: Duration,
     pub rejected_retry_max: Duration,
+    pub rejected_retry_jitter: bool,
     /// 并发槽位数（随 Hello 上报，控制面按它限制派发）。
     pub slots: u32,
     /// 共享 venv 路径。
@@ -161,6 +163,7 @@ impl Config {
             token: None,
             rejected_retry_min: REJECTED_RETRY_MIN,
             rejected_retry_max: REJECTED_RETRY_MAX,
+            rejected_retry_jitter: true,
             slots: DEFAULT_SLOTS,
             venv: PathBuf::from("venv"),
             work_dir: PathBuf::from("work"),
@@ -759,7 +762,11 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     // 端口监听不了时照常运行，只是能力不能被其它 Agent 调用（原因随 Hello 上报）。
     let endpoint = peer::serve(config.listen_port, config.public_address.clone(), host).await;
     let mut delay = RECONNECT_MIN;
-    let mut rejections = Rejections::new(config.rejected_retry_min, config.rejected_retry_max);
+    let mut rejections = Rejections::new(
+        config.rejected_retry_min,
+        config.rejected_retry_max,
+        config.rejected_retry_jitter,
+    );
     // 启动时扫描一次工作目录，之后每隔 task_dir_sweep_interval 一次（断线重连期间也照常进行）。
     let mut sweep = Sweep {
         next: tokio::time::Instant::now(),
@@ -800,9 +807,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         let connected = connect(&config, hello).await;
         match &connected {
             Ok(_) => {}
-            // 被拒绝（凭据、停用……）不是新版本的错：换回旧版本也一样会被拒绝，不能因此回滚。
-            Err(error) if rejection(error).is_some() => config.trial.end(update::Attempt::Rejected),
             Err(error) if unreachable(error) => config.trial.end(update::Attempt::Unreachable),
+            // 被控制面拒绝（凭据、停用……）也在这里：试用中的新版本一启动就被拒绝，多半是它自己的毛病
+            // （握手写错了、没带上凭据）；算作失败，连续失败后回滚到旧版本，回滚之后的旧版本被拒绝时照旧
+            // 不退出（下面）。不算的话它永远不回滚，也收不到修好的下一个版本。
             Err(_) => config.trial.end(update::Attempt::Failed),
         }
         match connected {
@@ -917,20 +925,23 @@ fn rejection(error: &anyhow::Error) -> Option<&tonic::Status> {
 
 /// 被控制面拒绝之后的重试：下一次等多久，和上一次打印过的原因。
 ///
-/// 等待从 `min` 开始每次翻倍、最多 `max`，连上一次就重置；原因（状态码加说明）和上一次打印的不同才再打一行，
-/// 同一个原因反复被拒绝时不刷屏。
+/// 等待从 `min` 开始每次翻倍、最多 `max`，连上一次就重置；加抖动时每次实际等的是算出来的时长的一半到全部
+/// （[`jittered`]）：管理员一次吊销、停用很多台 Agent 之后，它们不按同一个节奏一起重试。原因（状态码加说明）和上一次
+/// 打印的不同才再打一行，同一个原因反复被拒绝时不刷屏。
 struct Rejections {
     min: Duration,
     max: Duration,
+    jitter: bool,
     next: Duration,
     reported: Option<(tonic::Code, String)>,
 }
 
 impl Rejections {
-    fn new(min: Duration, max: Duration) -> Self {
+    fn new(min: Duration, max: Duration, jitter: bool) -> Self {
         Self {
             min,
             max,
+            jitter,
             next: min,
             reported: None,
         }
@@ -945,7 +956,7 @@ impl Rejections {
         }
         let wait = self.next;
         self.next = (self.next * 2).min(self.max);
-        (wait, report)
+        (if self.jitter { jittered(wait) } else { wait }, report)
     }
 
     /// 连上了：重置等待；之前被拒绝过时返回 true。
@@ -953,6 +964,15 @@ impl Rejections {
         self.next = self.min;
         self.reported.take().is_some()
     }
+}
+
+/// `wait` 的一半到全部之间的一个随机时长（上限不变，所以「最长 5 分钟」仍然成立）。
+/// 随机数取自标准库的 `RandomState`（每个进程的种子由系统随机给出），不为这一处多引入一个依赖。
+fn jittered(wait: Duration) -> Duration {
+    use std::hash::BuildHasher as _;
+    let half = wait / 2;
+    let span = u64::try_from(half.as_nanos()).unwrap_or(u64::MAX).max(1);
+    half + Duration::from_nanos(std::collections::hash_map::RandomState::new().hash_one(0u8) % span)
 }
 
 /// 连不上控制面（建立连接失败，或 gRPC 报告不可用）：与「连上了却握手失败」区分，前者不算新版本的失败。
@@ -1186,7 +1206,8 @@ mod tests {
 
     #[test]
     fn the_wait_doubles_up_to_the_cap_and_resets_after_a_connection() {
-        let mut rejections = Rejections::new(Duration::from_secs(30), Duration::from_secs(300));
+        let mut rejections =
+            Rejections::new(Duration::from_secs(30), Duration::from_secs(300), false);
         let rejected = status(tonic::Code::Unauthenticated, "吊销了");
         let waits: Vec<u64> = (0..7)
             .map(|_| rejections.rejected(&rejected).0.as_secs())
@@ -1198,8 +1219,30 @@ mod tests {
     }
 
     #[test]
+    fn with_jitter_every_wait_is_between_half_and_all_of_the_backoff_and_they_differ() {
+        let rejected = status(tonic::Code::Unauthenticated, "吊销了");
+        let mut distinct = std::collections::HashSet::new();
+        for _ in 0..200 {
+            let mut rejections =
+                Rejections::new(Duration::from_secs(30), Duration::from_secs(300), true);
+            for base in [30, 60, 120, 240, 300, 300] {
+                let wait = rejections.rejected(&rejected).0;
+                assert!(
+                    wait >= Duration::from_secs(base) / 2 && wait <= Duration::from_secs(base),
+                    "{wait:?} 不在 {base} 秒的一半到全部之间"
+                );
+                if base == 30 {
+                    distinct.insert(wait);
+                }
+            }
+        }
+        // 第一次重试的等待在 15 到 30 秒之间随机：200 次里不会只有几个值（没有抖动时恰好是 30 秒一个值）。
+        assert!(distinct.len() > 100, "只有 {} 个不同的值", distinct.len());
+    }
+
+    #[test]
     fn a_reason_is_reported_the_first_time_and_when_it_changes() {
-        let mut rejections = Rejections::new(Duration::from_secs(1), Duration::from_secs(8));
+        let mut rejections = Rejections::new(Duration::from_secs(1), Duration::from_secs(8), false);
         let revoked = status(tonic::Code::Unauthenticated, "吊销了");
         let disabled = status(tonic::Code::PermissionDenied, "停用了");
         let reports: Vec<bool> = [&revoked, &revoked, &revoked, &disabled, &disabled, &revoked]

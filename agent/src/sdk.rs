@@ -83,6 +83,7 @@ pub async fn install(
         .args(["--reinstall-package", "sfly"])
         .arg(&wheel)
         .env_remove("VIRTUAL_ENV")
+        .env_remove(crate::secret::CREDENTIAL_ENV)
         .stdin(Stdio::null())
         .output()
         .await

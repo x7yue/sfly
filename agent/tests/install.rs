@@ -64,7 +64,74 @@ fn agent_with_credential(
     spawn_agent(options)
 }
 
+/// 记录环境里 `SFLY_TOKEN` 的 uv：每次调用把「`SFLY_TOKEN` 的值（没有时写 unset） 参数」写进 `log` 一行，然后转给
+/// 测试机的 uv。
+fn credential_logging_uv(dir: &std::path::Path, log: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let host = std::process::Command::new("sh")
+        .args(["-c", "command -v uv"])
+        .output()
+        .unwrap();
+    let host = String::from_utf8(host.stdout).unwrap();
+    let path = dir.join("credential-logging-uv");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"${{SFLY_TOKEN-unset}} $*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            host.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
 const ARCHIVE_PATH: &str = "/packages/sfly-demo/versions/1.0.0/archive";
+
+/// Agent 凭据经环境变量 `SFLY_TOKEN` 交给 Agent 时（#492），安装节点包依赖的 uv 进程的环境里没有它：
+/// 安装依赖会运行第三方包的构建脚本。
+#[tokio::test]
+async fn the_agent_credential_is_not_in_the_environment_of_the_uv_that_installs_dependencies() {
+    let fixture = HttpFixture::start().await;
+    let demo = publish(&fixture, "sfly-demo", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let log = venv.path().join("uv-calls.log");
+    let uv = credential_logging_uv(venv.path(), &log);
+    let cache = venv.path().join("uv-cache").to_string_lossy().into_owned();
+    let venv_path = venv_of(&venv);
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-uv-env");
+    options.venv = &venv_path;
+    options.args = vec![
+        "--index-url".into(),
+        fixture.index_url(),
+        "--uv".into(),
+        uv.to_string_lossy().into_owned(),
+    ];
+    options.env = vec![
+        ("UV_CACHE_DIR", &cache),
+        ("SFLY_TOKEN", "sfly_agt_0123456789abcdef0123456789abcdef"),
+    ];
+    let _agent = spawn_agent(options);
+    cp.hello(0).await;
+
+    cp.assign(package_task(
+        "task-uv-env",
+        "sfly-demo",
+        "1.0.0",
+        "about",
+        json!({}),
+        demo.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-uv-env").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    let log = std::fs::read_to_string(&log).unwrap();
+    assert!(log.lines().any(|l| l.contains(" pip install ")), "{log}");
+    assert!(log.lines().all(|l| l.starts_with("unset ")), "{log}");
+}
 
 /// 下载节点包归档带 Agent 凭据（#492）：控制面按它检查归档属于这台 Agent 的项目或公共项目。
 #[tokio::test]

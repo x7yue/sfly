@@ -464,6 +464,9 @@ async fn the_task_token_reaches_the_executor_only_as_an_environment_variable() {
         vec![output_json.clone()]
     );
     assert_eq!(files_containing(&task_dir, "sfly_tsk_"), vec![output_json]);
+    // 后台进程目录（`SFLY_PROCS`，按运行分，和任务目录一起清理）里没有。
+    let procs = agent.work_dir.path().join("sfly-home/procs");
+    assert_eq!(files_containing(&procs, "sfly_tsk_"), Vec::<String>::new());
     // 回给控制面的日志、结果里没有。
     let logs = cp.task_logs("task-token");
     assert!(
@@ -474,6 +477,26 @@ async fn the_task_token_reaches_the_executor_only_as_an_environment_variable() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let everything = stderr.lock().unwrap().join("\n");
     assert!(!everything.contains("sfly_tsk_"), "{everything}");
+}
+
+/// Agent 凭据可以经环境变量 `SFLY_TOKEN` 交给 Agent（#492）：执行器（节点的代码）的环境里没有它。
+/// 节点和 Agent 是同一个系统用户，读得到 `agent.env`：这是多一层防护，不是隔离。
+#[tokio::test]
+async fn the_agent_credential_is_not_in_the_environment_of_the_executor() {
+    const AGENT_TOKEN: &str = "sfly_agt_0123456789abcdef0123456789abcdef";
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-env-credential");
+    options.env = vec![("SFLY_TOKEN", AGENT_TOKEN)];
+    let _agent = spawn_agent(options);
+    // Agent 自己拿到了凭据（Hello 里带着它）。
+    assert_eq!(cp.hello(0).await.token, AGENT_TOKEN);
+
+    cp.assign(stub_task("task-agent-token", "task_credential", json!({})))
+        .await;
+    let (result, _) = cp.result("task-agent-token").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    assert_eq!(outputs(&result)["agent_token_env"], Value::Null);
 }
 
 #[tokio::test]
