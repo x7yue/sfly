@@ -182,7 +182,7 @@ impl Installer {
         if let Some(index) = &package_index {
             self.check_package_index(index, label).await?;
         }
-        let mut command = tokio::process::Command::new(&self.uv);
+        let mut command = crate::subprocess::command(&self.uv);
         command
             .args(["pip", "install", "--no-progress", "--color", "never"])
             .arg("--python")
@@ -197,8 +197,6 @@ impl Installer {
             .arg("-r")
             .arg(&requirements_path)
             .env_remove("VIRTUAL_ENV")
-            // 安装依赖会运行第三方包的构建脚本：Agent 凭据不交给它。
-            .env_remove(crate::secret::CREDENTIAL_ENV)
             .stdin(Stdio::null());
         let line = format!("$ {:?}", command.as_std());
         let output = command.output().await.map_err(|e| {

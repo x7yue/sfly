@@ -364,7 +364,6 @@ impl Setup<'_> {
     ) -> Result<String, EnvironmentError> {
         let line = command_line(command.as_std());
         let output = command
-            .env_remove(crate::secret::CREDENTIAL_ENV)
             .stdin(Stdio::null())
             .output()
             .await
@@ -400,7 +399,7 @@ impl Setup<'_> {
         if self.mirrors.uv_download_url().is_some() {
             self.run_installer(WHAT).await?;
         } else {
-            let mut update = tokio::process::Command::new(self.uv);
+            let mut update = crate::subprocess::command(self.uv);
             update
                 .args(["self", "update", "--no-progress", "--color", "never"])
                 .env("UV_NO_MODIFY_PATH", "1");
@@ -411,7 +410,7 @@ impl Setup<'_> {
 
     /// 检查 uv 能运行。
     pub async fn check_uv(&self) -> Result<(), EnvironmentError> {
-        let mut check = tokio::process::Command::new(self.uv);
+        let mut check = crate::subprocess::command(self.uv);
         check.arg("--version");
         self.run("没有可用的 uv", check).await.map(drop)
     }
@@ -435,13 +434,13 @@ impl Setup<'_> {
             ));
         }
         let download = if in_path("curl") {
-            let mut curl = tokio::process::Command::new("curl");
+            let mut curl = crate::subprocess::command("curl");
             curl.args(["-fsSL", "-A", self.user_agent, "-o"])
                 .arg(&script)
                 .arg(&url);
             curl
         } else if in_path("wget") {
-            let mut wget = tokio::process::Command::new("wget");
+            let mut wget = crate::subprocess::command("wget");
             wget.args(["-q", "-U", self.user_agent, "-O"])
                 .arg(&script)
                 .arg(&url);
@@ -469,7 +468,7 @@ impl Setup<'_> {
         };
         let result = async {
             self.run(what, download).await?;
-            let mut install = tokio::process::Command::new("sh");
+            let mut install = crate::subprocess::command("sh");
             install
                 .arg(&script)
                 .env("UV_INSTALL_DIR", bin)
@@ -504,7 +503,7 @@ impl Setup<'_> {
         if venv.python().exists() {
             return Ok(false);
         }
-        let mut command = tokio::process::Command::new(self.uv);
+        let mut command = crate::subprocess::command(self.uv);
         command
             .args(["venv", "--no-progress", "--color", "never", "--no-project"])
             .args(["--python", python.unwrap_or(PYTHON_VERSION)])

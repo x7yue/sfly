@@ -29,6 +29,7 @@ pub mod retention;
 pub mod sdk;
 pub mod secret;
 mod socket;
+pub mod subprocess;
 pub mod time_jump;
 pub mod update;
 pub mod venv;
@@ -224,7 +225,12 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
     } = content;
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
-        .with_context(|| format!("connect to control plane at {}", config.server))?;
+        .with_context(|| {
+            format!(
+                "connect to control plane at {}",
+                secret::without_userinfo(&config.server)
+            )
+        })?;
 
     let (outbound, rx) = mpsc::channel(64);
     let now = clock::Reading::now();

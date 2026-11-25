@@ -12,8 +12,8 @@
 `SFLY_ARTIFACTS_URL`（Agent 给的产物地址前缀，`<控制面>/tasks/<任务 ID>/artifacts/`，
 控制面的对外地址可以带路径前缀）去掉结尾的 `tasks/<任务 ID>/artifacts/` 就是控制面的前缀，
 要带凭据的地址必须以它开头、后面接着 `tasks/`。比较在原文上做，协议和主机不分大小写，
-别的不做归一化；写法不规矩的（用户名段、反斜杠、空白或控制字符、路径里的 `..`、
-编码过的点或斜杠）一律不带。重定向之后一律不带（控制面下载产物不重定向；urllib
+别的不做归一化；写法不规矩的（用户名段、反斜杠、空白或控制字符，路径里有歧义的写法，
+见 `_is_ambiguous_path`）一律不带。重定向之后一律不带（控制面下载产物不重定向；urllib
 默认会把请求头带到重定向的新地址）。不带凭据时照常发请求。凭据只在这次任务尝试有效，
 任务结束之后下载是 401。
 """
@@ -30,7 +30,7 @@ from collections.abc import Callable, Iterator, Mapping
 from http.client import HTTPMessage
 from pathlib import Path
 from typing import IO
-from urllib.parse import urlsplit
+from urllib.parse import unquote_to_bytes, urlsplit
 
 from sfly.context import ArtifactDownloadError, cancelled_error
 
@@ -121,10 +121,24 @@ def _is_tidy(url: str) -> bool:
     return not any(c == "\\" or c.isspace() or not c.isprintable() for c in url)
 
 
-def _has_dot_segments(path: str) -> bool:
-    """路径里有 `.`、`..` 段，或编码过的点和斜杠（`%2e`、`%2f`，不分大小写）。"""
+def _is_ambiguous_path(path: str) -> bool:
+    """路径写法有歧义：不同的实现可能把它解析成不同的路径。
+
+    有 `.` 段、以 `..` 开头的段；编码过的点、斜杠、反斜杠、百分号（不分大小写）；
+    不是 ASCII 的字符；解码之后不是合法 UTF-8 的编码。
+    控制面和 SDK 自己生成的引用（名称按路径段编码）没有这些，名称里有 `%`、
+    或某一段以 `..` 开头时例外：这样的产物不带凭据，下载会得到 401。
+    """
     lowered = path.lower()
-    return "%2e" in lowered or "%2f" in lowered or any(s in (".", "..") for s in path.split("/"))
+    if any(escape in lowered for escape in ("%2e", "%2f", "%5c", "%25")):
+        return True
+    if not path.isascii() or any(s == "." or s.startswith("..") for s in path.split("/")):
+        return True
+    try:
+        unquote_to_bytes(path).decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return False
 
 
 def _is_control_plane_download(url: str, artifacts_url: str) -> bool:
@@ -132,7 +146,7 @@ def _is_control_plane_download(url: str, artifacts_url: str) -> bool:
 
     要同时满足：以控制面的前缀开头（协议和主机不分大小写，主机之后的部分逐字相同，不做别的归一化——
     端口写不写默认值、路径前缀之外的同主机地址都算别的地址），前缀之后接着 `tasks/`；
-    写法规矩：没有用户名段（`@`）、反斜杠、空白或控制字符，路径里没有 `..`、编码过的点或斜杠。
+    写法规矩：没有用户名段（`@`）、反斜杠、空白或控制字符，路径里没有歧义的写法（[`_is_ambiguous_path`]）。
     """
     prefix = _control_plane_prefix(artifacts_url)
     if prefix is None or not (_is_tidy(url) and _is_tidy(prefix)):
@@ -147,7 +161,7 @@ def _is_control_plane_download(url: str, artifacts_url: str) -> bool:
         return False
     if not target[3].startswith(rest + "tasks/"):
         return False
-    return not _has_dot_segments(re.split(r"[?#]", target[3], maxsplit=1)[0])
+    return not _is_ambiguous_path(re.split(r"[?#]", target[3], maxsplit=1)[0])
 
 
 class _DropCredentialOnRedirect(urllib.request.HTTPRedirectHandler):

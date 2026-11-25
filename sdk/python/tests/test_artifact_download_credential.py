@@ -30,6 +30,7 @@ class _Server:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str | None]] = []
         self.redirects: dict[str, str] = {}
+        self.redirect_status = 302
         self.status: dict[str, int] = {}
         owner = self
 
@@ -40,7 +41,7 @@ class _Server:
             def do_GET(self) -> None:
                 owner.requests.append((self.path, self.headers.get("Authorization")))
                 if self.path in owner.redirects:
-                    self.send_response(302)
+                    self.send_response(owner.redirect_status)
                     self.send_header("Location", owner.redirects[self.path])
                     self.send_header("Content-Length", "0")
                     self.end_headers()
@@ -173,6 +174,24 @@ def test_a_redirect_that_comes_back_does_not_get_the_token_again(
     assert elsewhere.authorizations() == [None]
 
 
+def test_a_redirect_to_the_very_same_address_does_not_carry_the_token(
+    control_plane: _Server, tmp_path: Path
+) -> None:
+    """重定向之后一律不带，包括重定向到完全相同的地址（各种重定向状态码）。"""
+    prefix = _prefix(control_plane)
+    for status in (301, 302, 303, 307, 308):
+        control_plane.requests.clear()
+        path = f"/tasks/t1/artifacts/same{status}.txt"
+        control_plane.redirects[path] = path
+        control_plane.redirect_status = status
+        # 重定向到自己：第一次带，之后不带；urllib 在重定向次数用完之后报错。
+        with pytest.raises(ArtifactDownloadError):
+            _fetch(prefix + f"same{status}.txt", tmp_path / f"s{status}.txt", prefix)
+        auths = control_plane.authorizations()
+        assert auths[0] == f"Bearer {TOKEN}", status
+        assert len(auths) > 1 and all(a is None for a in auths[1:]), (status, auths)
+
+
 def test_a_redirect_is_never_followed_with_the_token_even_inside_the_same_prefix(
     control_plane: _Server, tmp_path: Path
 ) -> None:
@@ -248,7 +267,7 @@ UNDER_PATH = "https://cp.example.com:8443/sfly/tasks/t1/artifacts/"
         ("http://127.0.0.1:8080/tasks/t1/artifacts/%E4%B8%96.txt?x=1#y", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a..b.txt", ARTIFACTS, True),
         ("HTTP://127.0.0.1:8080/tasks/t1/artifacts/a", ARTIFACTS, True),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/%252e", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%252e", ARTIFACTS, False),
         ("http://[::1]:8080/tasks/t1/artifacts/a", "http://[::1]:8080/tasks/t1/artifacts/", True),
         ("HTTPS://CP.Example.COM:8443/sfly/tasks/t9/artifacts/a", UNDER_PATH, True),
         # 不带：前缀之外的同主机地址。
@@ -315,6 +334,30 @@ UNDER_PATH = "https://cp.example.com:8443/sfly/tasks/t1/artifacts/"
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2fb", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2Fb", ARTIFACTS, False),
         ("https://cp.example.com:8443/sfly/tasks/t1/artifacts/../../x", UNDER_PATH, False),
+        # 不带：路径里有歧义的写法（段以 `..` 开头、编码过的反斜杠和百分号、非 ASCII 字符、
+        # 不合法的 UTF-8 编码）。
+        ("http://127.0.0.1:8080/tasks/..;/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/..%3b/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/..%3B/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/..a/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/...", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%5c..%5cx", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%5C..%5Cx", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%5cb", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%252e%252e/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/100%25.txt", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%25", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%c0%ae%c0%ae/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%ff", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/\uff0e\uff0e/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/\u2025/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/世界.txt", ARTIFACTS, False),
+        ("https://cp.example.com:8443/sfly/tasks/..;/x", UNDER_PATH, False),
+        # 带：名称按路径段编码之后的正常写法（合法的 UTF-8 编码、点在名称中间、`..` 不在段的开头）。
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%E4%B8%96%E7%95%8C.txt", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%20b.txt", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/dir/a.b..c", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%3Bb;c", ARTIFACTS, True),
         # 控制面给的前缀自己不规矩、或不是 `tasks/<id>/artifacts/` 结尾：一律不带。
         (
             "http://127.0.0.1:8080/tasks/t1/artifacts/a",

@@ -3,7 +3,11 @@
 //! 可能带密码的参数（Agent 凭据，镜像、索引和控制面的地址里可以写 `用户名:密码@`）都要这样声明。
 //! 这里逐个设置环境变量，运行 `--help`、`-h`、`--version` 和几种写错参数的调用，输出里没有任何一个原值。
 
+mod support;
+
 use std::process::Command;
+
+use support::{AgentOptions, capture_stderr, spawn_agent, wait_until};
 
 /// 变量名和值：值里都有一个不会出现在帮助正文里的标记。
 const SECRETS: [(&str, &str); 5] = [
@@ -106,4 +110,37 @@ fn version_and_wrong_arguments_do_not_print_them_either() {
         );
         assert_no_secret(&output, &format!("{args:?}"));
     }
+}
+
+/// 连不上控制面的报错每次重连写一行（进系统日志）：`--server` 里的用户名和密码不能原样写出来。
+#[tokio::test]
+async fn a_server_address_with_a_password_is_written_without_it_when_the_connection_fails() {
+    // 9 号端口（discard）上没有服务：连接被拒绝。
+    let mut options = AgentOptions::new(
+        "http://serveruser:serverpass-4f1c@127.0.0.1:9",
+        "agent-cli-server",
+    );
+    options.pipe_stderr = true;
+    let mut agent = spawn_agent(options);
+    let stderr = capture_stderr(&mut agent);
+    // 至少写了两次（重连之后又写）。
+    wait_until("连不上控制面的报错写了两次", || {
+        stderr
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|line| line.contains("cannot connect"))
+            .count()
+            >= 2
+    })
+    .await;
+    let output = stderr.lock().unwrap().join("\n");
+    assert!(
+        output.contains("connect to control plane at http://127.0.0.1:9"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("serverpass-4f1c") && !output.contains("serveruser"),
+        "{output}"
+    );
 }

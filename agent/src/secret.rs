@@ -10,10 +10,24 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Agent 凭据可以经环境变量 `SFLY_TOKEN` 交给 Agent（另一条路是 `agent.env`，由 Agent 自己读）。Agent 起的子进程
-/// 都不需要它：执行器（节点的代码）、装依赖的 uv（会运行第三方包的构建脚本）、下载和运行安装脚本的进程。
-/// 它们的环境里去掉这个变量（`env_remove`）。这是多一层防护，不是隔离：节点和 Agent 是同一个系统用户，
-/// 读得到 `agent.env`（ADR 0029：边界是那台机器）。
+/// 都不需要它，环境里去掉这个变量：所有子进程都经 [`crate::subprocess::command`] 起（执行器、`exec.run` 的命令、
+/// 装依赖的 uv、准备环境的进程……），例外只有启动 Agent 自己的新版本。这是多一层防护，不是隔离：节点和 Agent 是同一个
+/// 系统用户，读得到 `agent.env`（ADR 0029：边界是那台机器）。
 pub const CREDENTIAL_ENV: &str = "SFLY_TOKEN";
+
+/// 写给人看的地址：去掉用户名段（`用户名:密码@`）。`--server` 等地址里可以带用户名和密码，
+/// 报错、日志里写地址的地方都经过这里（`agent/tests/cli_secrets.rs` 守着）。不是 `协议://…` 的写法原样返回。
+pub fn without_userinfo(address: &str) -> String {
+    let Some((scheme, rest)) = address.split_once("://") else {
+        return address.to_string();
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://{host}{tail}"),
+        None => address.to_string(),
+    }
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);
@@ -66,6 +80,21 @@ mod tests {
             "Some(Secret(<redacted>))"
         );
         assert_eq!(secret.expose(), "sfly_agt_0123456789abcdef");
+    }
+
+    #[test]
+    fn addresses_for_people_have_no_userinfo() {
+        for (address, shown) in [
+            ("http://127.0.0.1:50051", "http://127.0.0.1:50051"),
+            ("http://user:pw@host:1", "http://host:1"),
+            ("https://user@host/x?y=a@b#c@d", "https://host/x?y=a@b#c@d"),
+            ("http://a:b@c@host:2/p", "http://host:2/p"),
+            ("http://u:p@[::1]:3", "http://[::1]:3"),
+            ("host:50051", "host:50051"),
+            ("", ""),
+        ] {
+            assert_eq!(without_userinfo(address), shown, "{address}");
+        }
     }
 
     /// `Secret` 没有 `Display`（`format!("{secret}")`、`to_string()` 会把原值写出去）也不能被序列化

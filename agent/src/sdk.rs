@@ -69,7 +69,7 @@ pub async fn install(
     tokio::fs::create_dir_all(&dir).await?;
     let wheel = dir.join(name);
     tokio::fs::write(&wheel, &bytes).await?;
-    let output = tokio::process::Command::new(uv)
+    let output = crate::subprocess::command(uv)
         .args([
             "pip",
             "install",
@@ -83,7 +83,6 @@ pub async fn install(
         .args(["--reinstall-package", "sfly"])
         .arg(&wheel)
         .env_remove("VIRTUAL_ENV")
-        .env_remove(crate::secret::CREDENTIAL_ENV)
         .stdin(Stdio::null())
         .output()
         .await
