@@ -371,7 +371,16 @@ esac
 						cp.httpUrl,
 						...args,
 					],
-					{ env: { PATH: `${stubs}:${process.env.PATH}`, HOME: home, ...env } },
+					{
+						env: {
+							PATH: `${stubs}:${process.env.PATH}`,
+							HOME: home,
+							// Python 在 C 语言环境里会把 LC_CTYPE 改成 C.UTF-8：macOS 的 /bin/sh（bash 3.2）在这个不存在的
+							// 语言环境里把「$变量名」后面的中文当成变量名的一部分。
+							PYTHONCOERCECLOCALE: "0",
+							...env,
+						},
+					},
 				);
 				return { code: 0, stdout, stderr };
 			} catch (error) {
