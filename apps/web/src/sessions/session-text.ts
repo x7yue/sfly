@@ -151,7 +151,7 @@ export function statusWithQueue(status: SessionStatus, position: number | null):
  * 输入框此刻是什么样（只由状态算）：
  * - `send` 空闲：接着说；
  * - `steer` 在做：发出去的是插话；
- * - `behind` 在做、而且停止途中说的话排在这一轮后面：不能再说，再点一次停止是撤掉它；
+ * - `behind` 在做、而且停止途中说的话排在这一轮后面：不能再说，停止按钮写「撤掉排着的话」、点它是撤掉那句话（按钮的字只由这个状态定）；
  * - `queued` 排队中：不能说，写排在第几位、在等谁；
  * - `ended` 已结束：不显示输入框。
  */
