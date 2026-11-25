@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import {
 	compareRunLogKeys,
 	type LogOrigin,
@@ -13,6 +14,7 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { runs } from "../db/schema.js";
 import { getRunView } from "../runs/run-read.js";
+import { type GoneTask, LogFilesGoneError, logFileProblem } from "./log-files.js";
 import type { LogMask } from "./log-mask.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
@@ -92,6 +94,14 @@ interface TaskStream {
 	log: TaskLogInfo;
 }
 
+/** 日志文件不全的任务（下载的 410 说明和日志里写出是哪个）。 */
+const goneTask = (task: RunLogTask, reason: GoneTask["reason"]): GoneTask => ({
+	taskId: task.origin.task_id,
+	nodeId: task.origin.node_id,
+	attempt: task.origin.attempt,
+	reason,
+});
+
 const OPEN_FILES = 32;
 /** 第一轮每个任务最多扫描的字节数：一次读取的量，够看出每个任务排在最前的几行。 */
 const FIRST_SLICE = 4 * 1024;
@@ -162,13 +172,28 @@ export class RunLogs {
 	/**
 	 * 范围内的全部日志，按合并视图的顺序从头到尾，一批一批（最多 {@link DOWNLOAD_BATCH} 行）；运行不存在时为 undefined。
 	 * 读到的内容固定在这个方法返回的那一刻：之后写入的行不会出现，整个下载共用这一份快照。
+	 *
+	 * **日志文件不能悄悄少了内容**（#669）：范围内某个任务的日志文件不见了、或者比数据库记的短（被删除、截短，保留期清理删到一半），
+	 * 这个方法抛 {@link LogFilesGoneError}（下载之前认出来的，路由回 410）；读的过程中文件变了（分批读，每批都重新打开文件），
+	 * 下一批读到的时候抛同一个错误，响应已经开始，连接被断开。以前文件不存在被当成空页、读短了被当成读到了末尾：只有已经读到的那一批，
+	 * 响应照常 200 结束，客户端看不出没下完。
 	 */
 	async readAll(
 		runId: string,
 		scope: RunLogScope | undefined,
 	): Promise<AsyncGenerator<RunLogLine[], void> | undefined> {
 		const streams = await this.#streams(runId, scope);
-		return streams && this.#batches(streams, await this.deps.logs.logMask(runId));
+		if (!streams) return undefined;
+		const found = await mapOpenFiles(
+			streams,
+			async ({ task, log }): Promise<GoneTask | undefined> => {
+				const reason = logFileProblem(log, await stat(log.file).catch(() => undefined));
+				return reason === undefined ? undefined : goneTask(task, reason);
+			},
+		);
+		const gone = found.filter((g): g is GoneTask => g !== undefined);
+		if (gone.length > 0) throw new LogFilesGoneError(gone);
+		return this.#batches(streams, await this.deps.logs.logMask(runId));
 	}
 
 	async *#batches(streams: TaskStream[], mask: LogMask): AsyncGenerator<RunLogLine[], void> {
@@ -188,6 +213,7 @@ export class RunLogs {
 					filter: {},
 					scanLimit,
 					mask: batchMask,
+					strict: true,
 				});
 			}
 			if (lines.length > 0) yield lines;
@@ -394,7 +420,17 @@ function take(lanes: Lane[], lines: RunLogLine[], limit: number, forward: boolea
 async function extend(
 	lanes: Lane[],
 	forward: boolean,
-	request: { limit: number; filter: LogFilter; scanLimit: number; mask: LogMask },
+	{
+		strict = false,
+		...request
+	}: {
+		limit: number;
+		filter: LogFilter;
+		scanLimit: number;
+		mask: LogMask;
+		/** 下载用（#669）：文件不见了、比记录的短时抛 {@link LogFilesGoneError}；不给（分页）时读到多少算多少。 */
+		strict?: boolean;
+	},
 ): Promise<number> {
 	const scanned = await mapOpenFiles(lanes, async (lane) => {
 		const { stream, until } = lane;
@@ -404,6 +440,11 @@ async function extend(
 				? { direction: "forward", after: lane.end, until, ...request }
 				: { direction: "backward", before: lane.start, until, ...request },
 		);
+		// 文件只追加，读到的完整行的字节数不会比数据库记的少：少了就是读的过程中文件被删了或截短了，不能当作读到了末尾。
+		if (strict && window.size < stream.log.recordedBytes) {
+			// 读的过程中分不出文件是被删了还是截短到了 0：都是「比记的短」。
+			throw new LogFilesGoneError([goneTask(stream.task, "short")]);
+		}
 		const read = window.lines.map(({ offset, ...rest }) => {
 			const line = runLogLine(stream, rest);
 			return { offset, line, key: runLogKey(line) };
