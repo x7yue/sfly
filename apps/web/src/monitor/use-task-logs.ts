@@ -24,11 +24,11 @@ function taskLogPorts(taskId: string, levelKey: string): TaskLogPorts {
 				params: { id: taskId },
 				query: { limit: PAGE, ...(levelKey ? { level: levelKey } : {}), ...position },
 			}),
-		subscribeLive: (afterSeq, onChunk) =>
+		subscribeLive: (afterSeq, { onChunk, onFileProblem }) =>
 			openEventSource(
 				logsApi.events,
 				{ params: { id: taskId }, query: { after_seq: String(afterSeq) } },
-				{ logs: onChunk },
+				{ logs: onChunk, file_problem: (event) => onFileProblem(event.file_problem) },
 			),
 		accepts: (line) => levelKey === "" || levelKey.split(",").includes(line.level),
 	};

@@ -57,6 +57,7 @@ import type {
 	RunListItem,
 	RunListQuery,
 	RunLogChunk,
+	RunLogFileProblemsEvent,
 	RunLogNodesParam,
 	RunLogPage,
 	RunLogPageQuery,
@@ -82,6 +83,7 @@ import type {
 	SteerQueueEvent,
 	StoredOrchestrationDocument,
 	TaskIoView,
+	TaskLogFileProblemEvent,
 	ThinkingEvent,
 	Timestamp,
 	TokenUsage,
@@ -347,7 +349,9 @@ export interface Api {
 		 * `GET /tasks/:id/logs/events`
 		 *
 		 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
-		 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。
+		 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。连上时如果这个任务的日志文件有问题
+		 * （`LogFileProblem`），先发一条事件 `file_problem`（内容同分页的字段），之后不再发（连着期间文件才出问题的不报）；
+		 * 不认识这个事件的客户端忽略它即可（#721）。
 		 */
 		events: Stream<
 			{
@@ -361,6 +365,7 @@ export interface Api {
 			},
 			{
 				logs: LogChunk;
+				file_problem: TaskLogFileProblemEvent;
 			}
 		>;
 		/**
@@ -418,6 +423,9 @@ export interface Api {
 		 *   （API 客户端的订阅自动带上），控制面只补发之后的行，不重复也不遗漏。
 		 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
 		 *
+		 * 连上时如果范围内有任务的日志文件有问题（`LogFileProblem`），先发一条事件 `file_problems`（内容同分页的字段），之后不再发；
+		 * 不认识这个事件的客户端忽略它即可（#721）。
+		 *
 		 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
 		 */
 		runEvents: Stream<
@@ -437,6 +445,7 @@ export interface Api {
 			{
 				logs: RunLogChunk;
 				reload: Record<string, never>;
+				file_problems: RunLogFileProblemsEvent;
 			}
 		>;
 	};
