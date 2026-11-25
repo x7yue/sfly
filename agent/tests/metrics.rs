@@ -377,9 +377,20 @@ async fn labels_survive_queueing(name: &str, interval: f64, reports: usize) {
 
     let (result, _) = cp.result(&task).await;
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
-    let conn = points_of(&batches_of(&cp.received_with_session(), &task), "conn");
     let a = labels(&[("host", "a"), ("port", "1")]);
     let b = labels(&[("host", "b"), ("port", "1")]);
+    // 重连时任务已经结束的话（下线时长加上重连的间隔可以超过节点跑完的时间），Agent 先重发没被 Ack 的结果、
+    // 再补发排队的指标：结果比补发的点先到，所以等两个序列的最后一个点都到了再看，不在收到结果的那一刻取快照。
+    let last = (reports - 1) as f64;
+    cp.wait_for("the last point of both series", |all| {
+        let conn = points_of(&batches_of(all, &task), "conn");
+        [&a, &b]
+            .iter()
+            .all(|s| conn.iter().any(|p| p.labels == **s && p.value == last))
+            .then_some(())
+    })
+    .await;
+    let conn = points_of(&batches_of(&cp.received_with_session(), &task), "conn");
     assert!(
         conn.iter().all(|p| p.labels == a || p.labels == b),
         "补发的点带着各自的标签：{conn:?}"

@@ -168,6 +168,22 @@ export function foldLabel(station: Extract<Station, { kind: "fold" }>): string {
 /** 链名那一列最宽 10rem（再长的链名截断，悬停看全名）。 */
 const LABEL_COLUMN_MAX = "10rem";
 
+/**
+ * 站的格子最宽（放得下时每一站取这么宽；站名比它长的列例外，各取自己站名的宽度，最宽 18rem）：站很少时不平分整行，
+ * 多出来的宽度留在行尾。12rem 够写一个常见的节点 ID（等宽 12px，约 20 个字符）加上线和点。
+ */
+export const LINE_CELL = "12rem";
+
+/** `labelColumnWidth` 的估算里为「估少了」多留的 0.375rem：算「放不放得下」时减掉它，让这一项也只往小里估。 */
+const LABEL_ESTIMATE_MARGIN = "0.375rem";
+
+/**
+ * 计数那一列预留的宽度，算「放不放得下」（`--line-room`）用：最短的「1/1」加左边距（等宽 12px 三个字符加 0.5rem），只往小里估
+ * （计数更宽时线路本来就按内容取宽，只是放得下的界限差几十像素）。估大了的话，放得下时多出来的宽度会摊到每一站的格子上，
+ * 格子就超过 {@link LINE_CELL}。
+ */
+const COUNT_COLUMN = "1.75rem";
+
 /** 链名在 `text-xs`（0.75rem）里大概有多宽（rem）：全角字一个字宽，其余按 0.6 个字宽估。 */
 const labelRem = (text: string) =>
 	[...text].reduce((width, ch) => width + (ch.charCodeAt(0) > 0x2e7f ? 0.75 : 0.75 * 0.6), 0);
@@ -200,50 +216,62 @@ export function RunLines({
 }) {
 	const { rows, columns } = layoutLines(chains);
 	return (
-		<ul
-			aria-label={LIST_LABEL.chainProgress}
-			data-viz
-			style={
-				{
-					"--line-columns": columns,
-					...(labelWidth ? { "--line-label": labelWidth } : {}),
-				} as CSSProperties
-			}
-			className={cn(
-				// 站名那几列：每列最宽 18rem、各取自己站名的宽度（`auto`），放不下时按各列缺的宽度均分：短站名让出的宽度给长站名，
-				// 长节点 ID 的站名（常常正好是失败的那个节点）不再和短站名平分同样的宽度。放得下时剩下的宽度由这几列均分
-				// （auto 的列在 `justify-content: normal` 下平均拉伸）：短链（2–4 站）不再挤在左边一两百像素、右边留一大片空白。
-				// 计数那一列是 `max-content`（不是 auto，不跟着拉伸），链名那一列也是。
-				"m-0 grid list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,auto))_max-content] gap-y-1.5 p-0",
-				className,
-			)}
-		>
-			{rows.map((row, r) => (
-				<li key={row.chain.id} className="col-span-full grid grid-cols-subgrid">
-					{/* 第一列取链名的全宽（最宽 10rem）：站名那几列分余量时不和它抢。 */}
-					<span className="flex min-w-0 max-w-40 pr-3 text-xs text-fg-3">
-						<Truncate>{row.chain.label}</Truncate>
-						{row.chain.instance && (
-							<span data-chain-id className="ml-1.5 flex-none font-mono">
-								{row.chain.instance}
-							</span>
-						)}
-					</span>
-					<ol className="col-[2/-2] m-0 grid list-none grid-cols-subgrid p-0">
-						{row.stations.map((station, k) => (
-							<StationCell
-								key={station.kind === "node" ? station.node.node_id : `fold-${station.start}`}
-								station={station}
-								column={row.column + k}
-								next={row.stations[k + 1]}
-								branchUp={k === 0 && row.parent !== null ? r - row.parent : 0}
-							/>
-						))}
-					</ol>
-					<ChainCount nodes={row.chain.nodes} />
-				</li>
-			))}
-		</ul>
+		// 外面这层是容器（`@container`）：站的格子要知道这一块有多宽，才分得出「放得下」和「放不下」，见下面 `ul` 和站格里的垫片。
+		<div className={cn("@container", className)}>
+			<ul
+				aria-label={LIST_LABEL.chainProgress}
+				data-viz
+				style={
+					{
+						"--line-columns": columns,
+						"--line-cell": LINE_CELL,
+						...(labelWidth ? { "--line-label": labelWidth } : {}),
+						// 链名那一列的宽度（给了 `labelWidth` 就是它，没给时按链名估一个，只用来算这一块要多宽才算放得下）。
+						"--line-label-est": labelColumnWidth(chains.map((c) => c.label)),
+						"--line-room": `calc(var(--line-columns) * var(--line-cell) + var(--line-label, var(--line-label-est)) - ${LABEL_ESTIMATE_MARGIN} + ${COUNT_COLUMN})`,
+					} as CSSProperties
+				}
+				className={cn(
+					// 站名那几列：每列最宽 18rem、各取自己站名的宽度（`auto`），放不下时按各列缺的宽度均分：短站名让出的宽度给长站名，
+					// 长节点 ID 的站名（常常正好是失败的那个节点）不再和短站名平分同样的宽度。
+					// 宽度有两种情形，分界是「每一站取 `--line-cell`、加上链名和计数，这一块放不放得下」（`--line-room`）：
+					// ① 放不下（或刚好）：`min-width` 是整行（容器宽度，台阶：容器不比 `--line-room` 宽就是整行，宽了就是 0），
+					//    站名那几列分掉整行剩下的宽度（auto 的列在 `justify-content: normal` 下平均拉伸），短链（2–4 站）不再挤在左边一两百像素；
+					// ② 放得下：线路只占它要的宽度（`w-fit`、`min-width` 为 0），除最后一列外每一站的格子是 `--line-cell`（站格里有一个这么宽的垫片
+					//    撑着，站名更长的列取站名的宽度），**最后一列取站名的宽度**：计数紧跟在末站的站名后面，多出来的宽度只留在计数之后
+					//    （最后一站也是 192px 的话，末站名后面先空一百多像素才是计数，看起来像少了一站）。
+					// 计数那一列是 `max-content`（不是 auto，不跟着拉伸），链名那一列也是。
+					"m-0 grid w-fit max-w-full min-w-[clamp(0px,calc((var(--line-room)-100cqw)*1000),100cqw)] list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,auto))_max-content] gap-y-1.5 p-0",
+				)}
+			>
+				{rows.map((row, r) => (
+					<li key={row.chain.id} className="col-span-full grid grid-cols-subgrid">
+						{/* 第一列取链名的全宽（最宽 10rem）：站名那几列分余量时不和它抢。 */}
+						<span className="flex min-w-0 max-w-40 pr-3 text-xs text-fg-3">
+							<Truncate>{row.chain.label}</Truncate>
+							{row.chain.instance && (
+								<span data-chain-id className="ml-1.5 flex-none font-mono">
+									{row.chain.instance}
+								</span>
+							)}
+						</span>
+						<ol className="col-[2/-2] m-0 grid list-none grid-cols-subgrid p-0">
+							{row.stations.map((station, k) => (
+								<StationCell
+									key={station.kind === "node" ? station.node.node_id : `fold-${station.start}`}
+									station={station}
+									column={row.column + k}
+									capped={row.column + k < columns - 1}
+									next={row.stations[k + 1]}
+									branchUp={k === 0 && row.parent !== null ? r - row.parent : 0}
+								/>
+							))}
+						</ol>
+						<ChainCount nodes={row.chain.nodes} />
+					</li>
+				))}
+			</ul>
+		</div>
 	);
 }
 
@@ -268,11 +296,14 @@ const BRANCH_LINE =
 function StationCell({
 	station,
 	column,
+	capped,
 	next,
 	branchUp,
 }: {
 	station: Station;
 	column: number;
+	/** 不是最后一列：放得下时格子撑到 `--line-cell`（垫片）；最后一列取站名的宽度，计数紧跟在后面。 */
+	capped: boolean;
 	next: Station | undefined;
 	/** 分支竖线往上画几行（0 是不画）。 */
 	branchUp: number;
@@ -323,6 +354,14 @@ function StationCell({
 				</Truncate>
 				{status && <span className="sr-only">（{status.label}）</span>}
 			</span>
+			{/* 垫片（最后一列没有）：放得下时（容器宽度够 `--line-room`）把这一列撑到 `--line-cell`，放不下时宽度为 0，列按站名的宽度分整行。
+			    宽度是个「台阶」：容器宽出 `--line-room` 1px 以上就是满的，不足就是 0（差值乘 1000 再夹到 0 到 `--line-cell` 之间）。 */}
+			{capped && (
+				<span
+					aria-hidden
+					className="block h-0 w-[clamp(0px,calc((100cqw-var(--line-room))*1000),var(--line-cell))] max-w-full"
+				/>
+			)}
 		</li>
 	);
 }

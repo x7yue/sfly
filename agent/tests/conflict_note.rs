@@ -307,6 +307,115 @@ async fn installed_packages_that_contradict_each_other_are_not_paired_with_the_u
     assert_eq!(listed(n), 2, "{n}");
 }
 
+/// 别的包（节点包共同依赖的第三方库）的分组只在要求确实不能同时满足时才列（#703）：失败是别的原因（正在装的包的
+/// 依赖在镜像上没有）时，两个已装节点包对 `sfly-dep` 的要求（`>=0.25` 和 `>=0.20`）彼此相容，不列，也不写「怎么办」。
+#[tokio::test]
+async fn compatible_requirements_on_a_third_party_library_are_not_listed_when_the_failure_is_something_else()
+ {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-dep", "1.0", &[]);
+    let u1 = publish(&fixture, "sfly-u1", "1.0.0", &["sfly-dep>=0.25"]);
+    let u2 = publish(&fixture, "sfly-u2", "1.0.0", &["sfly-dep>=0.20"]);
+    let base = publish(&fixture, "sfly-base", "1.0.0", &["sfly-missing>=1"]);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-703-other-failure", &venv, &fixture);
+    cp.hello(0).await;
+    install_ok(&cp, task("t-u1", "sfly-u1", "1.0.0", &u1)).await;
+    install_ok(&cp, task("t-u2", "sfly-u2", "1.0.0", &u2)).await;
+
+    let message = install_fails(&cp, task("t-base", "sfly-base", "1.0.0", &base)).await;
+
+    assert!(message.contains("sfly-missing"), "{message}");
+    assert!(!message.contains("依赖冲突："), "{message}");
+    assert!(!message.contains("怎么办"), "{message}");
+}
+
+/// 两个已装节点包对 `sfly-dep` 的要求确实矛盾（`>=2` 对 `<2`）：照常列出；对 `httpx` 的要求写法不一样但彼此相容
+/// （`>=0.25` 和 `>=0.20`）：不列。
+#[tokio::test]
+async fn only_the_group_that_really_contradicts_is_listed() {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-dep", "1.0", &[]);
+    add_to_index(&fixture, "sfly-dep", "2.0", &[]);
+    add_to_index(&fixture, "httpx", "0.30", &[]);
+    let base = publish(&fixture, "sfly-base", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    install_without_dependencies(
+        &venv,
+        &[
+            ("sfly-a", &["sfly-dep>=2", "httpx>=0.25"]),
+            ("sfly-b", &["sfly-dep<2", "httpx>=0.20"]),
+        ],
+    );
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-703-contradiction", &venv, &fixture);
+    cp.hello(0).await;
+
+    let message = install_fails(&cp, task("t-base", "sfly-base", "1.0.0", &base)).await;
+
+    let n = note(&message);
+    assert!(n.contains("sfly-a（已安装） 要求 sfly-dep>=2"), "{n}");
+    assert!(n.contains("sfly-b（已安装） 要求 sfly-dep<2"), "{n}");
+    assert!(!n.contains("httpx"), "{n}");
+    assert_eq!(listed(n), 2, "{n}");
+}
+
+/// 一条要求自己就满足不了（`sfly-dep>=2,<1`）：单独列出、写明它自己就满足不了，不拿它去和别的要求配对
+/// （`sfly-dep>=0` 和谁都相容，不该被一起列出来）。
+#[tokio::test]
+async fn a_requirement_that_cannot_be_met_by_itself_is_listed_alone() {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-dep", "1.0", &[]);
+    add_to_index(&fixture, "sfly-dep", "2.0", &[]);
+    let base = publish(&fixture, "sfly-base", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    install_without_dependencies(
+        &venv,
+        &[
+            ("sfly-a", &["sfly-dep>=2,<1"]),
+            ("sfly-b", &["sfly-dep>=0"]),
+        ],
+    );
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-703-alone", &venv, &fixture);
+    cp.hello(0).await;
+
+    let message = install_fails(&cp, task("t-base", "sfly-base", "1.0.0", &base)).await;
+
+    let n = note(&message);
+    assert!(n.contains("sfly-a（已安装） 要求 sfly-dep"), "{n}");
+    assert!(n.contains("（这一条自己就满足不了）"), "{n}");
+    assert!(!n.contains("sfly-b"), "{n}");
+    assert_eq!(listed(n), 1, "{n}");
+}
+
+/// 矛盾的两条里有一条带环境标记（`; python_version >= '3'`，在这台解释器上适用，uv 也解不出来）：这条判断不了，
+/// 不参与，说明里没有可列的，不补说明；uv 的原话里看得到 `sfly-dep`。
+#[tokio::test]
+async fn a_contradiction_with_a_marked_requirement_gets_no_note() {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-dep", "1.0", &[]);
+    add_to_index(&fixture, "sfly-dep", "2.0", &[]);
+    let base = publish(&fixture, "sfly-base", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    install_without_dependencies(
+        &venv,
+        &[
+            ("sfly-a", &["sfly-dep>=2"]),
+            ("sfly-b", &["sfly-dep<2 ; python_version >= '3'"]),
+        ],
+    );
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-703-marked", &venv, &fixture);
+    cp.hello(0).await;
+
+    let message = install_fails(&cp, task("t-base", "sfly-base", "1.0.0", &base)).await;
+
+    assert!(!message.contains("依赖冲突："), "{message}");
+    assert!(uv_words(&message).contains("sfly-dep"), "{message}");
+}
+
 /// 正在装的包自己的依赖在镜像上没有（不是版本冲突）：没有可写的，不补「依赖冲突」，也没有「怎么办」。
 #[tokio::test]
 async fn a_dependency_missing_from_the_index_is_not_a_conflict() {
