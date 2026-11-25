@@ -24,6 +24,7 @@ import http.client
 import os
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping
@@ -121,24 +122,37 @@ def _is_tidy(url: str) -> bool:
     return not any(c == "\\" or c.isspace() or not c.isprintable() for c in url)
 
 
+#: 路径最多解码几遍：到了这个次数还在变就当作有歧义。
+_MAX_DECODE_PASSES = 5
+#: 编码过的点、斜杠、反斜杠（不分大小写）。
+_ENCODED_SEPARATORS = ("%2e", "%2f", "%5c")
+
+
 def _is_ambiguous_path(path: str) -> bool:
     """路径写法有歧义：不同的实现可能把它解析成不同的路径。
 
-    有 `.` 段、以 `..` 开头的段；编码过的点、斜杠、反斜杠、百分号（不分大小写）；
-    不是 ASCII 的字符；解码之后不是合法 UTF-8 的编码。
-    控制面和 SDK 自己生成的引用（名称按路径段编码）没有这些，名称里有 `%`、
-    或某一段以 `..` 开头时例外：这样的产物不带凭据，下载会得到 401。
+    原文和有限遍解码之后的文字都要过检查，任何一遍有歧义（或到了次数还在变）就算。
+    控制面允许的产物名称（含 `%`、以 `..` 开头的名称）按路径段编码之后都不算有歧义。
     """
-    lowered = path.lower()
-    if any(escape in lowered for escape in ("%2e", "%2f", "%5c", "%25")):
+    if not path.isascii():
         return True
-    if not path.isascii() or any(s == "." or s.startswith("..") for s in path.split("/")):
-        return True
-    try:
-        unquote_to_bytes(path).decode("utf-8")
-    except UnicodeDecodeError:
-        return True
-    return False
+    text = path
+    for _ in range(_MAX_DECODE_PASSES + 1):
+        lowered = text.lower()
+        if any(escape in lowered for escape in _ENCODED_SEPARATORS):
+            return True
+        for segment in text.split("/"):
+            base = segment.split(";", 1)[0]
+            if base in (".", "..") or unicodedata.normalize("NFKC", base) in (".", ".."):
+                return True
+        try:
+            decoded = unquote_to_bytes(text).decode("utf-8")
+        except UnicodeDecodeError:
+            return True
+        if decoded == text:
+            return False
+        text = decoded
+    return True
 
 
 def _is_control_plane_download(url: str, artifacts_url: str) -> bool:

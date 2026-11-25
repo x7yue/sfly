@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import http.server
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import pytest
 
@@ -334,30 +334,44 @@ UNDER_PATH = "https://cp.example.com:8443/sfly/tasks/t1/artifacts/"
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2fb", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%2Fb", ARTIFACTS, False),
         ("https://cp.example.com:8443/sfly/tasks/t1/artifacts/../../x", UNDER_PATH, False),
-        # 不带：路径里有歧义的写法（段以 `..` 开头、编码过的反斜杠和百分号、非 ASCII 字符、
-        # 不合法的 UTF-8 编码）。
+        # 不带：路径里有歧义的写法。
         ("http://127.0.0.1:8080/tasks/..;/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%3b/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/..%3B/x", ARTIFACTS, False),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/..a/x", ARTIFACTS, False),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/...", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/..%253b/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/.;x/y", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/%5c..%5cx", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/%5C..%5Cx", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%5cb", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/%252e%252e/x", ARTIFACTS, False),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/100%25.txt", ARTIFACTS, False),
-        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%25", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%252fx", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%255cx", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%25252e%25252e/x", ARTIFACTS, False),
+        # 解码到次数用完还在变：不带。
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%" + "25" * 7, ARTIFACTS, False),
+        # 嵌套得浅一点（解码几遍之后稳定）：带。
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%" + "25" * 3, ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/%c0%ae%c0%ae/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/%ff", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/\uff0e\uff0e/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/\u2025/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%EF%BC%8E%EF%BC%8E/x", ARTIFACTS, False),
+        ("http://127.0.0.1:8080/tasks/%E2%80%A5/x", ARTIFACTS, False),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/世界.txt", ARTIFACTS, False),
         ("https://cp.example.com:8443/sfly/tasks/..;/x", UNDER_PATH, False),
-        # 带：名称按路径段编码之后的正常写法（合法的 UTF-8 编码、点在名称中间、`..` 不在段的开头）。
+        ("https://cp.example.com:8443/sfly/tasks/%252e%252e/x", UNDER_PATH, False),
+        # 带：控制面允许的产物名称，按路径段编码之后（两种编码的写法都在下面的用例里逐个核对）。
         ("http://127.0.0.1:8080/tasks/t1/artifacts/%E4%B8%96%E7%95%8C.txt", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%20b.txt", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/dir/a.b..c", ARTIFACTS, True),
         ("http://127.0.0.1:8080/tasks/t1/artifacts/a%3Bb;c", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/100%25.txt", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/100%.txt", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/a%25", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/%2525", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/..a/x", ARTIFACTS, True),
+        ("http://127.0.0.1:8080/tasks/t1/artifacts/...", ARTIFACTS, True),
+        ("https://cp.example.com:8443/sfly/tasks/t1/artifacts/100%25.txt", UNDER_PATH, True),
         # 控制面给的前缀自己不规矩、或不是 `tasks/<id>/artifacts/` 结尾：一律不带。
         (
             "http://127.0.0.1:8080/tasks/t1/artifacts/a",
@@ -393,6 +407,60 @@ def test_the_decision_compares_the_text_under_the_control_planes_prefix(
     url: str, artifacts_url: str, sent: bool
 ) -> None:
     assert _is_control_plane_download(url, artifacts_url) is sent
+
+
+#: 控制面允许的产物名称（`ArtifactStore.invalidName` 只拒绝反斜杠、控制字符、空段、`.`、`..`）。
+ALLOWED_NAMES = [
+    "report.txt",
+    "100%.txt",
+    "a%",
+    "覆盖率 95%.png",
+    "top%25.csv",  # 名称里字面上就有 `%25`
+    "..env",
+    "...",
+    "dir/..x/y",
+    "a..b",
+    "a;b",
+    "a b",
+    "#1?.txt",
+    "图/截图 (1).png",
+    "~tmp",
+]
+
+
+def _encode_like_the_sdk(name: str) -> str:
+    """SDK 的 `ctx.artifacts.ref`：逐段 `quote(p, safe="")`。"""
+    return "/".join(quote(part, safe="") for part in name.split("/"))
+
+
+def _encode_like_the_control_plane(name: str) -> str:
+    """控制面的 `artifactUrl`：逐段 `encodeURIComponent`（不编码 `A-Za-z0-9-_.!~*'()`）。"""
+    return "/".join(quote(part, safe="!~*'()") for part in name.split("/"))
+
+
+@pytest.mark.parametrize("encode", [_encode_like_the_sdk, _encode_like_the_control_plane])
+@pytest.mark.parametrize("name", ALLOWED_NAMES)
+@pytest.mark.parametrize("artifacts_url", [ARTIFACTS, UNDER_PATH])
+def test_every_name_the_control_plane_allows_gets_the_token_in_both_encodings(
+    name: str, encode: Callable[[str], str], artifacts_url: str
+) -> None:
+    prefix = artifacts_url
+    assert _is_control_plane_download(prefix + encode(name), artifacts_url), encode(name)
+    # 同一个控制面上别的任务的产物也一样。
+    other = prefix.replace("/t1/", "/t2/") + encode(name)
+    assert _is_control_plane_download(other, artifacts_url), other
+
+
+def test_a_name_with_a_percent_sign_or_leading_dots_is_downloaded_with_the_token(
+    control_plane: _Server, tmp_path: Path
+) -> None:
+    """请求真的发出去：路径照原样到了控制面，带着凭据。"""
+    prefix = _prefix(control_plane)
+    for name in ("100%.txt", "..env", "...", "覆盖率 95%.png", "top%25.csv"):
+        control_plane.requests.clear()
+        got = _fetch(prefix + _encode_like_the_sdk(name), tmp_path / "got", prefix)
+        assert got.read_bytes() == b"content", name
+        assert control_plane.authorizations() == [f"Bearer {TOKEN}"], name
 
 
 def test_the_prefix_is_the_artifacts_address_without_its_tail() -> None:

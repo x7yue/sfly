@@ -179,6 +179,40 @@ describeWithAgent("全栈：产物与完整日志", () => {
 		}
 	}, 120_000);
 
+	// 控制面允许的产物名称（只拒绝反斜杠、控制字符、空段、`.`、`..`）：名称里有 `%`、以 `..` 开头的名称，
+	// 引用按路径段编码之后 SDK 照样带上任务凭据，节点用引用下载拿得到内容（#492）。
+	it("名称里有 % 或以 .. 开头的产物，节点用引用照样下载得到（带任务凭据）", async () => {
+		const api = new ApiClient(cp);
+		const files = {
+			"100%.txt": "百分号",
+			"..env": "点点",
+			"覆盖率 95%.png": "中文",
+			"top%25.csv": "字面上的 25",
+		};
+		const id = await api.orchestrationWith({
+			default_agent: "art-agent",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "save", kind: "package", package: "sfly-stub", node: "artifacts", inputs: { files } },
+				{
+					id: "get",
+					kind: "package",
+					package: "sfly-stub",
+					node: "artifact_download",
+					inputs: { refs: "${{ nodes.save.outputs.refs }}" },
+				},
+			],
+			edges: [
+				{ from: "entry", to: "save", kind: "chain" },
+				{ from: "save", to: "get", kind: "chain" },
+			],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+		const runId = await api.triggerOk(id);
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 60_000);
+		expect((await api.node(runId, "get")).outputs?.texts).toEqual(files);
+	}, 120_000);
+
 	it("节点返回超过 1 MB 的输出时任务以 node_error 失败", async () => {
 		const api = new ApiClient(cp);
 		const id = await api.orchestrationWith({

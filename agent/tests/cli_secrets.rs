@@ -112,14 +112,10 @@ fn version_and_wrong_arguments_do_not_print_them_either() {
     }
 }
 
-/// 连不上控制面的报错每次重连写一行（进系统日志）：`--server` 里的用户名和密码不能原样写出来。
-#[tokio::test]
-async fn a_server_address_with_a_password_is_written_without_it_when_the_connection_fails() {
-    // 9 号端口（discard）上没有服务：连接被拒绝。
-    let mut options = AgentOptions::new(
-        "http://serveruser:serverpass-4f1c@127.0.0.1:9",
-        "agent-cli-server",
-    );
+/// 连不上控制面的报错每次重连写一行（进系统日志）：`--server` 里的用户名和密码不能原样写出来，
+/// 漏了协议（`用户名:密码@主机:端口`）的写法也一样。
+async fn assert_the_connect_error_has_no_password(server: &str, shown: &str) {
+    let mut options = AgentOptions::new(server, "agent-cli-server");
     options.pipe_stderr = true;
     let mut agent = spawn_agent(options);
     let stderr = capture_stderr(&mut agent);
@@ -136,11 +132,30 @@ async fn a_server_address_with_a_password_is_written_without_it_when_the_connect
     .await;
     let output = stderr.lock().unwrap().join("\n");
     assert!(
-        output.contains("connect to control plane at http://127.0.0.1:9"),
-        "{output}"
+        output.contains(&format!("connect to control plane at {shown}")),
+        "{server}：{output}"
     );
     assert!(
         !output.contains("serverpass-4f1c") && !output.contains("serveruser"),
-        "{output}"
+        "{server}：{output}"
     );
+}
+
+#[tokio::test]
+async fn a_server_address_with_a_password_is_written_without_it_when_the_connection_fails() {
+    // 9 号端口（discard）上没有服务：连接被拒绝。
+    assert_the_connect_error_has_no_password(
+        "http://serveruser:serverpass-4f1c@127.0.0.1:9",
+        "http://127.0.0.1:9",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_server_address_without_a_scheme_is_written_without_the_password_too() {
+    assert_the_connect_error_has_no_password(
+        "serveruser:serverpass-4f1c@127.0.0.1:9",
+        "127.0.0.1:9",
+    )
+    .await;
 }

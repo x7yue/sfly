@@ -16,16 +16,21 @@ use std::str::FromStr;
 pub const CREDENTIAL_ENV: &str = "SFLY_TOKEN";
 
 /// 写给人看的地址：去掉用户名段（`用户名:密码@`）。`--server` 等地址里可以带用户名和密码，
-/// 报错、日志里写地址的地方都经过这里（`agent/tests/cli_secrets.rs` 守着）。不是 `协议://…` 的写法原样返回。
+/// 报错、日志里写地址的地方都经过这里（`agent/tests/cli_secrets.rs` 守着）。没写协议的地址（漏了 `http://`）也一样：
+/// 到第一个 `/`、`?`、`#` 为止是主机那一段，去掉其中最后一个 `@` 之前的部分；没有 `@` 的原样返回。
 pub fn without_userinfo(address: &str) -> String {
-    let Some((scheme, rest)) = address.split_once("://") else {
-        return address.to_string();
+    let (scheme, rest) = match address.split_once("://") {
+        Some((scheme, rest)) => (Some(scheme), rest),
+        None => (None, address),
     };
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, tail) = rest.split_at(end);
-    match authority.rsplit_once('@') {
-        Some((_, host)) => format!("{scheme}://{host}{tail}"),
-        None => address.to_string(),
+    let Some((_, host)) = authority.rsplit_once('@') else {
+        return address.to_string();
+    };
+    match scheme {
+        Some(scheme) => format!("{scheme}://{host}{tail}"),
+        None => format!("{host}{tail}"),
     }
 }
 
@@ -91,6 +96,11 @@ mod tests {
             ("http://a:b@c@host:2/p", "http://host:2/p"),
             ("http://u:p@[::1]:3", "http://[::1]:3"),
             ("host:50051", "host:50051"),
+            // 没写协议（漏了 `http://`）。
+            ("user:pw@host:1", "host:1"),
+            ("user:pw@host:1/x", "host:1/x"),
+            ("a:b@c@host:2?q=x@y", "host:2?q=x@y"),
+            ("host:50051/p@q", "host:50051/p@q"),
             ("", ""),
         ] {
             assert_eq!(without_userinfo(address), shown, "{address}");
