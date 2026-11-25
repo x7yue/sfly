@@ -31,6 +31,12 @@ const chain = (ids: string[]) => ({
 	packages: { stub: "1.0.0" },
 });
 
+/** 等一会儿，看这条流收到过什么事件（连着的流会周期性地发控制面时间 `time`，不算）。 */
+const eventsAfter = async (stream: SseClient, ms: number) => {
+	await new Promise((resolve) => setTimeout(resolve, ms));
+	return stream.received.map((e) => e.event).filter((event) => event !== "time");
+};
+
 /** 一个运行里最多列出多少个有问题的任务（页里和 410 的 `details` 一样，总数在 `file_problems_total`）。 */
 const LIMIT = 20;
 
@@ -302,7 +308,7 @@ describe("分页读取和实时流里的日志文件问题（#721）", () => {
 				expect(problem.data).toEqual({ file_problem: "missing" });
 				expect(goodStream.received.map((e) => e.event)).not.toContain("file_problem");
 				// 连上时发一次，之后不再发。
-				await badStream.expectNone(300);
+				expect(await eventsAfter(badStream, 300)).toEqual(["file_problem", "logs"]);
 			} finally {
 				badStream.close();
 				goodStream.close();
@@ -349,7 +355,7 @@ describe("分页读取和实时流里的日志文件问题（#721）", () => {
 					[bad.b.taskId, "missing"],
 				]);
 				// 没有问题的运行：连上之后没有任何事件（没有新的行）。
-				await goodStream.expectNone(500);
+				expect(await eventsAfter(goodStream, 500)).toEqual([]);
 			} finally {
 				badStream.close();
 				goodStream.close();
@@ -428,7 +434,7 @@ describe("已经过了保留期的运行（#721）", () => {
 		try {
 			await taskStream.next("logs");
 			expect(taskStream.received.map((e) => e.event)).not.toContain("file_problem");
-			await runStream.expectNone(500);
+			expect(await eventsAfter(runStream, 500)).toEqual([]);
 		} finally {
 			taskStream.close();
 			runStream.close();
