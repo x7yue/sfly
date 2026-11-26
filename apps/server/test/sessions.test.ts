@@ -25,13 +25,16 @@ import type { ManualClock } from "./support/manual-clock.js";
 import { messageId, persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
+import { asUsers, type UserFetch } from "./support/user-api.js";
 import { diffFootprints, settledFootprint } from "./support/write-footprint.js";
 
 let cp: TestControlPlane;
 let api: ApiClient;
+let users: UserFetch;
 beforeAll(async () => {
 	cp = await startTestControlPlane();
-	api = new ApiClient(cp);
+	users = asUsers(cp);
+	api = new ApiClient(users);
 }, 60_000);
 afterAll(async () => {
 	await cp?.close();
@@ -600,7 +603,14 @@ describe("助手没有配置：写接口 503，读接口照常", () => {
 
 	it("写接口先查请求：没有昵称 400、正文不合格 400、项目或会话不存在 404，然后才是 503", async () => {
 		const id = await seedSession(cp.database.url);
-		const noNickname = await cp.fetch("/projects/default/sessions", {
+		// 建会话只认用户的凭据：不带凭据是 401（不是 400 缺昵称）；别的会话接口在 #494 之前照旧，没有昵称 400。
+		const noCredential = await cp.fetch("/projects/default/sessions", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ text: "你好" }),
+		});
+		expect(noCredential.status).toBe(401);
+		const noNickname = await cp.fetch(`/sessions/${id}/messages`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ text: "你好" }),
@@ -802,6 +812,8 @@ async function using_project(id: string, run: (project: string) => Promise<void>
 	const accounts = new TestAccounts(cp.database.url);
 	try {
 		await accounts.project(id);
+		// 请求带的是用户的凭据（建会话只认它）：这个用户在这个项目里是编辑者。
+		await accounts.member(id, await users.userId("tester"), "editor");
 	} finally {
 		await accounts.close();
 	}

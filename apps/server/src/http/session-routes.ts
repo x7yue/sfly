@@ -6,6 +6,7 @@ import {
 	type TurnOutcome,
 } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { credentialRequiredMessage } from "../auth/access-rules.js";
 import { parseProjectId } from "../projects/project-id.js";
 import { FollowOverflowError } from "../sessions/follow.js";
 import type { Outcome, SessionService } from "../sessions/session-service.js";
@@ -75,6 +76,11 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 	contractRoute(app, sessionsApi.create, async ({ params, body }, reply, request) => {
 		const actor = requireActor(request, reply);
 		if (actor === undefined) return reply;
+		// 建会话只认用户的凭据（访问检查已经对不带凭据的请求回了 401）：`created_by_user_id` 从凭据取，会话令牌要代他干活。
+		// 这是第二道：没有经过访问检查的请求（没有身份）到这里也不能建出一个没有发起人的会话。
+		if (actor.userId === null) {
+			return sendError(reply, 401, "unauthorized", credentialRequiredMessage(sessionsApi.create));
+		}
 		const project = parseProjectId(params.project);
 		if (project === undefined || !(await sessions.projectExists(project))) {
 			return projectNotFound(reply);

@@ -300,6 +300,13 @@ export const ASSISTANT_STOP_MARGIN_MS = 3_000;
 export const ASSISTANT_STOP_WAIT_MS =
 	ASSISTANT_ABORT_SETTLE_MS + ASSISTANT_PROCESS_KILL_GRACE_MS + ASSISTANT_STOP_MARGIN_MS;
 
+/**
+ * 一轮最长做多久（毫秒）：助手服务照这个数执行（到了就按「停止一轮」以 `limit` 结束），控制面据此定这一轮的会话令牌的有效期
+ * （`apps/server/src/sessions/session-tokens.ts`：这个数，加停止一轮最晚的时间 {@link ASSISTANT_STOP_WAIT_MS}，再加余量）。
+ * 两边引用同一个数，改它时令牌的有效期自动跟着走。
+ */
+export const ASSISTANT_TURN_MAX_MS = 20 * 60 * 1000;
+
 /** 共享密钥放在助手服务和控制面各自的这个环境变量里。 */
 export const ASSISTANT_SECRET_ENV = "SFLY_ASSISTANT_SECRET";
 

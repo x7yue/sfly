@@ -18,6 +18,7 @@ import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
 import { type FollowSink, follow, REPLAY_BATCH } from "./follow.js";
+import { issueSessionToken, maskSessionTokens, revokeSessionTokens } from "./session-tokens.js";
 
 /**
  * 一个会话的推送指针（{@link SessionStore.#cursors}）：`published` 是已经推送到的序号；`registered` 是登记过的最大序号
@@ -122,6 +123,8 @@ interface Inserted {
 	/** 这条 `turn_end` 把会话从「在做」改回了空闲（这个项目的位置空出来了，排队的可以开始）。 */
 	endedTurn: boolean;
 	project: ProjectId;
+	/** 这条 `turn_end` 同一个事务里吊销的会话令牌（提交之后通知路由层）。 */
+	revoked: string[];
 }
 
 /** 助手服务发来的事件为什么不收：会话不存在、不在做、不是此刻在做的那一轮。 */
@@ -208,6 +211,11 @@ export interface SessionStoreDeps {
 	afterCommit?: (sessionId: string, event: PersistedSessionEvent) => Promise<void>;
 	/** 不该抛出去、只记日志的错误（平台记录发布失败）。 */
 	onError?: (what: string, error: unknown) => void;
+	/**
+	 * 会话令牌被吊销（一轮结束、会话结束、下一轮签发时吊销上一枚）、事务提交**之后**调用，参数是令牌的 ID：路由层据此关掉用它
+	 * 打开着的事件流（控制面里的 `RevocationBus`）。不等它，抛的错只记日志。
+	 */
+	onTokensRevoked?: (tokenIds: readonly string[]) => void;
 	/** 会话令牌的写的事务里等行锁最多等多久（毫秒），默认 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}；测试里调小。 */
 	writeLockTimeoutMs?: number;
 	/** 推送指针多到这个数时顺手清掉闲置的，默认 1000；测试里调小，验证清理只清闲置的、不清还在用的。 */
@@ -275,6 +283,16 @@ export class SessionStore {
 			this.#turnEndListener?.(project, sessionId);
 		} catch {
 			// 监听自己处理错误；这里不能因为它让落库的调用失败。
+		}
+	}
+
+	/** 会话令牌在事务里吊销了、事务已经提交：通知路由层关掉用它打开着的事件流（不等它；出错只记日志，吊销已经生效）。 */
+	#tokensRevoked(tokenIds: readonly string[]): void {
+		if (tokenIds.length === 0) return;
+		try {
+			this.deps.onTokensRevoked?.(tokenIds);
+		} catch (error) {
+			this.deps.onError?.("session token revocation not broadcast:", error);
 		}
 	}
 
@@ -509,7 +527,13 @@ export class SessionStore {
 		input: { project: ProjectId; title: string; createdBy: string; createdByUserId: string | null },
 		user: SessionEventBody,
 		started?: (sessionId: string, turn: number) => void,
-	): Promise<{ session: SessionRow; events: PersistedSessionEvent[]; queued: boolean }> {
+	): Promise<{
+		session: SessionRow;
+		events: PersistedSessionEvent[];
+		queued: boolean;
+		/** 这一轮的会话令牌的原值（这一轮开始了、会话有发起人的用户时才有）：只交给 `commandEnv`。 */
+		token?: string;
+	}> {
 		const id = randomUUID();
 		return this.#serial(id, async () => {
 			const now = this.deps.clock.now();
@@ -535,11 +559,14 @@ export class SessionStore {
 					const events: PersistedSessionEvent[] = [
 						(await this.#insert(tx, session, parsePersistent(user), now)).event,
 					];
+					let issued: Awaited<ReturnType<typeof issueSessionToken>>;
 					if (!queue) {
 						const started = { type: "turn_started" as const, turn: 1 };
 						events.push((await this.#insert(tx, session, parsePersistent(started), now)).event);
+						// 这一轮的会话令牌：和这一轮的开始在同一个事务里签发（`./session-tokens.ts`）。
+						issued = await issueSessionToken(tx, session, now);
 					}
-					return { session, events, queued: queue };
+					return { session, events, queued: queue, issued };
 				});
 			let created: Awaited<ReturnType<typeof attempt>>;
 			try {
@@ -551,7 +578,8 @@ export class SessionStore {
 			// 事务提交的这一步之后、释放链之前：别的请求对这个会话的写排在链上，到它们执行时这个回调早就调过了。
 			if (!created.queued) started?.(id, 1);
 			await this.#publishCommitted(id, created.events);
-			return created;
+			const { issued, ...result } = created;
+			return issued === undefined ? result : { ...result, token: issued.token };
 		});
 	}
 
@@ -648,7 +676,13 @@ export class SessionStore {
 		user: SessionEventBody,
 		started?: (sessionId: string, turn: number) => void,
 	): Promise<
-		| { outcome: "started"; turn: number; events: PersistedSessionEvent[] }
+		| {
+				outcome: "started";
+				turn: number;
+				events: PersistedSessionEvent[];
+				/** 这一轮的会话令牌的原值（会话有发起人的用户时才有）：只交给 `commandEnv`。 */
+				token?: string;
+		  }
 		| { outcome: "queued"; events: PersistedSessionEvent[] }
 		| { outcome: "refused"; status: SessionStatus }
 	> {
@@ -686,7 +720,9 @@ export class SessionStore {
 						(await this.#insert(tx, running, parsePersistent(user), now)).event,
 						(await this.#insert(tx, running, parsePersistent(started), now)).event,
 					];
-					return { outcome: "started" as const, turn: running.currentTurn, events };
+					// 这一轮的会话令牌：和这一轮的开始在同一个事务里签发，同时吊销上一枚（`./session-tokens.ts`）。
+					const issued = await issueSessionToken(tx, running, now);
+					return { outcome: "started" as const, turn: running.currentTurn, events, issued };
 				});
 			let begun: Awaited<ReturnType<typeof attempt>>;
 			try {
@@ -698,7 +734,10 @@ export class SessionStore {
 			// 事务提交的这一步之后、释放链之前（见 createWithTurn）：会话刚变成在做，调用方在这里设上「插话等 202」的门。
 			if (begun.outcome === "started") started?.(sessionId, begun.turn);
 			if (begun.outcome !== "refused") await this.#publishCommitted(sessionId, begun.events);
-			return begun;
+			if (begun.outcome !== "started") return begun;
+			const { issued, ...result } = begun;
+			this.#tokensRevoked(issued?.revoked ?? []);
+			return issued === undefined ? result : { ...result, token: issued.token };
 		});
 	}
 
@@ -841,6 +880,8 @@ export class SessionStore {
 					author: string;
 					author_user_id: string | null;
 				};
+				/** 这一轮的会话令牌的原值：会话没有发起人的用户（建于登录之前）时没有，这一轮交不出去，调用方让它失败。 */
+				token?: string;
 		  }
 		| undefined
 	> {
@@ -858,7 +899,13 @@ export class SessionStore {
 				// 排到链上的这段时间里这个会话被记成「正在结束」了：不开始它，换下一个。
 				if (held(next.id)) return undefined;
 				const now = this.deps.clock.now();
-				let result: { session: SessionRow; event: PersistedSessionEvent } | undefined;
+				let result:
+					| {
+							session: SessionRow;
+							event: PersistedSessionEvent;
+							issued: Awaited<ReturnType<typeof issueSessionToken>>;
+					  }
+					| undefined;
 				try {
 					result = await this.deps.db.transaction(async (tx) => {
 						const session = await lockSession(tx, next.id);
@@ -876,10 +923,9 @@ export class SessionStore {
 							.returning();
 						const running = row as SessionRow;
 						const started = { type: "turn_started" as const, turn: running.currentTurn };
-						return {
-							session: running,
-							event: (await this.#insert(tx, running, parsePersistent(started), now)).event,
-						};
+						const event = (await this.#insert(tx, running, parsePersistent(started), now)).event;
+						// 这一轮的会话令牌：和这一轮的开始在同一个事务里签发，同时吊销上一枚（`./session-tokens.ts`）。
+						return { session: running, event, issued: await issueSessionToken(tx, running, now) };
 					});
 				} catch (error) {
 					// 项目里别的会话已经在做了：位置不是空的，什么也不做。
@@ -890,6 +936,7 @@ export class SessionStore {
 				// 会话刚变成在做、释放链之前：调用方在这里设上「插话等 202」的门（见 createWithTurn）。
 				started?.(next.id, result.session.currentTurn);
 				await this.#publishCommitted(next.id, [result.event]);
+				this.#tokensRevoked(result.issued?.revoked ?? []);
 				return result;
 			});
 			if (promoted === "occupied") return undefined;
@@ -908,7 +955,12 @@ export class SessionStore {
 				});
 				continue;
 			}
-			return { session: promoted.session, turn: promoted.session.currentTurn, message };
+			return {
+				session: promoted.session,
+				turn: promoted.session.currentTurn,
+				message,
+				...(promoted.issued && { token: promoted.issued.token }),
+			};
 		}
 		return undefined;
 	}
@@ -991,9 +1043,14 @@ export class SessionStore {
 					parsePersistent({ type: "session_ended", by }),
 					now,
 				);
-				return { ended: true as const, event };
+				// 会话结束：它的令牌同一个事务里吊销（一轮结束时已经吊销过的，这里没有有效的可吊销；重复无害）。
+				const revoked = await revokeSessionTokens(tx, sessionId, now);
+				return { ended: true as const, event, revoked };
 			});
-			if (result.ended) await this.#publishCommitted(sessionId, [result.event]);
+			if (result.ended) {
+				await this.#publishCommitted(sessionId, [result.event]);
+				this.#tokensRevoked(result.revoked);
+			}
 			return result;
 		});
 	}
@@ -1080,6 +1137,7 @@ export class SessionStore {
 				return this.#insert(tx, session, parsed, at);
 			});
 			if (!stored.duplicate) await this.#publishCommitted(sessionId, [stored.event]);
+			this.#tokensRevoked(stored.revoked);
 			if (stored.endedTurn) {
 				this.#steerSeen.delete(sessionId);
 				this.#turnEnded(stored.project, sessionId);
@@ -1099,7 +1157,8 @@ export class SessionStore {
 		body: SessionEventBody,
 		at: Date,
 	): Promise<{ stored: PersistedSessionEvent } | { dropped: DropReason }> {
-		const parsed = parsePersistent(body);
+		// 第二道打码（第一道在助手服务）：事件里出现的会话令牌，按令牌的格式在落库之前换成掩码（`./session-tokens.ts`）。
+		const parsed = parsePersistent(maskSessionTokens(body));
 		return this.#serial(sessionId, async () => {
 			const result = await this.deps.db.transaction(
 				async (tx): Promise<{ dropped: DropReason } | { stored: Inserted }> => {
@@ -1116,6 +1175,7 @@ export class SessionStore {
 			);
 			if ("dropped" in result) return { dropped: result.dropped };
 			if (!result.stored.duplicate) await this.#publishCommitted(sessionId, [result.stored.event]);
+			this.#tokensRevoked(result.stored.revoked);
 			if (result.stored.endedTurn) {
 				this.#steerSeen.delete(sessionId);
 				this.#turnEnded(result.stored.project, sessionId);
@@ -1133,7 +1193,8 @@ export class SessionStore {
 		if (isPersistedType(body.type)) {
 			throw new Error(`会话事件 ${body.type} 是持久的，要落库（用 appendFromAssistant）`);
 		}
-		const parsed = SessionEventBody.parse(body) as SessionEvent;
+		// 第二道打码：同 `appendFromAssistant`（实时推给页面的增量也一样；令牌被拆在两条增量里的由第一道处理）。
+		const parsed = SessionEventBody.parse(maskSessionTokens(body)) as SessionEvent;
 		return this.#serial(sessionId, async () => {
 			const [session] = await this.deps.db
 				.select()
@@ -1192,6 +1253,7 @@ export class SessionStore {
 			});
 			for (const drop of stored.drops) await this.#publishCommitted(sessionId, [drop.event]);
 			if (!stored.end.duplicate) await this.#publishCommitted(sessionId, [stored.end.event]);
+			this.#tokensRevoked(stored.end.revoked);
 			if (stored.end.endedTurn) {
 				// 只有写的是**当前这一轮**的结局才清「确认送到」的记录：更早一轮的重复结局（比如第 t 轮的 `prompt` 超时时第 t+1 轮已经
 				// 开始）不动当前这一轮的。
@@ -1437,14 +1499,17 @@ export class SessionStore {
 				)
 				.limit(1);
 			if (existing) {
+				let revoked: string[] = [];
 				if (endsCurrent) {
 					await tx.update(sessions).set(endsTurn).where(eq(sessions.id, session.id));
+					revoked = await revokeSessionTokens(tx, session.id, now);
 				}
 				return {
 					event: toEvent(existing),
 					duplicate: true,
 					endedTurn: endsCurrent,
 					project: session.projectId,
+					revoked,
 				};
 			}
 		}
@@ -1468,11 +1533,15 @@ export class SessionStore {
 			.update(sessions)
 			.set({ lastActivityAt: touched, ...(endsCurrent && endsTurn) })
 			.where(eq(sessions.id, session.id));
+		// 这一轮以任何结局结束（助手服务带回的，控制面自己补的）：这一轮的会话令牌同一个事务里吊销（`./session-tokens.ts`）。
+		// 只在「此刻在做的那一轮」结束时：迟到的、重复的 `turn_end`（别的轮次）不动下一轮的令牌。
+		const revoked = endsCurrent ? await revokeSessionTokens(tx, session.id, now) : [];
 		return {
 			event: toEvent(row as EventRow),
 			duplicate: false,
 			endedTurn: endsCurrent,
 			project: session.projectId,
+			revoked,
 		};
 	}
 

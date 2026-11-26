@@ -43,6 +43,22 @@ const rejected = (status: 409 | 503, code: SessionErrorCode, message: string): O
 	message,
 });
 
+/**
+ * 会话建于登录之前（没有发起人的用户，签发不了会话令牌）：不能再开始新的一轮（#547）。这样的会话只在开发和评测环境里有
+ * （#494 之前建会话不要凭据）。
+ */
+export const PREDATES_LOGIN_MESSAGE = "这个会话建于登录之前，请新建一个会话";
+const predatesLogin = () => rejected(409, "session_predates_login", PREDATES_LOGIN_MESSAGE);
+
+/**
+ * 这一轮开始时签发的会话令牌的原值。存储层在这一轮开始的事务里签发，会话有发起人的用户就一定有；没有是调用方先该拦住的
+ * （建会话要带凭据、`say` 和 `#promote` 先看会话有没有发起人），到这里没有是代码错了，不是请求的错。
+ */
+function turnToken(token: string | undefined): string {
+	if (token === undefined) throw new Error("这一轮开始时没有签发会话令牌：会话没有发起人的用户");
+	return token;
+}
+
 /** 工作区在工作台上的路径。 */
 const WORKDIR = "/work";
 
@@ -140,8 +156,8 @@ export interface SessionServiceDeps {
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
 	/**
-	 * 会话结束（会话已经改成 `ended`、`session_ended` 已经写下）之后调用：会话令牌合入之后在这里吊销这个会话的令牌
-	 * （#544 留好的接口，谁后合入谁接上）。尽力而为，抛的错只进日志，不影响结束。
+	 * 会话结束（会话已经改成 `ended`、`session_ended` 已经写下）之后调用（#544 留好的接口）：尽力而为，抛的错只进日志，不影响结束。
+	 * 会话令牌的吊销不在这里：它在会话结束的事务里（{@link SessionStore.end}，#547），不靠一个事后的回调。
 	 */
 	onEnded?: (session: SessionRow) => Promise<void>;
 	/**
@@ -389,6 +405,9 @@ export class SessionService {
 	 */
 	async create(project: ProjectId, actor: Actor, text: string): Promise<Outcome<SessionRow>> {
 		const { sessions } = this.deps;
+		// 建会话要有发起人的用户（会话令牌代他干活，`created_by_user_id` 从凭据取）：路由在这之前已经对不带凭据的请求回 401，
+		// 到这里没有用户是调用方的错，不是请求的错。
+		if (actor.userId === null) throw new Error("建会话要有发起人的用户：请求要带登录或个人令牌");
 		const ready = await this.#ready(project);
 		if (!ready.ok) return ready;
 		this.#unpause(project);
@@ -412,12 +431,18 @@ export class SessionService {
 		// 才删**（{@link SessionStore.deleteUntouched}，在锁着会话那一行的事务里核对）：等结局的那段时间别人对它说的话回了 200，
 		// 不能跟着会话一起没了，更不能在那句话已经开始成第 2 轮之后删会话；**助手服务其实收下了这一轮、做了事**（这一轮里有它的事件，
 		// 包括它带回的结局）也算碰过：工作区里的改动留着，会话记录不能没；有人正在结束这个会话也不删（让结束做完）。
-		const sent = await this.#handOver(session, 1, { messageId, text, actor }, ready.value, {
-			afterFailure: async ({ endedByAssistant }) => {
-				if (endedByAssistant || this.#endings.has(session.id)) return;
-				await sessions.deleteUntouched(session.id, 1);
+		const sent = await this.#handOver(
+			session,
+			1,
+			{ messageId, text, actor, token: turnToken(created.token) },
+			ready.value,
+			{
+				afterFailure: async ({ endedByAssistant }) => {
+					if (endedByAssistant || this.#endings.has(session.id)) return;
+					await sessions.deleteUntouched(session.id, 1);
+				},
 			},
-		});
+		);
 		if (!sent.ok) return sent;
 		return { ok: true, value: (await sessions.find(session.id)) ?? session };
 	}
@@ -448,6 +473,8 @@ export class SessionService {
 					current.queuedAt !== null ||
 					this.#stopping.get(current.id) === effectiveTurn(current)
 				) {
+					// 这句话是下一轮的开头，要签发令牌：建于登录之前的会话（没有发起人的用户）不能再开始新的一轮。
+					if (current.createdByUserId === null) return predatesLogin();
 					const behind = await sessions.queueBehind(
 						current.id,
 						userMessage(randomUUID(), actor, text),
@@ -465,6 +492,9 @@ export class SessionService {
 				if (steered !== "retry") return steered;
 				continue;
 			}
+			// 空闲的会话说话是新的一轮：建于登录之前的（没有发起人的用户，签发不了令牌）不能再开始，要新建一个会话；
+			// 排队中、已结束的照常走下面的 409。
+			if (current.status === "idle" && current.createdByUserId === null) return predatesLogin();
 			const ready = await this.#ready(session.projectId);
 			if (!ready.ok) return ready;
 			this.#unpause(session.projectId);
@@ -480,7 +510,7 @@ export class SessionService {
 					const sent = await this.#handOver(
 						session,
 						begun.turn,
-						{ messageId, text, actor },
+						{ messageId, text, actor, token: turnToken(begun.token) },
 						ready.value,
 					);
 					if (!sent.ok) return sent;
@@ -603,7 +633,23 @@ export class SessionService {
 		await this.#announceQueue(project).catch((error) =>
 			this.deps.log?.("推送排队的位置失败", error),
 		);
-		const { session, turn, message } = promoted;
+		const { session, turn, message, token } = promoted;
+		// 排队中的会话建于登录之前（没有发起人的用户）：签发不了这一轮的令牌，这一轮按失败结束，让排在后面的有机会
+		// （结局写下触发下一个开始）。只发生在开发和评测环境里的旧会话。
+		if (token === undefined) {
+			// 这一轮的「插话等 202」的门不会有 202 了：摘掉；留着的插话由这条结局补 `steer_dropped`。
+			if (this.#handOvers.get(session.id)?.turn === turn) this.#handOvers.delete(session.id);
+			await sessions.appendTurnEnd(session.id, {
+				type: "turn_end",
+				turn,
+				outcome: "failed",
+				reason: PREDATES_LOGIN_MESSAGE,
+				steps: 0,
+				model_calls: 0,
+				duration_ms: 0,
+			});
+			return;
+		}
 		const actor: Actor = {
 			nickname: message.author,
 			via: null,
@@ -615,7 +661,7 @@ export class SessionService {
 		await this.#handOver(
 			session,
 			turn,
-			{ messageId: message.message_id, text: message.text, actor },
+			{ messageId: message.message_id, text: message.text, actor, token },
 			ready.value,
 			{ fromQueue: true },
 		);
@@ -704,7 +750,7 @@ export class SessionService {
 	async #handOver(
 		session: SessionRow,
 		turn: number,
-		message: { messageId: string; text: string; actor: Actor },
+		message: { messageId: string; text: string; actor: Actor; token: string },
 		ready: { client: AssistantClient; target: WorkbenchTarget },
 		options: {
 			/** 这一轮是从队里开始的：确定没开始、原因是连不上助手服务或 503 时，这个项目不接着开始下一个（{@link SessionService.#paused}）。 */
@@ -743,7 +789,7 @@ export class SessionService {
 				text: message.text,
 				session: { title: session.title, created_by: session.createdBy },
 				workbench: ready.target,
-				...commandEnv(message.actor),
+				...commandEnv(message.actor, message.token),
 			});
 		} catch (error) {
 			// 下面三步是同步的，中间没有别的请求插进来：摘下留着插话的地方（之后新来的插话直接转发）、取走已经留着的、结果未知的标成正在停止。
@@ -879,7 +925,7 @@ export class SessionService {
 	 * {@link SessionStore.end}），**写下之后**才把 `end` 发给助手服务（它结束这个会话的进程；尽力而为：连不上时会话照样已经结束，
 	 * 进程由助手服务自己回收，#545）。写下之后控制面不再为这个会话发 `prompt` 和 `steer`：助手服务不记得会话结束了，`end` 之后来的
 	 * `prompt` 它会照常做，所以先写下结束、再发 `end`，中间不会有新的一轮开始。已经结束的再调用无害（什么也不写）。
-	 * 助手没有配置时 503（和别的写一样）。结束之后调用 `onEnded`（会话令牌合入之后在那里吊销，先于 `end` 的命令：不等助手服务）。
+	 * 助手没有配置时 503（和别的写一样）。结束之后调用 `onEnded`（先于 `end` 的命令：不等助手服务；会话令牌在 `SessionStore.end` 的事务里已经吊销了）。
 	 * **一开始就把会话记成「正在结束」**（{@link SessionService.#endings}）：写下 `session_ended` 之前，不为它开始任何一轮（后台的
 	 * {@link SessionService.#promote} 跳过它，已经开始、还没发出 `prompt` 的也不发），对它说话回 409 `session_ended`，排着的话
 	 * （含刚排进来的）移出队列。**同一个会话同时只有一次结束在进行**：第二次调用等第一次的结果（两次的响应一样），不会因为自己

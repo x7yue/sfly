@@ -7,12 +7,14 @@ docker 调用都换成记录，不起容器。
 from __future__ import annotations
 
 import argparse
+import http.client
 import http.server
 import json
 import re
 import subprocess
 import threading
 import time
+import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -590,3 +592,65 @@ def test_follow_stops_at_the_turn_end(monkeypatch: pytest.MonkeyPatch) -> None:
         assert (events, error) == (GOOD, None)
     finally:
         server.close()
+
+
+class _LoginResponse:
+    """`urlopen` 返回的响应：只有登录用到的两样（响应头和读出来的内容）。"""
+
+    def __init__(self, cookies: list[str]) -> None:
+        self.headers = http.client.HTTPMessage()
+        for cookie in cookies:
+            self.headers.add_header("Set-Cookie", cookie)
+
+    def __enter__(self) -> _LoginResponse:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+def test_requests_log_in_as_the_initial_admin_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    """建会话只认用户的凭据（#547）：e2e 用初始管理员登录，拿登录 Cookie 去建会话。"""
+    sent: list[tuple[str, str, bytes | None, dict[str, str]]] = []
+
+    def urlopen(request: Any, timeout: float = 0) -> Any:
+        sent.append((request.method, request.full_url, request.data, dict(request.header_items())))
+        if request.full_url.endswith("/auth/login"):
+            return _LoginResponse(["sfly_login=abc123; Path=/; HttpOnly; SameSite=Lax"])
+        return _Json({"id": "s1"})
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    stack = Stack(slot=7)
+    stack.admin_password = "p" * 32
+    assert e2e._request(stack, "POST", "/projects/default/sessions", {"text": "做点事"}) == {
+        "id": "s1"
+    }
+    login, create = sent
+    assert login[1].endswith("/auth/login")
+    assert json.loads(login[2] or b"") == {"login_name": ADMIN_LOGIN, "password": "p" * 32}
+    # 请求头的名字 urllib 首字母大写；Cookie 只对同源的请求有效。
+    assert create[3]["Cookie"] == "sfly_login=abc123"
+    assert create[3]["Sec-fetch-site"] == "same-origin"
+    assert create[3]["X-sfly-nickname"] == e2e.NICKNAME
+
+
+def test_login_without_the_admin_password_says_what_to_do() -> None:
+    stack = Stack(slot=7)
+    with pytest.raises(e2e.ControlPlaneError, match="初始管理员的密码"):
+        e2e.login_cookie(stack)
+
+
+class _Json:
+    """`urlopen` 返回的响应：读出来是一段 JSON。"""
+
+    def __init__(self, value: Any) -> None:
+        self._body = json.dumps(value).encode()
+
+    def __enter__(self) -> _Json:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -21,10 +22,11 @@ from pathlib import Path
 from typing import Any
 
 from aeval import docker as d
-from aeval.env import Stack
+from aeval.env import ADMIN_LOGIN, Stack
 from aeval.tasks import REFERENCE_DIR, Task, stage_reference, summarize
 
-# 发话的人：控制面把会话和它的操作记在这个昵称下（竖切的命令不带凭据，只带昵称）。
+# 发话的人：控制面把会话和它的操作记在这个昵称下（别的会话接口在 #494 之前不带凭据、只带昵称）。
+# 建会话只认用户的凭据（#547）：用初始管理员登录，见 `login_cookie`。
 NICKNAME = "e2e"
 PROJECT = "default"
 
@@ -99,10 +101,40 @@ def check_sequence(persisted: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
+def login_cookie(stack: Stack) -> str:
+    """初始管理员登录（建会话只认用户的凭据，#547），返回 `sfly_login=…`（Cookie 的内容）。
+    密码是控制面这一次建库时随机生成的（`stack.admin_password`，reset 之后就有）；
+    会话记在这个用户名下，会话令牌代他干活。"""
+    if not stack.admin_password:
+        raise ControlPlaneError(
+            "不知道初始管理员的密码：控制面不是这一次进程起的（先 stack.reset()）"
+        )
+    data = json.dumps({"login_name": ADMIN_LOGIN, "password": stack.admin_password}).encode()
+    request = urllib.request.Request(stack.cp_url + "/auth/login", data=data, method="POST")
+    request.add_header("content-type", "application/json")
+    # 登录 Cookie 只对同源的请求有效（和控制台页面自己发的请求一样）。
+    request.add_header("sec-fetch-site", "same-origin")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            cookies = response.headers.get_all("set-cookie") or []
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode(errors="replace")[:500]
+        raise ControlPlaneError(f"管理员登录返回 {error.code}：{detail}") from error
+    except OSError as error:
+        raise ControlPlaneError(f"管理员登录连不上控制面：{error}") from error
+    for cookie in cookies:
+        match = re.match(r"(sfly_login=[^;\s]+)", cookie)
+        if match:
+            return match.group(1)
+    raise ControlPlaneError("管理员登录没有拿到登录 Cookie")
+
+
 def _request(stack: Stack, method: str, path: str, body: Any = None) -> Any:
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
     request = urllib.request.Request(stack.cp_url + path, data=data, method=method)
     request.add_header("x-sfly-nickname", NICKNAME)
+    request.add_header("cookie", login_cookie(stack))
+    request.add_header("sec-fetch-site", "same-origin")
     if data is not None:
         request.add_header("content-type", "application/json")
     try:

@@ -214,6 +214,8 @@ describe("契约路由的访问检查", () => {
 					"DELETE /agents/:name/credentials/:id",
 					"POST /agents/:name/disable",
 					"POST /agents/:name/enable",
+					// 建会话只认用户的凭据（#547）：会话令牌代发起人干活，没有发起人的会话签发不了令牌。
+					"POST /projects/:project/sessions",
 					...REQUIRES_CREDENTIAL_ROUTES,
 				]),
 			);
