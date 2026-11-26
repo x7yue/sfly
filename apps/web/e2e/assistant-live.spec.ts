@@ -571,3 +571,218 @@ test("接着说：一轮结束后发一句，助手服务收到第 2 轮；会�
 	const view = (await (await page.request.get(`/api/sessions/${id}`)).json()) as SessionView;
 	expect(view.status).toBe("running");
 });
+
+// ---------------------------------------------------------------------------
+// #545：事件流里的快照——断线重连、刷新、换一个浏览器打开时，现场（正在输出的文字、在跑的命令和它输出的最后一段、插话的队列、排位）
+// 由控制面在补发读完、切到实时的那一刻发给这一条连接。
+// ---------------------------------------------------------------------------
+
+/**
+ * 让页面里的会话事件流可以被「剪断」：包一层 `fetch`，`__streamCut.cut()` 中止现在打开着的事件流请求（页面当作网络断了，隔一会儿
+ * 带着 `Last-Event-ID` 重连），`__streamCut.opened` 是打开过几次。要在页面打开之前调用。
+ */
+async function installStreamCut(page: Page) {
+	await page.addInitScript(() => {
+		const original = window.fetch.bind(window);
+		const live = new Set<AbortController>();
+		const cut = {
+			opened: 0,
+			cut() {
+				for (const controller of [...live]) controller.abort();
+				live.clear();
+			},
+		};
+		Object.assign(window, { __streamCut: cut });
+		window.fetch = (input, init) => {
+			const url =
+				typeof input === "string" ? input : input instanceof Request ? input.url : `${input}`;
+			if (!/\/api\/sessions\/[^/?]+\/events/.test(url)) return original(input, init);
+			cut.opened++;
+			const own = new AbortController();
+			live.add(own);
+			init?.signal?.addEventListener("abort", () => own.abort());
+			return original(input, { ...init, signal: own.signal });
+		};
+	});
+}
+const cutStream = (page: Page) =>
+	page.evaluate(() => (window as unknown as { __streamCut: { cut(): void } }).__streamCut.cut());
+const streamsOpened = (page: Page) =>
+	page.evaluate(
+		() => (window as unknown as { __streamCut: { opened: number } }).__streamCut.opened,
+	);
+
+test("浏览器在一条消息输出到一半时断线重连：先看到已经输出的部分（包括断线期间错过的），再接着出；整条消息到了以它为准", async ({
+	page,
+	assistant,
+	workbench,
+}) => {
+	void workbench;
+	await installStreamCut(page);
+	const id = await startSession(page, "写一段说明");
+	await streamReady(page, assistant, id);
+	const delta = (text: string) =>
+		assistant.emit(id, 1, { type: "assistant_delta", text }, eventAt());
+	delta("我先看");
+	const said = page.getByTestId("assistant-message");
+	await expect(said).toHaveText("我先看");
+	// 浏览器断线：这条连接没了；助手服务继续输出，页面收不到（增量不持久，补发里也没有）。
+	const opened = await streamsOpened(page);
+	await cutStream(page);
+	delta("一下现有的节点，");
+	delta("然后看测试。");
+	await expect(said).toHaveText("我先看");
+	// 重连之后先看到已经输出的全部（快照，不是等下一条增量），再接着出。
+	await expect(said).toHaveText("我先看一下现有的节点，然后看测试。", { timeout: 20_000 });
+	expect(await streamsOpened(page)).toBeGreaterThan(opened);
+	delta("再改。");
+	await expect(said).toHaveText("我先看一下现有的节点，然后看测试。再改。");
+	assistant.emit(
+		id,
+		1,
+		{ type: "assistant_message", text: "我先看一下现有的节点，然后看测试，再改。", usage: USAGE },
+		eventAt(),
+	);
+	await expect(said).toHaveText("我先看一下现有的节点，然后看测试，再改。");
+	await expect(page.getByTestId("assistant-message")).toHaveCount(1);
+});
+
+test("刷新页面时一条消息输出到一半：刷新后先看到已经输出的部分，再接着出", async ({
+	page,
+	assistant,
+	workbench,
+}) => {
+	void workbench;
+	const id = await startSession(page, "写一段说明");
+	await streamReady(page, assistant, id);
+	assistant.emit(id, 1, { type: "assistant_delta", text: "已经输出的" }, eventAt());
+	await expect(page.getByTestId("assistant-message")).toHaveText("已经输出的");
+	await page.reload();
+	await expect(page.getByTestId("assistant-message")).toHaveText("已经输出的");
+	assistant.emit(id, 1, { type: "assistant_delta", text: "和后来的" }, eventAt());
+	await expect(page.getByTestId("assistant-message")).toHaveText("已经输出的和后来的");
+});
+
+test("另一个浏览器在命令运行中打开会话：看到这条命令和它输出的最后一段（至多 16 KB），和一直开着的页面一样；之后的输出两边都接着出，结果到了改看结果", async ({
+	page,
+	assistant,
+	workbench,
+}) => {
+	void workbench;
+	const id = await startSession(page, "跑一个很久的命令");
+	await streamReady(page, assistant, id);
+	assistant.emit(
+		id,
+		1,
+		{ type: "tool_call", call_id: "c1", tool: "command", title: "sleep 600" },
+		eventAt(),
+	);
+	await expect(toolRows(page).first()).toHaveAttribute("data-state", "running");
+	// 30 KB 的输出（每行 100 字节，300 行）：只留最后一段。
+	const lines = Array.from(
+		{ length: 300 },
+		(_, i) => `L${String(i + 1).padStart(4, "0")} ${"x".repeat(93)}\n`,
+	);
+	for (let at = 0; at < lines.length; at += 100) {
+		assistant.emit(
+			id,
+			1,
+			{ type: "tool_output", call_id: "c1", text: lines.slice(at, at + 100).join("") },
+			eventAt(),
+		);
+	}
+	const expand = async (target: Page) => {
+		const row = toolRows(target).first();
+		await expect(row).toContainText("$ sleep 600");
+		await expect(row).toHaveAttribute("data-state", "running");
+		await row.getByRole("button").click();
+		return row.getByTestId("tool-output");
+	};
+	const live = await expand(page);
+	await expect(live).toContainText("L0300");
+	// 另一个浏览器（同一个登录）打开这个会话。
+	const other = await page.context().newPage();
+	await other.goto(`/sessions/${id}`);
+	const opened = await expand(other);
+	await expect(opened).toContainText("L0300");
+	// 最后一段：开头的行被截掉了，不超过 16 KB；两边一样（实时累积的和快照里的是同一个字段、同一个上限）。
+	await expect(opened).not.toContainText("L0001 ");
+	const tail = await opened.innerText();
+	expect(Buffer.byteLength(tail, "utf8")).toBeLessThanOrEqual(16 * 1024);
+	expect(tail.length).toBeGreaterThan(15 * 1024);
+	expect(await live.innerText()).toBe(tail);
+	// 之后的输出两边都接着出。
+	assistant.emit(id, 1, { type: "tool_output", call_id: "c1", text: "后来的输出\n" }, eventAt());
+	await expect(live).toContainText("后来的输出");
+	await expect(opened).toContainText("后来的输出");
+	// 结果到了：运行中的输出换成结果。
+	assistant.emit(
+		id,
+		1,
+		{
+			type: "tool_result",
+			call_id: "c1",
+			is_error: false,
+			text: "最终的输出\n",
+			truncated: false,
+			exit_code: 0,
+			duration_ms: 1000,
+		},
+		eventAt(),
+	);
+	await expect(other.getByTestId("tool-result")).toHaveText("最终的输出");
+	await expect(other.getByTestId("tool-output")).toHaveCount(0);
+	await other.close();
+});
+
+test("刷新后在做的一轮里的插话：快照里还没送到的是「等待送达」（不再没有标记）；送到之后变已送到", async ({
+	page,
+	assistant,
+	workbench,
+}) => {
+	void workbench;
+	const id = await startSession(page, "做第一件事");
+	await composer(page).fill("先别改测试");
+	await page.getByRole("button", { name: "发送插话" }).click();
+	const delivery = (target: Page) =>
+		timeline(target)
+			.getByTestId("user-message")
+			.filter({ hasText: "先别改测试" })
+			.getByTestId("message-delivery");
+	await expect(delivery(page)).toHaveText("等待送达");
+	await page.reload();
+	// 刷新后读到的历史里没有 steer_queue（不持久），靠快照知道它还没送到。
+	await expect(delivery(page)).toHaveText("等待送达");
+	assistant.deliverSteers(id);
+	await expect(delivery(page)).toHaveText("已送到");
+});
+
+test("排队中断线重连：断线期间前面的会话被移出队列，重连后排位马上对（不等下一次变化）", async ({
+	page,
+	assistant,
+	workbench,
+	clock,
+}) => {
+	void workbench;
+	await installStreamCut(page);
+	await startSession(page, "第一个会话");
+	const second = await startSession(page, "第二个会话的话");
+	// 排队的先后按排队的时刻：控制面的时钟是手动的，不走一秒的话两个会话同一时刻，先后由会话 ID 定（随机）。
+	clock.advance(1_000);
+	await startSession(page, "第三个会话的话");
+	await expect(statusText(page)).toHaveText("排队中 · 排在第 2 位");
+	const opened = await streamsOpened(page);
+	await cutStream(page);
+	// 另一个浏览器把第二个会话移出队列：第三个会话排到第 1 位；断线的页面收不到这条 `turn_queued`。
+	const other = await page.context().newPage();
+	await other.goto(`/sessions/${second}`);
+	await expect(statusText(other)).toHaveText("排队中 · 排在第 1 位");
+	await other.getByRole("button", { name: "停止" }).click();
+	await expect(statusText(other)).toHaveText("空闲");
+	await expect(statusText(page)).toHaveText("排队中 · 排在第 2 位");
+	// 重连之后快照带来了此刻的排位。
+	await expect(statusText(page)).toHaveText("排队中 · 排在第 1 位", { timeout: 20_000 });
+	expect(await streamsOpened(page)).toBeGreaterThan(opened);
+	await other.close();
+	void assistant;
+});

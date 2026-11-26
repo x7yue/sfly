@@ -1,0 +1,17 @@
+{
+	"说明": "整套冒烟（scripts/release/compose-smoke.sh、offline-stack.sh，#549）：经助手的 bash 工具（工作台 Agent 的 exec 能力）看一眼工作台上命令的运行环境。用法同评测集的剧本：提示里写 AEVAL-SCRIPT:workbench-check，假的模型端点从自己所在的目录读这个文件。",
+	"steps": [
+		{
+			"id": "env",
+			"tool": "bash",
+			"args": {
+				"command": "command -v sfly uv git rg fd jq python python3; echo user=$(id -un); echo home=$HOME; echo pwd=$(pwd); echo token-env=${SFLY_TOKEN:-unset}; echo workbench-token-env=${SFLY_WORKBENCH_TOKEN:-unset}; python --version; git --version",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "done",
+			"text": "检查完了。"
+		}
+	]
+}
