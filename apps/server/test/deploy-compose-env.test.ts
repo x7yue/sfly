@@ -19,16 +19,18 @@ const listedInEnvExample = (): Set<string> =>
 		[...envExampleText.matchAll(/^#?\s*([A-Z][A-Z0-9_]*)=/gm)].map((match) => match[1] as string),
 	);
 
-/** compose 里 `services.sfly.environment` 的键（缩进 6 个空格的 `NAME: 值`，到下一个同级的键为止）。 */
+/**
+ * compose 里每个服务的 `environment` 取自 `.env` 的变量名（缩进 6 个空格的 `NAME: 值`，值里的 `${变量…}`）。
+ * 控制面和 assistant profile 里的助手、工作台（#549）都算：写在 `.env` 里要传得进它们。
+ * 值是固定写死的项（`SFLY_WORKBENCH_URL: http://sfly:8080`）不取自 `.env`，不算。
+ */
 const composeEnvironment = (): Set<string> => {
-	const lines = composeText.split("\n");
-	const start = lines.findIndex((line) => /^ {4}environment:\s*$/.test(line));
-	expect(start, "docker-compose.yml 里找不到 environment").toBeGreaterThanOrEqual(0);
 	const names = new Set<string>();
-	for (const line of lines.slice(start + 1)) {
-		if (/^ {4}\S/.test(line) || /^\S/.test(line)) break; // 下一个同级的键（ports、volumes……）
-		const match = /^ {6}([A-Z][A-Z0-9_]*):/.exec(line);
-		if (match) names.add(match[1] as string);
+	for (const line of composeText.split("\n")) {
+		const item = /^ {6}[A-Z][A-Z0-9_]*:\s*(.*)$/.exec(line);
+		if (!item) continue;
+		for (const match of (item[1] as string).matchAll(/\$\{([A-Z][A-Z0-9_]*)[:}?-]/g))
+			names.add(match[1] as string);
 	}
 	return names;
 };
@@ -56,7 +58,7 @@ describe("deploy/.env.example 和 deploy/docker-compose.yml 的环境变量", ()
 		expect(listedInEnvExample().size).toBeGreaterThan(10);
 		expect(composeEnvironment().size).toBeGreaterThan(10);
 		expect(usedByComposeItself()).toEqual(
-			new Set(["SFLY_VERSION", "SFLY_HTTP_PORT", "SFLY_GRPC_PORT"]),
+			new Set(["SFLY_VERSION", "SFLY_HTTP_PORT", "SFLY_GRPC_PORT", "SFLY_ASSISTANT_MODELS_FILE"]),
 		);
 	});
 
