@@ -43,6 +43,12 @@ type Node = Record<string, unknown> & { id: string };
 type Trigger = "failed" | "failed_or_cancelled";
 type Ending = "success" | "failed" | "cancelled";
 
+/** 飞书把转义的实体 `&#编号;` 显示成对应的字符（#701）：还原之后才是卡片上看到的文字。 */
+const rendered = <T extends string | undefined>(text: T): T =>
+	(text === undefined
+		? undefined
+		: text.replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))) as T;
+
 const echo = (id: string, extra: Record<string, unknown> = {}): Node => ({
 	id,
 	kind: "package",
@@ -131,13 +137,18 @@ describe("运行通知", () => {
 		card.card.body.elements.find((e) => e.content?.startsWith("**失败的节点**"));
 	/** 卡片上除标题以外的全部文字（各元素的 markdown 正文，按钮写 button）。 */
 	const textOf = (card: Card) => card.card.body.elements.map((e) => e.content ?? e.tag).join("\n");
-	/** 「失败的节点」那一段里某个标签后面的内容；没有这一行时为 undefined。 */
+	/**
+	 * 「失败的节点」那一段里某个标签后面的内容（卡片上显示出来的样子：转义的实体 `&#编号;` 还原成字符，#701）；
+	 * 没有这一行时为 undefined。
+	 */
 	const fieldOf = (card: Card, label: string): string | undefined => {
 		const prefix = `**${label}**：`;
-		return failureOf(card)
-			?.content?.split("\n")
-			.find((line) => line.startsWith(prefix))
-			?.slice(prefix.length);
+		return rendered(
+			failureOf(card)
+				?.content?.split("\n")
+				.find((line) => line.startsWith(prefix))
+				?.slice(prefix.length),
+		);
 	};
 
 	/**
@@ -320,6 +331,47 @@ describe("运行通知", () => {
 			);
 			expect(failureOf(card) !== undefined).toBe(ending === "failed");
 			expect(textOf(card).includes("失败原因")).toBe(ending === "failed");
+		});
+
+		it("场景名、触发人、节点显示名称、失败原因、出错位置里有 Markdown 和卡片的标记：卡片上按原样显示，不被当成格式（#701）", async () => {
+			const sceneName = "**订单** [压测](https://evil.example/x)";
+			const nickname = "<font color=red>甲</font>~~乙~~";
+			const nodeName = "`创建` <at id=ou_1></at>";
+			const reason = '<at user_id="all">所有人</at> **余额不足** [详情](https://evil.example/y)';
+			const location = "# pay.py:3 - `run` $x_y$";
+			const id = await scenario(
+				flow([echo("a", { display_name: nodeName })]),
+				{ note: "附加说明里的 **标记** 照常生效" },
+				sceneName,
+			);
+			const runId = await (async () => {
+				const res = await api.trigger(id, {}, nickname);
+				expect(res.status, await res.clone().text()).toBe(201);
+				return ((await res.json()) as { id: string }).id;
+			})();
+			await agent.fail(await agent.nextAssign(), reason, ErrorKind.NODE_ERROR, undefined, location);
+			await status(runId, "failed");
+
+			const card = await onlyCard();
+			const shown = rendered(textOf(card));
+			// 卡片上看到的就是这几段原文。
+			expect(shown).toContain(`**场景**：${sceneName}`);
+			expect(shown).toContain(`**触发人**：${nickname}`);
+			expect(fieldOf(card, "失败的节点")).toBe(`主链：${nodeName}（a）`);
+			expect(fieldOf(card, "失败原因")).toBe(reason);
+			expect(fieldOf(card, "出错位置")).toBe(location);
+			// 请求体里这几段文字的标记都在实体里：没有链接、@、字体、代码、删除线的写法留给飞书去解释。
+			const markdown = card.card.body.elements
+				.slice(1) // 第一个元素是用户写的附加说明，照常是 Markdown
+				.flatMap((e) => (e.tag === "markdown" ? [e.content ?? ""] : []))
+				.join("\n");
+			for (const raw of ["](", "<at", "<font", "`", "~~", "$x", "evil.example/"]) {
+				expect(markdown, raw).not.toContain(raw);
+			}
+			expect(card.card.body.elements[0]).toEqual({
+				tag: "markdown",
+				content: "附加说明里的 **标记** 照常生效",
+			});
 		});
 
 		it("卡片里没有关注项、预设、开始时间、耗时：这些信息由场景自己的节点用 ctx.notify 发", async () => {
