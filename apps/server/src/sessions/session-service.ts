@@ -708,19 +708,19 @@ export class SessionService {
 	/**
 	 * 给项目里每个排队的会话推一条 `turn_queued`（不持久）：排第几、在等哪个会话和它的发起人。「排队的」包括排队中的，和停止途中说了话、
 	 * 排在这一轮后面的在做的会话（{@link SessionStore.queueOrder}，按说话的时刻排）。队列变化时调用（有会话排上队、有会话被停止或
-	 * 结束、排队的开始了）。没有会话在做时不推：它们在等开始，开始那一刻再推。
+	 * 结束、排队的开始了）。**项目里没有会话在做时也推，`waiting_for` 是 null**（#545：排队的会话在等助手服务或工作台恢复、等下一次
+	 * 开始，没有「在等谁」可写；以前这时不推，别的标签页和别的人要等这一轮开始才看得到）。
+	 * **它不在会话的链上**（读库、发布都在链外）：事件流的快照取的排位可能比它新发布的 `turn_queued` 旧（见 `SessionStore.follow` 里的
+	 * 已知边界）：只影响排位，到下一次队列变化纠正。
 	 */
 	async #announceQueue(project: ProjectId): Promise<void> {
 		const { sessions } = this.deps;
 		const queued = await sessions.queueOrder(project);
 		if (queued.length === 0) return;
 		const running = await sessions.running(project);
-		if (!running) return;
-		const waitingFor = {
-			session_id: running.id,
-			title: running.title,
-			created_by: running.createdBy,
-		};
+		const waitingFor = running
+			? { session_id: running.id, title: running.title, created_by: running.createdBy }
+			: null;
 		for (const [index, row] of queued.entries()) {
 			sessions.publish(row.id, {
 				type: "turn_queued",
@@ -732,20 +732,12 @@ export class SessionService {
 
 	/**
 	 * 排队的会话排第几和在等谁（接口的会话视图用）；没有排队时都是 null。「排队的」见 {@link SessionService.#announceQueue}：停止途中
-	 * 说了话的在做的会话也有名次（在等的是它自己正在停止的这一轮）。
+	 * 说了话的在做的会话也有名次（在等的是它自己正在停止的这一轮）。和 `turn_queued`、快照同一个算法（{@link SessionStore.queueState}）。
 	 */
 	async queueInfo(
 		row: SessionRow,
 	): Promise<{ position: number | null; waitingFor: SessionView["waiting_for"] }> {
-		if (row.queuedAt === null) return { position: null, waitingFor: null };
-		const { sessions } = this.deps;
-		const running = await sessions.running(row.projectId);
-		return {
-			position: await sessions.queuePosition(row),
-			waitingFor: running
-				? { session_id: running.id, title: running.title, created_by: running.createdBy }
-				: null,
-		};
+		return this.deps.sessions.queueState(row);
 	}
 
 	/** 设上这一轮「插话等 202」的门（会话刚变成在做，存储层在提交之后、释放链之前调用）。 */

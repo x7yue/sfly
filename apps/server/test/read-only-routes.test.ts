@@ -128,6 +128,10 @@ const UNVERIFIED_ARRAYS: Record<string, string> = {
 		"secret 参数的值合计超过上限（真实的上限是 100 多万个字符）的默认值才有这一项，这里的 seed 用真实的上限，不会出现；元素的 schema 由 secret-params-too-large.test.ts 用调小的上限对过（响应按契约解析，列出了没有改 secret 值的预设）",
 	"GET /orchestrations/:id/preflight response problems[].origin.preset_ids[]":
 		"同一个问题的结构：`origin` 只有警告里的默认值那一条带它，阻断项里没有；schema 同上",
+	"GET /sessions/:id/events snapshot steer_queue[]":
+		"快照（#545）里的插话队列取自控制面内存里的现场（助手服务发来的 `steer_queue`），这里的会话是直接写库的，没有助手服务的事件、" +
+		"也没有在做的一轮，快照里的队列按设计是空的；元素是 `SteerEntry`（和 `steer_queue` 事件的元素同一个 schema），" +
+		"由 session-snapshot.test.ts 用 `sessionEventSchemas.snapshot` 对照带着非空队列的快照",
 };
 
 /** 接口用哪些数据调用：定位到场景、运行、任务的，每种状态各一遍；其余（列表、系统）一遍。 */

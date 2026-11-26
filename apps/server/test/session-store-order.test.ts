@@ -93,20 +93,30 @@ describe("会话事件的落库和发布顺序", () => {
 		return id as ProjectId;
 	};
 
-	/** 订阅一个会话的实时事件（和事件流的补发一起用 `store.follow`）。 */
+	/**
+	 * 订阅一个会话的实时事件（和事件流的补发一起用 `store.follow`）。`out` 是补发和实时的事件；补发读完切到实时的那一刻
+	 * 控制面还会发一条 `snapshot`（#545，只给这一条连接）：这些用例看的是持久事件的顺序，它另放在 `snapshots` 里，位置和内容见
+	 * session-snapshot.test.ts。
+	 */
 	const collect = (sessionId: string, after = 0) => {
 		const out: SessionEvent[] = [];
+		const snapshots: SessionEvent[] = [];
 		const stop = store.follow(
 			sessionId,
 			after,
-			{ emit: (event) => out.push(event), drained: () => Promise.resolve() },
+			{
+				emit: (event) => (event.type === "snapshot" ? snapshots : out).push(event),
+				drained: () => Promise.resolve(),
+			},
 			(error) => {
 				throw error;
 			},
 		);
-		return { out, stop };
+		return { out, snapshots, stop };
 	};
-	const shape = (out: SessionEvent[]) => out.map((e) => ("seq" in e ? e.seq : e.type));
+	/** 事件的序号（不持久的写类型）；快照（#545）不算：它的位置和内容见 session-snapshot.test.ts。 */
+	const shape = (out: SessionEvent[]) =>
+		out.filter((e) => e.type !== "snapshot").map((e) => ("seq" in e ? e.seq : e.type));
 
 	it("并发写同一个会话：发布的顺序等于序号的顺序；前一条还没发布完，后一条不开始落库", async () => {
 		const { id } = await newSession();
