@@ -364,6 +364,134 @@ describe("会话时间线：由事件序列算出", () => {
 	});
 });
 
+describe("平台提交工作区的记录（platform 的 commit，#546）", () => {
+	const commit = (
+		seq: number,
+		turn = 1,
+		extra: Partial<Extract<SessionEvent, { type: "platform"; kind: "commit" }>> = {},
+	): SessionEvent => ({
+		type: "platform",
+		kind: "commit",
+		seq,
+		at: at(),
+		turn,
+		hash: "3f1c2ab9d0e4a5b6c7d8e9f00112233445566778",
+		files: [
+			{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+			{ path: "assets/logo.png", additions: null, deletions: null },
+		],
+		diff: "diff --git a/nodes/http_check.py b/nodes/http_check.py\n",
+		truncated: false,
+		...extra,
+	});
+
+	it("一行：提交号、文件、差异原样，排在这一轮的结局前面；不改变会话的状态", () => {
+		const state = run([user(1), started(2), message(3, "改好了"), commit(4), end(5, "completed")]);
+		expect(state.items.map((item) => item.kind)).toEqual([
+			"user",
+			"assistant",
+			"commit",
+			"turn_end",
+		]);
+		expect(state.items[2]).toEqual({
+			kind: "commit",
+			key: "e4",
+			seq: 4,
+			at: expect.any(String),
+			turn: 1,
+			leftover: false,
+			beforeSession: false,
+			hash: "3f1c2ab9d0e4a5b6c7d8e9f00112233445566778",
+			files: [
+				{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+				{ path: "assets/logo.png", additions: null, deletions: null },
+			],
+			diff: "diff --git a/nodes/http_check.py b/nodes/http_check.py\n",
+			truncated: false,
+		});
+		expect(state.status).toBe("idle");
+		// 一轮在做时来的提交不改状态、不打断「在做」。
+		const running = run([user(1), started(2), commit(3)]);
+		expect(running.status).toBe("running");
+		expect(running.turnOpen).toBe(true);
+	});
+
+	it("同一个序号来第二次（补发和事件流重叠）只有一行；差异太长的标截断", () => {
+		const once = run([user(1), started(2), commit(3, 1, { truncated: true })]);
+		expect(run([commit(3, 1, { truncated: true })], once).items).toEqual(once.items);
+		expect(once.items.filter((item) => item.kind === "commit")).toHaveLength(1);
+		expect(once.items[1]).toMatchObject({ kind: "commit", truncated: true });
+	});
+
+	it("补提交：上一轮被打断时留下的改动在这一轮开始前提交，事件的轮次比这一轮小；这一轮自己的提交不是", () => {
+		const state = run([
+			user(1),
+			started(2, 1),
+			end(3, "interrupted", { turn: 1 }),
+			user(4, "接着做"),
+			started(5, 2),
+			commit(6, 1),
+			commit(7, 2),
+			end(8, "completed", { turn: 2 }),
+		]);
+		const commits = state.items.filter((item) => item.kind === "commit");
+		expect(commits.map((item) => [item.turn, item.leftover])).toEqual([
+			[1, true],
+			[2, false],
+		]);
+	});
+
+	it("会话开始之前工作区里留下的改动（第 1 轮开始前补提交）：事件的轮次就是这一轮，靠位置认——排在模型说话、调工具之前；这一轮自己的提交不是", () => {
+		const state = run([
+			user(1),
+			started(2, 1),
+			commit(3, 1),
+			message(4, "做好了"),
+			commit(5, 1),
+			end(6, "completed", { turn: 1 }),
+		]);
+		const commits = state.items.filter((item) => item.kind === "commit");
+		expect(commits.map((item) => [item.leftover, item.beforeSession])).toEqual([
+			[true, true],
+			[false, false],
+		]);
+		// 上一轮被打断留下的那种不是「会话开始之前」。
+		const interrupted = run([
+			user(1),
+			started(2, 1),
+			end(3, "interrupted", { turn: 1 }),
+			user(4, "接着做"),
+			started(5, 2),
+			commit(6, 1),
+		]);
+		expect(interrupted.items.at(-1)).toMatchObject({ leftover: true, beforeSession: false });
+	});
+
+	it("这一页里没有 turn_started（它在更早的一页）：不判补提交；往前翻页读进来的提交也不改状态", () => {
+		const page = initialTimeline("idle", [commit(10, 3), end(11, "completed", { turn: 3 })], true);
+		expect(page.items[0]).toMatchObject({ kind: "commit", leftover: false });
+		const older = prependHistory(page, [user(1), started(2, 3), commit(3, 3)], false);
+		expect(older.items.map((item) => item.kind)).toEqual(["user", "commit", "commit", "turn_end"]);
+		expect(older.status).toBe("idle");
+		expect(older.lastSeq).toBe(11);
+	});
+
+	it("scenario_version、run 这一版不渲染（成果栏里用，#547）：不添行", () => {
+		const base = run([user(1), started(2)]);
+		const version = applyEvent(base, {
+			type: "platform",
+			kind: "scenario_version",
+			seq: 3,
+			at: at(),
+			turn: 1,
+			scenario_id: MSG(1),
+			name: "接口巡检",
+			version: 2,
+		} as SessionEvent);
+		expect(version.items).toEqual(base.items);
+	});
+});
+
 describe("会话页打开：最近一页历史、接着事件流、往前翻页", () => {
 	it("状态以会话视图为准，不由这一页历史推出来；序号和翻页的游标取自历史", () => {
 		const state = initialTimeline("running", [user(5), started(6)], true);

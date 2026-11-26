@@ -110,6 +110,33 @@ export function turnEndText(item: Extract<TimelineItem, { kind: "turn_end" }>): 
 	}
 }
 
+/** 一个提交里全部文件的增、删行数（二进制文件没有行数，不算）。 */
+export function commitTotals(
+	files: readonly { additions: number | null; deletions: number | null }[],
+) {
+	let additions = 0;
+	let deletions = 0;
+	for (const file of files) {
+		additions += file.additions ?? 0;
+		deletions += file.deletions ?? 0;
+	}
+	return { files: files.length, additions, deletions };
+}
+
+/** 提交那一行的文字：「这一轮改了 N 个文件 +a −b」；补提交的写是哪一轮留下的、或者是会话开始之前就有的。 */
+export function commitSummary(item: Extract<TimelineItem, { kind: "commit" }>): string {
+	const total = commitTotals(item.files);
+	if (item.beforeSession) {
+		return SESSION.commit.beforeSession(total.files, total.additions, total.deletions);
+	}
+	return item.leftover
+		? SESSION.commit.leftover(item.turn, total.files, total.additions, total.deletions)
+		: SESSION.commit.summary(total.files, total.additions, total.deletions);
+}
+
+/** 提交的短号：前 7 位。 */
+export const shortHash = (hash: string): string => hash.slice(0, 7);
+
 /** 一轮结束那一行的语气：完成和停止是中性的，到了上限是提醒，其余是出了问题。 */
 export function turnEndTone(
 	outcome: Extract<TimelineItem, { kind: "turn_end" }>["outcome"],

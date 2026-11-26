@@ -394,6 +394,27 @@ export const SESSION = {
 		expand: "展开",
 		collapse: "收起",
 	},
+	/**
+	 * 平台在一轮结束时提交工作区的记录（#546）：一行摘要，展开是文件列表和差异。样式和平台记录的其他两类一起在 #550 统一。
+	 * 加号和减号：新增、删除的行数；二进制文件没有行数。
+	 */
+	commit: {
+		summary: (files: number, additions: number, deletions: number) =>
+			`这一轮改了 ${files} 个文件 +${additions} −${deletions}`,
+		/** 上一轮（被打断的）留下的改动，在这一轮开始前补提交的。 */
+		leftover: (turn: number, files: number, additions: number, deletions: number) =>
+			`第 ${turn} 轮被打断时留下的改动：${files} 个文件 +${additions} −${deletions}`,
+		/** 会话开始之前工作区里就有的改动，在第 1 轮开始前补提交的。 */
+		beforeSession: (files: number, additions: number, deletions: number) =>
+			`会话开始之前工作区里留下的改动：${files} 个文件 +${additions} −${deletions}`,
+		/** 提交号（短写）旁边的读屏名称。 */
+		hash: "提交号",
+		binary: "二进制文件",
+		additions: (n: number) => `+${n}`,
+		deletions: (n: number) => `−${n}`,
+		files: "改动的文件",
+		truncated: "差异太长，只显示了开头",
+	},
 	turnEnd: {
 		completed: "这一轮完成",
 		steps: (n: number) => `${n} 步`,
