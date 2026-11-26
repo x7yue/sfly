@@ -9,33 +9,71 @@ import type { Redactor } from "./redact.js";
  * 提交号、改了哪些文件、差异在这一刻记进会话的时间线（`platform` 事件，`kind` 是 `commit`）。命令都经能力端口在工作台上执行
  * （`AgentClient.run`），**不带会话令牌**：这里只传 git 自己的几个环境变量，调用方不给 `secret_env`。
  *
+ * ## 威胁模型
+ *
+ * 模型在工作台上本来就能以同一个用户执行任意命令，所以「平台提交时执行了模型的东西」本身不是提权。要防的是两件事：
+ * 一是平台的记录被模型改得不真（少记、记错）；二是模型借平台的提交拖住或打乱一轮的收尾（让它不结束、让它在停止的期限之后才结束）。
+ * 下面每一条都按这两件事来：不执行模型留下的东西，是因为执行了它就能改记录、拖时间；基准不用模型的 `HEAD`，是因为它能改记录。
+ *
  * ## 提交不执行工作区里能被模型改的任何东西
  *
  * 工作区和它的 `.git/` 都在模型手里：它能往 `.git/hooks/` 放脚本，能改 `.git/config`（`core.hooksPath`、`core.fsmonitor`、
- * `filter.<名>.clean`、`diff.<名>.textconv`、`diff.external`、`gpg.program`、`include.path`、`includeIf`……），能写 `.gitattributes`
- * 和 `.git/info/attributes`。普通的 `git add -A && git commit` 会执行其中好几样，所以提交的做法是：
+ * `filter.<名>.clean`、`diff.<名>.textconv`、`diff.external`、`gpg.program`、`include.path`、`includeIf`、`remote.<名>.uploadpack`……），
+ * 能写 `.gitattributes` 和 `.git/info/attributes`，能在工作区里放子模块、嵌套仓库（它们自己的配置和属性也是它写的），能改索引
+ * （`skip-worktree`、`assume-unchanged`、`gitlink`）。普通的 `git add -A && git commit` 会执行其中好几样，所以提交的做法是：
  *
  * 1. **每条 git 命令都在命令上显式关掉**会执行东西的配置（{@link GIT_FLAGS}），不靠仓库里的配置：命令行上的 `-c` 比所有配置文件
  *    （含 `include.path`、`includeIf` 引进来的）都优先。`core.hooksPath=/dev/null` 让所有钩子（含 `reference-transaction`、
  *    `post-index-change`）都找不到（`/dev/null/<钩子名>` 不是文件）；`core.fsmonitor=false`；`gc.auto=0`、`maintenance.auto=false`；
- *    `commit.gpgsign=false`。全局和系统的配置、全局的属性文件也去掉（{@link GIT_ENV}）。
- * 2. **过滤器（`filter`）整体绕开，不靠关掉它**：`filter.<名>.clean` 的名字是任意的，命令行上没法逐个覆盖；而 `.gitattributes` 引用它、
- *    `.git/config` 定义它，两处都在模型手里。只把属性来源设成空树（`GIT_ATTR_SOURCE`，`--attr-source`）**不够**：它只换掉工作区里的
- *    `.gitattributes`，`.git/info/attributes` 照样读（在 git 2.47 上实测，`* filter=…` 写在那里过滤器照样执行）。所以暂存这一步**不用模型的
- *    仓库当 `GIT_DIR`**：在工作台上新建一个只有平台写过的临时仓库（`mktemp -d` 出来的、名字不可预测的目录），用它作 `GIT_DIR`
- *    （配置、`info/attributes`、钩子目录都是它的，空的），而索引（`GIT_INDEX_FILE`）和对象目录（`GIT_OBJECT_DIRECTORY`）指到真的仓库里，
- *    `GIT_WORK_TREE` 是工作区：暂存、`write-tree`、`commit-tree` 全在这个环境里做，读不到模型的 `config` 和 `info/attributes`。
- *    工作区里的 `.gitattributes` 另用 `GIT_ATTR_SOURCE`（空树）绕开，存进去的就是工作区里的字节（不做换行转换、不展开 `$Id$`）。
- *    `.git/info/exclude` 是数据，用 `core.excludesFile` 指过来照常生效。
+ *    `commit.gpgsign=false`。全局和系统的配置、全局的属性文件也去掉（{@link GIT_ENV}）。`GIT_NO_LAZY_FETCH=1`：仓库是部分克隆
+ *    （`extensions.partialClone`）、`HEAD` 指到一个不存在的提交时，git 读这个提交会去「补取」，补取会执行 `remote.<名>.uploadpack`
+ *    （或 `ext::` 地址）里写的命令；这个环境变量让它不去取，缺的就是缺的。
+ * 2. **暂存不用模型的仓库，也不用模型的索引**：在工作台上新建一个只有平台写过的临时仓库（`mktemp -d` 出来的、名字不可预测的目录，
+ *    里面的配置、`info/attributes`、钩子目录都是空的），用它作 `GIT_DIR`，**索引（`GIT_INDEX_FILE`）也是它里面的一个新文件（空的）**，
+ *    对象目录（`GIT_OBJECT_DIRECTORY`）指到真的仓库里（新对象写在那里），`GIT_WORK_TREE` 是工作区。暂存（`add -A`）、`write-tree`、
+ *    `commit-tree` 全在这个环境里做，读不到模型的 `config` 和 `info/attributes`，也读不到模型的索引。
+ *    - 为什么不用模型的索引：索引里有子模块（`gitlink`）时，`add -A` 会进到子模块里看它改没改，子模块自己的 `.git/config` 和
+ *      `.git/info/attributes` 里的过滤器、`fsmonitor` 就会执行（`diff.ignoreSubmodules`、`submodule.recurse` 都拦不住）；
+ *      索引里的 `skip-worktree`、`assume-unchanged` 位会让改了的文件不进提交（记录少记）。空索引里什么都没有：工作区里的子仓库当作
+ *      普通的嵌套仓库，记成一个 `gitlink`，不进去看。
+ *    - 代价：每一轮都把工作区里的文件全读一遍（没有索引里的文件状态可省）；**真的索引平台不再更新**，所以在工作台上直接 `git status`
+ *      会看到上一轮的改动像是没暂存（`HEAD` 已经是平台的提交、索引还是旧的）；模型自己 `git add -A` 一下就对了。
+ *    - 工作区里的 `.gitattributes` 另用 `GIT_ATTR_SOURCE`（空树）绕开，存进去的就是工作区里的字节（不做换行转换、不展开 `$Id$`）。
+ *      只把属性来源设成空树**不够**：它只换掉工作区里的 `.gitattributes`，`.git/info/attributes` 照样读（在 git 2.47 上实测），
+ *      所以才要上面的临时仓库。`.git/info/exclude` 是数据，用 `core.excludesFile` 指过来照常生效。
  *    只有读 `HEAD`、更新分支（`rev-parse`、`update-ref`）在真的仓库里做：它们不碰属性和过滤器，钩子在命令上关了，
  *    `reference-transaction` 也在内。**更新分支排在最后**：差异和文件统计在分支动之前就取好了，中途失败时仓库里看不出任何变化（只多了
- *    索引里暂存的内容和没人引用的对象）。
- * 3. 取差异用 `diff-tree`（提交对提交，不读工作区），带 `--no-ext-diff --no-textconv`：外部 diff 和 textconv 不执行。
- * 4. **每次暂存之后都显式把 `.agents/skills` 从索引里拿掉**（助手服务每次拉起 pi 都把 skill 复制进去，不能进用户的仓库），
- *    不靠 `.gitignore`：`.gitignore` 在模型手里，它删了、改了、写了 `!.agents/skills/` 都一样。
+ *    没人引用的对象）。
+ * 3. 取差异用 `diff-tree`（树对树，不读工作区的文件内容），带 `--no-ext-diff --no-textconv`：外部 diff 和 textconv 不执行；
+ *    也带 `GIT_ATTR_SOURCE`（空树）：工作区里的 `.gitattributes` 写 `* -diff`（再用 `.gitignore` 藏起来）就能让每个文件都显示成二进制，
+ *    差异里什么都看不到。
+ * 4. **每次暂存之后都显式把根目录的 `.agents/skills` 从索引里拿掉**（助手服务每次拉起 pi 都把 skill 复制进去，不能进用户的仓库），
+ *    不靠 `.gitignore`：`.gitignore` 在模型手里，它删了、改了、写了 `!.agents/skills/` 都一样。只管根目录那一个：命令在工作区根目录里
+ *    执行，路径是相对根的；节点包里 `sfly init` 放进去的 `<包>/.agents/skills/` 是用户的东西，照常提交。
  *
- * 没做到的：模型在提交进行的同时还有进程在往 `.git/` 里写（它起的后台进程）时，上面的「读不到」不保证；提交不会在命令结束之后还被什么执行。
- * 经过滤器管理的文件（git-lfs 一类）按工作区里的原样提交，不经过滤器。
+ * ## 记什么：基准是平台自己上次记下的提交
+ *
+ * 一轮的记录是「这一轮的树」和「平台上次记下的树」之差，**不是**和 `HEAD` 比：模型自己 `git commit`、`git reset --hard`、改写历史之后，
+ * `HEAD` 已经不是平台上次看到的样子，和它比就会把改动记丢（模型只要自己提交一下，这一轮在时间线上就是空的）。平台上次记下的提交号由
+ * 调用方按工作区（工作台地址加路径）存在助手服务自己的数据目录里（{@link CommitInput.recorded}，不放工作台上：那里模型能改），
+ * 每次提交成功后换成新的（{@link CommitOutcome.recorded}）。
+ * - 这一轮的树等于上次记下的树：没有改动，不提交、不发事件。
+ * - 不等：做一个提交，**父提交是当前的 `HEAD`**（模型的历史接着往下；模型已经把改动都提交了时，这是一个空提交，只记这一轮），
+ *   事件里的文件统计和差异是「上次记下的树 → 这一轮的树」。
+ * - 从没记过（第一轮、助手服务的数据目录丢了）或记的提交已经不在仓库里（模型 `gc`、删了对象）：退回和 `HEAD` 比，
+ *   差异开头加一行说明（{@link CommitResult.note}：事件的契约里没有放这件事的字段，不改契约）。
+ *
+ * 没做到的：
+ * - 模型在提交进行的同时还有进程在往 `.git/` 里写（它起的后台进程，包括脱离进程组的：`setsid`）时，上面的「读不到」不保证；
+ *   提交不会在命令结束之后还被什么执行。
+ * - 平台用的 `git`、`mktemp`、`rm` 是工作台 `PATH` 上找到的那几个：Agent 以 root 运行、或 `PATH` 里有模型能写的目录时，模型能换掉它们。
+ *   这和模型本来就有的权限一样，防不了。
+ * - `.git/logs/HEAD` 是符号链接、`.git` 是一个 `gitdir:` 文件（指到别处）时，平台更新分支会写到那个地方：同样是模型自己的权限。
+ * - 模型存心毁掉平台的记录：先自己提交全部改动，再改写历史并清掉平台上次记下的提交对象，这一轮会退回和 `HEAD` 比、记成没有改动
+ *   （上面第三种）；`HEAD` 指到不存在的提交时平台提交不成（记日志、不发事件，每一轮都再试）。要防这些得把记录放到模型够不着的地方（#752 起）。
+ * - 经过滤器管理的文件（git-lfs 一类）按工作区里的原样提交，不经过滤器。
+ * - 提交进行中平台被放弃（期限到了、助手服务退出）：这一轮照常结束，`update-ref` 可能已经在工作台上做了、事件没发出去；
+ *   这一轮的提交做成了、但这一轮已经结束（晚到的事件被丢）。这两个窗口很小，不处理（记日志）。
  *
  * 连不上工作台、git 不在、仓库坏了：抛 {@link WorkspaceError} 或工作台的错误，由调用方记日志；这一轮照常结束，留给下一轮开始前再试
  * （sessions.ts）。
@@ -48,9 +86,9 @@ export const PLATFORM_IDENTITY = { name: "sfly", email: "noreply@sfly.invalid" }
 export const INITIAL_COMMIT_MESSAGE = "初始化工作区";
 
 /** 写进 `.gitignore` 的行（至少这些：uv 把虚拟环境建在节点包目录里，不忽略就会被提交）。 */
-export const GITIGNORE_LINES = [".agents/skills/", ".venv/", "__pycache__/", "dist/"] as const;
+export const GITIGNORE_LINES = ["/.agents/skills/", ".venv/", "__pycache__/", "dist/"] as const;
 
-/** 暂存时显式排除的路径：不靠 `.gitignore`。 */
+/** 暂存时显式排除的路径：不靠 `.gitignore`。命令在工作区根目录里执行，这是相对根的路径：只管根目录那一个。 */
 export const EXCLUDED_FROM_COMMITS = ".agents/skills";
 
 /** 空树的对象号（SHA-1）：属性来源、没有父提交时的「父树」。 */
@@ -90,6 +128,8 @@ const GIT_ENV: Record<string, string> = {
 	GIT_PAGER: "cat",
 	// 提示和路径按字节原样：说明里的中文不被当地的编码改写。
 	LC_ALL: "C",
+	// 缺的对象就是缺的，不去「补取」：补取会执行 `.git/config` 里 `remote.<名>.uploadpack`（见文件头）。
+	GIT_NO_LAZY_FETCH: "1",
 };
 
 /** 一条 git 命令最长等多久（整个提交另有自己的期限）。 */
@@ -98,6 +138,13 @@ const STEP_TIMEOUT_MS = 60_000;
 /** 临时仓库的位置：工作台上 `/tmp` 一定在、谁都能写。 */
 const SCRATCH_TEMPLATE = "/tmp/sfly-commit.XXXXXXXX";
 const SCRATCH_PREFIX = "/tmp/sfly-commit.";
+
+/**
+ * 删临时仓库最多等多久：提交还在期限内时是这么久（也不超过提交的期限）；提交已经被放弃（期限到了、助手服务退出）时只给很短的一下，
+ * 不等工作台（它可能已经不回话了），留在 `/tmp` 里的小目录以后再清。用真实的时间：放弃的那一刻时钟的约定不适用。
+ */
+const CLEANUP_MS = 10_000;
+const ABANDONED_CLEANUP_MS = 500;
 
 /** 文件统计（`--numstat`）最多读这么多字节。 */
 const NUMSTAT_LIMIT_BYTES = 16 * 1024 * 1024;
@@ -125,6 +172,11 @@ export interface CommitInput {
 	diffExtraBytes?: number;
 	/** 初次提交不要文件统计和差异（没有人看）。默认要。 */
 	summary?: boolean;
+	/**
+	 * 平台上次在这个工作区记下的提交号（调用方按工作区存，见文件头「记什么」）：这一轮的树和它的树比。
+	 * 没有记过传 undefined，退回和 `HEAD` 比。
+	 */
+	recorded?: string;
 }
 
 /** 一个提交的结果：{@link commitEventBody} 把它做成事件。 */
@@ -135,12 +187,24 @@ export interface CommitResult {
 	diff: Buffer;
 	/** 差异就是全部（没有被截在读的时候）。 */
 	diffComplete: boolean;
+	/** 差异是和 `HEAD` 比的（不是和平台上次记下的）时，开头要写的一行说明（平台自己的话，不含模型的东西）。 */
+	note?: string;
+}
+
+/** {@link commitChanges} 的结果。 */
+export interface CommitOutcome {
+	/** 这一轮的提交；没有改动是 undefined（什么也没留下）。 */
+	result: CommitResult | undefined;
+	/**
+	 * 之后平台记下的提交号（下一轮的基准）：提交了是新的提交；没有改动时是原来记的；没有记过（或记的不在了）时是 `HEAD`
+	 * （没有改动，`HEAD` 的树就是这一轮的树）。
+	 */
+	recorded: string | undefined;
 }
 
 interface Repository {
 	gitDir: string;
 	objects: string;
-	index: string;
 	exclude: string;
 }
 
@@ -241,8 +305,6 @@ async function findRepository(
 			"--git-path",
 			"objects",
 			"--git-path",
-			"index",
-			"--git-path",
 			"info/exclude",
 		],
 		cwd: workdir,
@@ -251,12 +313,12 @@ async function findRepository(
 		signal,
 	});
 	if (result.code === 0) {
-		const [gitDir, objects, index, exclude] = result.stdout.toString("utf8").split("\n");
-		if (!gitDir || !objects || !index || !exclude) {
+		const [gitDir, objects, exclude] = result.stdout.toString("utf8").split("\n");
+		if (!gitDir || !objects || !exclude) {
 			throw new WorkspaceError("git rev-parse 的输出认不出来");
 		}
 		const at = (path: string) => posix.resolve(workdir, path);
-		return { gitDir, objects: at(objects), index: at(index), exclude: at(exclude) };
+		return { gitDir, objects: at(objects), exclude: at(exclude) };
 	}
 	if (/not a git repository/i.test(result.stderr)) return undefined;
 	must(result, "git rev-parse");
@@ -265,16 +327,16 @@ async function findRepository(
 
 /**
  * 工作区是 git 仓库：不是就 `git init`（分支 `main`，不带模板：没有示例钩子）、写 `.gitignore`，连同已有的文件做初次提交
- * （「初始化工作区」，作者是平台，不含 `.agents/skills`），返回 true；已经是仓库返回 false，什么也不动。
- * 初次提交不发 `platform` 事件（由调用方决定，这里只管做）。
+ * （「初始化工作区」，作者是平台，不含 `.agents/skills`），`created` 为 true，`recorded` 是初次提交的提交号（调用方记下它当基准）；
+ * 已经是仓库 `created` 为 false，什么也不动。初次提交不发 `platform` 事件（由调用方决定，这里只管做）。
  */
 export async function ensureRepository(
 	agent: WorkspaceAgent,
 	workdir: string,
 	options: { signal?: AbortSignal } = {},
-): Promise<boolean> {
+): Promise<{ created: boolean; recorded: string | undefined }> {
 	const { signal } = options;
-	if (await findRepository(agent, workdir, signal)) return false;
+	if (await findRepository(agent, workdir, signal)) return { created: false, recorded: undefined };
 	must(
 		await git(agent, {
 			args: ["init", "-q", "--template=", "--initial-branch=main"],
@@ -284,13 +346,13 @@ export async function ensureRepository(
 		"git init",
 	);
 	await writeGitignore(agent, workdir, signal);
-	await commitChanges(agent, workdir, {
+	const { recorded } = await commitChanges(agent, workdir, {
 		message: INITIAL_COMMIT_MESSAGE,
 		author: PLATFORM_IDENTITY,
 		signal,
 		summary: false,
 	});
-	return true;
+	return { created: true, recorded };
 }
 
 /** `.gitignore`：没有就写；已经有的补上缺的行，原来的行不动。 */
@@ -313,29 +375,34 @@ async function writeGitignore(
 	await agent.writeFile(path, Buffer.from(`${lead}${missing.join("\n")}\n`), signal);
 }
 
+/** 提交号的样子（认过才拼进命令行）。 */
+const OBJECT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
 /**
- * 暂存工作区里的全部改动（`.agents/skills` 除外）并提交到当前分支；没有改动返回 undefined，什么也不留下（提交对象、分支都不变）。
- * 怎么做、为什么这样做见文件头。工作区不是仓库时抛 {@link WorkspaceError}（先 {@link ensureRepository}）。
+ * 把工作区里的全部改动（根目录的 `.agents/skills` 除外）提交到当前分支；没有改动 `result` 是 undefined，什么也没留下（提交对象、分支都不变）。
+ * 记什么、怎么做、为什么这样做见文件头。工作区不是仓库时抛 {@link WorkspaceError}（先 {@link ensureRepository}）。
  */
 export async function commitChanges(
 	agent: WorkspaceAgent,
 	workdir: string,
 	input: CommitInput,
-): Promise<CommitResult | undefined> {
+): Promise<CommitOutcome> {
 	const { signal } = input;
 	const repo = await findRepository(agent, workdir, signal);
 	if (!repo) throw new WorkspaceError("工作区不是 git 仓库");
 	const scratch = await makeScratch(agent, signal);
 	try {
-		// 临时仓库当 GIT_DIR，索引、对象目录是真的仓库里的，工作区是工作区。
+		// 临时仓库当 GIT_DIR，对象目录是真的仓库里的，工作区是工作区；索引是临时仓库里的新文件（空的，不读模型的索引）。
 		const objects = { GIT_DIR: scratch, GIT_OBJECT_DIRECTORY: repo.objects };
 		const stage = {
 			...objects,
 			GIT_WORK_TREE: workdir,
-			GIT_INDEX_FILE: repo.index,
+			GIT_INDEX_FILE: posix.join(scratch, "index"),
 			// 工作区里的 .gitignore 照常生效；.git/info/exclude 经 core.excludesFile 指过来。
 			GIT_ATTR_SOURCE: EMPTY_TREE,
 		};
+		// 取差异也不读工作区里的 .gitattributes（`* -diff` 会让每个文件都显示成二进制）。
+		const compare = { ...objects, GIT_ATTR_SOURCE: EMPTY_TREE };
 		const stageFlags = ["-c", "core.bare=false", "-c", `core.excludesFile=${repo.exclude}`];
 		const run = (args: string[], env: Record<string, string>, keep?: number) =>
 			git(agent, { args: [...stageFlags, ...args], cwd: workdir, env, keep, signal });
@@ -353,7 +420,6 @@ export async function commitChanges(
 		must(await run(["add", "-A"], stage), "git add");
 		// `.agents/skills` 不进提交，每次都显式从索引里拿掉，不靠 `.gitignore`（它在模型手里）。不用路径排除（`add -A -- . ':(exclude)…'`）：
 		// `.gitignore` 里也有这条时（初始化写进去的就有），git 把排除的路径当成「你明明点名了一个被忽略的路径」报错、退出码 1。
-		// 已经跟踪的（不是平台提交进去的）会在这个提交里删掉：平台的提交里没有它。
 		must(
 			await run(
 				["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", EXCLUDED_FROM_COMMITS],
@@ -364,12 +430,19 @@ export async function commitChanges(
 		const tree = must(await run(["write-tree"], stage), "git write-tree")
 			.toString("utf8")
 			.trim();
-		const parentTree = parent
+
+		// 基准：平台上次记下的提交的树；没记过、不在了就退回 HEAD 的树。
+		const recordedTree = await treeOf(run, objects, input.recorded);
+		const headTree = parent
 			? must(await run(["rev-parse", `${parent}^{tree}`], objects), "git rev-parse")
 					.toString("utf8")
 					.trim()
 			: EMPTY_TREE;
-		if (tree === parentTree) return undefined;
+		const baseTree = recordedTree ?? headTree;
+		if (tree === baseTree) {
+			return { result: undefined, recorded: recordedTree ? input.recorded : parent };
+		}
+		const note = recordedTree ? undefined : fallbackNote(input.recorded, parent);
 
 		const author = identity(input.author);
 		const hash = must(
@@ -387,23 +460,23 @@ export async function commitChanges(
 		)
 			.toString("utf8")
 			.trim();
-		if (!/^[0-9a-f]{40,64}$/.test(hash)) throw new WorkspaceError("git commit-tree 的输出认不出来");
+		if (!OBJECT_ID.test(hash)) throw new WorkspaceError("git commit-tree 的输出认不出来");
 
 		let files: CommitFile[] = [];
 		let diff: Buffer = Buffer.alloc(0);
 		let diffComplete = true;
 		if (input.summary !== false) {
-			const show = ["diff-tree", "-r", "--root", "--no-commit-id", "--no-renames"];
+			const show = ["diff-tree", "-r", "--no-renames"];
 			const numstat = await run(
-				[...show, "--numstat", "-z", "--no-ext-diff", "--no-textconv", hash],
-				objects,
+				[...show, "--numstat", "-z", "--no-ext-diff", "--no-textconv", baseTree, tree],
+				compare,
 				NUMSTAT_LIMIT_BYTES,
 			);
 			files = parseNumstat(must(numstat, "git diff-tree"), numstat.cut);
 			const limit = SESSION_EVENT_LIMITS.commitDiffBytes + (input.diffExtraBytes ?? 0);
 			const patch = await run(
-				[...show, "-p", "--no-color", "--no-ext-diff", "--no-textconv", hash],
-				objects,
+				[...show, "-p", "--no-color", "--no-ext-diff", "--no-textconv", baseTree, tree],
+				compare,
 				limit + 1,
 			);
 			must(patch, "git diff-tree");
@@ -411,7 +484,7 @@ export async function commitChanges(
 			diff = patch.stdout.subarray(0, limit);
 		}
 
-		// 分支最后动：上面任何一步失败，仓库里只多了索引里暂存的内容和没人引用的对象。
+		// 分支最后动：上面任何一步失败，仓库里只多了没人引用的对象。
 		must(
 			await git(agent, {
 				args: [
@@ -428,10 +501,35 @@ export async function commitChanges(
 			}),
 			"git update-ref",
 		);
-		return { hash, files, diff, diffComplete };
+		return { result: { hash, files, diff, diffComplete, note }, recorded: hash };
 	} finally {
-		await removeScratch(agent, scratch);
+		await removeScratch(agent, scratch, signal);
 	}
+}
+
+/**
+ * 平台上次记下的提交的树；没记过、不在仓库里（连同它的树）时 undefined。不去远端取（`GIT_NO_LAZY_FETCH`）：缺的对象就是缺的。
+ */
+async function treeOf(
+	run: (args: string[], env: Record<string, string>) => Promise<GitResult>,
+	objects: Record<string, string>,
+	recorded: string | undefined,
+): Promise<string | undefined> {
+	if (!recorded || !OBJECT_ID.test(recorded)) return undefined;
+	const found = await run(["rev-parse", "-q", "--verify", `${recorded}^{tree}`], objects);
+	if (found.code === 1) return undefined;
+	const tree = must(found, "git rev-parse").toString("utf8").trim();
+	if (!OBJECT_ID.test(tree)) throw new WorkspaceError("git rev-parse 的输出认不出来");
+	// 提交在、它的树不在（模型删了对象）：同样退回。
+	const exists = await run(["cat-file", "-e", tree], objects);
+	return exists.code === 0 ? tree : undefined;
+}
+
+/** 基准退回到 `HEAD` 时差异开头那一行：平台自己的话，说明这份差异是和什么比的。 */
+function fallbackNote(recorded: string | undefined, head: string | undefined): string {
+	const against = head ? `仓库当前提交（${head.slice(0, 7)}）` : "空仓库";
+	const why = recorded ? "平台上次记下的提交已经不在仓库里" : "平台还没有记过这个工作区的提交";
+	return `（${why}，下面是和${against}的差异）\n`;
 }
 
 /** `--numstat -z` 的输出：每个文件 `增\t删\t路径\0`，二进制文件的增删是 `-`。 */
@@ -486,19 +584,31 @@ async function makeScratch(
 			"git init（临时仓库）",
 		);
 	} catch (error) {
-		await removeScratch(agent, path);
+		await removeScratch(agent, path, signal);
 		throw error;
 	}
 	return path;
 }
 
-/** 删临时仓库：不管这次提交有没有被放弃都要做（所以不带调用方的信号），出错不抛（只是在工作台的 /tmp 里多留一个小目录）。 */
-async function removeScratch(agent: WorkspaceAgent, path: string): Promise<void> {
+/**
+ * 删临时仓库：不管这次提交有没有成都要做，出错不抛（只是在工作台的 /tmp 里多留一个小目录）。提交的期限（`signal`）还没到时算在期限里；
+ * 已经到了（提交被放弃）就只给 {@link ABANDONED_CLEANUP_MS} 那么一下，不等工作台回话。
+ */
+async function removeScratch(
+	agent: WorkspaceAgent,
+	path: string,
+	signal: AbortSignal | undefined,
+): Promise<void> {
 	if (!path.startsWith(SCRATCH_PREFIX)) return;
+	const within = AbortSignal.timeout(CLEANUP_MS);
+	const budget =
+		signal && !signal.aborted
+			? AbortSignal.any([signal, within])
+			: AbortSignal.timeout(ABANDONED_CLEANUP_MS);
 	try {
-		await execute(agent, ["rm", "-rf", path], { cwd: "/" });
+		await execute(agent, ["rm", "-rf", path], { cwd: "/", signal: budget });
 	} catch {
-		// 连不上工作台：留着，下次工作台上清 /tmp 时一起清。
+		// 连不上工作台、等不到：留着，下次工作台上清 /tmp 时一起清。
 	}
 }
 
@@ -519,7 +629,9 @@ export function commitEventBody(
 	result: CommitResult,
 	redactor: Redactor,
 ): CommitEvent {
-	const limit = SESSION_EVENT_LIMITS.commitDiffBytes;
+	// 开头的说明是平台自己写的（不含模型的东西，不用打码），占上限里的几个字节。
+	const note = result.note ?? "";
+	const limit = SESSION_EVENT_LIMITS.commitDiffBytes - Buffer.byteLength(note);
 	const stream = redactor.byteStream();
 	let safe = stream.push(result.diff);
 	if (result.diffComplete) safe = Buffer.concat([safe, stream.flush()]);
@@ -531,7 +643,7 @@ export function commitEventBody(
 		turn,
 		hash: result.hash,
 		files: result.files,
-		diff: kept.toString("utf8"),
+		diff: note + kept.toString("utf8"),
 		truncated,
 	};
 }

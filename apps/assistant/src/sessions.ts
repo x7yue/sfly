@@ -27,6 +27,7 @@ import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
 import { modelEnvRefs } from "./models.js";
 import { describeError } from "./output.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
+import { RecordedCommits } from "./recorded-commits.js";
 import { forLog, Redactor } from "./redact.js";
 import { mirrorSkillsLocally, workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
 import { quote, type Steer, SteerBook } from "./steers.js";
@@ -56,8 +57,9 @@ import {
  *   它没有在做的一轮，#539 第 8 题）；没有空闲的就拒绝（503 `process_limit`，控制面把这一轮记成 `failed`）。
  *   为了回收而关 stdin 只对空闲的进程做（一轮进行中关了，pi 不等这一轮做完）。
  * - secret 环境变量的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（redact.ts）。
- * - 工作区的提交（#546，workspace.ts）：一轮开始、把 `prompt` 交给 pi 之前，保证工作区是 git 仓库（不是就初始化），上一轮没能提交的
- *   改动（被打断、提交没做成）先单独提交；一轮以任何结局结束时（`turn_end` 之前）提交这一轮的改动，发 `platform`（`commit`）事件。
+ * - 工作区的提交（#546，workspace.ts）：一轮开始、把 `prompt` 交给 pi 之前，保证工作区是 git 仓库（不是就初始化），这一轮之前留下的
+ *   改动（会话开始之前就在的、上一轮被打断或提交没做成的）先单独提交；一轮以任何结局结束时（`turn_end` 之前）提交这一轮的改动，
+ *   发 `platform`（`commit`）事件。这一轮改了什么按平台上次记下的提交算（{@link RecordedCommits}），不看模型自己的 `HEAD`。
  *   连不上工作台、提交不成的，记日志，这一轮照常结束（留给下一轮开始前）。提交的命令不带会话令牌。
  */
 
@@ -84,11 +86,15 @@ export const ABORT_MARK_LIMIT = 1000;
 /**
  * 一轮结束时的提交最多用多久；停止一轮时再受「离 T0 加 {@link ASSISTANT_STOP_WAIT_MS} 还剩多少」限制：控制面在那之后会自己补结局、
  * 丢掉晚到的事件（协议「停止一轮」），所以剩下的时间不够（不到 {@link MIN_COMMIT_BUDGET_MS}）就不做，留给下一轮开始之前。
+ * **提交已经在进行时才收到停止**（用户停止、结束会话）：期限缩到「收到的这一刻加 {@link ASSISTANT_STOP_WAIT_MS} 减余量」，
+ * 不然一个卡住的提交会让这一轮的 `turn_end` 晚于控制面自己补结局的时间。
  */
 export const COMMIT_BUDGET_MS = 30_000;
 export const MIN_COMMIT_BUDGET_MS = 2_000;
-/** 停止一轮时给发结局留的余量。 */
-const COMMIT_STOP_MARGIN_MS = 1_000;
+/**
+ * 停止一轮时给发结局留的余量：放弃提交之后还要删临时仓库（最多等半秒）、发事件，加上控制面那一头计时比这里早起一个来回的网络时间。
+ */
+const COMMIT_STOP_MARGIN_MS = 2_000;
 /** 一轮开始前整理工作区（初始化、补提交）最多用多久；超过了这一轮照常开始。 */
 export const PREPARE_BUDGET_MS = 60_000;
 
@@ -185,10 +191,17 @@ interface Turn {
 	settled: Record<string, unknown> | undefined;
 	/** 开始前整理工作区时的取消（这一轮被停止、结束时用）。 */
 	prepare: AbortController | undefined;
-	/** 结束时的提交的取消（助手服务退出时用）；没有在提交时 undefined。 */
-	commit: AbortController | undefined;
+	/** 结束时在进行的提交（取消、期限）：助手服务退出、收到停止时用；没有在提交时 undefined。 */
+	commit: CommitRun | undefined;
 	/** 结局已经定了、正在提交：提交做完发 `turn_end`。没有在提交时 undefined。 */
 	concluding: Promise<void> | undefined;
+}
+
+/** 一轮结束时在进行的提交：到了期限（`deadline`，时钟上的时刻）就取消；收到停止时期限可以缩短（{@link SessionManager.#shortenCommit}）。 */
+interface CommitRun {
+	controller: AbortController;
+	deadline: number;
+	timer: Timer | undefined;
 }
 
 interface Session {
@@ -232,6 +245,8 @@ export class SessionManager {
 	readonly #stopWaitMs: number;
 	readonly #commitBudgetMs: number;
 	readonly #prepareBudgetMs: number;
+	/** 平台在每个工作区上次记下的提交号（助手服务自己的数据目录里）：一轮改了什么按它算。 */
+	readonly #recorded: RecordedCommits;
 	/** 正在关的 pi 进程（关 stdin 之后、退出之前）。 */
 	readonly #closing = new Set<PiProcess>();
 	/** 中止记号：会话 ID → 中止到第几轮（见 {@link abort}）。按最近一次提高的先后排，满了丢最早的。 */
@@ -251,6 +266,7 @@ export class SessionManager {
 		this.#stopWaitMs = options.stopWaitMs ?? ASSISTANT_STOP_WAIT_MS;
 		this.#commitBudgetMs = options.commitBudgetMs ?? COMMIT_BUDGET_MS;
 		this.#prepareBudgetMs = options.prepareBudgetMs ?? PREPARE_BUDGET_MS;
+		this.#recorded = new RecordedCommits(join(options.dataDir, "workspaces"));
 		mkdirSync(join(options.dataDir, "sessions"), { recursive: true });
 		this.#cleanLeftovers();
 	}
@@ -437,6 +453,7 @@ export class SessionManager {
 		}
 		const turn = session.turn;
 		if (turn) {
+			this.#shortenCommit(turn);
 			this.#stop(session, turn, ending);
 			if (turn.stop && !turn.ended) {
 				turn.stop.closeAfter = true;
@@ -489,6 +506,8 @@ export class SessionManager {
 		const session = this.#sessions.get(sessionId);
 		const current = session?.turn;
 		if (!session || !current || current.number > turn) return;
+		// 这一轮已经结束、提交还在进行：停止的期限从现在起算，提交的期限不能超过它。
+		this.#shortenCommit(current);
 		const ending: Ending = { outcome: "stopped", reason: "用户停止了这一轮" };
 		if (session.stopping) this.#end(session, current, ending);
 		else this.#stop(session, current, ending);
@@ -503,7 +522,7 @@ export class SessionManager {
 		for (const session of this.#sessions.values()) {
 			// 正在提交的不等了（留给下一轮开始前）：放弃提交，照原来的结局发 `turn_end`。
 			for (const turn of [session.stopping, session.turn]) {
-				turn?.commit?.abort();
+				turn?.commit?.controller.abort();
 				turn?.prepare?.abort();
 				if (turn?.concluding) concluding.push(turn.concluding);
 			}
@@ -1137,9 +1156,11 @@ export class SessionManager {
 	}
 
 	/**
-	 * 一轮开始、交给 pi 之前整理工作区：不是 git 仓库就初始化（初次提交，不发事件）；是仓库、而且上一轮的提交没做成（`committed` 不是
-	 * true：被打断、助手服务重启过、提交出了错）就先把留下的改动单独提交（「第 N-1 轮被打断时留下的改动」），发 `platform` 事件
-	 * （`turn` 是被打断的那一轮，事件在这一轮的事件流里发出）。出了错只记日志，这一轮照常开始。这一轮被停止、结束时放弃。
+	 * 一轮开始、交给 pi 之前整理工作区：不是 git 仓库就初始化（初次提交，不发事件）；是仓库、而且这一轮之前的提交没做成（`committed` 不是
+	 * true：会话刚开始、被打断、助手服务重启过、提交出了错）就先把留下的改动单独提交，发 `platform` 事件：
+	 * 第 1 轮是「会话开始之前工作区里留下的改动」（`turn` 是 1），之后是「第 N-1 轮被打断时留下的改动」（`turn` 是被打断的那一轮，
+	 * 事件在这一轮的事件流里发出）。这些改动按平台上次记下的提交算，没记过的退回和 `HEAD` 比（差异开头有说明）。
+	 * 出了错只记日志，这一轮照常开始。这一轮被停止、结束时放弃。
 	 */
 	async #prepareWorkspace(session: Session, turn: Turn): Promise<void> {
 		const { name, address, workdir } = turn.body.workbench;
@@ -1150,22 +1171,32 @@ export class SessionManager {
 			this.options.log(`会话 ${session.id} 第 ${turn.number} 轮：${this.#forLog(session, line)}`),
 		);
 		try {
-			if (!(await agent.reachable())) throw new WorkbenchError(`${WORKBENCH_UNREACHABLE}：${name}`);
+			if (!(await agent.reachable(controller.signal))) {
+				throw new WorkbenchError(`${WORKBENCH_UNREACHABLE}：${name}`);
+			}
 			const created = await ensureRepository(agent, workdir, { signal: controller.signal });
-			if (created) {
+			if (created.created) {
+				this.#remember(session, address, workdir, created.recorded);
 				session.committed = true;
 				return;
 			}
-			if (turn.number === 1 || session.committed) return;
-			const result = await commitChanges(agent, workdir, {
-				message: `${this.#label(session, turn)}第 ${turn.number - 1} 轮被打断时留下的改动`,
+			if (session.committed) return;
+			const first = turn.number === 1;
+			const outcome = await commitChanges(agent, workdir, {
+				message: `${this.#label(session, turn)}${first ? "会话开始之前工作区里留下的改动" : `第 ${turn.number - 1} 轮被打断时留下的改动`}`,
 				author: this.#author(turn),
 				signal: controller.signal,
 				diffExtraBytes: session.redactor.longestBytes,
+				recorded: this.#recorded.get(address, workdir),
 			});
+			this.#remember(session, address, workdir, outcome.recorded);
 			session.committed = true;
-			if (result && !turn.ended) {
-				this.#emit(session, turn, commitEventBody(turn.number - 1, result, session.redactor));
+			if (outcome.result && !turn.ended) {
+				this.#emit(
+					session,
+					turn,
+					commitEventBody(first ? 1 : turn.number - 1, outcome.result, session.redactor),
+				);
 			}
 		} catch (error) {
 			this.options.log(
@@ -1178,11 +1209,45 @@ export class SessionManager {
 		}
 	}
 
+	/** 记下平台这一刻在这个工作区的提交（下一轮的基准）。写不了（数据目录满了）只记日志：下一轮退回和 `HEAD` 比。 */
+	#remember(session: Session, address: string, workdir: string, commit: string | undefined): void {
+		if (!commit) return;
+		try {
+			this.#recorded.set(address, workdir, commit);
+		} catch (error) {
+			this.options.log(
+				`会话 ${session.id}：记不下工作区上次提交的提交号：${this.#forLog(session, error instanceof Error ? error.message : String(error))}`,
+			);
+		}
+	}
+
 	/** 这一轮的提交最多还能用多久（毫秒）：停止一轮时不能超过停止的期限。 */
 	#commitBudget(turn: Turn): number {
 		if (!turn.stop) return this.#commitBudgetMs;
 		const left = turn.stop.t0 + this.#stopWaitMs - this.#clock.now() - COMMIT_STOP_MARGIN_MS;
 		return Math.min(this.#commitBudgetMs, left);
+	}
+
+	/**
+	 * 这一轮已经结束、提交还在进行时收到停止（用户停止、结束会话）：停止的期限（协议「停止一轮」，从现在起算）之后控制面自己补结局、
+	 * 丢掉晚到的事件，所以提交的期限缩到「现在加 {@link ASSISTANT_STOP_WAIT_MS} 减余量」（已经更早就不动）；
+	 * 剩下的时间不够（不到 {@link MIN_COMMIT_BUDGET_MS}）就放弃，留给下一轮开始之前。
+	 */
+	#shortenCommit(turn: Turn): void {
+		const commit = turn.commit;
+		// 在停止的一轮提交的期限本来就是从停止的那一刻算的（#commitBudget）。
+		if (!commit || turn.stop) return;
+		const now = this.#clock.now();
+		const deadline = now + this.#stopWaitMs - COMMIT_STOP_MARGIN_MS;
+		if (deadline >= commit.deadline) return;
+		this.#clock.clearTimeout(commit.timer);
+		commit.deadline = deadline;
+		if (deadline - now < MIN_COMMIT_BUDGET_MS) {
+			commit.timer = undefined;
+			commit.controller.abort();
+			return;
+		}
+		commit.timer = this.#clock.setTimeout(() => commit.controller.abort(), deadline - now);
 	}
 
 	/**
@@ -1196,22 +1261,30 @@ export class SessionManager {
 	): Promise<CommitEvent | undefined> {
 		const { name, address, workdir } = turn.body.workbench;
 		const controller = new AbortController();
-		turn.commit = controller;
-		const timer = this.#clock.setTimeout(() => controller.abort(), budget);
+		const run: CommitRun = {
+			controller,
+			deadline: this.#clock.now() + budget,
+			timer: this.#clock.setTimeout(() => controller.abort(), budget),
+		};
+		turn.commit = run;
 		const agent = this.options.connect(address, (line) =>
 			this.options.log(`会话 ${session.id} 第 ${turn.number} 轮：${this.#forLog(session, line)}`),
 		);
 		try {
-			// 工作台不回话时不等整个期限：先问一声（几秒内没有回应就放弃）。
-			if (!(await agent.reachable())) throw new WorkbenchError(`${WORKBENCH_UNREACHABLE}：${name}`);
-			const result = await commitChanges(agent, workdir, {
+			// 工作台不回话时不等整个期限：先问一声（几秒内没有回应就放弃）。问也在期限里：期限先到就不再等。
+			if (!(await agent.reachable(controller.signal))) {
+				throw new WorkbenchError(`${WORKBENCH_UNREACHABLE}：${name}`);
+			}
+			const outcome = await commitChanges(agent, workdir, {
 				message: `${this.#label(session, turn)}第 ${turn.number} 轮`,
 				author: this.#author(turn),
 				signal: controller.signal,
 				diffExtraBytes: session.redactor.longestBytes,
+				recorded: this.#recorded.get(address, workdir),
 			});
+			this.#remember(session, address, workdir, outcome.recorded);
 			session.committed = true;
-			return result && commitEventBody(turn.number, result, session.redactor);
+			return outcome.result && commitEventBody(turn.number, outcome.result, session.redactor);
 		} catch (error) {
 			session.committed = false;
 			this.options.log(
@@ -1219,7 +1292,7 @@ export class SessionManager {
 			);
 			return undefined;
 		} finally {
-			this.#clock.clearTimeout(timer);
+			this.#clock.clearTimeout(run.timer);
 			agent.close();
 			turn.commit = undefined;
 		}

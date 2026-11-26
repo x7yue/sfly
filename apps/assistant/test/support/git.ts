@@ -8,6 +8,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -69,22 +70,103 @@ export interface Traps {
 	names: string[];
 }
 
+/** 一批陷阱共用的标记目录：每个陷阱是一个会在这里留下 `<名字>.ran` 的脚本。 */
+function trapKit() {
+	const markers = mkdtempSync(join(tmpdir(), "sfly-traps-"));
+	const names: string[] = [];
+	/** 写一个脚本陷阱；`body` 不给时是「留下标记、原样转发标准输入」（过滤器、textconv 那样的）。 */
+	const script = (path: string, name: string, body = "cat\n") => {
+		names.push(name);
+		writeFileSync(path, `#!/bin/sh\ntouch '${join(markers, `${name}.ran`)}'\n${body}`);
+		chmodSync(path, 0o755);
+		return path;
+	};
+	const traps = (): Traps => ({
+		names,
+		ran: () =>
+			readdirSync(markers)
+				.filter((name) => name.endsWith(".ran"))
+				.map((name) => name.replace(/\.ran$/, ""))
+				.sort(),
+	});
+	return { markers, names, script, traps };
+}
+
+/** 模型自己的 git：有身份，不读全局和系统的配置。 */
+const asModel = (cwd: string, ...args: string[]) =>
+	execFileSync("git", ["-c", "user.name=m", "-c", "user.email=m@m.invalid", ...args], {
+		cwd,
+		env: gitEnv(),
+		stdio: "ignore",
+	});
+
+/** 子模块那一路的陷阱：工作区里的嵌套仓库 `nested-repo`，在父仓库的索引里是 gitlink（模型自己 `git add` 的），里面有一个改过的文件。 */
+const NESTED = "nested-repo";
+
+function plantNested(kit: ReturnType<typeof trapKit>, workdir: string): void {
+	const sub = join(workdir, NESTED);
+	mkdirSync(sub);
+	asModel(sub, "init", "-q", "-b", "main");
+	writeFileSync(join(sub, "f"), "s\n");
+	asModel(sub, "add", "f");
+	asModel(sub, "commit", "-q", "-m", "s");
+	// 子仓库自己的属性和配置（它在子仓库里，不在父仓库的 .git 里：父仓库的所有防护都够不着，只能不进去看）。
+	mkdirSync(join(sub, ".git", "info"), { recursive: true });
+	writeFileSync(join(sub, ".git", "info", "attributes"), "* filter=evil\n");
+	asModel(
+		sub,
+		"config",
+		"filter.evil.clean",
+		kit.script(join(sub, ".git", "filter.sh"), "submodule-filter"),
+	);
+	asModel(
+		sub,
+		"config",
+		"core.fsmonitor",
+		kit.script(join(sub, ".git", "fsmonitor.sh"), "submodule-fsmonitor"),
+	);
+	// 父仓库的索引里放 gitlink，再把子仓库里的文件改了（文件状态变了，`git add -A` 才会进去看）。
+	asModel(workdir, "add", NESTED);
+	writeFileSync(join(sub, "f"), "t\n");
+	utimesSync(join(sub, "f"), new Date("2001-01-01"), new Date("2001-01-01"));
+}
+
+/** 只布子模块那一路（见 {@link plantNested}）：工作区已经是 git 仓库。 */
+export function plantSubmodule(workdir: string): Traps {
+	const kit = trapKit();
+	plantNested(kit, workdir);
+	return kit.traps();
+}
+
+/**
+ * 部分克隆的陷阱：`extensions.partialClone` 加 `remote.origin.uploadpack`（补取缺的对象时 git 会执行它），`HEAD` 指到一个不存在的提交
+ * （读它就要补取）。仓库已经是坏的：平台提交不成也没关系，要看的是 uploadpack 没有被执行。
+ */
+export function plantLazyFetch(workdir: string): Traps {
+	const kit = trapKit();
+	const gitDir = join(workdir, ".git");
+	const upload = kit.script(join(gitDir, "uploadpack.sh"), "lazy-fetch-uploadpack", "exit 1\n");
+	asModel(workdir, "config", "core.repositoryformatversion", "1");
+	asModel(workdir, "config", "extensions.partialClone", "origin");
+	asModel(workdir, "config", "remote.origin.url", workdir);
+	asModel(workdir, "config", "remote.origin.promisor", "true");
+	asModel(workdir, "config", "remote.origin.uploadpack", upload);
+	writeFileSync(join(gitDir, "refs", "heads", "main"), `${"1".repeat(40)}\n`);
+	return kit.traps();
+}
+
 /**
  * 在一个已经是 git 仓库的 `workdir` 里布下陷阱，写法都是模型能做到的（它在工作台上能写 `.git/` 里的任何东西和工作区里的任何文件）：
  * `.git/hooks/` 里的钩子、`core.hooksPath` 指到别处、`core.fsmonitor`、`filter` 经 `.gitattributes` 和 `.git/info/attributes` 两处引用、
  * `diff.<名>.textconv` 和外部 diff（`diff.external`、`diff.<名>.command`）、`gpg.program` 加 `commit.gpgsign`、`gc.auto`，
- * 同样的配置还放在 `include.path` 和 `includeIf` 引进来的文件里。
+ * 同样的配置还放在 `include.path` 和 `includeIf` 引进来的文件里；再加一个嵌套仓库（父索引里有它的 gitlink，它自己配了过滤器和 fsmonitor，
+ * 见 {@link plantSubmodule}）。部分克隆那一路另放（{@link plantLazyFetch}）：它让仓库的 `HEAD` 坏掉。
  */
 export function plantTraps(workdir: string): Traps {
-	const markers = mkdtempSync(join(tmpdir(), "sfly-traps-"));
+	const kit = trapKit();
+	const { markers, names, script } = kit;
 	const gitDir = join(workdir, ".git");
-	const names: string[] = [];
-	const script = (path: string, name: string) => {
-		names.push(name);
-		writeFileSync(path, `#!/bin/sh\ntouch '${join(markers, `${name}.ran`)}'\ncat\n`);
-		chmodSync(path, 0o755);
-		return path;
-	};
+	plantNested(kit, workdir);
 	mkdirSync(join(gitDir, "hooks"), { recursive: true });
 	for (const hook of [
 		"pre-commit",
@@ -145,12 +227,5 @@ export function plantTraps(workdir: string): Traps {
 	writeFileSync(join(workdir, ".gitattributes"), "* filter=evil diff=evil\n");
 	mkdirSync(join(gitDir, "info"), { recursive: true });
 	writeFileSync(join(gitDir, "info", "attributes"), "* filter=evil diff=evil\n");
-	return {
-		names,
-		ran: () =>
-			readdirSync(markers)
-				.filter((name) => name.endsWith(".ran"))
-				.map((name) => name.replace(/\.ran$/, ""))
-				.sort(),
-	};
+	return kit.traps();
 }
