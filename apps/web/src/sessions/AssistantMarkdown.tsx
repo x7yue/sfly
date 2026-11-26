@@ -43,8 +43,9 @@ import {
  *
  * **逐字出现**时每来一段增量，这一条要整条重新解析一遍（react-markdown 不做增量解析；20 KB 约二十几毫秒，一帧 16.7 毫秒放不下）：
  * 所以逐字出现的那一条**最多每 {@link STREAM_PARSE_INTERVAL_MS} 毫秒解析一次**（节流，{@link useThrottledText}），中间来的增量先攒着；
- * 整条消息到了（`streaming` 为假）立刻解析最终的文字。试过 `useDeferredValue`：解析是一次不可中断的整块，延迟只改变先后，每帧还是
- * 解析一次，20 KB 时 300 帧里 298 帧以上超过 20 毫秒，没有改善。解析的结果按文字缓存（`useMemo`），文字没变的重新渲染不再解析。
+ * 整条消息到了（`streaming` 为假）立刻解析最终的文字。20 KB 的一条，主线程每个增量忙的时间（`session-long-measure.spec.ts`）：不处理 9.4 毫秒，
+ * 节流 2.4 毫秒；试过 `useDeferredValue`：解析是一次不可中断的整块，延迟只改变先后，每个增量还是解析一次，9.7 毫秒，没有改善。
+ * 解析的结果按文字缓存（`useMemo`），文字没变的重新渲染不再解析。
  * 别的条目不受影响（`SessionTimeline` 的行是 `memo`）。
  */
 export function AssistantMarkdown({
