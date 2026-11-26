@@ -20,6 +20,16 @@ export function logFileProblem(
 	return stats.size < info.recordedBytes ? "short" : undefined;
 }
 
+/** 下载应当到的位置（#721，响应头 {@link LOG_EXPECT_HEADER}）：范围内有日志的任务数，和各任务最后一个序号之和。 */
+export interface LogExpect {
+	tasks: number;
+	lastSeqSum: number;
+}
+
+/** {@link LOG_EXPECT_HEADER} 的值：大小固定，和任务个数无关。 */
+export const formatLogExpect = ({ tasks, lastSeqSum }: LogExpect): string =>
+	`tasks=${tasks}; last_seq_sum=${lastSeqSum}`;
+
 /** 日志文件不全的两种：不见了、比数据库记的短。 */
 export type LogFileProblemKind = NonNullable<ReturnType<typeof logFileProblem>>;
 

@@ -16,6 +16,7 @@ import { runs } from "../db/schema.js";
 import { getRunView } from "../runs/run-read.js";
 import {
 	type GoneTask,
+	type LogExpect,
 	type LogFileProblemKind,
 	LogFilesGoneError,
 	logFileProblem,
@@ -203,12 +204,18 @@ export class RunLogs {
 	async readAll(
 		runId: string,
 		scope: RunLogScope | undefined,
-	): Promise<AsyncGenerator<RunLogLine[], void> | undefined> {
+	): Promise<{ batches: AsyncGenerator<RunLogLine[], void>; expect: LogExpect } | undefined> {
 		const streams = await this.#streams(runId, scope);
 		if (!streams) return undefined;
 		const gone = (await problemsOf(streams)).map(({ task, reason }) => goneTask(task, reason));
 		if (gone.length > 0) throw new LogFilesGoneError(gone);
-		return this.#batches(streams, await this.deps.logs.logMask(runId));
+		// 应当到的位置（#721，响应头）：和下载读的是同一份快照（`streams` 里每个任务的 `seq`、`bytes` 是列出任务那一刻一起取的），
+		// 所以读到的每个任务的最大序号不会超过它的 `seq`。
+		const expect = {
+			tasks: streams.filter((s) => s.log.seq > 0).length,
+			lastSeqSum: streams.reduce((sum, s) => sum + s.log.seq, 0),
+		};
+		return { batches: this.#batches(streams, await this.deps.logs.logMask(runId)), expect };
 	}
 
 	async *#batches(streams: TaskStream[], mask: LogMask): AsyncGenerator<RunLogLine[], void> {
