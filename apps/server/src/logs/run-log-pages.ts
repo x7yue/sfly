@@ -14,7 +14,12 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { runs } from "../db/schema.js";
 import { getRunView } from "../runs/run-read.js";
-import { type GoneTask, LogFilesGoneError, logFileProblem } from "./log-files.js";
+import {
+	type GoneTask,
+	type LogFileProblemKind,
+	LogFilesGoneError,
+	logFileProblem,
+} from "./log-files.js";
 import type { LogMask } from "./log-mask.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
@@ -72,6 +77,14 @@ export interface RunLogPageResult {
 	truncatedTasks: LogOrigin[];
 	/** 实时流起点：读这一页那一刻每个任务已写入的最大序号。 */
 	live: TaskSeqs;
+	/** 范围内日志文件有问题的任务（#721），按运行视图里的顺序；全部，由路由截断到契约里的个数。 */
+	fileProblems: FileProblem[];
+}
+
+/** 日志文件有问题的任务（页里和实时流说明）：它的来源，和是不见了还是比数据库记的短。 */
+export interface FileProblem {
+	origin: LogOrigin;
+	problem: LogFileProblemKind;
 }
 
 export interface RunLogFollow {
@@ -80,6 +93,11 @@ export interface RunLogFollow {
 	filter: LogFilter;
 	/** 已经读到（或推送过）的位置：只推送每个任务更大的序号。 */
 	after: TaskSeqs;
+	/**
+	 * 连上时范围内日志文件有问题的任务（#721，和下载是同一个判断）：在补发之前、和补发同一步里查，复用 `follow` 本来就要做的那一次列任务
+	 * （连上之前再读一遍运行视图和每个文件会让连接变慢，#734 的审查）；没有问题时不调用。它返回之后才补发，所以事件在第一批 `logs` 之前。
+	 */
+	onProblems?: (problems: FileProblem[]) => Promise<void>;
 }
 
 /** 实时推送的一次推送，`at` 是推送到的位置。 */
@@ -166,6 +184,10 @@ export class RunLogs {
 			reachedEnd: lanes.every((lane) => after(lane) >= lane.until),
 			truncatedTasks: streams.filter((s) => s.log.truncated).map((s) => s.task.origin),
 			live: new Map(streams.map((s) => [s.log.order, s.log.seq])),
+			fileProblems: (await problemsOf(streams)).map(({ task, reason }) => ({
+				origin: task.origin,
+				problem: reason,
+			})),
 		};
 	}
 
@@ -184,14 +206,7 @@ export class RunLogs {
 	): Promise<AsyncGenerator<RunLogLine[], void> | undefined> {
 		const streams = await this.#streams(runId, scope);
 		if (!streams) return undefined;
-		const found = await mapOpenFiles(
-			streams,
-			async ({ task, log }): Promise<GoneTask | undefined> => {
-				const reason = logFileProblem(log, await stat(log.file).catch(() => undefined));
-				return reason === undefined ? undefined : goneTask(task, reason);
-			},
-		);
-		const gone = found.filter((g): g is GoneTask => g !== undefined);
+		const gone = (await problemsOf(streams)).map(({ task, reason }) => goneTask(task, reason));
 		if (gone.length > 0) throw new LogFilesGoneError(gone);
 		return this.#batches(streams, await this.deps.logs.logMask(runId));
 	}
@@ -263,6 +278,14 @@ export class RunLogs {
 		// 先排上补发再订阅（同步完成，中间不会有发布）：补发时取的快照之后写入的行，都排在补发之后按序号去重。
 		serial(async () => {
 			const streams = await learn();
+			if (request.onProblems) {
+				const found = await problemsOf(streams);
+				if (found.length > 0) {
+					await request.onProblems(
+						found.map(({ task, reason }) => ({ origin: task.origin, problem: reason })),
+					);
+				}
+			}
 			const sentSeq = (s: TaskStream) => sent.get(s.log.order) ?? 0;
 			const behind = streams.filter((s) => s.log.seq > sentSeq(s));
 			const missed = behind.reduce((n, s) => n + s.log.seq - sentSeq(s), 0);
@@ -314,6 +337,19 @@ export class RunLogs {
 			return log ? [{ task, log }] : [];
 		});
 	}
+}
+
+/** 这些任务里日志文件有问题的（不见了、比数据库记的短），按给定的顺序；每个文件 stat 一次。 */
+async function problemsOf(
+	streams: TaskStream[],
+): Promise<Array<{ task: RunLogTask; reason: LogFileProblemKind }>> {
+	const found = await mapOpenFiles(streams, async ({ task, log }) => {
+		const reason = logFileProblem(log, await stat(log.file).catch(() => undefined));
+		return reason === undefined ? undefined : { task, reason };
+	});
+	return found.filter(
+		(p): p is { task: RunLogTask; reason: LogFileProblemKind } => p !== undefined,
+	);
 }
 
 const runLogLine = (stream: TaskStream, line: LogLineView): RunLogLine => ({

@@ -4,6 +4,7 @@
 // 比它短、或者有行写入过文件却不存在，就是文件被删了或截短了：保留期清理（先删文件、再标记运行已清理，中间有一小段时间运行还没有标记）、
 // 人为删除、磁盘出问题。从没有日志的任务（`seq` 是 0、没有文件）不算：它的日志本来就是空的。
 import type { Stats } from "node:fs";
+import { LOG_FILE_PROBLEMS_LIMIT } from "@sfly/schema";
 import type { TaskLogInfo } from "./task-logs.js";
 
 /**
@@ -35,8 +36,8 @@ export const LOG_FILE_GONE_CAUSES =
 	"it was deleted or truncated, or the host lost power (appended lines are not fsynced, the database is), " +
 	"or the database was restored from a newer backup than the data directory";
 
-/** 410 `details` 里最多列出几个任务（总数在 `total`）。 */
-const DETAILS_TASKS = 20;
+/** 410 `details` 里最多列出几个任务（总数在 `total`）：和分页、实时流里的 `file_problems` 同一个上限。 */
+const DETAILS_TASKS = LOG_FILE_PROBLEMS_LIMIT;
 
 /**
  * 下载要读的日志文件已经不全了（不见了、变短了）：下载之前认出来的，路由回 410 `expired`；下载过程中认出来的（响应已经开始），

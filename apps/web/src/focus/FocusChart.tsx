@@ -2,6 +2,7 @@ import type { RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FOCUS, hiddenSeriesLabel, MONITOR_VIEW_LABEL, viewInLabel } from "#/lib/copy";
 import { attemptWindow } from "#/monitor/charts";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,7 @@ export function FocusChart({
 			<header className="flex items-baseline gap-2">
 				<StatusDot kind={nodeStatusView(item.source.status).kind} className="self-center" />
 				<h3 id={titleId} className="m-0 min-w-0 text-sm font-semibold wrap-anywhere text-fg-1">
-					{item.title}
+					<UntrustedText text={item.title} />
 				</h3>
 				{!item.unavailable && <FocusValue item={item} className="ml-auto flex-none truncate" />}
 			</header>
@@ -70,7 +71,7 @@ export function FocusChart({
 			)}
 			{item.unavailable ? (
 				<p className="m-0 grid h-24 place-items-center text-xs text-fg-3">
-					{FOCUS.chartMissing(item.chart)}
+					<UntrustedText text={FOCUS.chartMissing(item.chart)} />
 				</p>
 			) : (
 				<FocusPlot

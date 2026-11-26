@@ -7,6 +7,7 @@ import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
 import { filterAnnouncement, isFiltered, withFailed } from "#/actions/action-filter";
 import { type ActionTableGroup, actionTable, groupNotes } from "#/actions/action-table";
 import { useTaskActions } from "#/actions/use-task-actions";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { EmptyState, ErrorState, TableSkeleton } from "#/components/feedback/states";
 import { runNodeName } from "#/components/node-name";
 import { ACTION, ACTION_PAGE, MESSAGE, TERM } from "#/lib/copy";
@@ -131,7 +132,7 @@ export function ActionsTab({
 			<output className="sr-only">{announcement.text}</output>
 			{loaded && actions.error && (
 				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
-					{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
+					{MESSAGE.loadFailed(TERM.action)}：<ErrorMessage error={actions.error} />
 				</p>
 			)}
 			<div className="min-h-0 flex-1">

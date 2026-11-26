@@ -118,7 +118,8 @@ def describe_outputs(
     run: Mapping[str, Any], node_refs: Sequence[str] | None
 ) -> list[dict[str, Any]]:
     """各节点的输出（取节点最后一次尝试的，下游节点引用的就是它）：没有输出的节点（没执行完、失败、
-    被跳过）不在里面。`--json` 的内容。"""
+    被跳过）不在里面。运行视图里大的输出只给大小（`outputs_omitted_bytes`，#633），这样的节点在里面、
+    `outputs` 是 None，由 `show_outputs` 取全文。"""
     index = RunIndex.of(run)
     wanted = _wanted(index, node_refs)
     rows: list[dict[str, Any]] = []
@@ -127,9 +128,11 @@ def describe_outputs(
             if wanted is not None and (chain["id"], node["node_id"]) not in wanted:
                 continue
             outputs = node["outputs"]
+            # 内容为 None：没有输出，或者被省略了（只在被省略时 `outputs_omitted_bytes` 不是 None）
+            omitted = node.get("outputs_omitted_bytes") is not None
             attempts = node["attempts"]
             # 入口节点只是链的起点，没有输出可看。
-            if node["kind"] in _PSEUDO_NODES or outputs is None or not attempts:
+            if node["kind"] in _PSEUDO_NODES or (outputs is None and not omitted) or not attempts:
                 continue
             last = max(attempts, key=lambda a: a["attempt"])
             run_node = next(
@@ -183,10 +186,25 @@ def render_outputs(
     return "\n\n".join(blocks)
 
 
+def _with_full_outputs(client: Any, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """运行视图里被省略的大输出（内容是 None）取全文：`GET /tasks/<任务>/io`，
+    任务是节点最后一次尝试。"""
+    full: list[dict[str, Any]] = []
+    for row in rows:
+        if row["outputs"] is None:
+            outputs = client.get(f"/tasks/{segment(row['task'])}/io")["outputs"]
+            if outputs is None:
+                continue
+            row = {**row, "outputs": outputs}
+        full.append(row)
+    return full
+
+
 def show_outputs(session: Session, run_id: str, args: argparse.Namespace) -> None:
     run = fetch_run(session.client, run_id)
     rows = describe_outputs(run, args.node)
-    shown = rows[: args.limit]
+    # 只取要显示的那些的全文（大的输出在运行视图里只给大小）。
+    shown = _with_full_outputs(session.client, rows[: args.limit])
     note = more_note(len(rows) - len(shown), len(rows), "个节点的输出", narrow="用 --node 选节点")
     session.out.emit(shown, render_outputs(run_id, shown, selected=bool(args.node)), note=note)
 

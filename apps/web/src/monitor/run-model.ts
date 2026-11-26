@@ -15,7 +15,12 @@ import {
 } from "@sfly/schema";
 import { type RunNodeName, runNodeName } from "#/components/node-name";
 import { runStatusView, type StatusKind } from "#/components/status";
-import { attemptLabel, chainLabel as chainName } from "#/lib/copy";
+import {
+	attemptLabel,
+	chainLabel as chainName,
+	LOG_FILE_PROBLEMS_SHOWN,
+	MESSAGE,
+} from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 
@@ -69,10 +74,38 @@ export function chainLabelParts(chain: ChainRunView): { name: string; id: string
 export const documentNodes = (doc: StoredOrchestrationDocument | undefined) =>
 	new Map((doc?.nodes ?? []).map((n) => [n.id, n]));
 
+/**
+ * 停止子流程节点要停止的子流程（子流程入口的节点 ID）：取自运行绑定的版本里这个节点的配置（运行时记在任务输入里的就是它），
+ * 不读运行视图里的输入（输入大了会被省略，#633）；不是停止子流程节点、还没有选择子流程时为 undefined。
+ */
+export function stopSubflowTarget(
+	doc: StoredOrchestrationDocument | undefined,
+	nodeId: string,
+): string | undefined {
+	const node = documentNodes(doc).get(nodeId);
+	return node?.kind === "stop_subflow" ? node.subflow : undefined;
+}
+
 /** 停止子流程节点停止的子流程（按子流程入口 ID）在运行里的名称（每次运行每个子流程最多一个实例）。 */
 export function stoppedSubflowLabel(run: RunView, subflowId: string): string {
 	const chain = run.chains.find((c) => c.chain_id === subflowId);
 	return chainName({ chain_id: subflowId, subflow: true, name: chain?.name ?? null });
+}
+
+/**
+ * 合并视图的日志面板上，日志文件有问题的任务的说明（#721）：最多列 {@link LOG_FILE_PROBLEMS_SHOWN} 个（控制面给的更多，写「等共 N 个」），
+ * 每个写明是不在了还是比记录的短；没有问题时为 null。节点名是成员写的文字，和紧挨着的「输出太长」那一行一样直接显示（归 #714）。
+ */
+export function logFileProblemsNote(
+	run: RunView,
+	problems: readonly (LogOrigin & { problem: "missing" | "short" })[],
+	total: number,
+): string | null {
+	if (problems.length === 0) return null;
+	const items = problems
+		.slice(0, LOG_FILE_PROBLEMS_SHOWN)
+		.map((p) => `${logOrigin(run, p)}（${MESSAGE.logFileProblemKind[p.problem]}）`);
+	return MESSAGE.logFilesProblem(items, Math.max(total, problems.length));
 }
 
 export const isAlways = (decl: StoredNode | undefined) =>
