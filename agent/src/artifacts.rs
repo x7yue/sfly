@@ -32,7 +32,7 @@ use tokio_stream::Stream;
 use crate::clock;
 use crate::executor;
 use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
-use crate::secret::Secret;
+use crate::secret::{Secret, mask_userinfo};
 
 /// 网络错误、卡住、5xx、408 时的上传尝试次数。
 const ATTEMPTS: u32 = 3;
@@ -280,7 +280,8 @@ impl Uploader {
         if reasons.is_empty() {
             return result;
         }
-        let message = reasons.join("\n\n");
+        // 上传地址和 reqwest 的报错里的地址：用户名和密码换成掩码（#733；地址是控制面按对外地址拼的，不会带，多一层防护）。
+        let message = mask_userinfo(&reasons.join("\n\n")).into_owned();
         eprintln!("task {}: {message}", task.task_id);
         if result.status() == TaskStatus::Success {
             // 节点已经成功、上传时被取消（取消运行、停止子流程……）：这是终止，不是失败（docs/SEMANTICS.md §4.1，

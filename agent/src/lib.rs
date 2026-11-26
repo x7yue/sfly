@@ -90,7 +90,10 @@ pub const REJECTED_RETRY_MAX: Duration = Duration::from_secs(300);
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Agent 配置。
-#[derive(Debug, Clone)]
+///
+/// `Debug` 是手写的（见下）：控制面地址（`server`）可以带用户名和密码，被 `{:?}` 打印时换成掩码（#733）；
+/// 凭据 `token` 本来就是 [`secret::Secret`]，镜像地址的 `Debug` 在 [`environment::LocalMirrors`] 里处理。
+#[derive(Clone)]
 pub struct Config {
     /// 控制面 Agent 网关地址，例如 `http://127.0.0.1:50051`。
     pub server: String,
@@ -162,6 +165,80 @@ pub struct Config {
     /// 监听目录时队列里最多有多少个还没发出的事件，超过时重新给快照
     /// （[`capabilities::file_watch::DEFAULT_QUEUE_EVENTS`]；测试用隐藏参数 `--watch-queue-events` 改小，模拟调用方读得太慢）。
     pub watch_queue_events: usize,
+}
+
+/// 每个字段都列出来、不用 `..`：加了字段这里编译不过，不会悄悄漏掉一个带凭据的字段。
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Config {
+            server,
+            name,
+            token,
+            rejected_retry_min,
+            rejected_retry_max,
+            rejected_retry_jitter,
+            slots,
+            venv,
+            work_dir,
+            procs_dir,
+            task_dir_retention,
+            task_dir_sweep_interval,
+            mirrors,
+            user_agent,
+            uv,
+            manage_uv,
+            local_socket,
+            terminate_grace,
+            python,
+            telemetry_queue_bytes,
+            metric_queue_points,
+            log_forward_rate,
+            stable_connection,
+            update_read_timeout,
+            upload_idle_timeout,
+            version,
+            agent_time_offset_file,
+            self_update,
+            trial,
+            listen_port,
+            public_address,
+            watch_queue_events,
+        } = self;
+        f.debug_struct("Config")
+            .field("server", &secret::Masked(server))
+            .field("name", name)
+            .field("token", token)
+            .field("rejected_retry_min", rejected_retry_min)
+            .field("rejected_retry_max", rejected_retry_max)
+            .field("rejected_retry_jitter", rejected_retry_jitter)
+            .field("slots", slots)
+            .field("venv", venv)
+            .field("work_dir", work_dir)
+            .field("procs_dir", procs_dir)
+            .field("task_dir_retention", task_dir_retention)
+            .field("task_dir_sweep_interval", task_dir_sweep_interval)
+            .field("mirrors", mirrors)
+            .field("user_agent", user_agent)
+            .field("uv", uv)
+            .field("manage_uv", manage_uv)
+            .field("local_socket", local_socket)
+            .field("terminate_grace", terminate_grace)
+            .field("python", python)
+            .field("telemetry_queue_bytes", telemetry_queue_bytes)
+            .field("metric_queue_points", metric_queue_points)
+            .field("log_forward_rate", log_forward_rate)
+            .field("stable_connection", stable_connection)
+            .field("update_read_timeout", update_read_timeout)
+            .field("upload_idle_timeout", upload_idle_timeout)
+            .field("version", version)
+            .field("agent_time_offset_file", agent_time_offset_file)
+            .field("self_update", self_update)
+            .field("trial", trial)
+            .field("listen_port", listen_port)
+            .field("public_address", public_address)
+            .field("watch_queue_events", watch_queue_events)
+            .finish()
+    }
 }
 
 impl Config {
@@ -627,7 +704,11 @@ impl Runtime {
                 emit(serde_json::json!({ "event": "sdk_installed", "version": version }));
                 self.inventory.refresh().await;
             }
-            Err(error) => eprintln!("cannot install SDK runtime {version}: {error:#}"),
+            // 下载地址和 reqwest 的报错里的地址：用户名和密码换成掩码（#733）。
+            Err(error) => eprintln!(
+                "cannot install SDK runtime {version}: {}",
+                secret::mask_userinfo(&format!("{error:#}"))
+            ),
         }
     }
 
@@ -1306,6 +1387,36 @@ mod limit_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 配置被 `{:?}` 打印时（#733）：控制面地址、镜像地址里的用户名和密码是掩码，Agent 凭据是 `<redacted>`。
+    #[test]
+    fn config_debug_masks_addresses_and_hides_the_credential() {
+        let mut config = Config::new("http://srvuser:srvpass-9@cp.example:50051", "agent-x");
+        config.token = Some(secret::Secret::from("sfly_agt_0123456789abcdef"));
+        config.mirrors = environment::LocalMirrors {
+            pypi: Some("https://idxuser:idxpass-7a2d@pypi.example/simple".into()),
+            github_release: Some("https://ghuser:ghpass-1c3e@gh.example/github-release".into()),
+            python_install: Some("https://pyuser:pypass-5c4f@py.example/".into()),
+        };
+        for shown in [format!("{config:?}"), format!("{config:#?}")] {
+            for secret in [
+                "srvuser",
+                "srvpass-9",
+                "sfly_agt_",
+                "idxuser",
+                "idxpass-7a2d",
+                "ghuser",
+                "ghpass-1c3e",
+                "pyuser",
+                "pypass-5c4f",
+            ] {
+                assert!(!shown.contains(secret), "{secret}：{shown}");
+            }
+            assert!(shown.contains("http://***@cp.example:50051"), "{shown}");
+            assert!(shown.contains("https://***@pypi.example/simple"), "{shown}");
+            assert!(shown.contains("agent-x"), "{shown}");
+        }
+    }
 
     fn status(code: tonic::Code, message: &str) -> tonic::Status {
         tonic::Status::new(code, message)
