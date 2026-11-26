@@ -211,21 +211,26 @@ docker exec "$wb" sh -c 'test -x ~/.local/bin/sfly && test -f ~/.sfly/.workbench
 [[ $(docker exec "$wb" cat /work/probe.txt) == kept ]] || fail "重装之后工作区里的文件不见了"
 
 # 控制面的 install.sh 变了（升级、改了对外地址）：标记里记的 sha256 和这次取到的不一样 → 重装（sfly 命令行不会自己升级，靠这一步跟着控制面走）。
-# 这里把标记里的 sha256 改掉；同时在家目录的 ~/.local/bin 里放一个假的 cat：入口脚本自己用的命令只在系统目录里找，不会执行它。
+# 这里把标记里的 sha256 改掉；同时在家目录的 ~/.local/bin 里放两个入口脚本自己要用的命令（sha256sum、sed）的替身，被执行就在 /tmp
+# 里留一个文件再转给真的：入口脚本自己用的命令只在系统目录里找，不会执行它们。
 docker rm -f "$wb" >/dev/null
 docker run --rm -v "$home_volume:/home/workbench" --entrypoint sh "$workbench_image" -c \
 	"printf 'name=%s\ninstall_sh_sha256=%s\n' '$agent' 0000 > ~/.sfly/.workbench-installed &&
-	printf '#!/bin/sh\ntouch /tmp/planted-cat-ran\nexec /usr/bin/cat \"\$@\"\n' > ~/.local/bin/cat && chmod +x ~/.local/bin/cat"
+	for tool in sha256sum sed; do
+		printf '#!/bin/sh\ntouch /tmp/planted-%s-ran\nexec /usr/bin/%s \"\$@\"\n' \$tool \$tool > ~/.local/bin/\$tool &&
+		chmod +x ~/.local/bin/\$tool
+	done"
 start_workbench
 wait_online
 logs=$(docker logs "$wb" 2>&1)
 contains "$logs" 'install.sh 变了' || fail "标记里的 sha256 不对，入口脚本没有重装"
 contains "$(docker exec "$wb" cat /home/workbench/.sfly/.workbench-installed)" '^install_sh_sha256=[0-9a-f]\{64\}$' ||
 	fail "重装之后标记里没有记下 install.sh 的 sha256"
-docker exec "$wb" test ! -e /tmp/planted-cat-ran || fail "入口脚本执行了家目录里放的 cat"
+docker exec "$wb" sh -c 'test ! -e /tmp/planted-sha256sum-ran && test ! -e /tmp/planted-sed-ran' ||
+	fail "入口脚本执行了家目录里放的 sha256sum 或 sed"
 path_of_agent=$(docker exec "$wb" sh -c 'tr "\0" "\n" < /proc/$(pgrep -x sfly-agent | head -n 1)/environ | sed -n "s/^PATH=//p"')
 [[ $path_of_agent == */home/workbench/.local/bin ]] || fail "Agent 的 PATH 里 ~/.local/bin 不在最后：$path_of_agent"
 [[ $(docker exec "$wb" cat /work/probe.txt) == kept ]] || fail "控制面的 install.sh 变了重装之后，工作区里的文件不见了"
-docker exec "$wb" rm -f /home/workbench/.local/bin/cat
+docker exec "$wb" rm -f /home/workbench/.local/bin/sha256sum /home/workbench/.local/bin/sed
 
 echo "工作台镜像冒烟通过：$workbench_image（控制面 $server_image，sfly $version）"
