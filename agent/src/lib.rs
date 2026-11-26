@@ -243,8 +243,11 @@ impl std::fmt::Debug for Config {
 
 impl Config {
     pub fn new(server: impl Into<String>, name: impl Into<String>) -> Self {
+        let server = server.into();
+        // 控制面地址可以带用户名和密码：从这一刻起写进日志的文字里它的原文按值换成掩码（[`secret::register_address`]，#757）。
+        secret::register_address(&server);
         Self {
-            server: server.into(),
+            server,
             name: name.into(),
             token: None,
             rejected_retry_min: REJECTED_RETRY_MIN,
@@ -280,6 +283,22 @@ impl Config {
     }
 }
 
+impl Config {
+    /// 把配置里可能带用户名和密码的地址（控制面地址和本机覆盖的三个镜像）登记给打码（[`secret::register_address`]）。
+    /// 字段是公开的、构造之后还会改，所以连接和运行之前再登记一遍（同一个地址只占一项）。
+    pub fn register_known_addresses(&self) {
+        secret::register_address(&self.server);
+        let environment::LocalMirrors {
+            pypi,
+            github_release,
+            python_install,
+        } = &self.mirrors;
+        for address in [pypi, github_release, python_install].into_iter().flatten() {
+            secret::register_address(address);
+        }
+    }
+}
+
 /// 已完成握手的连接。
 pub struct Connection {
     pub welcome: Welcome,
@@ -304,6 +323,7 @@ pub struct HelloContent {
 
 /// 连接控制面，发送 Hello（带上已安装的节点包、开发版本和手上的任务）并等待 Welcome。
 pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<Connection> {
+    config.register_known_addresses();
     let HelloContent {
         installed_packages,
         dev_packages,
@@ -355,11 +375,15 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
     match inbound.message().await.context("wait for welcome")? {
         Some(ServerMessage {
             body: Some(server_message::Body::Welcome(welcome)),
-        }) => Ok(Connection {
-            welcome,
-            outbound,
-            inbound,
-        }),
+        }) => {
+            // Welcome 里控制面下发的镜像等地址可以带用户名和密码：在 Agent 写任何一个之前登记（#757）。
+            environment::register_welcome_addresses(&welcome);
+            Ok(Connection {
+                welcome,
+                outbound,
+                inbound,
+            })
+        }
         Some(other) => bail!("expected Welcome, got {other:?}"),
         None => bail!("control plane closed the stream before Welcome"),
     }
@@ -778,6 +802,7 @@ impl Runtime {
 ///
 /// 任务结果在收到控制面的 Ack 之前一直保留，每次重新连接后再次上报（控制面按 task_id + attempt 幂等处理）。
 pub async fn run(config: Config) -> anyhow::Result<()> {
+    config.register_known_addresses();
     if let Some(file) = &config.agent_time_offset_file {
         clock::use_offset_file(file.clone());
     }
@@ -1415,6 +1440,44 @@ mod tests {
             assert!(shown.contains("http://***@cp.example:50051"), "{shown}");
             assert!(shown.contains("https://***@pypi.example/simple"), "{shown}");
             assert!(shown.contains("agent-x"), "{shown}");
+        }
+    }
+
+    /// 凭据里有文字规则认不出的字符（`"`、空格、反引号、`<`、`>`、`\`）时（#757）：`Config::new` 登记了控制面地址，
+    /// `register_known_addresses` 登记了本机覆盖的三个镜像（这些字段构造之后才赋值）：`{:?}` 里没有用户名和密码。
+    #[test]
+    fn config_debug_masks_addresses_whose_credentials_have_awkward_characters() {
+        let mut config = Config::new(
+            "http://cfguser1:Hd1\"xq Tl1yz@cfg1.example:50051",
+            "agent-x",
+        );
+        config.mirrors = environment::LocalMirrors {
+            pypi: Some("https://cfguser2:Hd2`xq<Tl2yz>@cfg2.example/simple".into()),
+            github_release: Some("https://cfguser3:Hd3 xq\"Tl3yz@cfg3.example/gh".into()),
+            // 读法不一致：`\` 在用户名位置，整个地址不写出来。
+            python_install: Some(r"https://CFG4\cfguser4:Hd4xqTl4yz@cfg4.example/py/".into()),
+        };
+        config.register_known_addresses();
+        for shown in [format!("{config:?}"), format!("{config:#?}")] {
+            for secret in [
+                "cfguser1",
+                "Hd1",
+                "Tl1yz",
+                "cfguser2",
+                "Hd2",
+                "Tl2yz",
+                "cfguser3",
+                "Hd3",
+                "Tl3yz",
+                "cfguser4",
+                "CFG4",
+                "Hd4xqTl4yz",
+            ] {
+                assert!(!shown.contains(secret), "{secret}：{shown}");
+            }
+            assert!(shown.contains("http://***@cfg1.example:50051"), "{shown}");
+            assert!(shown.contains("https://***@cfg2.example/simple"), "{shown}");
+            assert!(shown.contains("https://***@cfg3.example/gh"), "{shown}");
         }
     }
 
