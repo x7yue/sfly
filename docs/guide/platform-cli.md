@@ -18,7 +18,7 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注）；`--json` 里包节点还带 `inputs`、异步任务节点带 `params`（原样） |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 参数的值打码，什么是 secret 参数见 [运行场景](run-scenario.md) 的「运行抽屉」），最后是注释框（标题、成员、备注）；`--json` 里包节点还带 `inputs`、异步任务节点带 `params`（原样） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
 | `sfly scenario edit <场景> <操作> [--dry-run]` / `sfly scenario edit <场景> --file <文件>` | 局部编辑：加节点（`add 包/节点 [--after 节点]`）、删节点（`remove`）、连线（`connect`）、断开（`disconnect`）、改节点的字段（`set`），存成一个新版本；`--dry-run` 只检查 |

@@ -2,7 +2,7 @@
 //
 // drizzle 的查询出错时，错误的 message 和属性里带着这次查询的参数（`Failed query: insert … \nparams: …`，`error.params`），
 // PostgreSQL 驱动给的错误还有 `detail`（`Key (token_hash)=(…) already exists.`）：写 `users` 表出错时密码的 scrypt 哈希会进日志，
-// 别的表的参数里有令牌的哈希、保密参数的默认值、飞书 Webhook 的地址。要保留的是 SQL（`$1` 这样的占位）和数据库给的原因
+// 别的表的参数里有令牌的哈希、secret 参数的默认值、飞书 Webhook 的地址。要保留的是 SQL（`$1` 这样的占位）和数据库给的原因
 // （错误码、约束名、表名、列名），去掉的是参数和 `detail`、`where`（里面带着值）。
 // 所有记日志的地方都过这一处：Fastify 的日志用 {@link serializeError}（`logger.serializers.err`），`console.error` 的地方用 {@link safeError}。
 

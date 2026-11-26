@@ -317,7 +317,7 @@ export const ParamDeclView = z.object({
 	default: z.unknown().optional(),
 	required: z.boolean().optional(),
 	secret: z.boolean().optional(),
-	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	/** 搭场景的人写的一行说明；secret 参数的说明照常给出，只有值打码。 */
 	description: z.string().optional(),
 });
 

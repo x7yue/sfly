@@ -225,7 +225,7 @@ export interface RunView {
 		bot: string;
 		reason: string | null;
 	} | null;
-	/** 保密值太多、要打码的内容整段盖住（#657）。 */
+	/** secret 值太多、要打码的内容整段盖住（#657）。 */
 	secrets_oversize?: boolean;
 	chains: ChainView[];
 }

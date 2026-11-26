@@ -1,5 +1,5 @@
 // 出错时写进日志的数据库报错不带查询的参数（PR #555 的独立审查）：drizzle 的查询错误的 message 里带着参数，
-// 写 `users` 表出错时密码的 scrypt 哈希会进日志；别的表的参数里有令牌的哈希、保密参数的默认值、飞书 Webhook 的地址。
+// 写 `users` 表出错时密码的 scrypt 哈希会进日志；别的表的参数里有令牌的哈希、secret 参数的默认值、飞书 Webhook 的地址。
 // 保留 SQL 和数据库给的原因（错误码、约束名、表名、列名），去掉参数和 `detail`、`where`（里面带着值）。
 import { readFileSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";

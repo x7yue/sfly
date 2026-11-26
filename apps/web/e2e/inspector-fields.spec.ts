@@ -160,11 +160,11 @@ test("开关旁边的文字也是开关的一部分：点文字就能切换", as
 
 	await nodeCard(page, "entry").click();
 	const required = panel.getByRole("switch", { name: "必填" });
-	const secret = panel.getByRole("switch", { name: "敏感" });
+	const secret = panel.getByRole("switch", { name: "secret" });
 	await panel.getByText("必填", { exact: true }).click();
 	await expect(required).toBeChecked();
 	await expect(secret).not.toBeChecked();
-	await panel.getByText("敏感", { exact: true }).click();
+	await panel.getByText("secret", { exact: true }).click();
 	await expect(secret).toBeChecked();
 });
 

@@ -1,5 +1,5 @@
 // 切入点 A：运行摘要 GET /runs/:id/summary（#423）。真实控制面 + 讲真实 gRPC 的假 Agent + 手动时钟 + 独立的
-// PostgreSQL，通过 HTTP 接口观察：成功、节点失败、重试后成功、取消、还在执行的运行，保密参数打码，日志尾部、失败的动作、
+// PostgreSQL，通过 HTTP 接口观察：成功、节点失败、重试后成功、取消、还在执行的运行，secret 参数打码，日志尾部、失败的动作、
 // 有异常的关注项，数量上限。
 
 import { rm } from "node:fs/promises";
@@ -35,7 +35,7 @@ const echo = (id: string, extra: Record<string, unknown> = {}): Node => ({
 	...extra,
 });
 
-/** 入口加若干包节点串成的单链；入口声明一个保密参数 `token`。 */
+/** 入口加若干包节点串成的单链；入口声明一个 secret 参数 `token`。 */
 function flow(nodes: Node[]) {
 	const all: Node[] = [
 		{
@@ -379,7 +379,7 @@ describe("运行摘要", () => {
 		});
 	});
 
-	it("保密参数的值在错误信息、日志、失败的动作里都打码，原文一处也看不到", async () => {
+	it("secret 参数的值在错误信息、日志、失败的动作里都打码，原文一处也看不到", async () => {
 		const runId = await start(flow([echo("a")]));
 		const task = await agent.nextAssign();
 		agent.logs(task, [[1, "登录 tk-secret"]]);
@@ -428,7 +428,7 @@ describe("运行摘要", () => {
 	describe("摘要里来自日志的内容读取时再打码", () => {
 		const LATER = "later-pw-3f9d2a71";
 
-		/** 主链 entry → spawn0 → gate → spawn1；子流程「前」里有 x，子流程「后」声明保密参数 pw（值由 spawn1 传入）。 */
+		/** 主链 entry → spawn0 → gate → spawn1；子流程「前」里有 x，子流程「后」声明 secret 参数 pw（值由 spawn1 传入）。 */
 		const document = (x: Node) => {
 			const doc = orchestration(
 				[
@@ -456,7 +456,7 @@ describe("运行摘要", () => {
 			);
 			return { ...doc, packages: { ...doc.packages, bench: "1.0.0" } };
 		};
-		/** 让保密参数的子流程创建出来：gate 成功，spawn1 触发子流程「后」。 */
+		/** 让 secret 参数的子流程创建出来：gate 成功，spawn1 触发子流程「后」。 */
 		const createLaterSubflow = async (runId: string, gate: AssignedTask) => {
 			await agent.succeed(gate);
 			await eventually(async () => expect((await api.run(runId)).chains).toHaveLength(3));

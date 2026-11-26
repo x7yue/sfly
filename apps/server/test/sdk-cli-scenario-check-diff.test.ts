@@ -190,7 +190,7 @@ describe("sfly scenario check / push --strict / diff → 控制面", () => {
 	});
 
 	describe("改动之前就有的警告不挡住这次改动", () => {
-		/** 入口带一个写了默认值的保密参数：最新版本里就有一条 secret_param_default 警告。 */
+		/** 入口带一个写了默认值的 secret 参数：最新版本里就有一条 secret_param_default 警告。 */
 		const withSecretDefault = (): Doc => {
 			const doc = cleanDocument();
 			(doc.nodes[0] as { params?: unknown[] }).params = [

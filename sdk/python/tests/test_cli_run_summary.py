@@ -512,7 +512,7 @@ def test_an_error_from_an_older_control_plane_has_no_location_and_looks_as_befor
 
 
 def test_a_run_whose_secret_values_are_too_many_says_why_everything_is_masked() -> None:
-    """保密值太多的运行（#657）：摘要的 JSON 多一个 `secrets_oversize`，文本里多一行提示，
+    """secret 值太多的运行（#657）：摘要的 JSON 多一个 `secrets_oversize`，文本里多一行提示，
     不含任何值；正常的摘要没有这个键、没有这一行，和以前一字不差。"""
     plain = summary_of(CLIENT, report())
     assert "secrets_oversize" not in plain
