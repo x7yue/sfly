@@ -5,6 +5,7 @@ import {
 	applyQueuedView,
 	emptyTimeline,
 	initialTimeline,
+	lastBytes,
 	modelActivity,
 	prependHistory,
 	type TimelineState,
@@ -1028,10 +1029,24 @@ describe("定稿（#550）：并行的调用、编辑的差异、等模型回复
 	});
 
 	it("等模型回复（modelActivity）：一轮在做、没有文字在出、没有工具在跑、也没有听到「思考」时是 waiting，写从哪一刻起（最近一条持久事件）", () => {
-		const state = run([user(1), started(2)]);
-		// 从最近一条持久事件（这一轮的开始）起算。
-		expect(modelActivity(state)).toEqual({ kind: "waiting", since: state.lastEventAt });
-		expect(state.lastEventAt).toEqual(expect.any(String));
+		// 事件的时间是写死的：「从哪一刻起」要等于最近一条持久事件自己的 `at`，不是别的什么时间，也不是 null。
+		const turn = { ...started(2), at: "2026-01-01T00:00:07.000Z" } as SessionEvent;
+		const state = run([user(1), turn]);
+		expect(modelActivity(state)).toEqual({ kind: "waiting", since: "2026-01-01T00:00:07.000Z" });
+		// 之后又来一条持久事件（工具有了结果）：从那一条起算，不是从这一轮开始起算。
+		const later = run(
+			[
+				call(3, "c1", "command", "ls"),
+				{ ...result(4, "c1"), at: "2026-01-01T00:00:19.000Z" } as SessionEvent,
+			],
+			state,
+		);
+		expect(modelActivity(later)).toEqual({ kind: "waiting", since: "2026-01-01T00:00:19.000Z" });
+		// 没有任何带时间的事件（刚打开、历史是空的，会话视图说在做）：不知道从哪一刻起，since 是 null。
+		expect(modelActivity(emptyTimeline("running", null, true))).toEqual({
+			kind: "waiting",
+			since: null,
+		});
 	});
 
 	it("听到了「思考」就是 thinking；有文字在逐字出现、或者有工具在跑时都不写（那一行自己就是进行中的提示）", () => {
@@ -1087,6 +1102,43 @@ describe("定稿（#550）：命令跑着时的输出（tool_output）", () => {
 		expect(text.endsWith("汉")).toBe(true);
 		// 最后一批一定整个在里面（它只有 3 KB）。
 		expect(text.endsWith(`19`.padEnd(1000, "汉"))).toBe(true);
+	});
+
+	it("字节上限落在多字节字符中间时，从下一个字符的开头起留（lastBytes）：三字节的汉字、四字节的表情都不被切开", () => {
+		// 三字节的汉字：「a」一个字节，后面十个汉字 30 字节，共 31；留 8 字节时起点在第 23 字节（第 8 个汉字的第二个字节），
+		// 往后挪到下一个汉字的开头（第 25 字节），留下两个汉字（6 字节）。
+		expect(lastBytes(`a${"汉".repeat(10)}`, 8)).toBe("汉汉");
+		// 四字节的表情：三个共 12 字节，留 6 字节时起点在第 6 字节（第二个表情的中间），往后挪到第 8 字节，留下一个。
+		expect(lastBytes("😀😀😀", 6)).toBe("😀");
+		// 正好落在字符开头时不挪；够短时原样返回。
+		expect(lastBytes(`a${"汉".repeat(10)}`, 9)).toBe("汉汉汉");
+		expect(lastBytes("短", 100)).toBe("短");
+		// 结果永远不超过上限，也没有替换字符。
+		for (const text of ["a汉😀b".repeat(50), "😀".repeat(40), "汉".repeat(40)]) {
+			for (const limit of [1, 2, 3, 4, 5, 7, 11, 16, 33]) {
+				const kept = lastBytes(text, limit);
+				expect(
+					new TextEncoder().encode(kept).length,
+					`${text.slice(0, 4)} ${limit}`,
+				).toBeLessThanOrEqual(limit);
+				expect(kept).not.toContain("�");
+				expect(text.endsWith(kept)).toBe(true);
+			}
+		}
+	});
+
+	it("已中止的行（这一轮有了结局、调用一直没有结果）之后到的 tool_output 不累积：不再算在做", () => {
+		let state = run([
+			user(1),
+			started(2),
+			call(3, "a", "command", "sleep 100"),
+			output("a", "已有的\n"),
+		]);
+		state = applyEvent(state, end(4, "stopped"));
+		expect(row(state, "a")).toMatchObject({ abandoned: true, output: "已有的\n" });
+		const after = applyEvent(state, output("a", "晚到的\n"));
+		expect(row(after, "a")).toMatchObject({ abandoned: true, output: "已有的\n" });
+		expect(after).toEqual(state);
 	});
 
 	it("结果到了之后这一行改显示结果，不再累积输出；没有对上调用的 tool_output（调用在更早的一页里）不处理", () => {

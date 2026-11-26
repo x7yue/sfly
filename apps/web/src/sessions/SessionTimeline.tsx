@@ -169,7 +169,7 @@ const TimelineRow = memo(function TimelineRow({
 					data-streaming={item.streaming || undefined}
 					className="px-1 text-sm leading-relaxed wrap-anywhere text-fg-1"
 				>
-					<AssistantMarkdown text={item.text} />
+					<AssistantMarkdown text={item.text} streaming={item.streaming} />
 				</li>
 			);
 		case "tool":

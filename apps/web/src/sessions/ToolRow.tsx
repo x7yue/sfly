@@ -8,7 +8,7 @@ import {
 	TerminalIcon,
 	WrenchIcon,
 } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Elapsed } from "#/components/elapsed";
 import { StatusDot } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
@@ -18,7 +18,7 @@ import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
 import { DiffBlock } from "./DiffBlock";
-import { toolResultSummary, toolRowTitle } from "./session-text";
+import { resultDisplayText, toolResultSummary, toolRowTitle } from "./session-text";
 import type { TimelineItem, ToolResultInfo } from "./timeline";
 import { useFollowEnd } from "./use-follow-end";
 import { ROW_KEY_ATTRIBUTE } from "./use-timeline-scroll";
@@ -57,7 +57,8 @@ function ToolIcon({ item }: { item: ToolItem }) {
  *   事件的先后是调用开始的先后，先出结果的不一定是先开始的，标记让人看得出它们是同时跑的。
  * - **展开**：先写完整的命令（标题一行放不下时被截断，悬停或聚焦也给全文）；命令还在跑时是**实时的输出**，停在底部，往上翻看
  *   之后不再自动滚到底（不抢滚动），出现新输出时给一个「回到最新输出」；结束后是结果正文，**编辑显示差异**（增的行绿、删的行红）。
- * - **输出显示前先整理**（`terminalOutputText`）：终端的颜色码、光标移动这些整段序列去掉，连续的空行压成一个；只改显示，存的数据不动。
+ * - **命令的输出显示前先整理**（`resultDisplayText`、`terminalOutputText`）：终端的颜色码、光标移动这些整段序列去掉，连续的空行压成一个；
+ *   只改显示，接口里、库里存的是原文（页面上选中复制得到的是整理后的文字）。读、写、改文件的结果显示原文。
  *   其余的控制字符（响铃、退格……）由不可信文字组件写成可见的占位。
  * - **只有结果、没有对上的调用**（会话超过一页，调用在更早的一页里）：标题写明是哪一次调用的结果（`toolRowTitle`），加载更早的内容之后和调用合上。
  */
@@ -164,8 +165,10 @@ const OUTPUT_BLOCK =
  * 新输出到了写一个「回到最新输出」。还没有输出时写一句，免得展开看见一块空白、以为坏了。
  */
 function LiveOutput({ output }: { output: string }) {
-	const text = terminalOutputText(output);
-	const { ref, behind, toEnd } = useFollowEnd<HTMLPreElement>(output.length);
+	// 每段增量都整段重算：`terminalOutputText` 是线性的（`terminal-text.test.ts` 的病态输入），16 KB 是毫秒以内。
+	const text = useMemo(() => terminalOutputText(output), [output]);
+	// 跟随的信号是输出本身，不是它的长度：输出只留最后 16 KB，过了上限长度恒定、内容却在变（审查 #762）。
+	const { ref, behind, toEnd } = useFollowEnd<HTMLPreElement>(output);
 	return (
 		<section aria-label={SESSION.tool.outputLive} className="relative border-t border-border-soft">
 			<h4 className="m-0 flex items-center gap-2 px-3 pt-2 text-xs font-normal text-fg-3">
@@ -199,10 +202,10 @@ function LiveOutput({ output }: { output: string }) {
 
 /**
  * 结果：编辑先是差异（增的行绿、删的行红），再是结果的那句话；别的是结果正文。结果太长、只显示了一部分的在下面写明。
- * 文字是工具输出的原样（命令的输出、文件的内容），经整理（去控制序列、压空行）和不可信文字组件显示。
+ * 文字是工具输出的原样（命令的输出、文件的内容）：命令的先整理（去控制序列、压空行），文件的原样，都经不可信文字组件显示。
  */
 function ToolResult({ tool, result }: { tool: ToolItem["tool"]; result: ToolResultInfo }) {
-	const text = terminalOutputText(result.text);
+	const text = resultDisplayText(tool, result);
 	const isEdit = result.diff !== undefined;
 	return (
 		<>

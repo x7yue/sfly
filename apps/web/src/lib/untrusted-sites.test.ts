@@ -319,7 +319,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			},
 			// 助手的话（Markdown）：每个文字节点、代码块、图片的说明经组件；链接的地址和主机名放进属性和提示里，用 `untrustedPlain`。
 			"sessions/AssistantMarkdown.tsx": {
-				wrapped: ["child", "alt", "text", 'href ?? ""', "host"],
+				wrapped: ["children", "alt", "text", "text", 'href ?? ""', "host"],
 			},
 			// 工具行：命令（标题）经截断层；展开后的命令、实时输出、结果正文是多行的正文。
 			"sessions/ToolRow.tsx": {

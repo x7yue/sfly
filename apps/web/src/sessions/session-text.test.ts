@@ -7,6 +7,7 @@ import {
 	composerMode,
 	hasModelProblem,
 	readinessProblems,
+	resultDisplayText,
 	SESSION_STATUS,
 	sessionStatusText,
 	shortHash,
@@ -86,6 +87,30 @@ describe("会话页的文字", () => {
 		);
 		// 有调用的行照旧：命令写 $、读写改写路径。
 		expect(toolRowTitle({ tool: "command", title: "ls", result: base }, true)).toBe("$ ls");
+	});
+
+	it("结果正文的显示：只有命令的输出去颜色码、压空行；读、写、改文件的结果是文件的内容，显示原文（两个空行是文件自己的）", () => {
+		const ESC = "\u001b";
+		const base = { isError: false, truncated: false, durationMs: 5 };
+		const file = "import os\n\n\ndef main():\n    pass\n";
+		for (const tool of ["read", "write", "edit"] as const) {
+			expect(resultDisplayText(tool, { ...base, text: file }), tool).toBe(file);
+		}
+		// 文件里恰好有颜色码：不当成终端的输出去掉（由不可信文字组件写成占位，如实反映文件）。
+		expect(resultDisplayText("read", { ...base, text: `${ESC}[31mred${ESC}[0m` })).toBe(
+			`${ESC}[31mred${ESC}[0m`,
+		);
+		// 命令：去颜色码，压空行。
+		expect(
+			resultDisplayText("command", {
+				...base,
+				text: `${ESC}[31mFAILED${ESC}[0m\n\n\nCommand exited with code 1`,
+				exitCode: 1,
+			}),
+		).toBe("FAILED\n\nCommand exited with code 1");
+		// 只有结果、没有对上的调用（翻页边界，`tool` 是 null）：有退出码的是命令，整理；没有的认不出是什么，显示原文。
+		expect(resultDisplayText(null, { ...base, text: `a\n\n\nb`, exitCode: 0 })).toBe("a\n\nb");
+		expect(resultDisplayText(null, { ...base, text: `a\n\n\nb` })).toBe("a\n\n\nb");
 	});
 
 	it("一轮结束：六种结局各一句", () => {

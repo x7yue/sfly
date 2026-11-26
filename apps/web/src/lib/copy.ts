@@ -316,7 +316,6 @@ export const SESSION = {
 		/** 往上翻看之后有了新内容：不自己跳走，给一个回到底部的入口。 */
 		newContent: "有新内容",
 		newContentTitle: "回到最新的内容",
-		olderBoundary: "更早的内容还没有加载",
 		sendLabel: "接着说",
 		sendPlaceholder: "接着说",
 		send: "发送",
@@ -418,7 +417,6 @@ export const SESSION = {
 		/** 展开后的小标题。 */
 		outputLive: "输出（实时）",
 		outputWaiting: "还没有输出",
-		resultHeading: "结果",
 		diffHeading: "改动",
 		/** 命令还在跑时展开，输出只留最后一段；人往上翻之后不再自动滚到底，这里给一个回到底部的入口。 */
 		outputTail: "只显示最后一段输出",

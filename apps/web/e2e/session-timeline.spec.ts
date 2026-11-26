@@ -748,3 +748,206 @@ live(
 		await expect(page.getByTestId("waiting-model")).toHaveCount(0);
 	},
 );
+
+// ---------------------------------------------------------------- 审查（#762）退回的几处
+
+test("块级 HTML（根上、引用里、列表里）里的方向控制字符和零宽字符写成占位，不原样进页面", async ({
+	page,
+	controlPlane,
+}) => {
+	const bad = `${"‮"}drowssap${"​"}x`;
+	const text = [
+		`<div>${bad}</div>`,
+		"",
+		`> <div>引用里 ${bad}</div>`,
+		"",
+		`- <div>列表里 ${bad}</div>`,
+	].join("\n");
+	const events: SessionEventBody[] = [
+		{
+			type: "user_message",
+			message_id: MESSAGE_IDS.first,
+			text: "说话",
+			steer: false,
+			author: "alice",
+			author_user_id: null,
+		},
+		{ type: "turn_started", turn: 1 },
+		{
+			type: "assistant_message",
+			text,
+			usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+		},
+		{ type: "turn_end", turn: 1, outcome: "completed", reason: "", duration_ms: 1000 },
+	];
+	await open(page, controlPlane.database.url, events);
+	const said = page.getByTestId("assistant-message");
+	await expect(said).toContainText("drowssap");
+	// 三处都写成了占位（每处两个字符：方向覆盖、零宽空格），整条里没有一个原样留下。
+	await expect(said.locator("[data-slot=hidden-character]")).toHaveCount(6);
+	const raw = (await said.textContent()) ?? "";
+	expect(raw).not.toContain("‮");
+	expect(raw).not.toContain("​");
+});
+
+test("3000 层嵌套引用的一条助手的话不让会话页崩：这一条退回纯文字，别的条目照常显示，刷新也一样", async ({
+	page,
+	controlPlane,
+}) => {
+	const deep = `${">".repeat(3000)} 最里面的字${"‮"}`;
+	const usage = { input: 1, output: 1, cache_read: 0, cache_write: 0 };
+	const events: SessionEventBody[] = [
+		{
+			type: "user_message",
+			message_id: MESSAGE_IDS.first,
+			text: "说话",
+			steer: false,
+			author: "alice",
+			author_user_id: null,
+		},
+		{ type: "turn_started", turn: 1 },
+		{ type: "assistant_message", text: "前面一条正常的话，有 `代码`。", usage },
+		{ type: "assistant_message", text: deep, usage },
+		{ type: "assistant_message", text: "后面一条正常的话：\n\n- 一\n- 二", usage },
+		{ type: "turn_end", turn: 1, outcome: "completed", reason: "", duration_ms: 1000 },
+	];
+	await open(page, controlPlane.database.url, events);
+	const messages = page.getByTestId("assistant-message");
+	await expect(messages).toHaveCount(3);
+	// 页面没有换成错误页：时间线、标题、输入框都在。
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText(TITLE);
+	await expect(page.getByRole("textbox", { name: "接着说" })).toBeEnabled();
+	// 深的这一条是纯文字（没有渲染成引用），文字里的有害字符照样写成占位；前后两条是 Markdown。
+	await expect(messages.nth(1).locator('[data-fallback="plain"]')).toBeVisible();
+	await expect(messages.nth(1).locator("blockquote")).toHaveCount(0);
+	await expect(messages.nth(1)).toContainText("最里面的字");
+	await expect(messages.nth(1).locator("[data-slot=hidden-character]")).toHaveCount(1);
+	await expect(messages.nth(0).locator("code")).toHaveText("代码");
+	await expect(messages.nth(2).locator("li")).toHaveCount(2);
+	await page.reload();
+	await expect(page.getByTestId("assistant-message")).toHaveCount(3);
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText(TITLE);
+});
+
+live(
+	"命令的实时输出过了 16 KB 的上限之后：在底部时仍跟着最新的行；往上翻之后新输出仍出现「回到最新输出」（长度恒定、内容在变）",
+	async ({ page, assistant, workbench }) => {
+		void workbench;
+		await page.setViewportSize({ width: 1280, height: 900 });
+		const id = await startSession(page, "跑一遍");
+		await streamReady(page, assistant, id);
+		assistant.emit(
+			id,
+			1,
+			{ type: "tool_call", call_id: "big", tool: "command", title: "yes | head -n 100000" },
+			eventAt(),
+		);
+		const row = toolRows(page).first();
+		await row.getByRole("button").click();
+		const output = row.getByTestId("tool-output");
+		// 每行 80 字节（ASCII，字节数等于字符数）：先来 24 KB，超过 16 KB 的上限，之后输出只留最后 16384 字节，长度恒定。
+		const line = (n: number) => `${String(n).padStart(6, "0")} ${"x".repeat(72)}\n`;
+		let n = 0;
+		for (; n < 300; n += 1) {
+			assistant.emit(id, 1, { type: "tool_output", call_id: "big", text: line(n) }, eventAt());
+		}
+		await expect(output).toContainText(line(299).trim());
+		const atEnd = () => output.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+		await expect.poll(atEnd).toBeLessThan(2);
+		// 上限之后：在底部时每来一行还是停在最新的一行（以前跟随的信号是长度，恒定之后不再跟，最新几行落到下面）。
+		for (const extra of [300, 301, 302]) {
+			assistant.emit(id, 1, { type: "tool_output", call_id: "big", text: line(extra) }, eventAt());
+			await expect(output).toContainText(line(extra).trim());
+			await expect.poll(atEnd).toBeLessThan(2);
+		}
+		// 往上翻：之后来的新输出（长度仍然恒定）不把人拉回底部，出现「回到最新输出」。
+		await output.evaluate((el) => {
+			el.scrollTop = 0;
+		});
+		await expect.poll(() => output.evaluate((el) => el.scrollTop)).toBe(0);
+		assistant.emit(id, 1, { type: "tool_output", call_id: "big", text: line(303) }, eventAt());
+		await expect(output).toContainText(line(303).trim());
+		await expect(row.getByTestId("tool-live-follow")).toBeVisible();
+		expect(await output.evaluate((el) => el.scrollTop)).toBe(0);
+		await row.getByTestId("tool-live-follow").click();
+		await expect.poll(atEnd).toBeLessThan(2);
+	},
+);
+
+live(
+	"命令的实时输出里的颜色码：整段去掉，不留残文，也不多出空行（和结果一样）",
+	async ({ page, assistant, workbench }) => {
+		void workbench;
+		const id = await startSession(page, "跑一遍");
+		await streamReady(page, assistant, id);
+		assistant.emit(
+			id,
+			1,
+			{ type: "tool_call", call_id: "col", tool: "command", title: "pytest -q" },
+			eventAt(),
+		);
+		const row = toolRows(page).first();
+		await row.getByRole("button").click();
+		assistant.emit(
+			id,
+			1,
+			{
+				type: "tool_output",
+				call_id: "col",
+				text: `${ESC}[1m${ESC}[31mFAILED${ESC}[0m tests/a.py::t\n\n\n\n${ESC}]0;窗口标题\u0007done\n`,
+			},
+			eventAt(),
+		);
+		const output = row.getByTestId("tool-output");
+		await expect(output).toContainText("done");
+		const shown = (await output.textContent()) ?? "";
+		expect(shown).not.toContain(ESC);
+		expect(shown).not.toMatch(/\[\d+(;\d+)*m/);
+		expect(shown).not.toContain("窗口标题");
+		expect(shown).toBe("FAILED tests/a.py::t\n\ndone\n");
+		await expect(output.locator("[data-slot=hidden-character]")).toHaveCount(0);
+	},
+);
+
+test("读文件的结果显示原文：两个空行（文件自己的）不被压成一个", async ({ page, controlPlane }) => {
+	const file = "import os\n\n\ndef main():\n    pass\n";
+	const events: SessionEventBody[] = [
+		{
+			type: "user_message",
+			message_id: MESSAGE_IDS.first,
+			text: "看一下",
+			steer: false,
+			author: "alice",
+			author_user_id: null,
+		},
+		{ type: "turn_started", turn: 1 },
+		{ type: "tool_call", call_id: "r1", tool: "read", title: "main.py" },
+		{
+			type: "tool_result",
+			call_id: "r1",
+			is_error: false,
+			text: file,
+			truncated: false,
+			duration_ms: 3,
+		},
+		{ type: "tool_call", call_id: "r2", tool: "command", title: "cat main.py" },
+		{
+			type: "tool_result",
+			call_id: "r2",
+			is_error: false,
+			text: file,
+			truncated: false,
+			exit_code: 0,
+			duration_ms: 3,
+		},
+		{ type: "turn_end", turn: 1, outcome: "completed", reason: "", duration_ms: 1000 },
+	];
+	await open(page, controlPlane.database.url, events);
+	await toolRows(page).nth(0).getByRole("button").click();
+	await toolRows(page).nth(1).getByRole("button").click();
+	// 读文件：原文，保留两个空行；命令：整理，压成一个。
+	expect(await toolRows(page).nth(0).getByTestId("tool-result").textContent()).toBe(file);
+	expect(await toolRows(page).nth(1).getByTestId("tool-result").textContent()).toBe(
+		"import os\n\ndef main():\n    pass\n",
+	);
+});

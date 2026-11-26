@@ -2,6 +2,7 @@ import type { Readiness, SessionStatus, SessionTool, WaitingFor } from "@sfly/sc
 import type { StatusKind } from "#/components/status";
 import { SESSION } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
+import { terminalOutputText } from "#/lib/terminal-text";
 import {
 	hasBehind,
 	type SteerDelivery,
@@ -74,6 +75,17 @@ export function toolRowTitle(
 				? earlier.edit
 				: earlier.other;
 	return `${kind}的结果 · ${hasMore ? earlier.note : earlier.missing}`;
+}
+
+/**
+ * 结果正文在页面上显示的文字：**命令**的输出先整理（去掉整段的终端序列、压连续的空行，`lib/terminal-text.ts`）；读、写、改文件的结果是
+ * 文件的内容，显示原文——两个空行是文件自己的（PEP 8 的两个空行不能压成一个），文件里恰好有颜色码也不当成终端的输出去掉
+ * （不可信文字组件会把 ESC 写成占位，如实反映文件）。只有结果、没有对上的调用（翻页边界，`tool` 是 null）：有退出码的是命令；
+ * 没有的认不出是什么，显示原文。页面上选中复制得到的是这里返回的文字；存的、接口里的仍是原文。
+ */
+export function resultDisplayText(tool: SessionTool | null, result: ToolResultInfo): string {
+	const isCommand = tool === "command" || (tool === null && result.exitCode !== undefined);
+	return isCommand ? terminalOutputText(result.text) : result.text;
 }
 
 /**

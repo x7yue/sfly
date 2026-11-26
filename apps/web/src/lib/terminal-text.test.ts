@@ -115,3 +115,57 @@ describe("工具输出显示前的整理", () => {
 		);
 	});
 });
+
+describe("病态输入在时限内完成（线性，不是平方级）", () => {
+	// 审查（#762）量到的：16 K 个空格 120 毫秒、16 K 个 U+009D 加换行 300 毫秒、64 K 个 2 到 3 秒——两个正则在每个起点上都往后扫一遍。
+	// 命令的实时输出每来一段增量就整段重算，所以这里是页面卡不卡的问题。耗时只作上限（CODING_STANDARDS「耗时只作超时上限」）：
+	// 修好之后 64 KB 是毫秒级，CI 的 2 核机器上留两个数量级的余量。
+	const SIZE = 64 * 1024;
+	const LIMIT_MS = 500;
+	const timed = (run: () => string) => {
+		const start = performance.now();
+		const out = run();
+		return { out, ms: performance.now() - start };
+	};
+
+	const CASES: [name: string, input: string, run: (text: string) => string][] = [
+		["U+0090 重复加换行（C1 的 DCS 开头）", `${"\u0090".repeat(SIZE)}\n`, stripTerminalSequences],
+		["U+009D 重复加换行（C1 的 OSC 开头）", `${"\u009d".repeat(SIZE)}\n`, stripTerminalSequences],
+		[
+			"U+0098、U+009E、U+009F 交替加换行",
+			`${"\u0098\u009e\u009f".repeat(SIZE / 3)}\n`,
+			stripTerminalSequences,
+		],
+		["ESC ] 重复（OSC 开头）加换行", `${`${ESC}]`.repeat(SIZE / 2)}\n`, stripTerminalSequences],
+		["ESC P 重复（DCS 开头）加换行", `${`${ESC}P`.repeat(SIZE / 2)}\n`, stripTerminalSequences],
+		["几万个空格再接一个字（压空行）", `${" ".repeat(SIZE)}x`, collapseBlankLines],
+		["换行加几万个空格再接一个字", `\n${" ".repeat(SIZE)}x`, collapseBlankLines],
+		["「空格加换行」一对一对地重复", `${" \n".repeat(SIZE / 2)}x`, collapseBlankLines],
+		["几万个换行", `${"\n".repeat(SIZE)}x`, collapseBlankLines],
+		["整理（先去序列再压空行）：混在一起", `${"\u009d \n".repeat(SIZE / 4)}x`, terminalOutputText],
+	];
+
+	for (const [name, input, run] of CASES) {
+		it(`${name}：${SIZE / 1024} KB 在 ${LIMIT_MS} 毫秒内完成`, () => {
+			const { out, ms } = timed(() => run(input));
+			expect(ms).toBeLessThan(LIMIT_MS);
+			// 结果是正常的字符串（没有被截断成空、也没有变长）。
+			expect(typeof out).toBe("string");
+			expect(out.length).toBeLessThanOrEqual(input.length);
+		});
+	}
+
+	it("压空行的结果和以前一致：回车换行、行尾空白、结尾的多个换行（线性写法不改行为）", () => {
+		expect(collapseBlankLines("a\r\n\r\n\r\nb")).toBe("a\r\n\r\nb");
+		expect(collapseBlankLines("a\n  \n\t\n\nb")).toBe("a\n\nb");
+		expect(collapseBlankLines("a\n\n\n\n")).toBe("a\n\n");
+		expect(collapseBlankLines("a\n\nb\n")).toBe("a\n\nb\n");
+		// 行尾的空白留着（它不是空行的一部分）：只压空行本身。
+		expect(collapseBlankLines("a  \n\n\nb")).toBe("a  \n\nb");
+	});
+
+	it("C1 的字符串类序列里夹着另一个开头：不当成同一段（前一个没有结束符，原样留着，由不可信文字组件写成占位）", () => {
+		// 前一个 U+009D 没有结束符，后面又来一个：只有完整的那一段（第二个）去掉。
+		expect(stripTerminalSequences("a\u009d0;x\u009d0;title\u0007b")).toBe("a\u009d0;xb");
+	});
+});

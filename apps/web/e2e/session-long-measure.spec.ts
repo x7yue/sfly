@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import type { SessionEvent } from "@sfly/schema";
 import { installSessionStream, sessionView, stubSessionDetail } from "./assistant-support";
 import { expect, test } from "./fixtures";
@@ -142,5 +143,98 @@ test(`长会话：${ROWS} 个工具行，每个结果 16 KB`, async ({ page }) =
 	);
 	console.log(
 		`MEDIAN rows=${ROWS} first=${median(first)}ms longestFrame=${median(frames.longest).toFixed(1)}ms framesOver20ms=${median(frames.over)}/${median(frames.count)}`,
+	);
+});
+
+// 逐字出现（审查 #762 指出第一版的量法会话是空闲的，`assistant_delta` 在一轮不在进行时被丢掉，量到的不是逐字出现）：这里会话是「在做」，
+// 先流进 `STREAM_KB` KB 的 Markdown（标题、列表、行内代码、链接、加粗混排）建出一条长的助手的话，时间线上另有 `ROWS` 个工具行；
+// 然后每帧推一小段增量（共 300 个），量**主线程每个增量真正忙多久**：用 CDP 的 CPU 采样，去掉 `(idle)`，剩下的（脚本、样式布局、垃圾回收）除以 300。
+// **不量帧间隔**：每帧往 SSE 流里塞数据会让无头 Chromium 的 rAF 变成两个 vsync 一帧（约 30 毫秒），连「推一个不改变状态的事件」都是这样，
+// 那个数字与页面的开销无关（试过：0 KB 也是 30 毫秒，不推事件是 16 毫秒）。
+// 每一段增量都让这一条整条重新解析（`react-markdown` 不做增量解析），所以开销随这一条的长度涨；`STREAM_PARSE_INTERVAL_MS` 节流之后降下来。
+/** 等到助手的话不再变长（连着两次读到一样长）：增量都显示出来了。 */
+async function settled(page: Page) {
+	let previous = -1;
+	await expect
+		.poll(async () => {
+			const length = (await page.getByTestId("assistant-message").textContent())?.length ?? 0;
+			const same = length === previous;
+			previous = length;
+			return same;
+		})
+		.toBe(true);
+}
+
+const STREAM_KB = Number(process.env.SFLY_MEASURE_STREAM_KB ?? 20);
+const PARAGRAPH =
+	"## 小结\n\n- 改了 `nodes/http_check.py`：新增参数 **timeout**（秒，默认 30）\n- 补了 [用户文档](https://example.com/docs) 里的例子\n- 两个用例通过：`tests/test_timeout.py`\n\n下一步是把场景保存成新版本，再跑两遍看结果；如果还有超时，再把默认值调大一点。\n\n";
+
+test(`逐字出现：一条 ${STREAM_KB} KB 的助手的话，时间线上有 ${ROWS} 个工具行，主线程每个增量忙多久`, async ({
+	page,
+}) => {
+	test.setTimeout(10 * 60_000);
+	const view = sessionView({ status: "running" });
+	await installSessionStream(page);
+	await stubSessionDetail(
+		page,
+		view,
+		events(ROWS).filter((e) => e.type !== "turn_end"),
+	);
+	const perDelta: number[] = [];
+	for (let run = 0; run < RUNS; run++) {
+		await page.goto(`/sessions/${view.id}`);
+		await expect(page.getByTestId("user-message")).toBeVisible();
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() =>
+						(window as unknown as { __sessionStream: { opened: number } }).__sessionStream.opened,
+				),
+			)
+			.toBeGreaterThan(0);
+		// 先流进 STREAM_KB KB：每帧一段。
+		await page.evaluate(
+			async ([paragraph, kb]) => {
+				const push = (
+					window as unknown as { __sessionStream: { push(e: string, d: unknown): void } }
+				).__sessionStream;
+				let sent = 0;
+				while (sent < kb * 1024) {
+					push.push("assistant_delta", { type: "assistant_delta", text: paragraph });
+					sent += new TextEncoder().encode(paragraph).length;
+					await new Promise((r) => requestAnimationFrame(r));
+				}
+			},
+			[PARAGRAPH, STREAM_KB] as const,
+		);
+		// 让页面赶上来（节流的间隔、最后一次解析都做完）：这一条的文字不再变长。
+		await settled(page);
+		const cdp = await page.context().newCDPSession(page);
+		await cdp.send("Profiler.enable");
+		await cdp.send("Profiler.setSamplingInterval", { interval: 100 });
+		await cdp.send("Profiler.start");
+		await page.evaluate(async () => {
+			const push = (window as unknown as { __sessionStream: { push(e: string, d: unknown): void } })
+				.__sessionStream;
+			for (let i = 0; i < 300; i++) {
+				push.push("assistant_delta", { type: "assistant_delta", text: "再多一小段话，" });
+				await new Promise((r) => requestAnimationFrame(r));
+			}
+		});
+		await settled(page);
+		const { profile } = await cdp.send("Profiler.stop");
+		await cdp.detach();
+		const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+		let busy = 0;
+		(profile.samples ?? []).forEach((id, i) => {
+			const node = byId.get(id);
+			if (node && node.callFrame.functionName !== "(idle)")
+				busy += (profile.timeDeltas ?? [])[i] ?? 0;
+		});
+		perDelta.push(busy / 1000 / 300);
+		console.log(`stream run ${run}: busy=${perDelta.at(-1)?.toFixed(2)}ms per delta`);
+	}
+	console.log(
+		`MEDIAN stream ${STREAM_KB}KB rows=${ROWS}: mainThreadBusyPerDelta=${median(perDelta).toFixed(2)}ms（一帧 16.7 ms）`,
 	);
 });
