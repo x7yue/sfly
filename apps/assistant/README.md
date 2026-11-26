@@ -39,7 +39,8 @@ docker exec sfly-aeval-1-dev bash -c '(echo > /dev/tcp/127.0.0.1/50052) && echo 
 
 模型文件是 pi 的格式（`models.json`），`apiKey`、`headers` 里写 `$变量名` 或 `${变量名}`（可以夹在文字里，
 `"Bearer $KEY"`），值经同名环境变量交给助手容器；助手服务只把模型文件引用到的变量传给 pi。没有模型文件、写了要执行的
-命令（`!` 开头）时助手服务拒绝启动，引用的变量没有带进来时启动日志里有一句提醒。不想花钱时用评测集的假模型端点 `evals/assistant/container/fake_model.py`：它照剧本回复，
+命令（`!` 开头）、`SFLY_ASSISTANT_MODEL` 没设或不在文件里、引用的变量没有带进来时，助手服务照常启动，`GET /health` 的 `model` 写明缺什么
+（只有变量名和文件路径），新的一轮在开始之前 503；之后每 5 分钟试连一次模型端点（只建连接，不调模型），连不上时同样。不想花钱时用评测集的假模型端点 `evals/assistant/container/fake_model.py`：它照剧本回复，
 提示里写 `AEVAL-SCRIPT:<名字>` 时用和它同目录的 `<名字>.json`，`--dump <目录>` 把收到的每个请求存下来
 （看发给模型的系统提示和消息）。在网络里随便一个有 python3 的容器里起它，例如工作台容器：
 
@@ -141,7 +142,9 @@ for (let buf = ""; ; ) {
 
 - **这一轮以 `failed` 结束、原因是写不了 skill**：连不上工作台的能力端口。在助手容器里试
   `node -e 'require("net").connect(50052,"dev").on("connect",()=>{console.log("ok");process.exit()})'`。
-- **`interrupted`、pi 起不来**：看 `/data/sessions/<会话 ID>/pi-stderr.log` 和 `docker logs`；模型文件里引用的变量
-  没有带进容器时 pi 起来了也调不了模型，结局是 `model_unavailable`。
+- **`interrupted`、pi 起不来**：看 `/data/sessions/<会话 ID>/pi-stderr.log` 和 `docker logs`。
+- **503 `model_not_configured`、`model_unreachable`**：`curl -H "Authorization: Bearer $SFLY_ASSISTANT_SECRET" http://localhost:8090/health`
+  看 `model`：`configured` 是 false 时 `reason` 写缺什么（模型文件、`SFLY_ASSISTANT_MODEL`、引用的变量；只有变量名和路径，没有值），
+  `reachable` 是 false 时是模型端点连不上（`endpoint` 是主机和端口，`checked_at` 是上次试连的时间，每 5 分钟一次）。
 - **503 `process_limit`**：同时活着的 pi 进程到了 8 个、都在做。
 - **工作区不是 `/work` 下的目录**：助手容器里要能建同一个路径（镜像里只有 `/work` 归运行用户）。

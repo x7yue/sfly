@@ -1,6 +1,6 @@
 // 模型文件：引用的环境变量照 pi 的模板规则找（只把这些交给 pi），认不出的写法报出来；启动时的检查（#548）不拒绝启动，
 // 结果写明缺哪一项：只有变量名和文件路径，没有任何值。
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -202,5 +202,34 @@ describe("启动时检查模型配置（#548）：不满足时不拒绝，写明
 		});
 		const notUrl = file("notaurl.json", provider({ baseUrl: "not a url" }));
 		expect(check(notUrl, "acme/big", { ACME_KEY: "k" })).toMatchObject({ configured: false });
+	});
+});
+
+describe("部署文档「助手的模型」一节里的模板", () => {
+	it("照着写出来的模型文件配得好：模板、环境变量的名字、SFLY_ASSISTANT_MODEL 的写法都对得上", () => {
+		const readme = readFileSync(join(import.meta.dirname, "../../../README.md"), "utf8");
+		const section = readme.slice(readme.indexOf("### 助手的模型"));
+		const template = /```json\n([\s\S]*?)\n\s*```/.exec(section)?.[1];
+		expect(template).toBeDefined();
+		const dir = mkdtempSync(join(tmpdir(), "sfly-readme-models-"));
+		try {
+			const path = join(dir, "models.json");
+			writeFileSync(path, template ?? "");
+			// 文档里写：`SFLY_ASSISTANT_MODEL` 是 `<提供方>/<模型 id>`，密钥是环境变量 MODEL_API_KEY。
+			expect(
+				checkModels({ modelsFile: path, model: "gateway/<模型 id>", env: { MODEL_API_KEY: "k" } }),
+			).toEqual({
+				configured: true,
+				endpoint: { host: "llm-gateway.internal", port: 443, tls: true },
+			});
+			expect(modelEnvRefs(template ?? "")).toEqual({ names: ["MODEL_API_KEY"], problems: [] });
+			// 没带变量时写明缺的是 MODEL_API_KEY。
+			expect(checkModels({ modelsFile: path, model: "gateway/<模型 id>", env: {} })).toMatchObject({
+				configured: false,
+				reason: expect.stringContaining("MODEL_API_KEY"),
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

@@ -145,6 +145,42 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 - 随后若 venv 里的 SDK 运行时版本与 Agent 自身版本不一致，Agent 从控制面下载同版本的 wheel，校验 sha256 后用 `uv pip install` 安装；版本一致时不重装。控制面没有对应版本的 wheel 时保留现状并在日志里告警。
 - 节点包依赖从控制面下发的 PyPI 镜像安装；Agent 上的 `--index-url` 优先。本机的 `--github-release-mirror`、`--python-install-mirror` 同样优先于下发的 GitHub Release 镜像和由它推导的 Python 下载镜像。
 
+### 助手的模型
+
+助手（ADR 0027）用的模型和它的密钥只放在**助手容器**里：模型的四个工具都在工作台上执行，够不着助手容器，所以密钥不需要经过工作台，工作台也不需要连得到模型端点。**离线部署时只有助手容器要连得到模型端点**（内网的模型网关，或离线的模型服务）；控制面、工作台、浏览器都不用。
+
+- **模型文件**：给助手容器挂一份 pi 的 `models.json`（容器里的路径 `SFLY_ASSISTANT_MODELS`，默认 `/config/models.json`）。格式就是 pi 的，字段见 pi 文档的「Models Configuration」一页（[models-configuration.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models-configuration.md)，助手镜像里装的 pi 版本的同一页随包带在 `node_modules` 里）：内网的兼容端点常要按它验证过的差异开兼容开关（`compat`），所以不自己另定一套格式。下面的模板对应 `evals/assistant/models.example.json` 里内网档的那一项（`endpoint` 是 `baseUrl`，`model` 是 `id`），不含任何供应商的名字：
+
+  ```json
+  {
+    "providers": {
+      "gateway": {
+        "name": "内网模型网关",
+        "baseUrl": "https://llm-gateway.internal/v1",
+        "api": "openai-completions",
+        "apiKey": "$MODEL_API_KEY",
+        "models": [
+          {
+            "id": "<模型 id>",
+            "name": "<显示名>",
+            "reasoning": false,
+            "input": ["text"],
+            "contextWindow": 131072,
+            "maxTokens": 16384,
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          }
+        ]
+      }
+    }
+  }
+  ```
+
+- **密钥用环境变量引用，不写进文件**：`apiKey`、`headers` 的值里写 `"$变量名"` 或 `"${变量名}"`（可以夹在文字里，`"Bearer $MODEL_API_KEY"`），值由助手容器的环境变量给出（`docker run -e MODEL_API_KEY`、compose 的 `environment`，不要把值写在命令行或镜像里）；助手服务只把模型文件引用到的变量交给 pi，别的环境（含共享密钥 `SFLY_ASSISTANT_SECRET`）都不给。不支持 `"!命令"` 的写法。密钥的值不会出现在会话事件、日志、`/health` 和接口的响应里。
+- **`SFLY_ASSISTANT_MODEL`**：用文件里的哪个模型，写成 `<提供方>/<模型 id>`，和文件里 `providers` 下的名字、`models` 里的 `id` 对上，例如 `gateway/<模型 id>`；末尾可以带思考强度（`:high`）。页面上没有选择，一个部署一个模型。
+- **配得对不对在页面上看得到**：助手服务**不会因为模型没配好而拒绝启动**，而是照常起来，`GET /health` 的 `model.configured` 为 false，`reason` 写明缺的是哪一项（模型文件不在或读不了、不是合法的 JSON、有不支持的写法、`SFLY_ASSISTANT_MODEL` 没设或不在文件里、选中的提供方引用的环境变量没有值）：只写变量名和文件路径，不写任何值。页面「助手」顶上的就绪状态写「没有配置模型：<缺什么>」，「开始」不可用；改好文件之后不用重启（环境变量要重启容器）。共享密钥太短（少于 32 个字符）仍然拒绝启动。
+- **试连**：助手服务启动时和之后每 5 分钟对模型端点（`baseUrl` 的主机和端口）建一次连接，https 含 TLS 握手，**只建连接，不发请求、不调模型、不花钱**；`/health` 报连得上还是连不上、上次检查的时间和端点的主机端口（不带路径和参数）。连不上时就绪状态写「连不上模型端点 主机:端口：<原因>（上次检查：N 分钟前）」，新的一轮开始之前被拒绝（503 `model_unavailable`）。证书照默认规则验（pi 调模型时也一样）：验不过时试连失败，原因写「证书验不过」。
+- **模型出故障时**：一轮里模型报错，pi 自己重试（时间线写「模型暂时不可用（429 被限流），正在第 2/3 次重试，4 秒后」），重试用尽或不该重试的错误（密钥被拒绝、额度不足）这一轮以「模型不可用」结束，原因写类别和状态码（上游的错误原文不进事件，只进助手服务的日志，打过码），已经做的步骤和工作区的改动还在。
+
 ## 约定
 
 - 主分支：`main`，受保护，只能经 PR 以 squash 方式合入；`dev` 是路线图的集成分支，规则相同，路线图的 PR 以它为目标；分支命名、PR、`dev` 与发版规范见 [docs/agents/branching-and-release.md](./docs/agents/branching-and-release.md)
