@@ -243,14 +243,15 @@ const TABLE: Case[] = [
 	["空的", "", "other", undefined],
 ];
 
-const TEXT: Record<string, string> = {
-	unreachable: "连不上上游模型",
-	timeout: "上游模型超时",
-	auth: "上游拒绝了密钥",
-	quota: "上游的额度不足",
-	rate_limit: "上游限流",
-	upstream: "上游出错",
-	context_overflow: "上下文超出了模型的上限",
+const LABEL: Record<string, string> = {
+	unreachable: "连不上模型端点",
+	timeout: "模型端点超时",
+	auth: "密钥被拒绝",
+	quota: "额度不足",
+	rate_limit: "被限流",
+	upstream: "模型端点出错",
+	context_overflow: "对话太长，模型装不下",
+	other: "其他错误",
 };
 
 describe("上游的错误 → 类别、状态码和自己的说法", () => {
@@ -260,13 +261,9 @@ describe("上游的错误 → 类别、状态码和自己的说法", () => {
 			errorClass,
 			status,
 		});
-		const said =
-			errorClass === "other"
-				? status === undefined
-					? "模型调用出错"
-					: "上游拒绝了这次请求"
-				: TEXT[errorClass];
-		expect(described.text).toBe(status === undefined ? said : `${said}（上游返回 ${status}）`);
+		const label = LABEL[errorClass];
+		expect(described.label).toBe(label);
+		expect(described.text).toBe(status === undefined ? label : `${label}（${status}）`);
 	});
 
 	it("给人看的那句话里没有原文的任何一段", () => {

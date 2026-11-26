@@ -1,5 +1,4 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
 	AbortCommandBody,
@@ -7,6 +6,7 @@ import {
 	type AssistantErrorBody,
 	type AssistantErrorCode,
 	type AssistantHealth,
+	type AssistantModelHealth,
 	type AssistantStreamHeartbeat,
 	PromptCommandBody,
 	SessionId,
@@ -30,7 +30,8 @@ export interface ServerDeps {
 	bus: EventBus;
 	sessions: SessionManager;
 	versions: { assistant: string; pi: string };
-	modelsFile: string;
+	/** 模型的就绪状态（配没配好、连不连得上，#548）：`GET /health` 原样报。 */
+	model: () => AssistantModelHealth;
 	log: (message: string) => void;
 	/** 心跳的间隔，默认 {@link HEARTBEAT_MS}（测试里改短）。 */
 	heartbeatMs?: number;
@@ -127,15 +128,7 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		return {
 			epoch: deps.bus.epoch,
 			versions: deps.versions,
-			// 模型的检查、端点和错误分类是 #548。
-			model: {
-				configured: existsSync(deps.modelsFile),
-				endpoint: null,
-				reachable: null,
-				checked_at: null,
-				reason: null,
-				error_class: null,
-			},
+			model: deps.model(),
 			processes: { active: deps.sessions.activeProcesses, limit: deps.sessions.maxProcesses },
 		};
 	}

@@ -206,7 +206,9 @@ describe("真的 pi：上游的错误原文不外传（#640）", () => {
 			expect(await h.turnEnd(id, 1, 60_000)).toMatchObject({ outcome: "completed" });
 			const events = h.events.of(id).map((r) => r.event);
 			expect(events.find((e) => e.type === "notice" && e.kind === "retry")).toMatchObject({
-				message: "上游出错（上游返回 502），正在重试第 1 次",
+				message: expect.stringMatching(
+					/^模型暂时不可用（502 模型端点出错），正在第 1\/\d 次重试，\d+ 秒后$/,
+				),
 				error_class: "upstream",
 			});
 			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
@@ -227,7 +229,7 @@ describe("真的 pi：上游的错误原文不外传（#640）", () => {
 			expect(end).toMatchObject({
 				outcome: "model_unavailable",
 				error_class: "auth",
-				reason: "上游拒绝了密钥（上游返回 401）",
+				reason: "密钥被拒绝（401）",
 			});
 			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
 			expect(h.logs.join("\n")).toContain(MARKER);
