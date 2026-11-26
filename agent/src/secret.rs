@@ -725,6 +725,9 @@ mod tests {
         for text in [
             // 凭据的一部分，不带 `@` 和主机。
             "Hd12\"xq Tl12yz".to_string(),
+            // 整段用户名密码，但后面没有 `@` 和主机：不是这个地址的完整出现。
+            "fulluser12:Hd12\"xq Tl12yz".to_string(),
+            "https://fulluser12:Hd12\"xq Tl12yz".to_string(),
             "password is Hd12 and Tl12yz".to_string(),
             "https://fulluser12:Hd12\"xq Tl12".to_string(),
             // 到 `@` 为止、差一个字符。
@@ -766,6 +769,22 @@ mod tests {
             mask_known(r#"https://Zu15 "n15:****"#),
             r#"https://Zu15 "n15:****"#
         );
+    }
+
+    /// 按值那一层在文字规则之前：密码里有 `@` 又有文字规则认不出的字符时，文字规则会把 `@` 之前的当凭据、
+    /// 在引号处停下，剩下的一截（还是密码）留在日志里；按值先整段换掉就没有这一截。
+    #[test]
+    fn the_by_value_layer_runs_before_the_text_rule() {
+        let address = r#"https://ordusr16:Hd16@xq"Tl16yz@order.example/x"#;
+        register_address(address);
+
+        assert_eq!(
+            mask_userinfo(&format!("GET {address} failed")),
+            "GET https://***@order.example/x failed"
+        );
+        // 没登记过的同样的写法，文字规则单独处理：认不出，留下一截（已知的边界，所以才要登记）。
+        let unregistered = r#"https://ordusr17:Hd17@xq"Tl17yz@order.example/x"#;
+        assert!(mask_userinfo(unregistered).contains("Tl17yz"));
     }
 
     #[test]

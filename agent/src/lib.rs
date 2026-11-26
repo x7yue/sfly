@@ -1451,6 +1451,14 @@ mod tests {
             "http://cfguser1:Hd1\"xq Tl1yz@cfg1.example:50051",
             "agent-x",
         );
+        // 控制面地址在 `Config::new` 里就登记了（镜像是构造之后才赋值的，下面再登记）。
+        let at_construction = format!("{config:?}");
+        for secret in ["cfguser1", "Hd1", "Tl1yz"] {
+            assert!(
+                !at_construction.contains(secret),
+                "{secret}：{at_construction}"
+            );
+        }
         config.mirrors = environment::LocalMirrors {
             pypi: Some("https://cfguser2:Hd2`xq<Tl2yz>@cfg2.example/simple".into()),
             github_release: Some("https://cfguser3:Hd3 xq\"Tl3yz@cfg3.example/gh".into()),
