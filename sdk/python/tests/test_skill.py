@@ -54,6 +54,22 @@ def test_skill_files_have_no_doc_placeholders(skill: str) -> None:
         assert not found, f"{name}：{found}"
 
 
+def test_platform_skill_does_not_assume_the_local_agent_is_named_dev() -> None:
+    # 「确认本机 Agent」（联调的第 1 步，#549）：开发机上默认是 dev-<登录名>-<主机>，
+    # 但工作台上的 Agent 是部署者起的名字（平台说明里写着），用 `--dev --name` 装的也可以叫别的：
+    # 不能写成「名称是 dev-…」。
+    text = SKILLS["sfly-platform"]["SKILL.md"].read_text(encoding="utf-8")
+    start = text.index("1. **确认本机 Agent**")
+    step = text[start : text.index("\n2. **", start)]
+
+    assert "以说明为准" in step
+    assert "平台说明" in step
+    assert "名字不一定以 `dev-` 开头" in step
+    assert "本机 Agent（名称 `dev-" not in step
+    # 没有这台 Agent 时：开发机上请用户装，工作台上不自己安装。
+    assert "不要自己安装" in step
+
+
 def frontmatter(text: str) -> dict[str, str]:
     """解析 SKILL.md 的 frontmatter：只接受单行的 `键: 普通标量`（YAML 的严格子集）。"""
     assert text.startswith("---\n")
