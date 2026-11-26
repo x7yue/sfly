@@ -235,6 +235,8 @@ export interface ControlPlane {
 	readonly sessions: SessionStore;
 	/** 会话的写和后台（测试用：`idle()` 等排队中的会话开始完）。 */
 	readonly sessionService: SessionService;
+	/** 和助手服务的事件连接此刻连着没有（测试等它断开、重连用；没有配置助手服务时恒为 false）。 */
+	readonly assistantConnected: () => boolean;
 	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts）：测试用它给假 Agent 签发凭据。 */
 	readonly agentCredentials: AgentCredentialService;
 	/**
@@ -527,6 +529,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 				}),
 			})
 		: undefined;
+	// 助手服务的事件连接（下面、网关起来之后才建）：HTTP 在那之前就开始监听了，这几毫秒里进来的请求走就绪状态会问「连着没有」，
+	// 所以先声明；还没建好当作没连上（503，不是引用还没初始化的 ReferenceError → 500）。
+	let assistantConnection: AssistantConnection | undefined;
 	const sessionService = new SessionService({
 		sessions,
 		db: database.db,
@@ -537,6 +542,10 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
 		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
+		// 事件连接连不上时兜底不判中断、也不开始新的一轮；连接还没建好（只有配置了助手服务时才有这个函数）就是没连上。
+		...(assistantClient && {
+			assistantConnected: (): boolean => assistantConnection?.connected ?? false,
+		}),
 		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
 	const api = buildHttpApi({
@@ -675,10 +684,15 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	).replace(/\/+$/, "");
 
 	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
-	const assistantConnection = assistantClient
+	assistantConnection = assistantClient
 		? new AssistantConnection({
 				client: assistantClient,
 				sessions,
+				recovery: {
+					restarted: (candidates): Promise<number> => sessionService.assistantRestarted(candidates),
+					eventsLost: (): Promise<number> => sessionService.assistantEventsLost(),
+					connected: (): Promise<void> => sessionService.onAssistantConnected(),
+				},
 				log: (message, error) => logError(`sfly: ${message}`, error),
 				reconnect: options.assistantReconnectMs && {
 					minMs: options.assistantReconnectMs.min,
@@ -761,6 +775,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		grpcUrl: gateway.url,
 		sessions,
 		sessionService,
+		assistantConnected: () => assistantConnection?.connected ?? false,
 		agentCredentials,
 		close: () => {
 			closing ??= close();

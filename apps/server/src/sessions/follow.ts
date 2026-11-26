@@ -70,6 +70,9 @@ export interface FollowOptions {
  *   可能读到一条已经提交、还没推出来的平台记录，补发给了客户端；之后实时推出来的这一条按 `seq` 去重丢掉（不重不漏仍成立）。
  *   （SessionStore 保证持久事件推送的顺序等于序号的顺序，平台记录也一样；平台记录夹在一条消息的增量中间时，前半截增量也留下，
  *   见上一条）；
+ * - **实时阶段遇到序号缺口就补读**（#545）：切到实时之后，一条持久事件的序号比「已经发到哪」大出一个以上（序号大的先到了），就回到补发的
+ *   状态——这一条和之后到的先缓冲，缺的那一段从库里读出来、按序号发了，再放缓冲的（同样按 `seq` 去重）；读不到缺的（库里没有、序号有跳跃）
+ *   就照到达的发，不空等；不再发快照。页面这一次连接里收到的持久事件因此连续、不缺；
  * - **慢客户端不会把整段历史顶进内存**：补发每发完一批等 {@link FollowSink.drained}，期间实时事件的缓冲有上限
  *   （{@link FollowOptions.maxBuffered}），超过就用 {@link FollowOverflowError} 报错并结束。
  *
@@ -112,12 +115,25 @@ export function follow(
 
 	unsubscribe = source.subscribe((event) => {
 		if (stopped) return;
-		if (!replaying) return deliver(event);
+		if (!replaying) {
+			// 实时阶段：持久的事件序号接不上（比「已经发到哪」多出一个以上）时，中间的还没有到——序号大的先到了，后到的序号小的会被
+			// 当成「已经发过」丢掉，这条连接上就少一条、刷新才回来。回到补发的状态：这一条先缓冲，把缺的那一段从库里读出来、按序号发了，
+			// 再放这一条和之后到的。（一个控制面进程里「落库加发布」在会话的链上依次执行，正常不会走到这里；这是收口子：平台记录的推送、
+			// 控制面重启后补收的事件……）
+			if ("seq" in event && event.seq > sent + 1) {
+				replaying = true;
+				pending.push(event);
+				replay(false).catch(fail);
+				return;
+			}
+			return deliver(event);
+		}
 		if (pending.length >= maxBuffered) return fail(new FollowOverflowError(maxBuffered));
 		pending.push(event);
 	});
 
-	const replay = async () => {
+	/** `initial`：这条连接的第一次补发（补发完发快照）；实时阶段遇到序号缺口时的补读不再发快照。 */
+	const replay = async (initial: boolean) => {
 		for (;;) {
 			const batch = await source.read(sent, batchSize);
 			if (stopped) return;
@@ -155,9 +171,10 @@ export function follow(
 			deliver(event);
 		}
 		// 快照在缓冲的事件放完之后生成：此刻的状态已经包括它们。
+		if (!initial) return;
 		const snapshot = source.snapshot?.();
 		if (snapshot !== undefined) deliver(snapshot);
 	};
-	replay().catch(fail);
+	replay(true).catch(fail);
 	return stop;
 }

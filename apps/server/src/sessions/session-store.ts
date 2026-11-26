@@ -49,6 +49,12 @@ const PROMOTE_CANDIDATES = 20;
 /** 库里的一个会话。 */
 export type SessionRow = typeof sessions.$inferSelect;
 
+/** 助手服务发来的持久事件在助手服务里的位置：纪元加纪元内的序号（协议的 `AssistantStreamRecord.epoch`、`seq`）。 */
+export interface AssistantSource {
+	epoch: string;
+	seq: number;
+}
+
 /** 一条事件流的快照里来自库的那几项（{@link SessionStore.follow}）。 */
 interface SnapshotBase {
 	status: SessionStatus;
@@ -394,6 +400,42 @@ export class SessionStore {
 			.select()
 			.from(sessions)
 			.where(and(eq(sessions.status, "running"), lt(sessions.lastActivityAt, before)));
+	}
+
+	/** 此刻在做（`running`）的会话：会话 ID → 这一轮的轮次（所有项目的）。 */
+	async runningTurns(): Promise<Map<string, number>> {
+		const rows = await this.deps.db.select().from(sessions).where(eq(sessions.status, "running"));
+		return new Map(rows.map((row) => [row.id, effectiveTurn(row)]));
+	}
+
+	/** 在做（`running`）的会话（所有项目的）。 */
+	async allRunning(): Promise<SessionRow[]> {
+		return this.deps.db.select().from(sessions).where(eq(sessions.status, "running"));
+	}
+
+	/**
+	 * 最后收到的那条助手事件的位置（控制面启动时用它带着 `after` 连上助手服务续传，#545）；库里没有助手事件时为 undefined。
+	 * 纪元是随机串、没有先后，按事件产生的时间（助手服务盖的）往回找，同一时刻的取序号大的：助手服务重启之后产生的事件晚于重启之前的。
+	 * 两个容器的时钟偏差接受（`SESSION_EVENT_TYPES` 一节）；找错的后果由 `hello` 兜住：找到的是旧纪元时，助手服务回的 `hello` 里纪元不同，
+	 * 控制面先查库里有没有 `hello` 的这个纪元（{@link SessionStore.lastSeqOfEpoch}），有就是找错了位置，改用库里的位置重连，不当成重启。
+	 */
+	async lastAssistantSource(): Promise<AssistantSource | undefined> {
+		const [row] = await this.deps.db
+			.select({ epoch: sessionEvents.assistantEpoch, seq: sessionEvents.assistantSeq })
+			.from(sessionEvents)
+			.where(sql`${sessionEvents.assistantEpoch} is not null`)
+			.orderBy(desc(sessionEvents.createdAt), desc(sessionEvents.assistantSeq))
+			.limit(1);
+		return row?.epoch != null && row.seq != null ? { epoch: row.epoch, seq: row.seq } : undefined;
+	}
+
+	/** 这个纪元在库里的助手事件的最大序号（`hello` 的纪元和记着的不同时，查库里是不是已经有这个纪元的事件）；没有时为 undefined。 */
+	async lastSeqOfEpoch(epoch: string): Promise<number | undefined> {
+		const [row] = await this.deps.db
+			.select({ seq: sql<number | null>`max(${sessionEvents.assistantSeq})` })
+			.from(sessionEvents)
+			.where(eq(sessionEvents.assistantEpoch, epoch));
+		return row?.seq == null ? undefined : Number(row.seq);
 	}
 
 	/** 一个会话上一轮的结局（最近一条 `turn_end`）；没有结束过的一轮时为 null。 */
@@ -1186,30 +1228,55 @@ export class SessionStore {
 	 * 助手服务发来的持久事件：落库之前核对**会话存在、在做、`turn` 是会话此刻在做的那一轮**，核对和落库在同一个事务里；
 	 * 不符合的不记、不发布、不改状态，返回为什么（调用方记日志）。上一轮迟到的事件（停止之后助手服务才发来）、空闲或
 	 * 已结束的会话收到的事件都是这样丢掉的。
+	 *
+	 * **`source`（#545）是这条事件在助手服务里的位置（纪元和纪元内的序号）**：写进 `assistant_epoch`、`assistant_seq`。重连后助手服务补发
+	 * 已经收过的事件时，同一个位置的事件已经在库里，**什么也不写、不发布**，返回 `duplicate`——这一步在核对会话在不在做**之前**
+	 * （重复的事件不该因为这一轮已经结束就被当成「迟到的」记一条日志）；两条并发写同一个位置时唯一索引兜底，输的同样返回 `duplicate`。
 	 */
 	async appendFromAssistant(
 		sessionId: string,
 		turn: number,
 		body: SessionEventBody,
 		at: Date,
-	): Promise<{ stored: PersistedSessionEvent } | { dropped: DropReason }> {
+		source?: AssistantSource,
+	): Promise<{ stored: PersistedSessionEvent } | { dropped: DropReason } | { duplicate: true }> {
 		// 第二道打码（第一道在助手服务）：事件里出现的会话令牌，按令牌的格式在落库之前换成掩码（`./session-tokens.ts`）。
 		const parsed = parsePersistent(maskSessionTokens(body));
 		return this.#serial(sessionId, async () => {
-			const result = await this.deps.db.transaction(
-				async (tx): Promise<{ dropped: DropReason } | { stored: Inserted }> => {
+			let result: { dropped: DropReason } | { duplicate: true } | { stored: Inserted };
+			try {
+				result = await this.deps.db.transaction(async (tx) => {
 					const [session] = await tx
 						.select()
 						.from(sessions)
 						.where(eq(sessions.id, sessionId))
 						.for("no key update");
-					if (!session) return { dropped: "unknown_session" };
+					if (!session) return { dropped: "unknown_session" as const };
+					if (source !== undefined) {
+						const [existing] = await tx
+							.select({ seq: sessionEvents.seq })
+							.from(sessionEvents)
+							.where(
+								and(
+									eq(sessionEvents.assistantEpoch, source.epoch),
+									eq(sessionEvents.assistantSeq, source.seq),
+								),
+							)
+							.limit(1);
+						if (existing) return { duplicate: true as const };
+					}
 					const dropped = dropReason(session, turn);
 					if (dropped !== undefined) return { dropped };
-					return { stored: await this.#insert(tx, session, parsed, at) };
-				},
-			);
+					return { stored: await this.#insert(tx, session, parsed, at, source) };
+				});
+			} catch (error) {
+				if (source !== undefined && violates(error, "session_events_assistant_source_idx")) {
+					return { duplicate: true as const };
+				}
+				throw error;
+			}
 			if ("dropped" in result) return { dropped: result.dropped };
+			if ("duplicate" in result) return { duplicate: true as const };
 			if (!result.stored.duplicate) await this.#publishCommitted(sessionId, [result.stored.event]);
 			this.#tokensRevoked(result.stored.revoked);
 			if (result.stored.endedTurn) {
@@ -1512,6 +1579,7 @@ export class SessionStore {
 		session: SessionRow,
 		parsed: SessionEventBody,
 		at: Date,
+		source?: AssistantSource,
 	): Promise<Inserted> {
 		const { type, ...payload } = parsed;
 		const now = this.deps.clock.now();
@@ -1569,6 +1637,8 @@ export class SessionStore {
 				type,
 				payload,
 				createdAt: at,
+				assistantEpoch: source?.epoch ?? null,
+				assistantSeq: source?.seq ?? null,
 			})
 			.returning();
 		await tx

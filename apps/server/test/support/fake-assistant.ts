@@ -121,6 +121,27 @@ export class FakeAssistant {
 	healthRequests = 0;
 	/** 助手服务每次启动生成的随机 ID。 */
 	epoch = "fake-epoch";
+	/**
+	 * 续传的缓冲（#545，协议的 `AssistantEventsQuery`）：最近 {@link replayLimit} 条持久的事件的行，序号连续。`GET /events?after=` 据此补发
+	 * 和判 `hello.gap`；{@link restartService} 清空它、换纪元。
+	 */
+	readonly #replay: Array<{ seq: number; sessionId: string; line: string }> = [];
+	/** 缓冲留多少条持久的事件（默认和协议一样 1 万条；测试里改小，造「after 早于缓冲」）。 */
+	replayLimit = 10_000;
+	/**
+	 * 打开时不管 `after`、把缓冲里的持久事件全部补发一遍（`hello.gap` 为 false）：造「助手服务重放控制面已经收过的事件」，
+	 * 看库里不存第二遍。
+	 */
+	replayEverything = false;
+	/** `replayEverything` 时只重放这些会话的事件（别的会话的事件库里没有对应的会话，重放它们会被当成「不认识这个会话」丢弃）。不给就是全部。 */
+	replayOnly: string[] | undefined;
+	/**
+	 * 设了就让 `GET /events` 回这个状态码（命令和 `/health` 照常）：造「助手服务是好的、控制面和它的事件流没连上」
+	 * （控制面刚启动或正在退避重连时就是这样，#545）。已经连着的事件流不受影响（要断开用 {@link dropStreams}）。
+	 */
+	eventsStatus: number | undefined;
+	/** 最近一次 `GET /events` 带的 `after` 原文（没带是 undefined）；每次连接记一条。 */
+	readonly eventAfters: Array<string | undefined> = [];
 	/** 事件流里写心跳的间隔（毫秒），默认和协议一样 15 秒；0 是不写（模拟一个不发心跳的助手服务）。 */
 	heartbeatMs: number = ASSISTANT_STREAM_HEARTBEAT_MS;
 	/** 收到过几次 `GET /events`（连接断了重连会多一次）。 */
@@ -154,6 +175,20 @@ export class FakeAssistant {
 	/** 收到过几次 `GET /events`。 */
 	get eventRequests(): number {
 		return this.#eventRequests;
+	}
+
+	/**
+	 * 事件默认的时间：从 2026-01-01 起每条晚 1 毫秒，**跨 {@link restartService} 也递增**（真的助手服务的时钟是往前走的；固定的话「最后一条助手事件」
+	 * 按事件时间怎么排都是平的，测不出控制面找最后位置的先后，#764 审查的探针 P4）。要某个时间的用例自己传。
+	 */
+	#nextAt(): Date {
+		return new Date(Date.UTC(2026, 0, 1) + this.#atCounter++);
+	}
+	#atCounter = 0;
+
+	/** 在监听（`stop()` 之后不在，`resume()` 之后又在）。 */
+	get listening(): boolean {
+		return this.#server.listening;
 	}
 
 	/** 密钥不对的请求被拒绝了几次。 */
@@ -190,7 +225,7 @@ export class FakeAssistant {
 		sessionId: string,
 		turn: number,
 		event: AssistantEvent,
-		at: Date | string = new Date("2026-01-01T00:00:00.000Z"),
+		at: Date | string = this.#nextAt(),
 	): AssistantStreamRecord {
 		// 协议的不变式：这一轮没送到的插话，各有一条 `steer_dropped`，排在这一轮的 `turn_end` 前面（不论这条 `turn_end` 是谁发的）。
 		if (event.type === "turn_end") this.#dropSteers(sessionId, turn);
@@ -209,12 +244,41 @@ export class FakeAssistant {
 		if (event.type === "turn_end" && this.#pending.get(sessionId) === turn) {
 			this.#pending.delete(sessionId);
 		}
+		if (persisted) {
+			this.#replay.push({
+				seq: record.seq as number,
+				sessionId: record.session_id,
+				line: JSON.stringify(record),
+			});
+			while (this.#replay.length > this.replayLimit) this.#replay.shift();
+		}
 		this.#write(record);
 		if (event.type === "turn_end" && this.#stopping.get(sessionId) === turn) {
 			this.#stopping.delete(sessionId);
 			this.#startPending(sessionId);
 		}
 		return record;
+	}
+
+	/**
+	 * 模拟助手服务重启：换一个纪元（序号从头数）、清空续传的缓冲和每个会话的状态（pi 进程随它结束，没有一轮在做了）。事件流的连接断开
+	 * （和 `stop()` 一样；要让它连不上一阵，先 `stop()`、再调这个、再 `resume()`）。
+	 */
+	restartService(epoch = `fake-epoch-${++this.#restarts}`): void {
+		this.dropStreams();
+		this.epoch = epoch;
+		this.#seq = 0;
+		this.#replay.length = 0;
+		this.#running.clear();
+		this.#stopping.clear();
+		this.#pending.clear();
+		this.#steerQueues.clear();
+	}
+	#restarts = 0;
+
+	/** 缓冲里现在最后一条持久事件的序号（没有时 0）。 */
+	get lastSeq(): number {
+		return this.#seq;
 	}
 
 	/** 会话在「在停止」：收到了中止、结局还没发（`stopSettleMs` 内）。 */
@@ -364,6 +428,25 @@ export class FakeAssistant {
 		}
 	}
 
+	/** 协议的续传规则（`AssistantEventsQuery`）：纪元相同、缓冲里还有 `after` 之后的全部才补发，否则有缺口。 */
+	#resume(after: string | undefined): { gap: boolean; lines: string[] } {
+		if (this.replayEverything) {
+			const only = this.replayOnly;
+			const lines = this.#replay
+				.filter((e) => only === undefined || only.includes(e.sessionId))
+				.map((e) => e.line);
+			return { gap: false, lines };
+		}
+		if (after === undefined) return { gap: false, lines: [] };
+		const at = after.lastIndexOf(":");
+		const epoch = after.slice(0, at);
+		const seq = Number(after.slice(at + 1));
+		if (epoch !== this.epoch || seq > this.#seq) return { gap: true, lines: [] };
+		const first = this.#replay[0];
+		if (first !== undefined && first.seq > seq + 1) return { gap: true, lines: [] };
+		return { gap: false, lines: this.#replay.filter((e) => e.seq > seq).map((e) => e.line) };
+	}
+
 	#write(record: unknown): void {
 		const line = typeof record === "string" ? record : JSON.stringify(record);
 		for (const res of this.#streams) res.write(`${line}\n`);
@@ -404,8 +487,15 @@ export class FakeAssistant {
 			return this.#send(res, 200, health);
 		}
 		if (route === "GET /events") {
+			if (this.eventsStatus !== undefined) {
+				return this.#error(res, { status: this.eventsStatus, code: "start_failed" });
+			}
 			res.writeHead(200, { "content-type": "application/x-ndjson" });
-			res.write(`${JSON.stringify({ type: "hello", epoch: this.epoch, gap: false })}\n`);
+			const after = url.searchParams.get("after") ?? undefined;
+			this.eventAfters.push(after);
+			const resumed = this.#resume(after);
+			res.write(`${JSON.stringify({ type: "hello", epoch: this.epoch, gap: resumed.gap })}\n`);
+			for (const line of resumed.lines) res.write(`${line}\n`);
 			this.#eventRequests += 1;
 			this.#streams.add(res);
 			// 心跳：协议要求助手服务每隔一段时间写一行，让连接不空闲（控制面也靠它分清「静默」和「死了」）。

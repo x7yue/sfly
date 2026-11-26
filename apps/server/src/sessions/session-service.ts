@@ -119,8 +119,8 @@ export function titleOf(text: string): string {
 /**
  * 一个「在做」的会话多久没有持久事件，就当作这一轮中断了（毫秒）：一轮最长 20 分钟（#540），留出余量。
  * 控制面崩溃或重启、助手服务没有回话时，没有人会写这一轮的 `turn_end`，会话永远停在「在做」，
- * 这个项目就再也开不了新的一轮（同一个项目同一时刻只跑一轮）：这是兜底；断线之后的续传和助手服务重启之后的
- * 中断处理是 #545。
+ * 这个项目就再也开不了新的一轮（同一个项目同一时刻只跑一轮）：这是兜底。断线之后的续传和助手服务重启之后的中断由事件连接的
+ * `hello` 处理（#545，{@link SessionService.assistantRestarted}）；**事件连接连不上的时候兜底不动**：连不上不等于这一轮没在做。
  */
 export const STALE_TURN_MS = 30 * 60 * 1000;
 
@@ -133,6 +133,21 @@ export const STALE_TURN_MS = 30 * 60 * 1000;
  * 一句，助手服务那边上一轮还挂着。在做的会话点停止的响应最坏是这个时间，平时助手服务很快带回结局，马上返回。
  */
 export const STOP_GRACE_MS = ASSISTANT_STOP_WAIT_MS;
+
+/** 助手服务重启了，在做的会话补的 `interrupted` 的原因（协议和 #545 写定的这一句）。 */
+export const ASSISTANT_RESTARTED_REASON =
+	"助手服务重启了；工作区和已经触发的运行不受影响，说一句话可以接着做";
+
+/** 控制面和助手服务断开太久、错过的事件已经补不回来时，在做的会话里写的 `events_lost` 提示。 */
+export const EVENTS_LOST_MESSAGE = "控制面和助手服务断开太久，这一段过程没有记下";
+
+/**
+ * 控制面和助手服务的事件流还没连上（刚启动、或断了正在退避重连，间隔 1 到 30 秒）时，就绪状态和新的一轮写的说明（#545）：这时开始一轮的话，
+ * 助手服务发出的事件到不了控制面（持久的事件之后靠续传补回，但增量、工具输出这些不持久的就丢了），时间线上这一轮会缺东西
+ * （#760 审查在离线整套里碰到过：这一轮没有工具调用）。所以事件流连上之前不开始新的一轮，就绪状态写助手服务连不上。
+ */
+export const EVENTS_NOT_CONNECTED_MESSAGE =
+	"助手服务的事件流还没有连上（控制面刚启动或正在重新连接），过几秒再试";
 
 /** 关闭时最多等后台的事收尾多久（毫秒）：它们在放弃等待，只有正在发出去的命令要等它回来或超时。 */
 export const CLOSE_DRAIN_MS = 500;
@@ -155,6 +170,13 @@ export interface SessionServiceDeps {
 	workbenchAgent: string | undefined;
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
+	/**
+	 * 控制面和助手服务的事件连接此刻连着没有（`AssistantConnection.connected`，没有配置助手服务时不传）。连不上期间助手服务那边
+	 * 这一轮可能还在做，安静不是出事了：兜底（{@link SessionService.expireStale}）这时不把在做的会话判成中断，等连上之后由 `hello` 说了算
+	 * （{@link SessionService.assistantRestarted}、{@link SessionService.assistantEventsLost}）。**没连上时也不开始新的一轮**：就绪状态写助手服务
+	 * 连不上、建会话和说话 503 `assistant_unavailable`（{@link EVENTS_NOT_CONNECTED_MESSAGE}）：这时助手服务发出的增量、工具输出到不了控制面。
+	 */
+	assistantConnected?: () => boolean;
 	/**
 	 * 会话结束（会话已经改成 `ended`、`session_ended` 已经写下）之后调用（#544 留好的接口）：尽力而为，抛的错只进日志，不影响结束。
 	 * 会话令牌的吊销不在这里：它在会话结束的事务里（{@link SessionStore.end}，#547），不靠一个事后的回调。
@@ -233,6 +255,12 @@ export class SessionService {
 	/** 等某个会话这一轮的结局的人（{@link SessionService.#settled}）：结局写下（`onTurnEnd`）和关闭时唤醒，不靠轮询。 */
 	readonly #waiters = new Map<string, Set<() => void>>();
 
+	/**
+	 * 事件连接最近一次连上（`hello` 处理完）的时刻（毫秒，控制面的时钟）：兜底的 30 分钟从它算起（{@link SessionService.expireStale}）。
+	 * 没连上过（或没有配置助手服务）时是 undefined。
+	 */
+	#connectedAt: number | undefined;
+
 	/** 控制面在关闭：后台的「补发中止、等结局」放弃等待，不为它们延长关闭的上限，也不在关闭时自己补结局。 */
 	#closing = false;
 
@@ -279,6 +307,11 @@ export class SessionService {
 	}
 
 	// ---- 就绪状态 ----
+
+	/** 事件流此刻连着没有；没有登记「事件连接状态」的（没有配置助手服务、或测试里没给）当作连着。 */
+	#eventsConnected(): boolean {
+		return this.deps.assistantConnected?.() ?? true;
+	}
 
 	/**
 	 * 助手服务的 `/health`（缓存 {@link HEALTH_TTL_MS}，最多等 {@link HEALTH_TIMEOUT_MS}，同时来的请求共用一次）；
@@ -366,6 +399,9 @@ export class SessionService {
 			const health = await this.#assistantHealth();
 			if ("error" in health) {
 				problems.push({ kind: "assistant_unreachable", message: health.error });
+			} else if (!this.#eventsConnected()) {
+				// `/health` 通、事件流没连上：控制面正在（重新）连接，这时开始的一轮会丢事件，见 {@link EVENTS_NOT_CONNECTED_MESSAGE}。
+				problems.push({ kind: "assistant_unreachable", message: EVENTS_NOT_CONNECTED_MESSAGE });
 			} else {
 				const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
 				if (model) problems.push(model);
@@ -396,6 +432,16 @@ export class SessionService {
 				503,
 				"assistant_not_configured",
 				`助手没有开启：${setup.configured ? "" : setup.reason}`,
+			);
+		}
+		// 事件流没连上：不开始新的一轮（建会话、对空闲的会话说话、排队的轮到它都先过这里），不建会话、不写 `user_message`。
+		// 说明和就绪状态一致：助手服务的 `/health` 不通时写它不通的原因（密钥不一致、连不上……），通的话才写事件流还没连上。
+		if (!this.#eventsConnected()) {
+			const health = await this.#assistantHealth();
+			return rejected(
+				503,
+				"assistant_unavailable",
+				"error" in health ? health.error : EVENTS_NOT_CONNECTED_MESSAGE,
 			);
 		}
 		const workbench = await this.#workbench(project);
@@ -856,7 +902,14 @@ export class SessionService {
 	 */
 	async expireStale(): Promise<number> {
 		const { sessions, clock } = this.deps;
-		const stale = await sessions.staleRunning(new Date(clock.now().getTime() - STALE_TURN_MS));
+		// 连不上助手服务：安静是正常的，不判中断（见 `SessionServiceDeps.assistantConnected`）。
+		if (this.deps.assistantConnected && !this.deps.assistantConnected()) return 0;
+		const before = clock.now().getTime() - STALE_TURN_MS;
+		// 30 分钟按 max(最近的动静, 事件连接最近一次连上的时刻) 算：控制面停机很久（或断开很久）之后连上，助手服务那边这一段时间里做完的事件
+		// 还在补发的路上，会话的 `last_activity_at` 因此是旧的，不能在连上的下一刻就把它们判成中断，补发的结局随后又因为这一轮已经结束被丢掉
+		// （#764 审查的探针 P2）。连上之后 30 分钟内没有会话会被判中断；一轮最长 20 分钟，助手服务自己会结束它。
+		if (this.#connectedAt !== undefined && this.#connectedAt >= before) return 0;
+		const stale = await sessions.staleRunning(new Date(before));
 		for (const session of stale) {
 			await this.#endTurn(
 				session,
@@ -866,6 +919,53 @@ export class SessionService {
 			);
 		}
 		return stale.length;
+	}
+
+	/**
+	 * 事件连接连上了（`hello` 处理完、`AssistantConnection.connected` 已经是真，每次连上都调，包括控制面刚启动的第一次）：记下时刻，
+	 * 再开始排队的会话。事件流没连上时不开始新的一轮（{@link EVENTS_NOT_CONNECTED_MESSAGE}），所以控制面启动时的 `startWaiting`、
+	 * 助手服务重启补结局触发的开始都发生在连上之前，被挡掉了；这里补一次，不让它们等一分钟后兜底的扫描。
+	 */
+	async onAssistantConnected(): Promise<void> {
+		this.#connectedAt = this.deps.clock.now().getTime();
+		await this.startWaiting();
+	}
+
+	/**
+	 * 助手服务重启了（事件连接的 `hello` 里的纪元和控制面记着的不同，#545）：pi 进程随助手服务结束，这些会话这一轮没有人会带回结局。
+	 * `candidates` 是连接断开那一刻在做的会话（会话 → 轮次）：只结束其中**还是同一轮**的——连接断开之后才开始的一轮是在新的助手服务上
+	 * 开始的（用户在助手服务回来、事件连接还没重连上的这段时间说了话），它没有被打断。没有 `candidates`（不知道）时一个也不结束，
+	 * 留给兜底。每个会话补一条 `interrupted` 的 `turn_end`、改回空闲（和一般的 `turn_end` 一样先为没有确认送到的插话补
+	 * `steer_dropped`），排队的接着开始（`onTurnEnd`，按 #544 的规则）；工作区和已经触发的运行不受影响，说一句话可以接着做。
+	 * 返回结束了几个。
+	 */
+	async assistantRestarted(candidates: ReadonlyMap<string, number> | undefined): Promise<number> {
+		if (candidates === undefined) return 0;
+		let ended = 0;
+		for (const session of await this.deps.sessions.allRunning()) {
+			const turn = effectiveTurn(session);
+			if (candidates.get(session.id) !== turn) continue;
+			await this.#endTurn(session, turn, "interrupted", ASSISTANT_RESTARTED_REASON);
+			ended++;
+		}
+		return ended;
+	}
+
+	/**
+	 * 控制面和助手服务断开太久，错过的事件已经被助手服务挤出了缓冲（纪元相同、`hello.gap` 为真，#545）：在做的会话各补一条
+	 * `events_lost` 的提示，照常接着收。返回写了几条。
+	 */
+	async assistantEventsLost(): Promise<number> {
+		let written = 0;
+		for (const session of await this.deps.sessions.allRunning()) {
+			await this.deps.sessions.append(session.id, {
+				type: "notice",
+				kind: "events_lost",
+				message: EVENTS_LOST_MESSAGE,
+			});
+			written++;
+		}
+		return written;
 	}
 
 	/**
