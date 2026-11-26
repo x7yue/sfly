@@ -1,5 +1,5 @@
 {
-  "id": "086bfa24-c502-47a0-8c8e-07dd91f2423b",
+  "id": "aa73a0d8-3739-4fd7-b07d-298ba6f252be",
   "prevId": "db84ce0f-d526-41b7-85dd-737c8e13182e",
   "version": "7",
   "dialect": "postgresql",
@@ -2299,6 +2299,7 @@
             }
           ],
           "isUnique": true,
+          "where": "\"session_events\".\"assistant_epoch\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}

@@ -177,6 +177,15 @@ export class FakeAssistant {
 		return this.#eventRequests;
 	}
 
+	/**
+	 * 事件默认的时间：从 2026-01-01 起每条晚 1 毫秒，**跨 {@link restartService} 也递增**（真的助手服务的时钟是往前走的；固定的话「最后一条助手事件」
+	 * 按事件时间怎么排都是平的，测不出控制面找最后位置的先后，#764 审查的探针 P4）。要某个时间的用例自己传。
+	 */
+	#nextAt(): Date {
+		return new Date(Date.UTC(2026, 0, 1) + this.#atCounter++);
+	}
+	#atCounter = 0;
+
 	/** 在监听（`stop()` 之后不在，`resume()` 之后又在）。 */
 	get listening(): boolean {
 		return this.#server.listening;
@@ -216,7 +225,7 @@ export class FakeAssistant {
 		sessionId: string,
 		turn: number,
 		event: AssistantEvent,
-		at: Date | string = new Date("2026-01-01T00:00:00.000Z"),
+		at: Date | string = this.#nextAt(),
 	): AssistantStreamRecord {
 		// 协议的不变式：这一轮没送到的插话，各有一条 `steer_dropped`，排在这一轮的 `turn_end` 前面（不论这条 `turn_end` 是谁发的）。
 		if (event.type === "turn_end") this.#dropSteers(sessionId, turn);

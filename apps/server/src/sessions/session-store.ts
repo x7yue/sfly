@@ -416,8 +416,8 @@ export class SessionStore {
 	/**
 	 * 最后收到的那条助手事件的位置（控制面启动时用它带着 `after` 连上助手服务续传，#545）；库里没有助手事件时为 undefined。
 	 * 纪元是随机串、没有先后，按事件产生的时间（助手服务盖的）往回找，同一时刻的取序号大的：助手服务重启之后产生的事件晚于重启之前的。
-	 * 两个容器的时钟偏差接受（`SESSION_EVENT_TYPES` 一节）；找错的后果：找到的是旧纪元，助手服务回的 `hello` 里纪元不同，控制面当作
-	 * 助手服务重启了（在连接断开之前在做的会话补 `interrupted`）——只在时钟倒退跨过重启时才会发生。
+	 * 两个容器的时钟偏差接受（`SESSION_EVENT_TYPES` 一节）；找错的后果由 `hello` 兜住：找到的是旧纪元时，助手服务回的 `hello` 里纪元不同，
+	 * 控制面先查库里有没有 `hello` 的这个纪元（{@link SessionStore.lastSeqOfEpoch}），有就是找错了位置，改用库里的位置重连，不当成重启。
 	 */
 	async lastAssistantSource(): Promise<AssistantSource | undefined> {
 		const [row] = await this.deps.db
@@ -427,6 +427,15 @@ export class SessionStore {
 			.orderBy(desc(sessionEvents.createdAt), desc(sessionEvents.assistantSeq))
 			.limit(1);
 		return row?.epoch != null && row.seq != null ? { epoch: row.epoch, seq: row.seq } : undefined;
+	}
+
+	/** 这个纪元在库里的助手事件的最大序号（`hello` 的纪元和记着的不同时，查库里是不是已经有这个纪元的事件）；没有时为 undefined。 */
+	async lastSeqOfEpoch(epoch: string): Promise<number | undefined> {
+		const [row] = await this.deps.db
+			.select({ seq: sql<number | null>`max(${sessionEvents.assistantSeq})` })
+			.from(sessionEvents)
+			.where(eq(sessionEvents.assistantEpoch, epoch));
+		return row?.seq == null ? undefined : Number(row.seq);
 	}
 
 	/** 一个会话上一轮的结局（最近一条 `turn_end`）；没有结束过的一轮时为 null。 */

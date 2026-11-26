@@ -1312,6 +1312,9 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				lastActivityAt: new Date(other.clock.now().getTime() - 40 * 60_000),
 			});
 			await other.restart();
+			// 30 分钟从连上的时刻算起：连上之后没过 30 分钟不扫（见 session-reconnect.test.ts），过了才补。
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			(other.clock as ManualClock).advance(31 * 60_000);
 			await eventually(async () => {
 				const list = await json<SessionListResponse>(
 					await new ApiClient(asUsers(other)).get("/projects/default/sessions"),
@@ -1370,6 +1373,8 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				],
 			});
 			await other.restart();
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			(other.clock as ManualClock).advance(31 * 60_000);
 			await eventually(async () => {
 				const view = await json<SessionDetailResponse>(
 					await new ApiClient(asUsers(other)).get(`/sessions/${id}`),
@@ -1425,6 +1430,8 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 			});
 			await other.restart();
 			const api = new ApiClient(asUsers(other));
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			(other.clock as ManualClock).advance(31 * 60_000);
 			await eventually(async () => {
 				const view = await json<SessionDetailResponse>(await api.get(`/sessions/${id}`));
 				expect(view.status).toBe("idle");

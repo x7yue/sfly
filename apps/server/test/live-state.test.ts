@@ -357,6 +357,18 @@ describe("快照里的文字打过码：先打码、后截断", () => {
 		}
 	});
 
+	it("窗口的起点切在代理对中间：开头落单的低位代理不留（打码之后比上限短，最后一步的截断不会替它削）", () => {
+		// 一个表情占两个字符：窗口从它的第二个字符开始。后面一枚 sfly_ses_ 连着 1500 个令牌字符，打码之后整段比上限短。
+		const shrink = `\nsfly_ses_${"z".repeat(1500)}\n`;
+		const tail = new TailText(LIMIT);
+		tail.append(`😀${"a".repeat(WINDOW - 1 - shrink.length)}${shrink}`);
+		const out = tail.read();
+		expect(utf8(out)).toBeLessThan(LIMIT);
+		// 开头不是落单的低位代理，整段能原样来回转成 UTF-8（落单的代理会变成 U+FFFD）。
+		expect(out.charCodeAt(0)).toBeLessThan(0xdc00);
+		expect(Buffer.from(out, "utf8").toString("utf8")).toBe(out);
+	});
+
 	it("令牌后面连着一大串令牌字符（比令牌长很多）：窗口开头落在这一串里也不留令牌的半截", () => {
 		const live = new LiveStates();
 		live.apply(SESSION, toolCall("c1"));

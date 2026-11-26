@@ -332,6 +332,75 @@ describe("控制面和助手服务的断线重连、补发、纪元变化", () =
 			await eventually(async () => expect(await statusOf(cp, a.id)).toBe("idle"));
 		}, 30_000);
 
+		it("停机超过 30 分钟：连上之后补发还没处理完时扫描，已经做完的一轮不被判成中断（30 分钟从连上的时刻算起），补发带回的结局照常收下（#764 审查，探针 P2）", async () => {
+			const s1 = await createOk("甲");
+			assistant.emit(s1.id, 1, message("停机之前"));
+			await drained(s1.id, 1);
+			await cp.restart(() => {
+				// 停机期间：别的会话（控制面不认识的，代替别的项目里在做的会话）先产生了一批事件，之后这个会话的这一轮做完；停机超过 30 分钟。
+				for (let n = 0; n < 1500; n++) assistant.emit(randomUUID(), 1, message("别的会话"));
+				assistant.emit(s1.id, 1, message("停机期间做完了"));
+				assistant.emit(s1.id, 1, turnEnd(1));
+				(cp.clock as ManualClock).advance(31 * 60_000);
+			});
+			await workbench.disconnect();
+			workbench = await FakeAgent.connect(
+				cp.grpcUrl,
+				{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },
+				{ clock: cp.clock },
+			);
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 10_000);
+			// hello 已到、补发（先是 1500 条别的会话的）还没处理到这个会话：这时扫描不判中断。
+			expect(await cp.current.sessionService.expireStale()).toBe(0);
+			await eventually(async () => expect(await statusOf(cp, s1.id)).toBe("idle"), 30_000);
+			const view = await detail(s1.id);
+			expect(view.last_turn_outcome).toBe("completed");
+			expect(
+				view.events.flatMap((e) => (e.type === "assistant_message" ? [e.text] : [])),
+			).toContain("停机期间做完了");
+		}, 60_000);
+
+		it("记着的位置找错了（助手服务重启后时钟慢了几分钟，期间控制面重启）：不把新助手服务上在做的一轮判成中断，停机期间的事件也补回来（#764 审查，探针 P4）", async () => {
+			const a = await createOk("甲");
+			assistant.emit(a.id, 1, message("旧纪元"), "2026-06-01T00:10:00.000Z");
+			assistant.emit(a.id, 1, turnEnd(1), "2026-06-01T00:10:01.000Z");
+			await eventually(async () => expect(await statusOf(cp, a.id)).toBe("idle"));
+			const oldEpoch = assistant.epoch;
+			await assistant.stop();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
+			assistant.restartService();
+			await assistant.resume();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 10_000);
+			expect(assistant.epoch).not.toBe(oldEpoch);
+			// 新的助手服务时钟慢了 5 分钟：它的事件时间比旧纪元的最后一条还早。
+			const b = await createOk("乙");
+			assistant.emit(b.id, 1, message("新纪元"), "2026-06-01T00:05:00.000Z");
+			await eventually(async () =>
+				expect((await detail(b.id)).events.some((e) => e.type === "assistant_message")).toBe(true),
+			);
+			await cp.restart(() => {
+				assistant.emit(b.id, 1, message("停机期间"), "2026-06-01T00:05:30.000Z");
+			});
+			await workbench.disconnect();
+			workbench = await FakeAgent.connect(
+				cp.grpcUrl,
+				{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },
+				{ clock: cp.clock },
+			);
+			await eventually(async () => {
+				const texts = (await detail(b.id)).events.flatMap((e) =>
+					e.type === "assistant_message" ? [e.text] : [],
+				);
+				expect(texts).toContain("停机期间");
+			}, 10_000);
+			// 第一次带的是找错的旧纪元，hello 之后改用库里新纪元的位置重连。
+			expect(assistant.eventAfters.some((after) => after?.startsWith(`${oldEpoch}:`))).toBe(true);
+			expect(assistant.eventAfters.at(-1)?.startsWith(`${assistant.epoch}:`)).toBe(true);
+			// 乙这一轮还在新的助手服务上做，没有被判中断。
+			expect(await statusOf(cp, b.id)).toBe("running");
+			expect((await detail(b.id)).events.filter((e) => e.type === "turn_end")).toEqual([]);
+		}, 60_000);
+
 		it("第一次连接（库里还没有助手事件）不带 after；之后断线重连带内存里最后收到的位置", async () => {
 			const a = await createOk("甲");
 			assistant.emit(a.id, 1, message("一条"));
@@ -714,6 +783,67 @@ describe("控制面刚启动、事件流还没连上（#760 审查查到的现�
 					),
 				).toContain("tool_call"),
 			);
+		} finally {
+			await agent.disconnect();
+			await cp.close();
+			await assistant.close();
+		}
+	}, 60_000);
+});
+
+describe("控制面启动时排队的会话（#764 审查）", () => {
+	it("启动时事件流还没连上：排队的会话不开始；事件流连上（hello 处理完）之后马上开始，不等一分钟后兜底的扫描", async () => {
+		const assistant = await FakeAssistant.start();
+		const cp = await startTestControlPlane({
+			assistantUrl: assistant.url,
+			assistantSecret: assistant.secret,
+			workbenchAgent: "workbench-queued",
+			assistantReconnectMs: { min: 20, max: 100 },
+			// 兜底的扫描用默认（测试里一小时一次）：开始排队的会话只能靠连上之后的那一次。
+			// 不让夹具等事件流连上（重启时事件流故意连不上，夹具会白等 10 秒）；第一次连上自己等。
+			waitForAssistant: false,
+		});
+		let agent = await FakeAgent.connect(
+			cp.grpcUrl,
+			{ name: "workbench-queued", peer: { port: 7004, publicAddress: "10.0.0.8" } },
+			{ clock: cp.clock },
+		);
+		try {
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 10_000);
+			const api = new ApiClient(asUsers(cp));
+			const a = await json<SessionView>(
+				await api.post("/projects/default/sessions", { text: "在做的" }, "alice"),
+			);
+			(cp.clock as ManualClock).advance(1_000);
+			const b = await json<SessionView>(
+				await api.post("/projects/default/sessions", { text: "排队的" }, "bob"),
+			);
+			expect(b.status).toBe("queued");
+			expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id]);
+			// 控制面停机；停机期间 a 这一轮结束了（写库：回到空闲）；起来的时候事件流连不上（助手服务的事件流回 503）。
+			assistant.eventsStatus = 503;
+			await cp.restart(async () => {
+				await query(cp, "update sessions set status = 'idle' where id = $1", [a.id]);
+			});
+			await agent.disconnect();
+			agent = await FakeAgent.connect(
+				cp.grpcUrl,
+				{ name: "workbench-queued", peer: { port: 7004, publicAddress: "10.0.0.8" } },
+				{ clock: cp.clock },
+			);
+			// 启动时的 `startWaiting` 被「事件流没连上」挡掉了：排队的不开始（开始了的话它的事件到不了控制面）。
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			expect(cp.current.assistantConnected()).toBe(false);
+			expect(await statusOf(cp, b.id)).toBe("queued");
+			expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id]);
+			// 事件流连上：hello 处理完之后马上开始，没有靠兜底的扫描。
+			assistant.eventsStatus = undefined;
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 10_000);
+			await eventually(
+				() => expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]),
+				10_000,
+			);
+			expect(await statusOf(cp, b.id)).toBe("running");
 		} finally {
 			await agent.disconnect();
 			await cp.close();

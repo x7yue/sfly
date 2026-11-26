@@ -255,6 +255,12 @@ export class SessionService {
 	/** 等某个会话这一轮的结局的人（{@link SessionService.#settled}）：结局写下（`onTurnEnd`）和关闭时唤醒，不靠轮询。 */
 	readonly #waiters = new Map<string, Set<() => void>>();
 
+	/**
+	 * 事件连接最近一次连上（`hello` 处理完）的时刻（毫秒，控制面的时钟）：兜底的 30 分钟从它算起（{@link SessionService.expireStale}）。
+	 * 没连上过（或没有配置助手服务）时是 undefined。
+	 */
+	#connectedAt: number | undefined;
+
 	/** 控制面在关闭：后台的「补发中止、等结局」放弃等待，不为它们延长关闭的上限，也不在关闭时自己补结局。 */
 	#closing = false;
 
@@ -898,7 +904,12 @@ export class SessionService {
 		const { sessions, clock } = this.deps;
 		// 连不上助手服务：安静是正常的，不判中断（见 `SessionServiceDeps.assistantConnected`）。
 		if (this.deps.assistantConnected && !this.deps.assistantConnected()) return 0;
-		const stale = await sessions.staleRunning(new Date(clock.now().getTime() - STALE_TURN_MS));
+		const before = clock.now().getTime() - STALE_TURN_MS;
+		// 30 分钟按 max(最近的动静, 事件连接最近一次连上的时刻) 算：控制面停机很久（或断开很久）之后连上，助手服务那边这一段时间里做完的事件
+		// 还在补发的路上，会话的 `last_activity_at` 因此是旧的，不能在连上的下一刻就把它们判成中断，补发的结局随后又因为这一轮已经结束被丢掉
+		// （#764 审查的探针 P2）。连上之后 30 分钟内没有会话会被判中断；一轮最长 20 分钟，助手服务自己会结束它。
+		if (this.#connectedAt !== undefined && this.#connectedAt >= before) return 0;
+		const stale = await sessions.staleRunning(new Date(before));
 		for (const session of stale) {
 			await this.#endTurn(
 				session,
@@ -908,6 +919,16 @@ export class SessionService {
 			);
 		}
 		return stale.length;
+	}
+
+	/**
+	 * 事件连接连上了（`hello` 处理完、`AssistantConnection.connected` 已经是真，每次连上都调，包括控制面刚启动的第一次）：记下时刻，
+	 * 再开始排队的会话。事件流没连上时不开始新的一轮（{@link EVENTS_NOT_CONNECTED_MESSAGE}），所以控制面启动时的 `startWaiting`、
+	 * 助手服务重启补结局触发的开始都发生在连上之前，被挡掉了；这里补一次，不让它们等一分钟后兜底的扫描。
+	 */
+	async onAssistantConnected(): Promise<void> {
+		this.#connectedAt = this.deps.clock.now().getTime();
+		await this.startWaiting();
 	}
 
 	/**

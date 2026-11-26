@@ -14,6 +14,12 @@ export interface AssistantRecovery {
 	restarted(candidates: ReadonlyMap<string, number> | undefined): Promise<unknown>;
 	/** 纪元相同、断得太久、事件补不回来：在做的会话各写一条 `events_lost` 的提示。 */
 	eventsLost(): Promise<unknown>;
+	/**
+	 * `hello` 处理完、事件连接标成连着**之后**调用（每次连上都调，包括控制面刚启动的第一次）：这之前新的一轮因为事件流没连上被挡着
+	 * （`SessionService` 的就绪状态），重启补结局、控制面启动时排队的会话的开始都发生在连上之前，被挡掉了，在这里补开始；
+	 * 也让会话服务记下连上的时刻（兜底的 30 分钟从它算起）。出错只记日志，不影响连接。
+	 */
+	connected(): Promise<unknown>;
 }
 
 export interface AssistantConnectionOptions {
@@ -47,12 +53,15 @@ const DROP_TEXT: Record<DropReason | "turn_mismatch", string> = {
  * 第一次连接用库里最后一条助手事件的位置（`SessionStore.lastAssistantSource`），之后用内存里的。助手服务把它之后的持久事件补发过来，
  * 补发的和已经在库里的同一个位置的事件不存两次（`appendFromAssistant` 的 `source`）。不持久的事件（增量……）错过了就是错过了，由事件流的
  * 快照补上。第一行 `hello`：
- * - **纪元和记着的不同**（助手服务重启了）：连接断开那一刻在做的会话以 `interrupted` 结束（{@link AssistantRecovery.restarted}），
- *   排队的接着开始；之后的位置是新纪元的 0；
+ * - **纪元和记着的不同**（助手服务重启了）：先查库里有没有这个纪元的事件——有，说明记着的位置不是最后收到的那条（`lastAssistantSource`
+ *   按助手服务盖的事件时间找，两个容器的时钟偏差会让它找到旧纪元），那就是找错了位置：改用这个纪元在库里的最大序号，断开重连补回缺的，
+ *   不当成重启；没有才是助手服务重启了：连接断开那一刻在做的会话以 `interrupted` 结束（{@link AssistantRecovery.restarted}），
+ *   之后的位置是新纪元的 0；
  * - **纪元相同、`gap` 为真**（断开太久，事件被挤出缓冲）：在做的会话各写一条 `events_lost`（{@link AssistantRecovery.eventsLost}）。
  *
  * **连不上期间什么都不判**：会话保持原状态（这一轮可能还在做，只是网络断了），{@link AssistantConnection.connected} 说连着没有，
- * 兜底的 `expireStale` 看它。
+ * 兜底的 `expireStale` 看它；就绪状态和新的一轮也看它（事件流没连上时不开始新的一轮，`SessionService`）。每次 `hello` 处理完、标成连着之后
+ * 调 {@link AssistantRecovery.connected}，补开始这期间被挡着的排队的会话。
  */
 export class AssistantConnection {
 	readonly #abort = new AbortController();
@@ -101,6 +110,7 @@ export class AssistantConnection {
 		// 第一次连接之前先记下此刻在做的会话：之后才开始的一轮不算助手服务重启时被打断的（见 `#candidates`）。
 		await this.#snapshotRunning();
 		while (!this.#abort.signal.aborted) {
+			let reposition = false;
 			try {
 				let first = true;
 				const after = await this.#after();
@@ -115,12 +125,18 @@ export class AssistantConnection {
 						wait = minMs;
 					}
 					if ("type" in line) {
-						if (line.type === "hello") await this.#hello(line);
+						if (line.type === "hello" && (await this.#hello(line)) === "reconnect") {
+							// 位置改过了：断开，带新的位置重连（补回库里这个纪元最后一条之后的）。
+							reposition = true;
+							break;
+						}
 						continue; // 心跳
 					}
 					await this.#handle(line);
 				}
-				if (!this.#abort.signal.aborted) this.options.log("助手服务的事件流结束了，重新连接");
+				if (!this.#abort.signal.aborted && !reposition) {
+					this.options.log("助手服务的事件流结束了，重新连接");
+				}
 			} catch (error) {
 				if (this.#abort.signal.aborted) break;
 				this.options.log(`助手服务的事件流出错，${wait} 毫秒后重新连接`, error);
@@ -153,11 +169,23 @@ export class AssistantConnection {
 		}
 	}
 
-	/** 事件流的第一行：纪元变了（助手服务重启了）或者有缺口时，处理在做的会话，再记下新的位置。 */
-	async #hello(hello: AssistantStreamHello): Promise<void> {
+	/**
+	 * 事件流的第一行：纪元变了（助手服务重启了）或者有缺口时，处理在做的会话，再记下新的位置。返回 `"reconnect"` 表示位置改过了、要断开
+	 * 重连（不标成连着）。
+	 */
+	async #hello(hello: AssistantStreamHello): Promise<"ok" | "reconnect"> {
 		const known = this.#position?.epoch;
-		const { recovery } = this.options;
+		const { recovery, sessions } = this.options;
 		if (known !== undefined && hello.epoch !== known) {
+			// 库里已经有这个纪元的事件：记着的位置是找错的（时钟偏差），不是助手服务重启了。
+			const last = await sessions.lastSeqOfEpoch(hello.epoch);
+			if (last !== undefined) {
+				this.options.log(
+					`库里记着的最后一条助手事件在旧纪元（${known}），而这个纪元（${hello.epoch}）在库里已经有事件：改用它的位置重连，不当成助手服务重启`,
+				);
+				this.#position = { epoch: hello.epoch, seq: last };
+				return "reconnect";
+			}
 			this.options.log(`助手服务重启了（纪元 ${known} → ${hello.epoch}）：在做的会话按中断处理`);
 			await recovery?.restarted(this.#candidates);
 			this.#position = { epoch: hello.epoch, seq: 0 };
@@ -177,6 +205,13 @@ export class AssistantConnection {
 		}
 		this.#candidates = undefined;
 		this.#connected = true;
+		// 标成连着之后：补开始这期间被挡着的排队的会话（重启补结局触发的开始发生在标成连着之前，被挡掉了）。
+		try {
+			await recovery?.connected();
+		} catch (error) {
+			this.options.log("事件连接连上之后开始排队的会话失败", error);
+		}
+		return "ok";
 	}
 
 	/**
@@ -214,6 +249,8 @@ export class AssistantConnection {
 		} catch (error) {
 			if (error instanceof SessionNotFoundError) {
 				this.#dropped("unknown_session", record);
+				// 丢弃的也算处理过：重连不再补发它、不再记第二遍日志（和下面的 `#advance` 一致）。
+				this.#advance(record);
 				return;
 			}
 			// 写库出错：这条事件丢了，连接继续（后面的事件照常处理）。

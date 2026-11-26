@@ -951,8 +951,11 @@ export const sessionEvents = pgTable(
 			"session_events_assistant_source",
 			sql`(${t.assistantEpoch} is null) = (${t.assistantSeq} is null)`,
 		),
-		// 纪元和序号是整个助手服务共用的，不分会话：同一个位置的事件只存一条（NULL 互不相等，没有位置的不受约束）。
-		uniqueIndex("session_events_assistant_source_idx").on(t.assistantEpoch, t.assistantSeq),
+		// 纪元和序号是整个助手服务共用的，不分会话：同一个位置的事件只存一条。只覆盖有位置的行（控制面自己写的事件两列都空，
+		// 不占索引）；`hello` 时按纪元查最大序号（`lastSeqOfEpoch`）也走它。
+		uniqueIndex("session_events_assistant_source_idx")
+			.on(t.assistantEpoch, t.assistantSeq)
+			.where(sql`${t.assistantEpoch} is not null`),
 		// 控制面（重）启动时找最后收到的那条助手事件：纪元是随机串、没有先后，按事件产生的时间（助手服务盖的）往回找。
 		index("session_events_assistant_latest")
 			.on(t.createdAt.desc(), t.assistantSeq.desc())

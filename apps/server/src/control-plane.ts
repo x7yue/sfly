@@ -688,6 +688,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 				recovery: {
 					restarted: (candidates): Promise<number> => sessionService.assistantRestarted(candidates),
 					eventsLost: (): Promise<number> => sessionService.assistantEventsLost(),
+					connected: (): Promise<void> => sessionService.onAssistantConnected(),
 				},
 				log: (message, error) => logError(`sfly: ${message}`, error),
 				reconnect: options.assistantReconnectMs && {
