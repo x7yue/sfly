@@ -37,7 +37,7 @@ describe("运行预设的编辑表单", () => {
 		expect(toggleParam(draft, param("steps"), false).values).not.toHaveProperty("steps");
 	});
 
-	it("勾选敏感参数：它的默认值读不回来，表单里是空的，要重新输入（不把占位符填进去）", () => {
+	it("勾选 secret 参数：它的默认值读不回来，表单里是空的，要重新输入（不把占位符填进去）", () => {
 		const secret: ParamDeclView = {
 			name: "token",
 			type: "string",
@@ -49,7 +49,7 @@ describe("运行预设的编辑表单", () => {
 		expect(draftErrors(draft, [secret]).values).toEqual({ token: "必填" });
 	});
 
-	it("勾选敏感的布尔参数：没有可显示的值，是「没选」，要选 true 或 false；选了 false 也算选了", () => {
+	it("勾选 secret 的布尔参数：没有可显示的值，是「没选」，要选 true 或 false；选了 false 也算选了", () => {
 		const flag: ParamDeclView = { name: "flag", type: "boolean", secret: true, default: "******" };
 		let draft = toggleParam({ ...emptyDraft(), name: "p" }, flag, true);
 		expect(draft.values).toEqual({ flag: "" });
@@ -57,7 +57,7 @@ describe("运行预设的编辑表单", () => {
 		draft = { ...draft, values: { flag: false } };
 		expect(draftErrors(draft, [flag]).values).toEqual({});
 		expect(toPresetBody(draft, [flag]).params).toEqual([{ name: "flag", value: false }]);
-		// 沿用原值的敏感布尔参数点「替换」后同样要选。
+		// 沿用原值的 secret 布尔参数点「替换」后同样要选。
 		const replaced = replaceSecret({ ...draft, keptSecrets: ["flag"] }, "flag");
 		expect(draftErrors(replaced, [flag]).values).toEqual({ flag: "必填" });
 	});

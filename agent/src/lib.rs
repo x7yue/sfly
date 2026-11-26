@@ -72,9 +72,13 @@ pub const DEFAULT_SLOTS: u32 = 4;
 /// 终止任务时从优雅终止到强制杀掉进程树的默认宽限期（docs/SEMANTICS.md §3.4）。
 pub const DEFAULT_TERMINATE_GRACE: Duration = Duration::from_secs(10);
 
-/// 重连等待：从 MIN 开始翻倍，最多 MAX；成功连上后重置。
+/// 重连等待：从 MIN 开始翻倍，最多 MAX；连得稳（撑过 [`STABLE_CONNECTION`]）之后才重置，握手成功不重置。
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(10);
+/// 连上之后至少撑过这么久才算连得稳：重连的等待只在连得稳之后才回到 [`RECONNECT_MIN`]。握手一成功就重置的话，
+/// 握手成功、马上又被断开（比如重发的结果超过控制面一条消息的上限，每次都被拒）的 Agent 会每半秒重连一次，
+/// 控制面每次都要为它走一遍握手、续约（#723）。
+pub const STABLE_CONNECTION: Duration = Duration::from_secs(30);
 
 /// 控制面明确拒绝了这条连接（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）之后的重试等待：从 MIN 开始翻倍，
 /// 最多 MAX，连上一次就重置（[`Config::rejected_retry_min`]、[`Config::rejected_retry_max`] 默认取这两个值，测试里改短）。
@@ -136,6 +140,8 @@ pub struct Config {
     pub metric_queue_points: usize,
     /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制，[`logs::Pump::start`]）。
     pub log_forward_rate: u64,
+    /// 连上之后撑过这么久才算连得稳、重连的等待才回到最短（默认 [`STABLE_CONNECTION`]，测试里改短）。
+    pub stable_connection: Duration,
     /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
     pub update_read_timeout: Duration,
     /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
@@ -181,6 +187,7 @@ impl Config {
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
             metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
             log_forward_rate: 0,
+            stable_connection: STABLE_CONNECTION,
             update_read_timeout: update::DEFAULT_READ_TIMEOUT,
             version: AGENT_VERSION.to_string(),
             agent_time_offset_file: None,
@@ -821,7 +828,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         }
         match connected {
             Ok(connection) => {
-                delay = RECONNECT_MIN;
+                // 握手成功不重置重连的等待：连得稳了才重置（[`STABLE_CONNECTION`]，见下面 serve 结束之后）。
                 if rejections.accepted() {
                     eprintln!("控制面接受了这台 Agent 的连接（之前被拒绝）");
                 }
@@ -866,9 +873,25 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
                 };
+                let served_at = tokio::time::Instant::now();
                 match serve(connection, &runtime, channels, &updater, &mut sweep).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
-                    Err(error) => eprintln!("connection lost: {error:#}"),
+                    Err(error) => {
+                        eprintln!("connection lost: {error:#}");
+                        // 控制面用「消息超过上限」拒绝了这条连接：超过上限的结果不能再原样重发（每次重连都先重发
+                        // 没 Ack 的结果，每次都被拒），换成失败再发（#723）。被拒的是遥测时没有结果超过上限，不动。
+                        if let Some(limit) = message_limit_exceeded(&error) {
+                            let replaced = runtime.ledger.replace_results_over(limit);
+                            if replaced > 0 {
+                                eprintln!(
+                                    "控制面收一条消息最多 {limit} 字节：{replaced} 个任务的结果超过它，已换成失败，重连后发出"
+                                );
+                            }
+                        }
+                    }
+                }
+                if served_at.elapsed() >= config.stable_connection {
+                    delay = RECONNECT_MIN;
                 }
             }
             Err(error) => {
@@ -895,6 +918,18 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RECONNECT_MAX);
     }
+}
+
+/// 控制面因为一条消息超过它的上限（`readMaxBytes`，#674）结束了这条连接：返回它说的上限（字节）。
+/// 控制面回的状态是 `resource_exhausted`，说明是 `message size <声明的大小> is larger than configured readMaxBytes <上限>`。
+fn message_limit_exceeded(error: &anyhow::Error) -> Option<usize> {
+    let status = error
+        .chain()
+        .find_map(|e| e.downcast_ref::<tonic::Status>())
+        .filter(|status| status.code() == tonic::Code::ResourceExhausted)?;
+    let (_, after) = status.message().split_once("readMaxBytes ")?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// 任务目录的定期扫描（[`Runtime::sweep`]）。
@@ -1044,6 +1079,18 @@ fn result_message(result: TaskResult) -> AgentMessage {
     }
 }
 
+/// `AgentMessage.result` 的字段号（`proto/sfly/agent/v1/agent.proto`）：[`result_message_size`] 用；测试把它和真的编码对一遍。
+const RESULT_FIELD: u32 = 6;
+
+/// 这条结果作为一条 `AgentMessage`（[`result_message`]）发出时编码之后的大小：控制面的网关拿一条消息的上限比的是它
+/// （长度前缀里的长度），不是结果自己的编码长度，差一个字段标签加长度前缀（4 到 5 个字节）。不复制结果，直接算。
+pub(crate) fn result_message_size(result: &TaskResult) -> usize {
+    use prost::Message as _;
+    use prost::encoding::{encoded_len_varint, key_len};
+    let len = result.encoded_len();
+    key_len(RESULT_FIELD) + encoded_len_varint(len as u64) + len
+}
+
 /// 任务执行方发往控制面的消息。
 struct Channels<'a> {
     installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
@@ -1180,6 +1227,70 @@ async fn serve(
                     runtime.sweep();
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    fn exhausted(message: &str) -> anyhow::Error {
+        anyhow::Error::from(tonic::Status::resource_exhausted(message)).context("wrapped")
+    }
+
+    #[test]
+    fn the_limit_is_read_from_the_control_planes_status() {
+        let error =
+            exhausted("message size 83886081 is larger than configured readMaxBytes 83886080");
+        assert_eq!(message_limit_exceeded(&error), Some(83_886_080));
+        let at_the_end = exhausted("larger than configured readMaxBytes 4194304");
+        assert_eq!(message_limit_exceeded(&at_the_end), Some(4_194_304));
+    }
+
+    #[test]
+    fn other_errors_are_not_a_message_limit() {
+        assert_eq!(
+            message_limit_exceeded(&exhausted("too many requests")),
+            None
+        );
+        assert_eq!(
+            message_limit_exceeded(&exhausted("readMaxBytes unknown")),
+            None
+        );
+        let other_code = anyhow::Error::from(tonic::Status::internal(
+            "message size 9 is larger than configured readMaxBytes 8",
+        ));
+        assert_eq!(message_limit_exceeded(&other_code), None);
+        assert_eq!(message_limit_exceeded(&anyhow::anyhow!("plain")), None);
+    }
+
+    /// 控制面比的是整条消息：这个数和真的编码一样，长度前缀的字节数变化的几个边界（127/128、16383/16384、2 MiB）两侧都对。
+    #[test]
+    fn the_size_of_a_result_message_is_the_size_of_the_whole_message() {
+        use prost::Message as _;
+        let sizes = [
+            0, 1, 100, 120, 124, 125, 126, 127, 128, 129, 16_380, 16_383, 16_384, 16_385,
+        ];
+        let big = [
+            2 * 1024 * 1024 - 1,
+            2 * 1024 * 1024,
+            2 * 1024 * 1024 + 1,
+            40 * 1024 * 1024,
+        ];
+        for text in sizes.into_iter().chain(big) {
+            let result = TaskResult {
+                task_id: "t".into(),
+                attempt: 1,
+                outputs_json: "x".repeat(text),
+                ..Default::default()
+            };
+            assert_eq!(
+                result_message_size(&result),
+                result_message(result.clone()).encoded_len(),
+                "输出 {text} 字节"
+            );
+            assert!(result_message_size(&result) > result.encoded_len());
         }
     }
 }

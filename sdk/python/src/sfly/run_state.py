@@ -46,7 +46,7 @@ NodeStatus = Literal[
 
 
 class RunStateError(TypedDict):
-    """一个失败节点的错误（最近一次尝试的）。错误信息已按这次运行的保密参数的值打码。"""
+    """一个失败节点的错误（最近一次尝试的）。错误信息已按这次运行的 secret 参数的值打码。"""
 
     #: 错误类型：`node_error`（节点代码抛出异常）、`timeout`、`agent_lost`、`env_error`、
     #: `config_error`；没有记录错误类型时是 `unknown`。读它的代码遇到不认识的取值当作别的类型。

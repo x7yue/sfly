@@ -52,6 +52,18 @@ from sfly.nodes import NODE_ATTR, Metric, NodeDeclaration, is_context_param
 
 #: 节点返回值序列化后的大小上限（docs/ARCHITECTURE.md §4.1）。
 MAX_OUTPUT_BYTES = 1024 * 1024
+#: 失败结果里的说明（异常的类型和文字）最多这么多字节（UTF-8）：超过的把中间省掉，
+#: 首尾各留一半，写明省掉了多少。
+#: 异常的文字可以有几十 MiB；原样写进 output.json，Agent 读不了（超过它的读取上限就不读，
+#: 使用者看不到异常的类型和位置），
+#: 控制面也收不下（#723）。完整的文字照旧写进标准错误，任务日志里有全文。
+MAX_FAILURE_MESSAGE_BYTES = 64 * 1024
+#: 失败结果里的堆栈最多这么多字节：超过的只留最后几帧（出错的那一处在最后），写明前面省掉了多少。
+MAX_FAILURE_TRACEBACK_BYTES = 64 * 1024
+#: 异常的类型名、出错的位置（「模块.函数 第 N 行」）不会长到哪里去，
+#: 这个上限只是不让它们也成为无界的来源。
+MAX_FAILURE_TYPE_CHARS = 256
+MAX_FAILURE_LOCATION_CHARS = 1024
 
 
 class NodeOutputError(Exception):
@@ -480,6 +492,67 @@ def _format_failure(error: BaseException, *, importing: bool = False) -> str:
     return "".join(exc.format())
 
 
+def _encoded_if_over(text: str, limit: int) -> bytes | None:
+    """`text` 的 UTF-8 编码超过 `limit` 字节时返回编码，没超过返回 None（每个字符最多 4 个字节：
+    字符数乘 4 不超过上限的不用编码就知道没超过）。"""
+    if len(text) * 4 <= limit:
+        return None
+    raw = text.encode("utf-8", "surrogatepass")
+    return raw if len(raw) > limit else None
+
+
+def _bound_text(text: str, limit: int, what: str) -> str:
+    """`text` 的 UTF-8 字节数超过 `limit` 时把中间省掉：开头和末尾各留一半（落在字符边界上），
+    写明原来多少字节、
+    省掉了多少。没超过的原样返回。"""
+    raw = _encoded_if_over(text, limit)
+    if raw is None:
+        return text
+    keep = limit // 2
+    head = raw[:keep].decode("utf-8", "ignore")
+    tail = raw[len(raw) - keep :].decode("utf-8", "ignore")
+    left_out = len(raw) - len(head.encode("utf-8")) - len(tail.encode("utf-8"))
+    return (
+        f"{head}\n\n…（{what}有 {len(raw)} 字节，超过 {limit} 字节：中间 {left_out} 字节没有保留；"
+        f"完整的在任务日志的标准错误里）…\n\n{tail}"
+    )
+
+
+def _bound_traceback(tb: str, limit: int) -> str:
+    """堆栈的 UTF-8 字节数超过 `limit` 时只留最后的几帧（从一帧的开头起），
+    写明前面省掉了多少字节。"""
+    raw = _encoded_if_over(tb, limit)
+    if raw is None:
+        return tb
+    cut = len(raw) - limit
+    start = raw.find(b"\n  File ", cut)  # 下一帧的开头
+    if start != -1:
+        start += 1
+    else:  # 没有帧的开头可以对齐：对齐到一行的开头
+        line = raw.find(b"\n", cut)
+        start = line + 1 if 0 <= line < len(raw) - 1 else cut
+    kept = raw[start:].decode("utf-8", "ignore")
+    return (
+        f"…（堆栈有 {len(raw)} 字节，超过 {limit} 字节：前面的 {start} 字节没有保留，"
+        "只留最后的几帧；"
+        f"完整的在任务日志的标准错误里）…\n{kept}"
+    )
+
+
+def _bound_failure(message: str, tb: str, own: str) -> tuple[str, str]:
+    """失败结果里的说明和堆栈各自限长（[`MAX_FAILURE_MESSAGE_BYTES`]、[`MAX_FAILURE_TRACEBACK_BYTES`]）。
+
+    `own` 是异常自己的文字（`format_exception_only`），说明是它去掉首尾空白，
+    堆栈的末尾通常也是它。堆栈超过上限、
+    必须省掉一些的时候，末尾这一份不留：同样的文字不存两份（留着的话，异常的文字很长时堆栈的尾部全是这段文字，
+    看不到帧）。堆栈没超过上限时一个字不变，说明也是。
+    """
+    bounded = _bound_text(message, MAX_FAILURE_MESSAGE_BYTES, "异常的文字")
+    if own and tb.endswith(own) and _encoded_if_over(tb, MAX_FAILURE_TRACEBACK_BYTES) is not None:
+        tb = f"{tb[: len(tb) - len(own)]}（这条异常的文字就是上面的说明，这里不重复。）\n"
+    return bounded, _bound_traceback(tb, MAX_FAILURE_TRACEBACK_BYTES)
+
+
 def _termination_message(error: BaseException, entry: str = "", package: str | None = None) -> str:
     """被终止时写进日志的那一行。找不到执行到哪时只写原因：这条路径在信号处理之后，不能再抛异常。"""
     text = str(error) or "任务被终止"
@@ -525,7 +598,8 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
     except InputError as error:
         # 配置错误：不是节点出错，没有堆栈可看，错误信息就是原因，不往标准错误写（ERROR 级的日志）。
         # `kind` 让读取端记成 config_error（不重试）；没有这个键的失败是 node_error。
-        failure = {"status": "failed", "error": {"kind": "config_error", "message": str(error)}}
+        message = _bound_text(str(error), MAX_FAILURE_MESSAGE_BYTES, "说明")
+        failure = {"status": "failed", "error": {"kind": "config_error", "message": message}}
         return 1, json.dumps(failure, ensure_ascii=False)
     except BaseException as error:  # noqa: BLE001 - 节点代码的任何异常（包括 SystemExit）都是失败
         if isinstance(error, KeyboardInterrupt):
@@ -556,13 +630,15 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             if place:
                 _log("error", f"出错位置：{place}")
             sys.stderr.write(tb)
+        own = "".join(traceback.format_exception_only(type(error), error))
+        message, tb = _bound_failure(own.strip(), tb, own)
         failure_error = {
-            "type": type(error).__name__,
-            "message": "".join(traceback.format_exception_only(type(error), error)).strip(),
+            "type": type(error).__name__[:MAX_FAILURE_TYPE_CHARS],
+            "message": message,
             "traceback": tb,
         }
         if place:
-            failure_error["location"] = place
+            failure_error["location"] = place[:MAX_FAILURE_LOCATION_CHARS]
         if _is_artifact_limit(error):
             # 没接住 `ctx.artifacts.save` 抛出的超限：和 Agent 上传前发现产物超限同一个类型
             # env_error，不按 retries 重试（重跑一遍产物还是这么大，#477）。
