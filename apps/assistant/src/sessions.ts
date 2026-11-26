@@ -758,8 +758,6 @@ export class SessionManager {
 				return;
 			}
 			turn.accepted = true;
-			// 模型见到了这句话：记进对话记录（恢复不了时的摘要用；记的是用户原来的话，不含摘要）。
-			this.#record(session, turn.number, "user", body.text);
 			if (!turn.stop) this.#handOver(session, turn);
 		} catch (error) {
 			if (turn.ended) return;
@@ -1104,6 +1102,9 @@ export class SessionManager {
 	#delivered(session: Session, turn: Turn): boolean {
 		if (!turn.promptSeen) {
 			turn.promptSeen = true;
+			// 模型见到了这一轮自己的话：记进对话记录（恢复不了时的摘要用；记的是用户原来的话，不含摘要）。按 pi 的事件流的先后记，
+			// 在助手回答它之前；`prompt` 的回应和后面的事件可能在同一块数据里到，回应之后的那一步不一定先于它们执行。
+			this.#record(session, turn.number, "user", turn.body.text);
 			return false;
 		}
 		const delivered = turn.steers.deliverNext();

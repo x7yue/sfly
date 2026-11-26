@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { MODEL_PROBE_INTERVAL_MS, type Probe } from "../src/model-health.js";
 import { IDLE_RECLAIM_MS, MAX_PROCESSES } from "../src/sessions.js";
 import { eventually } from "./support/eventually.js";
 import { Harness, type HarnessOptions, SECRET } from "./support/harness.js";
@@ -62,7 +63,10 @@ const notices = (h: Harness, id: string) =>
 const health = async (h: Harness) =>
 	(await (
 		await fetch(`${h.url}/health`, { headers: { authorization: `Bearer ${SECRET}` } })
-	).json()) as { processes: { active: number; limit: number | null } };
+	).json()) as {
+		processes: { active: number; limit: number | null };
+		model: { reachable: boolean | null };
+	};
 
 /** 说一句话、等这一轮结束；返回会话 ID（不给就新建一个）。 */
 async function oneTurn(h: Harness, text = "settle", id: string = crypto.randomUUID(), turn = 1) {
@@ -109,6 +113,29 @@ describe("闲置回收（时间可控）", () => {
 		clock.advance(1);
 		expect(h.sessions.pid(id)).toBeUndefined();
 		await eventually(() => expect(alive(pid)).toBe(false), 10_000);
+	});
+
+	it("空闲时被拒的 prompt（模型连不上，503）也算收到：计时重新算", async () => {
+		const modelClock = new ManualClock();
+		const probes: Array<Awaited<ReturnType<Probe>>> = [
+			{ ok: true },
+			{ ok: false, errorClass: "unreachable", cause: "连接被拒绝" },
+		];
+		const probe: Probe = async () =>
+			probes.shift() ?? { ok: false, errorClass: "unreachable", cause: "连接被拒绝" };
+		const { h, clock } = await start({ modelClock, probe });
+		const id = await oneTurn(h);
+		const pid = h.sessions.pid(id) as number;
+		modelClock.advance(MODEL_PROBE_INTERVAL_MS);
+		await eventually(async () => expect((await health(h)).model.reachable).toBe(false));
+		clock.advance(10 * MINUTE);
+		const res = await h.prompt(id, { turn: 2, text: "settle" });
+		expect(res.status).toBe(503);
+		expect(await res.json()).toMatchObject({ code: "model_unreachable" });
+		clock.advance(14 * MINUTE + 59_999);
+		expect(h.sessions.pid(id)).toBe(pid);
+		clock.advance(1);
+		expect(h.sessions.pid(id)).toBeUndefined();
 	});
 
 	it("不认识的会话收到 steer、end 不建会话、也不挂计时", async () => {
@@ -291,7 +318,7 @@ describe("恢复", () => {
 		expect(existsSync(join(h.dataDir, "sessions", id, "pi-session.broken"))).toBe(false);
 	});
 
-	it("对话记录里有用户的话（prompt 被 pi 接受之后）、送到的插话和助手的整条消息，不含摘要", async () => {
+	it("对话记录里有用户的话（pi 把它作为用户消息回显之后）、送到的插话和助手的整条消息，不含摘要", async () => {
 		const { h } = await start();
 		const id = crypto.randomUUID();
 		await h.prompt(id, { text: "deliver-then-settle 第一句" });
@@ -307,6 +334,18 @@ describe("恢复", () => {
 			{ turn: 1, role: "user", text: "插话一句" },
 			{ turn: 1, role: "assistant", text: "看到了" },
 		]);
+	});
+
+	it("`prompt` 的回应和后面的事件（用户消息、助手的话、停下）在同一块数据里到：用户的话仍记在助手的话前面", async () => {
+		const { h } = await start();
+		for (let i = 0; i < 12; i += 1) {
+			const id = await oneTurn(h, `say:回答${i}||`);
+			const lines = readFileSync(join(h.dataDir, "sessions", id, "transcript.jsonl"), "utf8")
+				.trim()
+				.split("\n")
+				.map((l) => (JSON.parse(l) as { role: string }).role);
+			expect(lines, `第 ${i} 个会话`).toEqual(["user", "assistant"]);
+		}
 	});
 
 	it("pi 没接受的 prompt 不进对话记录（模型没见过）", async () => {
