@@ -55,7 +55,7 @@ import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { createStdIndex } from "./packages/std-index.js";
 import { PresetStore } from "./presets/preset-store.js";
-import type { Mirrors } from "./public-config.js";
+import { type Mirrors, publicMirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
@@ -541,7 +541,8 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			httpUrl: () => publicHttpUrl,
 			grpcUrl: () => publicGrpcUrl,
 			version,
-			mirrors,
+			// 公开的地方（不用登录的 /install.sh、/sdk/project-settings）不带用户名和密码；Welcome 用上面的原值（#755）。
+			mirrors: publicMirrors(mirrors),
 		},
 		sdkWheels,
 		stdIndex: createStdIndex({

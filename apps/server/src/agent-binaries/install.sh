@@ -22,6 +22,7 @@ SFLY_VERSION='{{SFLY_VERSION}}'
 SHA256_X86_64='{{SHA256_X86_64}}'
 SHA256_AARCH64='{{SHA256_AARCH64}}'
 # 控制面配置的镜像（ADR 0012），未配置时为空；只在 --dev 安装 uv 和 sfly CLI 时以环境变量传给这一次的命令。
+# 这里的地址是控制面去掉了用户名和密码的（这个脚本不用登录就能下载）；镜像要认证时，凭据放这台机器的 ~/.netrc（uv、curl、wget 都读它）。
 # 本机可以用环境变量 SFLY_INDEX_URL、SFLY_GITHUB_RELEASE_MIRROR、SFLY_PYTHON_INSTALL_MIRROR 覆盖（与 Agent 相同），
 # 覆盖值写进 agent.env，Agent 和 sfly init 也用它们。
 # 下载时 curl、wget 带的 User-Agent 默认 sfly-agent/<版本>（镜像站会封禁它们的部分默认 User-Agent），
@@ -82,6 +83,8 @@ usage() {
   从 GitHub Release 镜像推导（<镜像>/astral-sh/python-build-standalone/）。
   控制面配置的 PyPI 镜像：${PYPI_MIRROR:-未配置}
   控制面配置的 GitHub Release 镜像：${GITHUB_RELEASE_MIRROR:-未配置}
+  （上面两个地址不带用户名和密码：这个脚本不用登录就能下载。镜像要认证时，把凭据写进这台机器的 ~/.netrc，
+  权限 600；也可以用上面的环境变量设一个带用户名和密码的地址，只对这台机器有效。）
 
   SFLY_USER_AGENT             下载时 curl、wget 带的 User-Agent（默认 sfly-agent/$SFLY_VERSION）；
                               镜像站封禁默认 User-Agent 时换成能看出机构或用途的值，例如 acme-lab-sfly/1.0。
@@ -106,7 +109,7 @@ unit_value() {
 
 download() {
 	if command -v curl >/dev/null 2>&1; then
-		curl -fsSL -A "$user_agent" -o "$2" "$1"
+		curl -fsSL --netrc-optional -A "$user_agent" -o "$2" "$1"
 	elif command -v wget >/dev/null 2>&1; then
 		wget -q -U "$user_agent" -O "$2" "$1"
 	else
@@ -127,6 +130,8 @@ user_agent_config() {
 			fi
 		done
 		printf 'user-agent = "%s"\n' "$user_agent"
+		# 镜像要认证时凭据在 ~/.netrc 里，uv 的安装脚本里改不了参数的 curl 也要读它（没有 ~/.netrc 时不受影响）。
+		printf 'netrc-optional\n'
 	} >"$1/.curlrc"
 	{
 		f=${WGETRC:-${HOME:+$HOME/.wgetrc}}
