@@ -135,7 +135,7 @@ def summary_of(client: Client, report: Mapping[str, Any]) -> dict[str, Any]:
             failed_action_entry(action, labels) for action in report["failed_actions"]
         ],
         "attention_items": [attention_entry(item) for item in report["attention_items"]],
-        # 只在保密值太多时才有这个键：正常的摘要和以前一字不差。
+        # 只在 secret 值太多时才有这个键：正常的摘要和以前一字不差。
         **({"secrets_oversize": True} if report.get("secrets_oversize") else {}),
     }
 

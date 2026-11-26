@@ -27,6 +27,11 @@ describe("字段错误的位置说明", () => {
 		expect(fieldLabel(entry, "params.0.description")).toBe("参数 1st（第 1 个）的说明");
 	});
 
+	it("secret 是英文：和前面的中文之间留一个空格", () => {
+		expect(fieldLabel(entry, "params.0.secret")).toBe("参数 1st（第 1 个）的 secret");
+		expect(fieldLabel(entry, "params.1.secret")).toBe("第 2 个参数的 secret");
+	});
+
 	it("节点的显示名称", () => {
 		expect(fieldLabel(pkg, "display_name")).toBe("显示名称");
 	});

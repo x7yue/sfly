@@ -7,7 +7,7 @@ import { errorHeadline, failuresInOrder } from "./run-failures.js";
  * `${{ run.state }}` 共用它，所以两处看到的结构和取法一样，只有限制不同（{@link RunStateLimits}）。
  *
  * 输入 {@link RunStateSource} 是读取结果里投影需要的那部分，写成普通的 JSON（时间是 ISO 字符串），
- * 两端共跑的用例表 `testdata/run-state-cases.json` 用的就是这个形状。读取结果里的用户内容在读取时已经按这次运行的保密参数的值打码，
+ * 两端共跑的用例表 `testdata/run-state-cases.json` 用的就是这个形状。读取结果里的用户内容在读取时已经按这次运行的 secret 参数的值打码，
  * 这里不再打码。
  */
 

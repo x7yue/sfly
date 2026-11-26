@@ -53,6 +53,8 @@ export const TERM = {
 	lastEdited: "最后修改",
 	action: "动作",
 	mark: "标记",
+	/** 照契约的字段名原样写的英文（GLOSSARY.md「secret 参数」）：参数面板的开关、各处标出一个参数是 secret 的字。 */
+	secret: "secret",
 } as const;
 
 /**

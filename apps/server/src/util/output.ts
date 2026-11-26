@@ -4,7 +4,7 @@
 // **它是方便，不是保证**：认的是 biome-plugins/no-direct-output.grit 开头清单里的写法（docs/ARCHITECTURE.md 里是同一份），
 // 清单之外的（存进变量的 `process`、拼出来的名字……）不保证拦住，靠审查。
 // 错误一律过 {@link safeError}：错误本身是数据库的查询错误、或者在 `cause` 链和 `AggregateError` 里的，参数（密码的哈希、令牌的哈希、
-// 保密参数的值、飞书 Webhook 的地址）不会进日志，也不会打在操作者的终端上；错误放在别的错误的属性里的（`printError("…", 外层)`，
+// secret 参数的值、飞书 Webhook 的地址）不会进日志，也不会打在操作者的终端上；错误放在别的错误的属性里的（`printError("…", 外层)`，
 // 查询错误在外层的 `original` 之类的属性里）不处理，不要这样包。**只有 {@link printError} 收错误**：{@link printWarning}、{@link printInfo}、{@link writeStdout} 收的是
 // 字符串，把错误拼进去（`` printWarning(`失败：${error}`) ``）时已经是字符串，认不出来、去不了参数——要打印错误就用 printError。
 import { safeError } from "./safe-error.js";
