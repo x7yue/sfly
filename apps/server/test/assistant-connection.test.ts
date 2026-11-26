@@ -336,6 +336,8 @@ describe("事件流：心跳和死连接检测", () => {
 				name: "x",
 				version: 1,
 			},
+			// `platform` 助手服务只发 `commit` 这一种：`run`、`scenario_version` 是控制面在记下那条记录的事务里自己写的。
+			{ type: "platform", kind: "run", turn: 1, run_id: randomUUID(), scenario_name: "x" },
 			{ type: "session_ended", by: "x" },
 			{ type: "turn_queued", position: 1, waiting_for: "x" },
 		];
@@ -531,6 +533,69 @@ describe("事件连接：核对会话和轮次", () => {
 		expect(joined).toContain("不是会话此刻在做的那一轮");
 		expect(joined).not.toContain("迟到的消息");
 		expect(joined).not.toContain("迟到的增量");
+	});
+
+	it("助手服务发来的 platform（commit）事件：落库（时间是助手服务盖的）、排在这一轮的 turn_end 前面、推给浏览器；被打断那一轮的补提交带上一轮的轮次、在这一轮的事件流里照样收下", async () => {
+		const project = await newProject();
+		const { id } = await newSession(project);
+		await store.beginTurn(id, project, opening);
+		const commit = (turn: number, hash: string) => ({
+			type: "platform" as const,
+			kind: "commit" as const,
+			turn,
+			hash,
+			files: [
+				{ path: "a.txt", additions: 1, deletions: 0 },
+				{ path: "logo.png", additions: null, deletions: null },
+			],
+			diff: "diff --git a/a.txt b/a.txt\n+x\n",
+			truncated: true,
+		});
+		const { out, stop } = collect(id);
+		const first = "a".repeat(40);
+		const logs = await run([
+			{ ...record(id, 1, commit(1, first)), at: "2026-01-01T00:00:07.000Z" },
+			record(id, 1, turnEnd(1)),
+		]);
+		const stored = await store.after(id, 0, 100);
+		expect(stored.map((e) => e.type)).toEqual([
+			"user_message",
+			"turn_started",
+			"platform",
+			"turn_end",
+		]);
+		expect(stored[2]).toMatchObject({
+			type: "platform",
+			kind: "commit",
+			turn: 1,
+			hash: first,
+			files: [
+				{ path: "a.txt", additions: 1, deletions: 0 },
+				{ path: "logo.png", additions: null, deletions: null },
+			],
+			diff: "diff --git a/a.txt b/a.txt\n+x\n",
+			truncated: true,
+			at: "2026-01-01T00:00:07.000Z",
+		});
+		await eventually(() => expect(out.some((e) => e.type === "platform")).toBe(true));
+
+		// 第 2 轮开始前补提交上一轮（被打断的那一轮）留下的改动：记录的轮次是 2（此刻在做的），事件里的轮次是 1。
+		await store.beginTurn(id, project, opening);
+		const second = "b".repeat(40);
+		logs.push(...(await run([record(id, 2, commit(1, second))])));
+		const left = (await store.after(id, 0, 100)).filter(
+			(e): e is Extract<typeof e, { kind: "commit" }> =>
+				e.type === "platform" && e.kind === "commit",
+		);
+		expect(left.map((e) => [e.turn, e.hash])).toEqual([
+			[1, first],
+			[1, second],
+		]);
+		// 这一轮结束之后（会话空闲）才到的不收，和别的助手事件一样。
+		await run([record(id, 2, turnEnd(2)), record(id, 2, commit(2, "c".repeat(40)))]);
+		expect((await store.after(id, 0, 100)).filter((e) => e.type === "platform")).toHaveLength(2);
+		expect(logs.join("\n")).toBe("");
+		stop();
 	});
 
 	it("空闲和已结束的会话也不收助手服务的事件：不落库、不推送、不改状态（空闲的会话收到 turn_end 不变）", async () => {

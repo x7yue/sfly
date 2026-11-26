@@ -146,7 +146,8 @@ describe("一轮的结局", () => {
 		await harness.prompt(id, { text: "settle" });
 		const first = await harness.turnEnd(id);
 		expect(first, first.reason).toMatchObject({ outcome: "completed" });
-		expect(harness.connections).toEqual({ opened: 1, closed: 1 });
+		// 三个：写 skill、一轮开始前整理工作区、一轮结束时提交（#546），各自用完就关。
+		expect(harness.connections).toEqual({ opened: 3, closed: 3 });
 		// 不只数 close() 被调用的次数：假工作台上的连接真的关了（#618 审查）。
 		await eventually(() => expect(harness.workbench.openConnections).toBe(0));
 		const port = await silentPort();
@@ -157,7 +158,8 @@ describe("一轮的结局", () => {
 				workbench: { name: "silent", address: port.address, workdir: harness.workdir },
 			});
 			expect(await harness.turnEnd(other, 1, 40_000)).toMatchObject({ outcome: "failed" });
-			expect(harness.connections).toEqual({ opened: 2, closed: 2 });
+			// 写 skill 就失败了：这一轮没有开始（没有整理工作区，也没有提交）。
+			expect(harness.connections).toEqual({ opened: 4, closed: 4 });
 		} finally {
 			await port.close();
 		}

@@ -321,6 +321,8 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				],
 				truncate: 1,
 			},
+			// 提交的记录（#546）：文件的路径经截断层（`Truncate untrusted`），差异是多行的正文。
+			"sessions/CommitRow.tsx": { wrapped: ["item.diff"], truncate: 1 },
 			"sessions/ReadinessLine.tsx": { wrapped: ["SESSION.ready(readiness.workbench)", "problem"] },
 			"sessions/SessionList.tsx": { wrapped: ["session.created_by"], truncate: 1 },
 			"sessions/SessionPage.tsx": {

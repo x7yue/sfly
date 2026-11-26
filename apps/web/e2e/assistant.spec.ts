@@ -5,6 +5,7 @@ import { seedSession } from "../../server/test/support/sessions.js";
 import {
 	apiError,
 	assistantMessage,
+	commitEvent,
 	eventAt,
 	fulfillJson,
 	installSessionStream,
@@ -378,6 +379,129 @@ test("历史：工具行默认折叠，展开看结果；命令写 $、读写改
 	// 没有输出的结果写明。
 	await rows.nth(4).getByRole("button").click();
 	await expect(page.getByTestId("tool-result")).toHaveText("（没有输出）");
+});
+
+test("提交的记录（platform 的 commit）：一行「这一轮改了 N 个文件 +a −b」和短提交号，默认折叠，展开是文件列表和差异；差异太长写明只显示了开头；补提交写是哪一轮留下的；路径里的方向控制字符写出来；刷新后一样（真的控制面）", async ({
+	page,
+	controlPlane,
+}) => {
+	const hash = "3f1c2ab9d0e4a5b6c7d8e9f00112233445566778";
+	const files = [
+		{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+		{ path: "assets/logo.png", additions: null, deletions: null },
+	];
+	const commit = (turn: number, over: Record<string, unknown> = {}): SessionEventBody =>
+		({
+			type: "platform",
+			kind: "commit",
+			turn,
+			hash,
+			files,
+			diff: "diff --git a/nodes/http_check.py b/nodes/http_check.py\n+timeout = 30\n",
+			truncated: false,
+			...over,
+		}) as SessionEventBody;
+	const say = (text: string): SessionEventBody => ({
+		type: "user_message",
+		message_id: randomUUID(),
+		text,
+		steer: false,
+		author: "alice",
+		author_user_id: null,
+	});
+	const end = (turn: number): SessionEventBody => ({
+		type: "turn_end",
+		turn,
+		outcome: "completed",
+		reason: "",
+		duration_ms: 1000,
+	});
+	const events: SessionEventBody[] = [
+		say("给 http_check 加超时"),
+		{ type: "turn_started", turn: 1 },
+		{ type: "assistant_message", text: "改好了。", usage: USAGE },
+		commit(1),
+		end(1),
+		say("接着做"),
+		{ type: "turn_started", turn: 2 },
+		// 第 1 轮被打断时留下的改动，在第 2 轮开始前补提交的。
+		commit(1, {
+			truncated: true,
+			hash: "b".repeat(40),
+			files: [{ path: "big.txt", additions: 20_000, deletions: 0 }],
+		}),
+		// 路径里有从右到左的覆盖字符：写出来，不让它把旁边的字带反。
+		commit(2, {
+			hash: "c".repeat(40),
+			files: [{ path: "evil\u202Efdp.py", additions: 1, deletions: 0 }],
+		}),
+		end(2),
+	];
+	const id = await seedSession(controlPlane.database.url, { events });
+	for (const reload of [false, true]) {
+		if (reload) await page.reload();
+		else await page.goto(`/sessions/${id}`);
+		const rows = page.getByTestId("commit-row");
+		await expect(rows).toHaveCount(3);
+		// 一行摘要和短提交号；不是「助手的话」，也不是工具行。
+		await expect(rows.nth(0).getByTestId("commit-summary")).toHaveText(
+			"这一轮改了 2 个文件 +12 −3",
+		);
+		await expect(rows.nth(0).getByTestId("commit-hash")).toContainText("3f1c2ab");
+		await expect(rows.nth(0).getByTestId("commit-hash")).toHaveAttribute("title", hash);
+		await expect(rows.nth(0)).not.toHaveAttribute("data-leftover");
+		await expect(rows.nth(1)).toHaveAttribute("data-leftover", "true");
+		await expect(rows.nth(1).getByTestId("commit-summary")).toHaveText(
+			"第 1 轮被打断时留下的改动：1 个文件 +20000 −0",
+		);
+		await expect(page.getByTestId("assistant-message")).toHaveCount(1);
+		await expect(page.getByTestId("tool-row")).toHaveCount(0);
+		// 默认折叠。
+		const first = rows.nth(0);
+		await expect(first.getByRole("button")).toHaveAttribute("aria-expanded", "false");
+		await expect(first.getByTestId("commit-files")).toHaveCount(0);
+		await expect(first.getByTestId("commit-diff")).toHaveCount(0);
+		// 展开：文件列表（增删行数，二进制写「二进制文件」）和差异；差异没有被截断，没有那句说明。
+		await first.getByRole("button").click();
+		await expect(first.getByRole("button")).toHaveAttribute("aria-expanded", "true");
+		const listed = first.getByTestId("commit-file");
+		await expect(listed).toHaveCount(2);
+		await expect(listed.nth(0)).toContainText("nodes/http_check.py");
+		await expect(listed.nth(0)).toContainText("+12");
+		await expect(listed.nth(0)).toContainText("−3");
+		await expect(listed.nth(1)).toContainText("assets/logo.png");
+		await expect(listed.nth(1)).toContainText("二进制文件");
+		await expect(first.getByTestId("commit-diff")).toContainText("+timeout = 30");
+		await expect(first.getByTestId("commit-truncated")).toHaveCount(0);
+		// 收起。
+		await first.getByRole("button").click();
+		await expect(first.getByTestId("commit-files")).toHaveCount(0);
+		// 差异太长只存了开头：写明。
+		await rows.nth(1).getByRole("button").click();
+		await expect(rows.nth(1).getByTestId("commit-truncated")).toHaveText("差异太长，只显示了开头");
+		// 别人写的路径经不可信文字组件：覆盖字符写成 U+202E，页面上没有原样的控制字符。
+		await rows.nth(2).getByRole("button").click();
+		const evil = rows.nth(2).getByTestId("commit-file");
+		await expect(evil).toContainText("U+202E");
+		expect(await evil.evaluate((el) => el.textContent?.includes("\u202e"))).toBe(false);
+	}
+});
+
+test("提交的记录：一轮在做时到的 commit 事件排在这一轮的结局前面，不改会话的状态", async ({
+	page,
+}) => {
+	await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+	await pushEvent(page, commitEvent(3));
+	await expect(page.getByTestId("commit-row")).toHaveCount(1);
+	await expect(page.getByTestId("session-status")).toHaveText("在做");
+	await pushEvent(page, turnEnd(4, "completed"));
+	const kinds = await timeline(page)
+		.getByRole("listitem")
+		.evaluateAll((items) => items.map((item) => item.getAttribute("data-testid")));
+	expect(kinds).toEqual(["user-message", "commit-row", "turn-end"]);
+	// 同一个序号再来一次（重连后补发）：不重复。
+	await pushEvent(page, commitEvent(3));
+	await expect(page.getByTestId("commit-row")).toHaveCount(1);
 });
 
 test("历史很长：先读最近一页，「加载更早的」往前翻页，翻完就没有这个按钮", async ({

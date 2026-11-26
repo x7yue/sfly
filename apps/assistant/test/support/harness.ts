@@ -53,6 +53,9 @@ export interface HarnessOptions {
 	/** 停止一轮时等 `agent_settled` 的时间、硬上限（测试里改短）。 */
 	abortSettleMs?: number;
 	stopWaitMs?: number;
+	/** 一轮结束时的提交、开始前整理工作区的期限（测试里改短）。 */
+	commitBudgetMs?: number;
+	prepareBudgetMs?: number;
 	/** 计时（手动推进的时钟，见 manual-clock.ts）。 */
 	clock?: Clock;
 	hostEnv?: NodeJS.ProcessEnv;
@@ -74,7 +77,9 @@ export class Harness {
 		readonly workdir: string,
 		readonly model: FakeModel,
 		readonly workbench: FakeWorkbench,
-		readonly sessions: SessionManager,
+		public sessions: SessionManager,
+		/** 起 SessionManager 用的选项：{@link restart} 照它再起一个。 */
+		readonly managerOptions: SessionManagerOptions,
 		readonly bus: EventBus,
 		readonly server: Server,
 		readonly url: string,
@@ -95,7 +100,7 @@ export class Harness {
 		const logs: string[] = [];
 		const counts = { opened: 0, closed: 0 };
 		const bus = new EventBus();
-		const sessions = new SessionManager({
+		const managerOptions: SessionManagerOptions = {
 			dataDir,
 			modelsFile,
 			model: "fake/fake",
@@ -127,9 +132,12 @@ export class Harness {
 			killGraceMs: options.killGraceMs,
 			abortSettleMs: options.abortSettleMs,
 			stopWaitMs: options.stopWaitMs,
+			commitBudgetMs: options.commitBudgetMs,
+			prepareBudgetMs: options.prepareBudgetMs,
 			clock: options.clock,
 			tmpRoot: join(root, "tmp"),
-		});
+		};
+		const sessions = new SessionManager(managerOptions);
 		const server = createAssistantServer({
 			secret: SECRET,
 			bus,
@@ -148,6 +156,7 @@ export class Harness {
 			model,
 			workbench,
 			sessions,
+			managerOptions,
 			bus,
 			server,
 			url,
@@ -157,6 +166,16 @@ export class Harness {
 		// 计数从启动时就开始：和 SessionManager 用的是同一个对象。
 		harness.connections = counts;
 		return harness;
+	}
+
+	/**
+	 * 助手服务重启：旧的 SessionManager 退出（在做的一轮以 `interrupted` 结束，不提交），照同样的选项起一个新的（数据目录、工作台、
+	 * 事件总线都是原来的，内存里的状态没有了）。只能直接对 `sessions` 发命令（HTTP 服务还指着旧的）。
+	 */
+	async restart(): Promise<SessionManager> {
+		await this.sessions.shutdown();
+		this.sessions = new SessionManager(this.managerOptions);
+		return this.sessions;
 	}
 
 	prompt(
