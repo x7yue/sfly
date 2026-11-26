@@ -235,6 +235,21 @@ impl fmt::Debug for Mirrors {
     }
 }
 
+/// Welcome 里控制面下发的地址（镜像、SDK 和 Agent 二进制的下载地址、包索引）登记给打码（[`crate::secret::register_address`]，#757）：
+/// 镜像地址可以带用户名和密码，其余几个是控制面按自己的对外地址拼的（对外地址不许带用户名密码），多一层防护。
+/// 收到 Welcome 就登记，早于准备环境、下载 SDK、自更新写出任何一个。
+pub fn register_welcome_addresses(welcome: &Welcome) {
+    for address in [
+        &welcome.pypi_mirror,
+        &welcome.github_release_mirror,
+        &welcome.sdk_wheel_url,
+        &welcome.agent_binary_url,
+        &welcome.package_index_url,
+    ] {
+        crate::secret::register_address(address);
+    }
+}
+
 fn non_empty(s: &str) -> Option<String> {
     (!s.trim().is_empty()).then(|| s.trim().to_string())
 }
@@ -676,6 +691,91 @@ mod tests {
             report.contains("Python 下载镜像：https://***@gh.example/github-release/astral-sh/python-build-standalone/"),
             "{report}"
         );
+    }
+
+    /// 凭据里有文字规则认不出的字符（#757）：登记之后，失败报告（失败的命令的 shell 写法、命令的输出、「用到的镜像」）、
+    /// `Debug` 输出里都没有用户名和密码；主机和路径留着。
+    #[test]
+    fn mirror_credentials_with_awkward_characters_never_reach_the_report_or_debug_output() {
+        let mirrors = Mirrors {
+            distributed_pypi: Some("https://emuser1:Hd1\"xq Tl1yz@em1.example/simple".into()),
+            distributed_github_release: Some(
+                "https://emuser2:Hd2'xq`Tl2yz@em2.example/github-release".into(),
+            ),
+            local: LocalMirrors {
+                pypi: Some("https://emuser3:Hd3<xq>Tl3yz@em3.example/simple".into()),
+                github_release: Some("https://emuser4:Hd4 xq\"Tl4yz@em4.example/gh".into()),
+                python_install: Some(r"https://EM5\emuser5:Hd5xqTl5yz@em5.example/py/".into()),
+            },
+        };
+        crate::secret::register_address(mirrors.distributed_pypi.as_deref().unwrap());
+        crate::secret::register_address(mirrors.distributed_github_release.as_deref().unwrap());
+        for address in [
+            &mirrors.local.pypi,
+            &mirrors.local.github_release,
+            &mirrors.local.python_install,
+        ] {
+            crate::secret::register_address(address.as_deref().unwrap());
+        }
+        let setup = Setup {
+            uv: Path::new("uv"),
+            manage_uv: true,
+            mirrors: &mirrors,
+            scratch: Path::new("/tmp"),
+            user_agent: "ua",
+        };
+        // 失败的命令用 shell 的单引号写法（`command_line`），命令的输出里地址原样（curl 回显的、安装脚本回显的）。
+        let mut curl = std::process::Command::new("curl");
+        curl.arg("-o").arg("x").arg(
+            "https://emuser4:Hd4 xq\"Tl4yz@em4.example/gh/astral-sh/uv/LatestRelease/uv-installer.sh",
+        );
+        curl.env(
+            "UV_DOWNLOAD_URL",
+            "https://emuser2:Hd2'xq`Tl2yz@em2.example/github-release/astral-sh/uv/LatestRelease",
+        );
+        let error = setup.error(
+            "安装 uv 失败",
+            command_line(&curl),
+            "curl: (22) 404 https://emuser3:Hd3<xq>Tl3yz@em3.example/simple/x/".into(),
+        );
+        let shown = [
+            format!("{error}"),
+            format!("{error:?}"),
+            format!("{error:#?}"),
+            format!("{mirrors:?}"),
+            format!("{:?}", mirrors.local),
+        ];
+        for text in &shown {
+            for secret in [
+                "emuser1",
+                "Hd1",
+                "Tl1yz",
+                "emuser2",
+                "Hd2",
+                "Tl2yz",
+                "emuser3",
+                "Hd3",
+                "Tl3yz",
+                "emuser4",
+                "Hd4",
+                "Tl4yz",
+                "emuser5",
+                "EM5",
+                "Hd5xqTl5yz",
+            ] {
+                assert!(!text.contains(secret), "{secret}：{text}");
+            }
+        }
+        let report = &shown[0];
+        for kept in [
+            "'https://***@em4.example/gh/astral-sh/uv/LatestRelease/uv-installer.sh'",
+            "UV_DOWNLOAD_URL='https://***@em2.example/github-release/astral-sh/uv/LatestRelease'",
+            "https://***@em3.example/simple/x/",
+            "GitHub Release 镜像：https://***@em4.example/gh（本地覆盖；控制面下发的是 https://***@em2.example/github-release）",
+            "PyPI 镜像：https://***@em3.example/simple（本地覆盖；控制面下发的是 https://***@em1.example/simple）",
+        ] {
+            assert!(report.contains(kept), "{kept}：{report}");
+        }
     }
 
     #[test]
