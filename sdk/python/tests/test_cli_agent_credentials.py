@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from sfly.cli import main
-from sfly.cli.agent import EXIT_NOT_LOGGED_IN, default_host
+from sfly.cli.agent import EXIT_NAME_TAKEN, EXIT_NOT_LOGGED_IN, default_host
 
 AGENT_TOKEN = "sfly_agt_" + "0123456789abcdef" * 3
 DEV_TOKEN = "sfly_agt_" + "fedcba9876543210" * 3
@@ -262,6 +262,14 @@ class TestListAndRevoke:
         )
         assert "已吊销" in out and CREDENTIAL_ID in out
 
+    def test_the_id_and_the_name_are_encoded_in_the_path(
+        self, logged_in: FakeControlPlane, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # 有斜杠、问号、空格的 id 不能变成别的路径（也不能带出查询参数）。
+        code, _, err = run(capsys, "agent", "credentials", "revoke", "worker 1", "a/b?c d")
+        assert code == 0, err
+        assert logged_in.requests[-1]["path"] == "/agents/worker%201/credentials/a%2Fb%3Fc%20d"
+
 
 class TestRegisterDev:
     def test_it_posts_the_host_and_prints_the_generated_name_and_the_token_once(
@@ -341,6 +349,26 @@ class TestRegisterDev:
         code, out, err = run(capsys, "agent", "register-dev", "--json")
         assert code == 5 and json.loads(err)["error"]["code"] == "not_logged_in"
 
+    def test_an_address_with_a_user_name_is_refused_before_login_check_and_request(
+        self,
+        plane: FakeControlPlane,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("SFLY_HOME", str(tmp_path / "sfly-home"))
+        monkeypatch.setenv("SFLY_API_TOKEN", PERSONAL)
+        for address in (
+            "http://user:hunter2pw@127.0.0.1",
+            plane.url.replace("//", "//user:hunter2pw@"),
+        ):
+            code, out, err = run(
+                capsys, "agent", "register-dev", "--host", "lab", "--server", address
+            )
+            assert code == 2 and out == ""
+            assert "hunter2pw" not in err and "不要带用户名和密码" in err
+        assert plane.requests == []
+
     def test_a_duplicate_says_to_pick_another_host(
         self, logged_in: FakeControlPlane, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -350,8 +378,13 @@ class TestRegisterDev:
             "已经有一台叫 dev-alice-lab 的 Agent：换一个主机名",
         )
         code, out, err = run(capsys, "agent", "register-dev", "--host", "lab")
-        assert code == 2 and out == ""
+        # 专门的退出码：安装脚本据此写明几条路。
+        assert code == EXIT_NAME_TAKEN == 6 and out == ""
         assert "dev-alice-lab" in err and "--host <另一个主机名>" in err
+        # 两种来源都写明：命令行的 --host、install.sh 的 --dev-host；自己以前注册的先 revoke-dev。
+        assert "--dev-host" in err and "sfly agent revoke-dev" in err
+        code, out, err = run(capsys, "agent", "register-dev", "--host", "lab", "--json")
+        assert code == 6 and json.loads(err)["error"]["code"] == "dev_agent_exists"
 
     def test_revoke_dev(
         self, logged_in: FakeControlPlane, capsys: pytest.CaptureFixture[str]

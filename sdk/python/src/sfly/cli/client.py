@@ -103,6 +103,41 @@ def without_userinfo(address: str) -> str:
     return f"{scheme}{separator}{host}{tail}"
 
 
+def has_userinfo(address: str) -> bool:
+    return without_userinfo(address) != address
+
+
+def address_problem(address: str) -> str | None:
+    """控制面地址里带着用户名段时的说明（地址用去掉用户名段的写法）；没有问题时为 None。
+    Python 的 HTTP 客户端不支持地址里的用户名和密码（`http://用户名:密码@主机` 连不上，不带端口时
+    还会把原文写进异常），所以带了就在发任何请求之前报错。"""
+    if not has_userinfo(address):
+        return None
+    return (
+        f"控制面地址里不要带用户名和密码（{without_userinfo(address)}）："
+        "用 SFLY_API_TOKEN 或 sfly login 提供身份"
+    )
+
+
+def check_address(address: str) -> None:
+    """地址里带用户名段就抛 `CliError`（还没有发出任何请求）。"""
+    if (problem := address_problem(address)) is not None:
+        raise CliError(
+            "address_has_userinfo",
+            problem,
+            next="sfly login（脚本、CI 里设置环境变量 SFLY_API_TOKEN）",
+        )
+
+
+_USERINFO_IN_TEXT = re.compile(r"(?<=://)[^\s/@'\"]*@|(?<=')[^\s/@']*@(?=[^\s']*')")
+
+
+def scrub_userinfo(text: str) -> str:
+    """底层异常的原文里可能带着地址里的用户名段（`://用户名:密码@主机`，或 `http.client` 的
+    「nonnumeric port: '密码@主机'」）：写给人看之前去掉。"""
+    return _USERINFO_IN_TEXT.sub("", text)
+
+
 class _KeepTokenOnSameOrigin(urllib.request.HTTPRedirectHandler):
     """跟随重定向，但重定向到不同的源时去掉 `Authorization`：urllib 默认把请求头原样带到新地址。"""
 
@@ -372,6 +407,7 @@ class Client:
         """发请求并返回打开的响应（调用方负责关闭），给流式读取（SSE、下载）用；
         `body` 是 JSON 请求体，`raw` 是原样的字节（上传归档，Content-Type 由 `headers` 给）；
         失败时抛 `CliError`（连不上）或 `ApiError`（错误响应）。"""
+        check_address(self.server)
         data = raw
         self._note_nickname_ignored()
         self.note_plain_http()
@@ -396,7 +432,7 @@ class Client:
     def _unreachable(self, reason: object) -> CliError:
         return CliError(
             "unreachable",
-            f"无法连接控制面 {self.shown_server}：{reason}\n{ADDRESS_HELP}",
+            f"无法连接控制面 {self.shown_server}：{scrub_userinfo(str(reason))}\n{ADDRESS_HELP}",
             next=f"curl {self.shown_url('/health')}",
         )
 

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -29,7 +30,7 @@ from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path
 
-from sfly.cli.client import without_userinfo
+from sfly.cli.client import address_problem, scrub_userinfo
 from sfly.cli.home import LocalMirrors, local_mirrors
 from sfly.schemas import load_schema
 
@@ -120,21 +121,21 @@ def validate_name(name: str) -> str:
 
 
 def fetch_settings(server: str) -> PackageDirSettings:
+    if (problem := address_problem(server)) is not None:
+        raise InitError(problem)
     url = f"{server.rstrip('/')}/sdk/project-settings"
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
             body = json.loads(response.read())
     except urllib.error.HTTPError as error:
+        raise InitError(f"读取控制面配置失败（{url}：HTTP {error.code}）") from None
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+        reason = scrub_userinfo(str(getattr(error, "reason", error)))
         raise InitError(
-            f"读取控制面配置失败（{without_userinfo(url)}：HTTP {error.code}）"
-        ) from None
-    except (urllib.error.URLError, OSError) as error:
-        reason = getattr(error, "reason", error)
-        raise InitError(
-            f"无法连接控制面 {without_userinfo(server)}：{reason}（用 --server 指定控制面地址）"
+            f"无法连接控制面 {server}：{reason}（用 --server 指定控制面地址）"
         ) from None
     except ValueError:
-        raise InitError(f"读取控制面配置失败（{without_userinfo(url)}：响应不是 JSON）") from None
+        raise InitError(f"读取控制面配置失败（{url}：响应不是 JSON）") from None
     return PackageDirSettings(
         version=body["version"],
         sfly_index_url=body["sfly_index_url"],

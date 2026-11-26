@@ -11,7 +11,7 @@
 
 **开发 Agent**：开发机上的 Agent（联调节点包用），名字由控制面按「`dev-<登录名>-<主机>`」生成，
 请求里不能给；凭据记在登录的这个人名下，要有登录（`sfly login`）或 `SFLY_API_TOKEN`，
-没有时退出码 5。
+没有时退出码 5；名字已经被占用（409）时退出码 6。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import socket
 from datetime import datetime
 from typing import Any
 
-from sfly.cli.client import segment
+from sfly.cli.client import check_address, segment
 from sfly.cli.errors import CliError
 from sfly.cli.output import add_limit_option, apply_limit, format_table, more_note
 from sfly.cli.run_view import parse_time
@@ -32,6 +32,9 @@ from sfly.cli.session import Session, command, common_options
 # `register-dev` 以这个退出码结束，安装脚本据此决定是走 `sfly login` 还是直接失败
 # （不能和别的失败混在一起）。
 EXIT_NOT_LOGGED_IN = 5
+# 名字已经被占用（`dev_agent_exists`，409）：同一个人同一个主机名注册过，或者这个名字是旧版本
+# 留下的 Agent。安装脚本据此写明几条路（换主机名；先吊销；请管理员签发凭据），不混在别的失败里。
+EXIT_NAME_TAKEN = 6
 # 开发 Agent 注册到哪个项目：现在 Agent 都在默认项目里（路径带项目的命令之后随 #488 一起）。
 _PROJECT = "default"
 # 开发 Agent 名字里「主机」那一段的上限
@@ -47,7 +50,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         "为 Agent 签发、列出、吊销凭据（credentials，要「管理」范围）；"
         "在开发机上注册我的开发 Agent（register-dev、revoke-dev，名字由控制面生成）。"
         "默认输出精简文本，--json 输出 JSON。退出码：成功 0，命令出错 2，"
-        "register-dev 没有登录凭据 5。",
+        "register-dev 没有登录凭据 5、名字已被占用 6。",
     )
     group = parser.add_subparsers(dest="agent_command", required=True)
     p_list = group.add_parser(
@@ -294,7 +297,8 @@ def _register_dev(group: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "名字由控制面按 dev-<登录名>-<主机> 生成"
         "（登录名来自你的登录，不能自己给名字），凭据记在你名下。"
         "要先登录（sfly login）或设置 SFLY_API_TOKEN"
-        "（没有时退出码 5）。同一个人在同一个项目里用同一个主机名只能注册一次，重名时换 --host。"
+        "（没有时退出码 5）。同一个人在同一个项目里用同一个主机名只能注册一次，名字被占用时"
+        "退出码 6：换 --host，或者先 sfly agent revoke-dev <名字>。"
         "凭据原值只显示这一次；--env 往 stdout 写两行 SFLY_AGENT_NAME=…、SFLY_TOKEN=…"
         "（安装脚本读它写进 agent.env，"
         "原值不经过命令行参数）。安装开发机用 install.sh --dev，它会替你调用这条命令。",
@@ -333,6 +337,7 @@ def default_host() -> str:
 
 def _register_dev_agent(session: Session, args: argparse.Namespace) -> int:
     _one_form(args, "--env")
+    check_address(session.client.server)
     # 没有登录凭据：用专门的退出码告诉调用方（安装脚本据此决定走 sfly login 还是失败），不发请求。
     if not session.client.token:
         session.out.error(
@@ -355,13 +360,17 @@ def _register_dev_agent(session: Session, args: argparse.Namespace) -> int:
             "POST", f"/projects/{_PROJECT}/dev-agents", body={"host": host}
         )
     except CliError as error:
-        if error.code == "dev_agent_exists":
-            raise CliError(
+        if error.code != "dev_agent_exists":
+            raise
+        session.out.error(
+            CliError(
                 error.code,
                 error.message,
-                next="sfly agent register-dev --host <另一个主机名>",
-            ) from None
-        raise
+                next="sfly agent register-dev --host <另一个主机名>（install.sh 里是 --dev-host）；"
+                "名字是你自己以前注册的开发 Agent 时，先 sfly agent revoke-dev <上面的名字>",
+            )
+        )
+        return EXIT_NAME_TAKEN
     name, token = created["name"], created["token"]
     if args.env:
         print(f"SFLY_AGENT_NAME={name}", file=session.out.stdout)

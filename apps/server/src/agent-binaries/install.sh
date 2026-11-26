@@ -28,6 +28,8 @@ SHA256_AARCH64='{{SHA256_AARCH64}}'
 # 环境变量 SFLY_USER_AGENT 覆盖，覆盖值同样写进 agent.env。
 PYPI_MIRROR='{{PYPI_MIRROR}}'
 GITHUB_RELEASE_MIRROR='{{GITHUB_RELEASE_MIRROR}}'
+# Agent 凭据原值的前缀（sfly_agt_）：--dev 重新运行时 agent.env 里只有这种凭据才沿用，共享令牌不算。
+AGENT_CREDENTIAL_PREFIX='{{AGENT_CREDENTIAL_PREFIX}}'
 
 # agent.env 里由本脚本管理的键（重新运行时改写），其余的行原样保留。
 MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_LISTEN_PORT SFLY_PUBLIC_ADDRESS SFLY_NO_AUTO_UPDATE SFLY_INDEX_URL SFLY_GITHUB_RELEASE_MIRROR SFLY_PYTHON_INSTALL_MIRROR SFLY_USER_AGENT'
@@ -62,7 +64,8 @@ usage() {
 
 重新运行时 agent.env 里的其他键保留；没有传 --token、--slots、--listen-port、--public-address、
 --no-auto-update，没有设置下面的镜像环境变量时沿用原来的值。--dev 重新运行时 agent.env 里已经有开发 Agent 的
-名字（dev- 开头）和凭据就沿用，不再注册；要换成新的，先删掉 agent.env 里的 SFLY_AGENT_NAME 和 SFLY_TOKEN 两行。
+名字（dev- 开头）和 Agent 凭据（sfly_agt_ 开头）就沿用，不再注册；要换成新的：先 sfly agent revoke-dev <名字>
+（吊销之后才能重新注册），再删掉 agent.env 里的 SFLY_AGENT_NAME 和 SFLY_TOKEN 两行，重新运行。
 
 环境变量：
   SFLY_HOME          安装目录（默认 ~/.sfly）
@@ -340,6 +343,8 @@ write_env_file() {
 	else
 		no_auto_update_value=$(env_value SFLY_NO_AUTO_UPDATE)
 	fi
+	# 事先存在的临时文件（别的权限、别人留下的）不能被写成 agent.env：先删掉，再用 umask 077 新建。
+	rm -f "$env_file.tmp"
 	(
 		umask 077
 		{
@@ -428,15 +433,18 @@ have_terminal() {
 register_dev_agent() {
 	# 重新运行（升级）：agent.env 里已经有开发 Agent 的名字和凭据就沿用：同一个人在同一个项目里用同一个主机名只能注册一次，
 	# 再注册会撞「已经有一台叫……」。
+	# 只沿用 Agent 凭据：旧版本 --dev 装的开发机里是共享令牌（下一个版本起控制面不再收），不沿用，照常注册新的。
 	existing_name=$(env_value SFLY_AGENT_NAME)
 	existing_token=$(env_value SFLY_TOKEN)
 	case $existing_name in
 	dev-*)
-		if [ -n "$existing_token" ]; then
+		case $existing_token in
+		"$AGENT_CREDENTIAL_PREFIX"?*)
 			name=$existing_name
-			echo "沿用 $env_file 里已有的开发 Agent $name（要换成新的：先删掉其中的 SFLY_AGENT_NAME 和 SFLY_TOKEN 两行，再重新运行）"
+			echo "沿用 $env_file 里已有的开发 Agent $name（要换成新的：先 sfly agent revoke-dev $name，再删掉其中的 SFLY_AGENT_NAME 和 SFLY_TOKEN 两行，重新运行）"
 			return 0
-		fi
+			;;
+		esac
 		;;
 	esac
 
@@ -469,6 +477,16 @@ install.sh: 注册开发 Agent 要用你自己的身份（登录或个人令牌�
   - 在这台机器的终端里先登录：sfly login --server $SFLY_URL
   - 不用开发 Agent：不加 --dev 的 Agent 用管理员签发的 Agent 凭据（sfly agent credentials issue <名称>），
     要装开发工具的话同时给 --dev --name <名称> 和 SFLY_TOKEN
+EOF
+			exit 1
+		fi
+		if [ "$status" = 6 ]; then
+			cat >&2 <<EOF
+install.sh: 这个名字已经被占用了（上面是控制面的说明）。选一个办法后重新运行同一条命令（Agent 二进制和 sfly CLI 已经装好）：
+  - 换一个名字：加 --dev-host <另一个主机名>（名字里「主机」那一段）
+  - 这个名字是你自己以前注册的开发 Agent（比如换了 agent.env）：先 sfly agent revoke-dev <上面的名字>，再重新运行
+  - 这个名字是旧版本 --dev 装的开发机的名字：请管理员为它签发凭据（sfly agent credentials issue <名字>），
+    然后同时给 --dev --name <名字>，凭据经环境变量 SFLY_TOKEN 给
 EOF
 			exit 1
 		fi

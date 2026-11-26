@@ -6,15 +6,19 @@
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from sfly.cli import credentials, main
-from sfly.cli.client import Client, without_userinfo
+from sfly.cli.client import Client, scrub_userinfo, without_userinfo
 from sfly.cli.init import InitError, fetch_settings
 from sfly.cli.run_summary import run_url
 
@@ -61,15 +65,115 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def test_connect_error_does_not_show_the_password(
-    home: Path, capsys: pytest.CaptureFixture[str]
+class Counting:
+    """数收到几个请求的假控制面：地址里带用户名段时一个请求都不该发出来。"""
+
+    def __init__(self) -> None:
+        self.requests = 0
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: Any) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                outer.requests += 1
+                self.send_response(200)
+                self.send_header("content-length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            do_POST = do_GET
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.port = self.httpd.server_address[1]
+
+    def close(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+@pytest.fixture
+def counting() -> Iterator[Counting]:
+    fake = Counting()
+    yield fake
+    fake.close()
+
+
+def _with_userinfo(counting: Counting) -> list[str]:
+    """带用户名段的几种写法：不带端口的 http、https（`http.client` 把整段当主机名，
+    异常原文里有密码），和带端口的、不带协议的。"""
+    return [
+        f"http://user:{PASSWORD}@127.0.0.1",
+        f"https://user:{PASSWORD}@example.invalid",
+        f"http://user:{PASSWORD}@127.0.0.1:{counting.port}",
+        f"user:{PASSWORD}@127.0.0.1:{counting.port}",
+    ]
+
+
+@pytest.mark.parametrize("argv", [["agent", "list"], ["agent", "list", "--json"]])
+def test_an_address_with_a_user_name_is_refused_before_any_request(
+    home: Path, counting: Counting, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
-    code = main(["agent", "list", "--server", f"http://user:{PASSWORD}@127.0.0.1:1"])
+    for address in _with_userinfo(counting):
+        code = main([*argv, "--server", address])
+        captured = capsys.readouterr()
+        text = captured.out + captured.err
+        assert code != 0, address
+        assert PASSWORD not in text, address
+        assert "控制面地址里不要带用户名和密码" in text, address
+        assert "SFLY_API_TOKEN" in text and "sfly login" in text, address
+    assert counting.requests == 0
+
+
+def test_the_address_from_the_environment_is_checked_too(
+    home: Path,
+    counting: Counting,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SFLY_SERVER", f"http://user:{PASSWORD}@127.0.0.1")
+    code = main(["agent", "list"])
+    captured = capsys.readouterr()
+    assert code != 0 and PASSWORD not in captured.out + captured.err
+    assert "http://127.0.0.1）" in captured.err
+    assert counting.requests == 0
+
+
+def test_a_clean_address_still_connects(home: Path, counting: Counting) -> None:
+    assert Client(f"http://127.0.0.1:{counting.port}", "tester").get("/anything") == {}
+    assert counting.requests == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "scrubbed"),
+    [
+        ("nonnumeric port: 'pw@127.0.0.1'", "nonnumeric port: '127.0.0.1'"),
+        ("failed for http://user:pw@host/path", "failed for http://host/path"),
+        ("failed for https://user@host:8443", "failed for https://host:8443"),
+        ("[Errno 8] nodename nor servname provided", "[Errno 8] nodename nor servname provided"),
+        ("mail me at a@b.example", "mail me at a@b.example"),
+    ],
+)
+def test_scrub_userinfo(text: str, scrubbed: str) -> None:
+    assert scrub_userinfo(text) == scrubbed
+
+
+def test_a_low_level_error_text_with_a_user_name_is_scrubbed_as_a_fallback(
+    home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sfly.cli.client as client_module
+
+    def refuse(self: object, request: object, timeout: float) -> Any:
+        raise http.client.InvalidURL(f"nonnumeric port: '{PASSWORD}@127.0.0.1'")
+
+    monkeypatch.setattr(client_module._OPENER, "open", refuse.__get__(client_module._OPENER))
+    code = main(["agent", "list", "--server", "http://127.0.0.1"])
     captured = capsys.readouterr()
     assert code != 0
     assert PASSWORD not in captured.out + captured.err
-    assert "无法连接控制面 http://127.0.0.1:1：" in captured.err
-    assert "curl http://127.0.0.1:1/health" in captured.err
+    assert "nonnumeric port: '127.0.0.1'" in captured.err
 
 
 def test_plain_http_warning_does_not_show_the_password(
@@ -115,43 +219,35 @@ def test_the_run_link_does_not_show_the_password() -> None:
     assert run_url(client, "run-1") == "https://plane.example/runs/run-1"
 
 
-def test_init_connect_error_does_not_show_the_password(home: Path) -> None:
-    with pytest.raises(InitError) as caught:
-        fetch_settings(f"http://user:{PASSWORD}@127.0.0.1:1")
-    assert PASSWORD not in str(caught.value)
-    assert "无法连接控制面 http://127.0.0.1:1：" in str(caught.value)
+def test_init_refuses_an_address_with_a_user_name_without_a_traceback(
+    home: Path, counting: Counting, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for address in _with_userinfo(counting):
+        with pytest.raises(InitError) as caught:
+            fetch_settings(address)
+        assert PASSWORD not in str(caught.value), address
+        assert "不要带用户名和密码" in str(caught.value), address
+        code = main(["init", str(home / "pkg"), "--server", address])
+        captured = capsys.readouterr()
+        text = captured.out + captured.err
+        assert code != 0 and PASSWORD not in text and "Traceback" not in text, address
+        assert "不要带用户名和密码" in text, address
+    assert counting.requests == 0
 
 
-def test_init_http_and_json_errors_do_not_show_the_password(
+def test_init_catches_the_invalid_url_error_and_scrubs_it(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import urllib.error
     import urllib.request
 
-    server = f"http://user:{PASSWORD}@plane.example"
+    def broken(url: str, timeout: float) -> Any:
+        raise http.client.InvalidURL(f"nonnumeric port: '{PASSWORD}@plane.example'")
 
-    def http_error(url: str, timeout: float) -> Any:
-        raise urllib.error.HTTPError(url, 500, "boom", None, None)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(urllib.request, "urlopen", http_error)
+    monkeypatch.setattr(urllib.request, "urlopen", broken)
     with pytest.raises(InitError) as caught:
-        fetch_settings(server)
-    assert PASSWORD not in str(caught.value) and "http://plane.example/sdk" in str(caught.value)
-
-    class NotJson:
-        def __enter__(self) -> NotJson:
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return b"<html>"
-
-    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: NotJson())
-    with pytest.raises(InitError) as caught:
-        fetch_settings(server)
-    assert PASSWORD not in str(caught.value) and "http://plane.example/sdk" in str(caught.value)
+        fetch_settings("https://plane.example")
+    assert PASSWORD not in str(caught.value)
+    assert "无法连接控制面 https://plane.example：" in str(caught.value)
 
 
 class TestLoginAndLogout:
@@ -193,31 +289,53 @@ class TestLoginAndLogout:
         assert f"已登出 {self.SHOWN}：" in captured.out
         assert PASSWORD not in captured.out + captured.err
 
-    def test_login_summary_and_message(
+    def test_login_refuses_an_address_with_a_user_name_before_reading_the_password(
         self,
         home: Path,
+        counting: Counting,
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        issued = {
-            "token": "sfly_pat_" + "00" * 16,
-            "id": "id-1",
-            "name": "laptop",
-            "prefix": "sfly_pat_0000",
-            "scopes": ["read"],
-            "expires_at": None,
-        }
-        monkeypatch.setattr("sfly.cli.login._issue", lambda client, body, retry_suffix: issued)
-        monkeypatch.setattr("sys.stdin", io.StringIO(PASSWORD + "\n"))
-        base = ["login", "--server", self.SERVER, "--login-name", "alice", "--password-stdin"]
-        code = main([*base, "--json"])
+        for address in _with_userinfo(counting):
+            stdin = io.StringIO(PASSWORD + "\n")
+            monkeypatch.setattr("sys.stdin", stdin)
+            code = main(
+                [
+                    "login",
+                    "--server",
+                    address,
+                    "--login-name",
+                    "alice",
+                    "--password-stdin",
+                    "--json",
+                ]
+            )
+            captured = capsys.readouterr()
+            text = captured.out + captured.err
+            assert code != 0, address
+            assert PASSWORD not in text, address
+            assert "不要带用户名和密码" in text, address
+            # 密码还在标准输入里：没读。
+            assert stdin.tell() == 0, address
+        assert counting.requests == 0
+
+    def test_the_interactive_default_address_is_shown_without_the_user_name(
+        self,
+        home: Path,
+        counting: Counting,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import sfly.cli.login as login_module
+
+        prompts: list[str] = []
+        monkeypatch.setattr(login_module, "_interactive", lambda: True)
+        monkeypatch.setattr(login_module, "_ask", lambda prompt: prompts.append(prompt) or "")
+        monkeypatch.setenv("SFLY_SERVER", f"http://user:{PASSWORD}@127.0.0.1")
+        code = main(["login", "--login-name", "alice"])
         captured = capsys.readouterr()
-        assert code == 0, captured.err
+        assert code != 0
+        assert prompts and PASSWORD not in prompts[0]
+        assert "[http://127.0.0.1]" in prompts[0]
         assert PASSWORD not in captured.out + captured.err
-        assert json.loads(captured.out)["server"] == self.SHOWN
-        monkeypatch.setattr("sys.stdin", io.StringIO(PASSWORD + "\n"))
-        code = main(base)
-        captured = capsys.readouterr()
-        assert code == 0, captured.err
-        assert f"已登录 {self.SHOWN}（alice）" in captured.out
-        assert PASSWORD not in captured.out + captured.err
+        assert counting.requests == 0

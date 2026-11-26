@@ -29,7 +29,7 @@ from collections.abc import Callable
 from typing import Any
 
 from sfly.cli import credentials
-from sfly.cli.client import ApiError, Client, resolve_nickname, without_userinfo
+from sfly.cli.client import ApiError, Client, check_address, resolve_nickname, without_userinfo
 from sfly.cli.errors import EXIT_ERROR, CliError
 from sfly.cli.home import DEFAULT_SERVER, control_plane_url
 from sfly.cli.output import Output
@@ -150,8 +150,9 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     server = args.server
     if server is None and _interactive():
         default = control_plane_url(None)
-        server = _ask(f"控制面地址 [{default}]：") or default
+        server = _ask(f"控制面地址 [{without_userinfo(default)}]：") or default
     url = control_plane_url(server)
+    check_address(url)
     login_name = (args.login_name or "").strip()
     if not login_name:
         if not _interactive():
@@ -190,9 +191,8 @@ def _login(args: argparse.Namespace, out: Output) -> int:
             saved_at=credentials.now_iso(),
         ),
     )
-    shown = without_userinfo(url)
     summary = {
-        "server": shown,
+        "server": url,
         "login_name": login_name,
         "token_name": issued["name"],
         "token_id": issued["id"],
@@ -213,7 +213,7 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     expires = issued["expires_at"] or "不过期"
     out.emit(
         summary,
-        f"已登录 {shown}（{login_name}）：令牌 {issued['name']}（{issued['prefix']}…），"
+        f"已登录 {url}（{login_name}）：令牌 {issued['name']}（{issued['prefix']}…），"
         f"范围 {'、'.join(issued['scopes'])}，过期时间 {expires}\n凭据存在 {path}（权限 0600）",
     )
     return 0
