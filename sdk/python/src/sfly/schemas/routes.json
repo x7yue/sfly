@@ -24346,24 +24346,31 @@
               "maximum": 9007199254740991
             },
             "waiting_for": {
-              "type": "object",
-              "properties": {
-                "session_id": {
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "created_by": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "session_id",
+                    "title",
+                    "created_by"
+                  ]
                 },
-                "title": {
-                  "type": "string"
-                },
-                "created_by": {
-                  "type": "string"
+                {
+                  "type": "null"
                 }
-              },
-              "required": [
-                "session_id",
-                "title",
-                "created_by"
               ]
             }
           },
@@ -25126,6 +25133,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "queue_position": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -25134,7 +25153,8 @@
             "partial_text",
             "running_tool",
             "steer_queue",
-            "waiting_for"
+            "waiting_for",
+            "queue_position"
           ]
         }
       },

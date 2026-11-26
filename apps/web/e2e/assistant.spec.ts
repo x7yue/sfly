@@ -754,7 +754,7 @@ test("事件重复来（重连后补发、历史和事件流重叠）不重复�
 	// 历史里已有的序号再来一次：不重复。
 	await pushEvent(page, userMessage(1));
 	await pushEvent(page, assistantMessage(3, "好的。"));
-	// 这一版不渲染的类型。
+	// 没有对上调用的工具输出、什么现场都没有的快照：不画任何东西。
 	await pushEvent(page, {
 		type: "tool_output",
 		call_id: "x",
@@ -767,6 +767,7 @@ test("事件重复来（重连后补发、历史和事件流重叠）不重复�
 		running_tool: null,
 		steer_queue: [],
 		waiting_for: null,
+		queue_position: null,
 	});
 	await pushEvent(page, { type: "steer_queue", messages: [] });
 	// 一个不认识的类型（以后才有的）。

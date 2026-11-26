@@ -3114,9 +3114,22 @@ export interface SlotHolderView {
 }
 
 /**
- * 会话此刻的状态：控制面在浏览器刚连上事件流时，只发给这一条连接，让断线期间错过的增量不用补发
- * （`partial_text` 是正在输出的那条助手消息已有的文字，没有时为空字符串；`running_tool` 没有在跑的工具时为 null；
- * `steer_queue` 是还没送到模型的插话；`waiting_for` 是排队中在等谁，不在排队时为 null）。不存。#545 起（`waiting_for` #544）。
+ * 会话此刻的状态：控制面在这条事件流**补发读完、切到实时的那一刻**发一条，**只发给这一条连接**（带 `Last-Event-ID` 或 `after`
+ * 重连的连接同样收到一条）。增量不持久，浏览器断线期间错过的增量、刚打开的浏览器没有见过的增量，补发里没有，靠它补上。
+ * 它发在补发之后：`partial_text` 是**相对「上一条持久的助手消息」的**，页面要先读完补发的历史才知道是哪一条，发在前面会被补发里的
+ * 那条整条消息盖掉。它是控制面内存里的状态（控制面重启后是空的，到下一条持久事件才恢复正常），不是历史：页面按「取代」处理，
+ * 不追加——同一个快照收到几次、和已经收到的增量重叠，结果一样。
+ *
+ * - `status`：会话此刻的状态；
+ * - `partial_text`：上一条持久的助手消息之后收到的全部增量文字，没有时为空字符串；
+ * - `running_tool`：正在跑的工具调用（`tool_call` 到 `tool_result` 之间）和它输出的最后一段（至多
+ *   `SESSION_EVENT_LIMITS` 的 `runningToolOutputBytes` 个 UTF-8 字节，不切开字符）；没有在跑的工具时为 null；
+ * - `steer_queue`：最近一份还没送到模型的插话（同 `SteerQueueEvent`）；
+ * - `waiting_for`、`queue_position`：排队中（`queued`，或停止途中说了话、排在这一轮后面的在做的会话）排第几、在等谁；
+ *   不在排队时都是 null，项目里没有会话在做时 `waiting_for` 是 null、`queue_position` 有值（同 `TurnQueuedEvent`）。
+ *
+ * **文字都打过码**：`partial_text` 和输出的最后一段是控制面把收到的增量拼起来、整段按会话令牌的格式打码之后才发的（先打码、后截断；
+ * 令牌被拆在两条增量里、跨在截断的边界上，里面都没有原值，也没有半截）。不存。#545 起（`waiting_for` #544，`queue_position` #545）。
  */
 export interface SnapshotEvent {
 	type: "snapshot";
@@ -3125,6 +3138,7 @@ export interface SnapshotEvent {
 	running_tool: RunningTool | null;
 	steer_queue: SteerEntry[];
 	waiting_for: WaitingFor | null;
+	queue_position: number | null;
 }
 
 /** 插话队列里的一条：用户这句话的 ID（`user_message.message_id`）和文字。 */
@@ -3325,13 +3339,15 @@ export type TurnOutcome = "completed" | "stopped" | "limit" | "model_unavailable
 
 /**
  * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
- * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
- * （`SessionView`）和快照（`SnapshotEvent`）里，刷新页面后拿得回来。#544 起。
+ * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）；
+ * **项目里没有会话在做时为 null**（排队的会话在等助手服务或工作台恢复、等下一次开始，没有「在等谁」可写；#545 起，之前这种
+ * 情况不推 `turn_queued`，别的标签页和别的人要等这一轮开始才看得到）。不存：排队的状态记在会话的 `status`、`queue_position` 上，
+ * 在等谁也在会话视图（`SessionView`）和快照（`SnapshotEvent`）里，刷新页面后拿得回来。#544 起。
  */
 export interface TurnQueuedEvent {
 	type: "turn_queued";
 	position: number;
-	waiting_for: WaitingFor;
+	waiting_for: WaitingFor | null;
 }
 
 /** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */

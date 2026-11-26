@@ -9,6 +9,7 @@ import {
 	type SessionListItem,
 	type SessionStatus,
 	TurnOutcome,
+	type WaitingFor,
 } from "@sfly/schema";
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
@@ -18,6 +19,7 @@ import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
 import { type FollowSink, follow, REPLAY_BATCH } from "./follow.js";
+import { LiveStates } from "./live-state.js";
 import { issueSessionToken, maskSessionTokens, revokeSessionTokens } from "./session-tokens.js";
 
 /**
@@ -46,6 +48,13 @@ const PROMOTE_CANDIDATES = 20;
 
 /** 库里的一个会话。 */
 export type SessionRow = typeof sessions.$inferSelect;
+
+/** 一条事件流的快照里来自库的那几项（{@link SessionStore.follow}）。 */
+interface SnapshotBase {
+	status: SessionStatus;
+	position: number | null;
+	waitingFor: WaitingFor | null;
+}
 
 const PERSISTED: ReadonlySet<string> = new Set(PERSISTED_SESSION_EVENT_TYPES);
 
@@ -237,8 +246,13 @@ export interface SessionStoreDeps {
  * 这个模块在 `src/sessions/` 下，不碰 `src/actions/`（那是性能关键路径）。
  */
 export class SessionStore {
-	/** 按会话 ID 发布的事件：持久的已经落库（带 `seq`、`at`），不持久的只在这里。 */
+	/** 按会话 ID 发布的事件：持久的已经落库（带 `seq`、`at`），不持久的只在这里。发布只走 {@link SessionStore.#emit}。 */
 	readonly #live = new Topics<SessionEvent>();
+	/**
+	 * 每个会话此刻的现场（快照用，#545）：上一条持久的助手消息之后的增量、正在跑的工具调用和输出的最后一段、最新的插话队列。
+	 * 随 {@link SessionStore.#emit} 更新，所以和订阅者收到的事件是同一个先后。只放内存，一轮结束时清掉。
+	 */
+	readonly #liveStates = new LiveStates();
 	/** 每个会话一条 Promise 链：这个会话的「落库加发布」和事件流补发的读库依次执行，见 {@link SessionStore.append}。 */
 	readonly #chains = new Map<string, Promise<unknown>>();
 	/**
@@ -1075,6 +1089,7 @@ export class SessionStore {
 	/** 删除一个会话和它的事件。 */
 	async delete(sessionId: string): Promise<void> {
 		await this.deps.db.delete(sessions).where(eq(sessions.id, sessionId));
+		this.#liveStates.clear(sessionId);
 	}
 
 	/**
@@ -1119,6 +1134,10 @@ export class SessionStore {
 					if (events.some((event) => !CONTROL_PLANE_ONLY_EVENTS.has(event.type))) return false;
 					await tx.delete(sessions).where(eq(sessions.id, sessionId));
 					return true;
+				})
+				.then((deleted) => {
+					if (deleted) this.#liveStates.clear(sessionId);
+					return deleted;
 				})
 				.catch((error: unknown) => {
 					// 会话已经不在了（别处删了）：没有什么可删的。
@@ -1220,7 +1239,13 @@ export class SessionStore {
 			const dropped = session ? dropReason(session, turn) : "unknown_session";
 			if (dropped !== undefined) return { dropped };
 			if (parsed.type === "steer_queue") this.#trackSteerQueue(sessionId, turn, parsed);
-			this.#live.publish(sessionId, parsed);
+			// 快照累积的是通过了上面的校验、还没有打码的原文（逐条打码认不出被拆在两条增量里的令牌，见 `./live-state.ts`）；
+			// 推给订阅者的是打过码的。
+			this.#emit(
+				sessionId,
+				parsed,
+				body.type === "assistant_delta" || body.type === "tool_output" ? body.text : undefined,
+			);
 			return { published: true as const };
 		});
 	}
@@ -1457,7 +1482,7 @@ export class SessionStore {
 		this.#cursors.set(sessionId, cursor);
 		cursor.usedAt = Date.now();
 		if (event.seq === cursor.published + 1) {
-			this.#live.publish(sessionId, event);
+			this.#emit(sessionId, event);
 			cursor.published = event.seq;
 			return;
 		}
@@ -1466,13 +1491,13 @@ export class SessionStore {
 			const batch = await this.after(sessionId, cursor.published, REPLAY_BATCH);
 			if (batch.length === 0) {
 				// 已经提交的事件读不到：不该发生。不空转，把这一条推出去（序号有跳跃，客户端按 seq 去重不受影响）。
-				this.#live.publish(sessionId, event);
+				this.#emit(sessionId, event);
 				cursor.published = event.seq;
 				return;
 			}
 			for (const found of batch) {
 				if (found.seq > event.seq) return;
-				this.#live.publish(sessionId, found);
+				this.#emit(sessionId, found);
 				cursor.published = found.seq;
 			}
 		}
@@ -1567,7 +1592,16 @@ export class SessionStore {
 		if (isPersistedType(body.type)) {
 			throw new Error(`会话事件 ${body.type} 是持久的，要落库（用 append）`);
 		}
-		this.#live.publish(sessionId, SessionEventBody.parse(body) as SessionEvent);
+		this.#emit(sessionId, SessionEventBody.parse(body) as SessionEvent);
+	}
+
+	/**
+	 * 发布一条事件的**唯一出口**：先更新这个会话的现场（快照用，{@link SessionStore.#liveStates}），再推给订阅者；两步之间没有别的事，
+	 * 所以补发读完切到实时的那一刻读到的现场，等于订阅者到那一刻为止收到的全部。同步，不能加 `await`。
+	 */
+	#emit(sessionId: string, event: SessionEvent, rawText?: string): void {
+		this.#liveStates.apply(sessionId, event, rawText);
+		this.#live.publish(sessionId, event);
 	}
 
 	/**
@@ -1581,15 +1615,67 @@ export class SessionStore {
 		sink: FollowSink,
 		onError: (error: unknown) => void,
 	): () => void {
+		// 这条连接的快照里来自库的那几项（状态、排队的位置和在等谁）：补发读完的那一批（不满一批，最后一次读）在链上顺便读一次。
+		let base: SnapshotBase | undefined;
 		return follow(
 			{
 				subscribe: (listener) => this.#live.subscribe(sessionId, listener),
 				// 补发读库排在这个会话的链上：读到的事件一定已经发布过，缓冲里排在它前面的增量才判断得了先后。
-				read: (from, limit) => this.#serial(sessionId, () => this.after(sessionId, from, limit)),
+				read: (from, limit) =>
+					this.#serial(sessionId, async () => {
+						const events = await this.after(sessionId, from, limit);
+						// 在链上读：这一刻之前提交的状态变化都已经发布，读到的状态和补发读到的事件对得上；之后到的变化是持久事件
+						// （`turn_started`、`turn_end` ……），经订阅进缓冲，先放、快照后放。
+						if (events.length < limit) base = await this.#snapshotBase(sessionId);
+						return events;
+					}),
+				snapshot: () => (base === undefined ? undefined : this.#snapshotEvent(sessionId, base)),
 			},
 			after,
 			sink,
 			onError,
 		);
+	}
+
+	/**
+	 * 一个会话排第几、在等谁（排队中，或停止途中说了话、排在这一轮后面的在做的会话）：没有排队时间的都是 null；项目里没有会话在做时
+	 * 在等谁是 null（排队的会话在等助手服务或工作台恢复、等下一次开始）。接口的会话视图、`turn_queued`、快照共用。
+	 */
+	async queueState(
+		row: SessionRow,
+	): Promise<{ position: number | null; waitingFor: WaitingFor | null }> {
+		if (row.queuedAt === null) return { position: null, waitingFor: null };
+		const running = await this.running(row.projectId);
+		return {
+			position: await this.queuePosition(row),
+			waitingFor: running
+				? { session_id: running.id, title: running.title, created_by: running.createdBy }
+				: null,
+		};
+	}
+
+	async #snapshotBase(sessionId: string): Promise<SnapshotBase | undefined> {
+		const [row] = await this.deps.db.select().from(sessions).where(eq(sessions.id, sessionId));
+		if (!row) return undefined;
+		const queue = await this.queueState(row);
+		return { status: row.status, position: queue.position, waitingFor: queue.waitingFor };
+	}
+
+	/**
+	 * 给刚连上的事件流的快照（同步，补发读完、切到实时的那一刻生成）：来自库的状态和排位，加内存里的现场。会话不在做时
+	 * （空闲、排队中、已结束）不带现场：内存里的现场只在一轮之内有意义，这一刻库里说没有在做的一轮，就不发过时的文字。
+	 */
+	#snapshotEvent(sessionId: string, base: SnapshotBase): SessionEvent {
+		const live =
+			base.status === "running"
+				? this.#liveStates.parts(sessionId)
+				: { partial_text: "", running_tool: null, steer_queue: [] };
+		return {
+			type: "snapshot",
+			status: base.status,
+			...live,
+			waiting_for: base.waitingFor,
+			queue_position: base.position,
+		};
 	}
 }

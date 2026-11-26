@@ -486,7 +486,13 @@ describe("事件连接：核对会话和轮次", () => {
 		const stop = store.follow(
 			sessionId,
 			0,
-			{ emit: (e) => out.push(e), drained: () => Promise.resolve() },
+			// 补发读完切到实时的那一刻发的快照（#545）不算：这些用例看的是推给浏览器的事件有没有、对不对。
+			{
+				emit: (e) => {
+					if (e.type !== "snapshot") out.push(e);
+				},
+				drained: () => Promise.resolve(),
+			},
 			(error) => {
 				throw error;
 			},
