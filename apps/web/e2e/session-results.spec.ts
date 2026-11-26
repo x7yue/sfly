@@ -162,14 +162,92 @@ test("成果：真的触发了运行（控制面记下的 platform 事件）：�
 	await expect(result).toContainText("巡检");
 	await expect(result.getByTestId("result-run-status")).toHaveText("运行中");
 
-	// 运行的状态是实时的（和运行监控共用同一份数据）：运行结束，成果栏里的状态跟着变，不用刷新。
+	// 运行的状态跟着运行变（和运行监控共用同一份缓存，在跑的每 5 秒重新读一次，不开事件流）：运行结束，成果栏里的状态跟着变，不用刷新。
 	await agent.succeed(assign);
-	await expect(result.getByTestId("result-run-status")).toHaveText("成功");
+	await expect(result.getByTestId("result-run-status")).toHaveText("成功", { timeout: 15_000 });
 
 	// 点进去是运行监控。
 	await result.getByRole("link").click();
 	// 运行监控会把地址再补上 `?view=…`：只比路径。
 	await expect.poll(() => new URL(page.url()).pathname).toBe(`/runs/${runId}`);
+});
+
+test("成果：很多运行同时在跑时不开运行事件流（浏览器对同源只给 6 条连接，占满了会话页的发送、停止、结束就卡住），状态靠定时重新读", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
+	// 6 个在跑的运行（比同源的连接数还多）：每个都留在会话里。
+	const runs: string[] = [];
+	for (let n = 0; n < 6; n++) runs.push(await triggerRun(controlPlane, scenario));
+	const id = await seedSession(controlPlane.database.url, {
+		title: TITLE,
+		status: "idle",
+		events: [
+			{
+				type: "user_message",
+				message_id: randomUUID(),
+				text: "把巡检都跑起来",
+				steer: false,
+				author: "tester",
+				author_user_id: null,
+			},
+			{ type: "turn_started", turn: 1 },
+			...runs.map((runId) => ({
+				type: "platform" as const,
+				kind: "run" as const,
+				turn: 1,
+				run_id: runId,
+				scenario_name: "巡检",
+			})),
+			{
+				type: "turn_end",
+				turn: 1,
+				outcome: "completed",
+				reason: "助手已完成",
+				steps: 1,
+				model_calls: 1,
+				duration_ms: 1000,
+			},
+		],
+	});
+	const eventStreams: string[] = [];
+	const reads: string[] = [];
+	page.on("request", (request) => {
+		const path = new URL(request.url()).pathname;
+		if (/^\/api\/runs\/[^/]+\/events$/.test(path)) eventStreams.push(path);
+		if (/^\/api\/runs\/[^/]+$/.test(path)) reads.push(path);
+	});
+	await page.goto(`/sessions/${id}`);
+	const rows = results(page).getByTestId("result-run");
+	await expect(rows).toHaveCount(6);
+	for (const row of await rows.all()) {
+		await expect(row.getByTestId("result-run-status")).toHaveText("运行中");
+	}
+	// 每个运行都读到了，一条运行事件流也没有开。
+	expect(new Set(reads).size).toBe(6);
+	expect(eventStreams).toEqual([]);
+
+	// 其中一个结束：下一次定时重新读时状态变了，别的还是运行中；结束了的运行之后不再被读。
+	await agent.succeed(await agent.nextAssign());
+	await expect(rows.filter({ hasText: "成功" })).toHaveCount(1, { timeout: 15_000 });
+	await expect(rows.filter({ hasText: "运行中" })).toHaveCount(5);
+	expect(eventStreams).toEqual([]);
+	const count = (runId: string | null) =>
+		reads.filter((path) => path === `/api/runs/${runId}`).length;
+	const ended = await rows.filter({ hasText: "成功" }).getAttribute("data-run");
+	const stillRunning = await rows.filter({ hasText: "运行中" }).first().getAttribute("data-run");
+	const endedBefore = count(ended);
+	const runningBefore = count(stillRunning);
+	// 在跑的运行又被读了两次（定时）之后，结束了的那个一次也没有再读。
+	await expect
+		.poll(() => count(stillRunning), { timeout: 20_000 })
+		.toBeGreaterThanOrEqual(runningBefore + 2);
+	expect(count(ended)).toBe(endedBefore);
+	expect(eventStreams).toEqual([]);
 });
 
 test("成果：提交（第几轮、提交号前 7 位、几个文件、增删行数、展开看差异）、场景版本（链到版本历史）、运行（链到运行监控）；刷新后读回的历史里也有", async ({
@@ -308,6 +386,18 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 	for (const run of [viaSession, running]) {
 		await recordRunSession(controlPlane.database.url, run, session);
 	}
+	// 标题很长的会话（会话的标题是第一句话，别人写的）做的、还在跑的运行。
+	const longTitle = `${"很长的一句话".repeat(20)}结尾`;
+	const longSessionId = await seedSession(controlPlane.database.url, {
+		title: longTitle,
+		status: "idle",
+	});
+	const viaLong = await triggerRun(controlPlane, scenario);
+	await agent.nextAssign();
+	await recordRunSession(controlPlane.database.url, viaLong, {
+		id: longSessionId,
+		title: longTitle,
+	});
 	const saved = await controlPlane.fetch(`/orchestrations/${scenario}/versions`, {
 		method: "POST",
 		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
@@ -329,12 +419,45 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 	await expect(triggeredBy(viaSession)).toHaveText(`tester ${via}`);
 	await expect(triggeredBy(byHand)).toHaveText("tester");
 
+	// 标题很长：「经 会话」的链接有最大宽度（14rem），放不下的截断，悬停给全文，链接还是去那个会话。
+	const longLink = card(viaLong).locator('[data-via="session"] a');
+	await expect(longLink).toHaveAttribute("data-truncated", "true");
+	await expect(longLink).toHaveText(longTitle);
+	expect((await longLink.boundingBox())?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+		224,
+	);
+	await longLink.hover();
+	await expect(page.getByRole("tooltip")).toContainText(longTitle);
+	await expect(longLink).toHaveAttribute("href", `/sessions/${longSessionId}`);
+
 	await page.goto("/");
 	const block = page
 		.getByRole("region", { name: "正在运行", exact: true })
 		.getByRole("region", { name: "巡检", exact: true })
 		.filter({ hasText: running.slice(0, 8) });
 	await expect(block).toContainText(`tester ${via} 触发`);
+
+	// 运行抽屉的摘要：在抽屉里触发的运行，之后记上了会话（直接写库），运行有新的变化时摘要读到它。
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	const triggered = page.waitForResponse(
+		(response) =>
+			response.request().method() === "POST" &&
+			new URL(response.url()).pathname === `/api/orchestrations/${scenario}/runs`,
+	);
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	const drawerRun = ((await (await triggered).json()) as { id: string }).id;
+	const summary = drawer.getByRole("region", { name: "运行摘要" });
+	await expect(summary).toContainText("tester 触发");
+	await expect(summary).not.toContainText("经");
+	await recordRunSession(controlPlane.database.url, drawerRun, session);
+	await agent.succeed(await agent.nextAssign());
+	await expect(summary).toContainText(`tester ${via} 触发`);
+	await expect(summary.locator('[data-via="session"] a')).toHaveAttribute(
+		"href",
+		`/sessions/${sessionId}`,
+	);
 
 	await page.goto(`/runs/${viaSession}`);
 	await expect(page.getByRole("banner")).toContainText(`tester ${via} 触发`);
@@ -351,6 +474,13 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 	await expect(row(2)).toContainText(`bob ${via} ·`);
 	await expect(row(1)).toContainText("tester ·");
 	await expect(row(1)).not.toContainText("经");
+	// 右边的标题行（默认显示最新版本）也写「经 会话」。
+	const pane = page.getByText("只读", { exact: true }).locator("..");
+	await expect(pane).toContainText(`bob ${via} ·`);
+	await expect(pane.locator('[data-via="session"] a')).toHaveAttribute(
+		"href",
+		`/sessions/${sessionId}`,
+	);
 
 	// 点标题进会话页。
 	await row(2).getByRole("link", { name: TITLE }).click();

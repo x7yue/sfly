@@ -1,4 +1,4 @@
-import type { SessionEvent } from "@sfly/schema";
+import type { SessionDetailResponse, SessionEvent } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	addResult,
@@ -9,6 +9,7 @@ import {
 	shortCommit,
 } from "./results";
 import { applyEvent, emptyTimeline, initialTimeline, prependHistory } from "./timeline";
+import { initialSession, reduceSession } from "./use-session-timeline";
 
 // 会话页右侧的「成果」和时间线上的两行平台记录（#547）：都只由 `platform` 事件生成。助手在对话里说的不进来：模型说「运行成功了」但没有真的
 // 触发，成果里没有这次运行，时间线上也没有。事件的样子取自 `@sfly/schema` 的 `PlatformEvent`（提交的形状是 #546 定的，这里用固定的事件）。
@@ -159,5 +160,69 @@ describe("时间线上的平台记录：运行和场景版本各一行", () => {
 			["run", 6],
 			["version", 7],
 		]);
+	});
+});
+
+// 页面上的状态（`use-session-timeline.ts`）把三条路读到的事件各算一遍时间线和成果：打开页面时读到的历史、事件流推来的、往前翻页读到的。
+// 哪一条路漏了成果，页面上那一类运行或提交就在那条路上不出现（时间线上的行还在，不会被别的测试发现）。
+describe("页面上的状态：历史、事件流、往前翻页三条路都进成果和时间线", () => {
+	const detail = (events: SessionEvent[], hasMore = false): SessionDetailResponse =>
+		({
+			id: "00000000-0000-4000-8000-0000000000aa",
+			status: "idle",
+			has_more: hasMore,
+			queue_position: null,
+			waiting_for: null,
+			events,
+		}) as unknown as SessionDetailResponse;
+	const runsOf = (state: ReturnType<typeof initialSession>) => state.results.runs.map((r) => r.seq);
+	const rowsOf = (state: ReturnType<typeof initialSession>) =>
+		state.timeline.items.filter((i) => i.kind === "run" || i.kind === "version").map((i) => i.kind);
+
+	it("打开页面时读到的最近一页历史里的运行、版本、提交", () => {
+		const state = initialSession(detail([run(5, RUN), version(6, 2), commit(7)], true));
+		expect(runsOf(state)).toEqual([5]);
+		expect(state.results.versions.map((v) => v.seq)).toEqual([6]);
+		expect(state.results.commits.map((c) => c.seq)).toEqual([7]);
+		expect(rowsOf(state)).toEqual(["run", "version"]);
+	});
+
+	it("事件流推来的（打开页面之后）：进成果，也进时间线；同一个序号再来一次（重连补发）不重复", () => {
+		const opened = initialSession(detail([said(2, "好")]));
+		const pushed = reduceSession(opened, { type: "event", event: run(5, RUN) });
+		expect(runsOf(pushed)).toEqual([5]);
+		expect(rowsOf(pushed)).toEqual(["run"]);
+		const again = reduceSession(pushed, { type: "event", event: run(5, RUN) });
+		expect(runsOf(again)).toEqual([5]);
+		expect(rowsOf(again)).toEqual(["run"]);
+		const more = reduceSession(again, { type: "event", event: version(6, 2) });
+		expect(more.results.versions.map((v) => v.seq)).toEqual([6]);
+	});
+
+	it("往前翻页读到的更早的事件：进成果，序号排在已有的前面；还有更早的由 has_more 说", () => {
+		const opened = initialSession(detail([run(8, RUN_2)], true));
+		expect(opened.timeline.hasMore).toBe(true);
+		const older = reduceSession(opened, {
+			type: "older",
+			events: [run(3, RUN), version(4, 1), commit(5)],
+			hasMore: false,
+		});
+		expect(runsOf(older)).toEqual([3, 8]);
+		expect(older.results.versions.map((v) => v.seq)).toEqual([4]);
+		expect(older.results.commits.map((c) => c.seq)).toEqual([5]);
+		expect(older.timeline.hasMore).toBe(false);
+	});
+
+	it("助手的话三条路都不进成果；排队视图的更新不改成果", () => {
+		const opened = initialSession(detail([said(2, "运行成功了")]));
+		const pushed = reduceSession(opened, { type: "event", event: said(3, "场景已经保存") });
+		const older = reduceSession(pushed, { type: "older", events: [said(1, "好")], hasMore: false });
+		expect(older.results).toEqual(emptyResults);
+		const queued = reduceSession(older, {
+			type: "queued",
+			queue: { position: 1, waitingFor: null },
+			after: 3,
+		});
+		expect(queued.results).toBe(older.results);
 	});
 });

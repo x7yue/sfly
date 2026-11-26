@@ -5,7 +5,8 @@ import { StatusPill } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
 import { MESSAGE, SESSION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
-import { useLiveRun } from "#/monitor/live-run";
+import { untrustedPlain } from "#/lib/untrusted-text";
+import { useRunStatus } from "#/monitor/live-run";
 import { runStatus } from "#/monitor/run-model";
 import { Truncate } from "@/components/ui/truncate";
 import {
@@ -21,7 +22,9 @@ import {
  * 会话页右侧的「成果」（#547）：这个会话留下了什么，三块——工作区的提交（第几轮、提交号前 7 位、改了几个文件、增删行数，展开看差异）、
  * 场景版本（场景名、版本号，链到版本历史）、运行（运行 ID 前几位、场景名、当前状态，链到运行监控）。
  * **全部来自这个会话的 `platform` 事件**（`results.ts`）：助手在对话里说的不进来，模型说「运行成功了」但没有真的触发，这里就没有它。
- * 运行的状态是实时的：用运行监控共用的那份数据（`useLiveRun`，同一个运行在页面上只开一条事件流），运行结束后不再占着连接。
+ * 运行的状态跟着运行变：用运行监控共用的那份缓存（`useRunStatus`），在跑的运行每 5 秒重新读一次，结束了就不再读。**不开运行事件流**：
+ * 会话页有多少个运行就开多少条的话，五个在跑的运行就占满浏览器对同源的 6 条连接，页面自己的发送、停止、结束会话排不上队。
+ * 场景名和会话里别的文字一样要当作别人写的：会话令牌能写场景（新建、改名、保存版本：`scenario` 的写入不限人），名字不再只是登录的人写的，所以走 `Truncate untrusted`，不原样显示。
  * 样式是最薄的一版（统一的样式在 #550）。
  */
 export function ResultsPanel({
@@ -195,41 +198,55 @@ function CommitResult({ commit }: { commit: ResultCommit }) {
 	);
 }
 
-/** 一个场景版本：场景名、版本号，链到版本历史（打开那个版本）。 */
+/** 一个场景版本：场景名、版本号，链到版本历史（打开那个版本）。场景名当作别人写的文字。 */
 function VersionResult({ version }: { version: ResultVersion }) {
 	return (
 		<li data-testid="result-version" className={ITEM}>
-			<Link
-				to="/orchestrations/$id/versions"
-				params={{ id: version.scenarioId }}
-				search={{ b: version.version }}
-				title={SESSION.record.openVersion}
-				className="flex min-w-0 items-baseline gap-2 px-2.5 py-1.5 hover:bg-raised"
+			<Truncate
+				label={`${untrustedPlain(version.name)} · v${version.version}`}
+				render={
+					<Link
+						to="/orchestrations/$id/versions"
+						params={{ id: version.scenarioId }}
+						search={{ b: version.version }}
+						aria-description={SESSION.record.openVersion}
+						className="flex min-w-0 items-baseline gap-2 px-2.5 py-1.5 hover:bg-raised"
+					/>
+				}
 			>
-				<span className="min-w-0 flex-1 truncate text-fg-1">{version.name}</span>
+				<Truncate untrusted className="flex-1 text-fg-1">
+					{version.name}
+				</Truncate>
 				<span className="flex-none font-mono text-fg-2">v{version.version}</span>
-			</Link>
+			</Truncate>
 		</li>
 	);
 }
 
-/** 一次运行：运行 ID 前几位、场景名、当前状态（实时），链到运行监控。 */
+/** 一次运行：运行 ID 前几位、场景名（当作别人写的文字）、当前状态，链到运行监控。 */
 function RunResult({ run }: { run: ResultRun }) {
-	const live = useLiveRun(run.runId);
+	const live = useRunStatus(run.runId);
 	const status = live.data ? runStatus(live.data) : null;
 	return (
 		<li data-testid="result-run" data-run={run.runId} className={ITEM}>
-			<Link
-				to="/runs/$id"
-				params={{ id: run.runId }}
-				title={SESSION.record.openRun}
-				className="flex min-w-0 flex-col gap-0.5 px-2.5 py-1.5 hover:bg-raised"
+			<Truncate
+				label={`${shortId(run.runId)} · ${untrustedPlain(run.scenarioName)}`}
+				render={
+					<Link
+						to="/runs/$id"
+						params={{ id: run.runId }}
+						aria-description={SESSION.record.openRun}
+						className="flex min-w-0 flex-col gap-0.5 px-2.5 py-1.5 hover:bg-raised"
+					/>
+				}
 			>
 				<span className="flex min-w-0 items-baseline gap-2">
 					<span data-slot="run-id" className="flex-none font-mono text-fg-1">
 						{shortId(run.runId)}
 					</span>
-					<span className="min-w-0 flex-1 truncate text-fg-2">{run.scenarioName}</span>
+					<Truncate untrusted className="flex-1 text-fg-2">
+						{run.scenarioName}
+					</Truncate>
 				</span>
 				<span data-testid="result-run-status" data-status={live.data?.status}>
 					{status ? (
@@ -242,7 +259,7 @@ function RunResult({ run }: { run: ResultRun }) {
 						<span className="text-fg-3">{MESSAGE.loading}</span>
 					)}
 				</span>
-			</Link>
+			</Truncate>
 		</li>
 	);
 }
