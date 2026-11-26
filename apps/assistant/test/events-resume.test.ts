@@ -4,6 +4,7 @@
 import { get, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+	ASSISTANT_REPLAY_BUFFER_BYTES,
 	ASSISTANT_REPLAY_BUFFER_EVENTS,
 	AssistantStreamLine,
 	type AssistantStreamRecord,
@@ -34,6 +35,55 @@ describe("EventBus：缓冲和续传", () => {
 		expect(bus.buffered).toBe(1);
 		for (let n = 2; n <= 6; n++) bus.emit(SESSION, 1, message(`m${n}`));
 		expect(bus.buffered).toBe(3);
+	});
+
+	it("字节上限：行长加起来超过上限就从最早的挤，缓冲里的字节数不超过上限；挤出去之后 after 早于缓冲回 gap，接得上的不回", () => {
+		expect(ASSISTANT_REPLAY_BUFFER_BYTES).toBe(64 * 1024 * 1024);
+		const line = (n: number) => message(`${n}:${"x".repeat(1000)}`);
+		const one = Buffer.byteLength(
+			`${JSON.stringify({ epoch: "e".repeat(12), seq: 1, session_id: SESSION, turn: 1, at: "2026-01-01T00:00:00.000Z", event: line(1) })}\n`,
+		);
+		// 上限约 5 条：条数的上限放得很大，只有字节在起作用。
+		const bus = new EventBus(() => new Date("2026-01-01T00:00:00Z"), 1_000_000, one * 5);
+		for (let n = 1; n <= 20; n++) bus.emit(SESSION, 1, line(n));
+		expect(bus.bufferedBytes).toBeLessThanOrEqual(one * 5);
+		expect(bus.buffered).toBeGreaterThanOrEqual(4);
+		expect(bus.buffered).toBeLessThanOrEqual(5);
+		const oldest = 20 - bus.buffered + 1;
+		// after 早于缓冲里最早的一条：有缺口。after 正好是被挤出的最后一条：接得上。
+		expect(bus.resume({ epoch: bus.epoch, seq: 3 })).toEqual({ gap: true, lines: [] });
+		const edge = bus.resume({ epoch: bus.epoch, seq: oldest - 1 });
+		expect(edge.gap).toBe(false);
+		expect(edge.lines).toHaveLength(bus.buffered);
+		expect(bus.resume({ epoch: bus.epoch, seq: 20 })).toEqual({ gap: false, lines: [] });
+	});
+
+	it("一条比字节上限还大的事件把缓冲挤空（连自己）：之后 after 早于它的都是 gap，缓冲里没有东西，字节数是 0", () => {
+		const bus = new EventBus(() => new Date(), 10_000, 500);
+		bus.emit(SESSION, 1, message("小"));
+		bus.emit(SESSION, 1, message("大".repeat(1000)));
+		expect(bus.buffered).toBe(0);
+		expect(bus.bufferedBytes).toBe(0);
+		expect(bus.resume({ epoch: bus.epoch, seq: 0 })).toEqual({ gap: true, lines: [] });
+		expect(bus.resume({ epoch: bus.epoch, seq: 1 })).toEqual({ gap: true, lines: [] });
+		// 最后一条（被挤掉的）就是 after：之后没有东西缺。
+		expect(bus.resume({ epoch: bus.epoch, seq: 2 })).toEqual({ gap: false, lines: [] });
+	});
+
+	it("挤出去的行立即释放：反复挤出不让缓冲的字节数和条数增长（不留到数组下一次挪动）", () => {
+		const bus = new EventBus(() => new Date(), 1_000_000, 50_000);
+		for (let n = 1; n <= 5000; n++) {
+			bus.emit(SESSION, 1, message(`${n}:${"y".repeat(500)}`));
+			expect(bus.bufferedBytes).toBeLessThanOrEqual(50_000);
+		}
+		expect(bus.buffered).toBeLessThan(100);
+		// 数组里没有留着被挤出去的行（槽位置空）：引用着的行数就是缓冲里的条数，不是发出过的条数。
+		expect(bus.retainedLines).toBe(bus.buffered);
+		// 留着的是最近的、序号连续。
+		const lines = bus.resume({ epoch: bus.epoch, seq: 5000 - bus.buffered }).lines;
+		expect(lines.map((l) => (JSON.parse(l) as AssistantStreamRecord).seq)).toEqual(
+			Array.from({ length: bus.buffered }, (_, i) => 5000 - bus.buffered + 1 + i),
+		);
 	});
 
 	it("没有 after：不补发，没有缺口", () => {

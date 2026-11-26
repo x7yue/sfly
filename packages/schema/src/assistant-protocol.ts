@@ -477,10 +477,18 @@ export const AssistantEpoch = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 export type AssistantEpoch = z.infer<typeof AssistantEpoch>;
 
 /**
- * 助手服务在内存里留多少条**持久**的事件用来续传（{@link AssistantEventsQuery}）：最近的这么多条；不持久的事件（增量、
+ * 助手服务在内存里留多少条**持久**的事件用来续传（{@link AssistantEventsQuery}）：最近的这么多条（同时受 {@link ASSISTANT_REPLAY_BUFFER_BYTES} 限制）；不持久的事件（增量、
  * 工具输出、思考、排队状态）不留，断线期间错过的增量由控制面的 `snapshot` 补上（`sessions.ts` 的 `SnapshotEvent`）。
  */
 export const ASSISTANT_REPLAY_BUFFER_EVENTS = 10_000;
+
+/**
+ * 续传缓冲（{@link ASSISTANT_REPLAY_BUFFER_EVENTS}）占的内存上限，按序列化后的行长（字节）加起来算：超过就从最早的挤出去，和条数的上限
+ * 谁先到按谁。一条持久事件常见几百字节，但 `tool_result` 的 `text` 和 `diff` 各最多 16 KB、`platform`（`commit`）的差异最多 64 KB，
+ * 1 万条都是大的就是几百 MB——助手容器的内存预算是按 pi 进程数算的（#539、#549），不留这么多余量，所以缓冲自己有上限。
+ * 被挤出去的事件立即释放；续传的 `after` 早于缓冲里最早的一条时 `hello.gap` 为真，和按条数挤出去时一样。
+ */
+export const ASSISTANT_REPLAY_BUFFER_BYTES = 64 * 1024 * 1024;
 
 /**
  * 事件流连接上写出去、对端还没读走的字节超过多少，助手服务就断开这条连接（对端读得太慢，不能把整段事件堆进助手服务的内存）：

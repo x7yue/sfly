@@ -82,6 +82,8 @@ docker run -d --name sfly-aeval-1-assistant --network sfly-aeval-1 --init --memo
 docker logs sfly-aeval-1-assistant      # 「助手服务在 :8090（pi 1.6.0）」
 ```
 
+`--memory 2g` 的内存里，断线续传的缓冲最多占 64 MiB（`ASSISTANT_REPLAY_BUFFER_BYTES`），其余是 pi 进程；缓冲和 pi 进程的数目无关，不随事件的大小涨。
+
 `./aeval.sh --slot 1 down` 不认识这个容器：收尾时先 `docker rm -f sfly-aeval-1-assistant` 再 `down`，不然网络删不掉。助手服务只在容器网络里听 8090；要从宿主机直接调，
 加 `-p 127.0.0.1:8090:8090`。
 
@@ -89,7 +91,7 @@ docker logs sfly-aeval-1-assistant      # 「助手服务在 :8090（pi 1.6.0）
 
 协议是 HTTP：`POST /sessions/<会话 ID>/prompt` 开始一轮（202，先回应再拉起 pi），`POST /sessions/<会话 ID>/abort`
 停止（请求体带轮次），`GET /events` 是 NDJSON 的事件流（第一行 `hello`，之后是事件记录；带 `?after=<纪元>:<序号>` 时补发那条之后的持久事件，
-内存里留最近 1 万条，补不全时 `hello.gap` 为真），`GET /health` 看版本和进程数；
+内存里留最近 1 万条、合计不超过 64 MiB（按序列化后的字节算），补不全时 `hello.gap` 为真），`GET /health` 看版本和进程数；
 每个请求带 `Authorization: Bearer <共享密钥>`。在助手容器里用 node 发（它有 `fetch`）：
 
 ```sh
