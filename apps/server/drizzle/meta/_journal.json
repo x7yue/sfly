@@ -288,6 +288,13 @@
       "when": 1795696014866,
       "tag": "0041_session_token_index",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1795719012049,
+      "tag": "0042_session_event_assistant_source",
+      "breakpoints": true
     }
   ]
 }

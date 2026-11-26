@@ -2,9 +2,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
 	AbortCommandBody,
+	ASSISTANT_STREAM_BACKLOG_BYTES,
 	ASSISTANT_STREAM_HEARTBEAT_MS,
 	type AssistantErrorBody,
 	type AssistantErrorCode,
+	AssistantEventsQuery,
 	type AssistantHealth,
 	type AssistantModelHealth,
 	type AssistantStreamHeartbeat,
@@ -12,7 +14,7 @@ import {
 	SessionId,
 	SteerCommandBody,
 } from "@sfly/schema";
-import type { EventBus } from "./bus.js";
+import type { EventBus, StreamPosition } from "./bus.js";
 import { describeError } from "./output.js";
 import type { SessionManager } from "./sessions.js";
 
@@ -35,11 +37,16 @@ export interface ServerDeps {
 	log: (message: string) => void;
 	/** 心跳的间隔，默认 {@link HEARTBEAT_MS}（测试里改短）。 */
 	heartbeatMs?: number;
+	/** 事件流连接上还没被对端读走的字节超过这个数就断开它，默认 {@link ASSISTANT_STREAM_BACKLOG_BYTES}（测试里改小）。 */
+	maxBacklogBytes?: number;
 }
+
+/** 补发时一次写多少字节，写完等对端读走（背压）再写下一块。 */
+const REPLAY_CHUNK_BYTES = 256 * 1024;
 
 /**
  * 事件流的心跳间隔：协议定的 {@link ASSISTANT_STREAM_HEARTBEAT_MS}。控制面超过 3 个间隔收不到任何字节就断开重连，
- * 重连时现在不补发，断开那一会儿的事件会丢：所以没有事件时也要按时写。
+ * 重连时持久的事件靠续传补回（`GET /events?after=`），不持久的丢：所以没有事件时也要按时写。
  */
 export const HEARTBEAT_MS = ASSISTANT_STREAM_HEARTBEAT_MS;
 const HEARTBEAT_LINE = `${JSON.stringify({ type: "heartbeat" } satisfies AssistantStreamHeartbeat)}\n`;
@@ -62,7 +69,7 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		const url = new URL(req.url ?? "/", "http://assistant");
 		const route = `${req.method} ${url.pathname}`;
 		if (route === "GET /health") return send(res, 200, health());
-		if (route === "GET /events") return events(req, res);
+		if (route === "GET /events") return events(req, res, url);
 		const command = /^POST \/sessions\/([^/]+)\/(prompt|steer|abort|end)$/.exec(route);
 		if (!command) return sendError(res, 404, "invalid_request", `没有 ${route}`);
 		const id = SessionId.safeParse(command[1]);
@@ -107,21 +114,82 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		send(res, 202);
 	}
 
-	function events(req: IncomingMessage, res: ServerResponse): void {
-		res.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-store" });
-		res.write(`${JSON.stringify(deps.bus.hello())}\n`);
-		const unsubscribe = deps.bus.subscribe((line) => res.write(line));
-		// 每条连接自己的心跳：不论有没有事件、有没有一轮在做，按间隔写一行。
-		const heartbeat = setInterval(
-			() => res.write(HEARTBEAT_LINE),
-			deps.heartbeatMs ?? HEARTBEAT_MS,
-		);
+	/**
+	 * 事件流（协议的 `GET /events`）：第一行 `hello`（`gap` 见 `EventBus.resume`），接着补发 `after` 之后的持久事件，再接实时的。
+	 * 补发和订阅实时在同一步里切换：之前的在补发里，之后的在 `live` 里，不漏不重。**背压**：补发每写一块（256 KB）看一次
+	 * 对端读走没有，没读走就等；补发期间到的实时事件先排在 `pending` 里，补发完再放；对端读得太慢——没被读走的字节（连接上
+	 * 已经写出去的，加补发期间排着的）超过 `maxBacklogBytes`——就断开这条连接（控制面带 `after` 重连，持久的事件从缓冲补发，
+	 * 不持久的丢，由快照补上），不让助手服务的内存跟着涨。
+	 */
+	function events(req: IncomingMessage, res: ServerResponse, url: URL): void {
+		const query = AssistantEventsQuery.safeParse({
+			after: url.searchParams.get("after") ?? undefined,
+		});
+		if (!query.success) {
+			sendError(res, 400, "invalid_request", "after 要写成 <纪元>:<序号>");
+			return;
+		}
+		const after = query.data.after === undefined ? undefined : parseAfter(query.data.after);
+		const limit = deps.maxBacklogBytes ?? ASSISTANT_STREAM_BACKLOG_BYTES;
+		let closed = false;
+		let replaying = false;
+		const pending: string[] = [];
+		let pendingBytes = 0;
 		const close = () => {
+			if (closed) return;
+			closed = true;
 			clearInterval(heartbeat);
 			unsubscribe();
 		};
+		const overflow = () => {
+			deps.log(`事件流的对端读得太慢（没读走的超过 ${limit} 字节），断开它，等它带着 after 重连`);
+			close();
+			res.destroy();
+		};
+		const write = (line: string) => {
+			if (closed) return;
+			if (res.writableLength > limit) return overflow();
+			res.write(line);
+		};
+		const live = (line: string) => {
+			if (!replaying) return write(line);
+			pending.push(line);
+			pendingBytes += Buffer.byteLength(line);
+			if (pendingBytes + res.writableLength > limit) overflow();
+		};
+		// 每条连接自己的心跳：不论有没有事件、有没有一轮在做，按间隔写一行。
+		const heartbeat = setInterval(() => write(HEARTBEAT_LINE), deps.heartbeatMs ?? HEARTBEAT_MS);
+		let unsubscribe: () => void = () => {};
 		req.on("close", close);
 		res.on("close", close);
+
+		res.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-store" });
+		// 下面三步在同一个同步段里：补发的最后一条和订阅之后的第一条实时事件之间不会漏进别的事件。
+		const resumption = deps.bus.resume(after);
+		res.write(`${JSON.stringify(deps.bus.hello(resumption.gap))}\n`);
+		replaying = resumption.lines.length > 0;
+		unsubscribe = deps.bus.subscribe(live);
+		if (!replaying) return;
+		void (async () => {
+			let index = 0;
+			while (index < resumption.lines.length && !closed) {
+				let chunk = "";
+				while (index < resumption.lines.length && chunk.length < REPLAY_CHUNK_BYTES) {
+					chunk += resumption.lines[index++];
+				}
+				if (!res.write(chunk)) await drained(res);
+			}
+			if (closed) return;
+			// 补发完，放出补发期间排着的实时事件，切到实时：这两步之间没有 await。
+			replaying = false;
+			const queued = pending.splice(0);
+			pendingBytes = 0;
+			for (const line of queued) write(line);
+		})().catch((error: unknown) => {
+			deps.log(`事件流补发出错：${describeError(error)}`);
+			close();
+			res.destroy();
+		});
 	}
 
 	function health(): AssistantHealth {
@@ -137,6 +205,29 @@ export function createAssistantServer(deps: ServerDeps): Server {
 }
 
 const digest = (text: string) => createHash("sha256").update(text).digest();
+
+/** `<纪元>:<序号>`（{@link AssistantEventsQuery} 已经校验过格式）。序号写得大到不是安全整数时当作对不上，按 `gap` 处理。 */
+function parseAfter(after: string): StreamPosition {
+	const at = after.lastIndexOf(":");
+	const seq = Number(after.slice(at + 1));
+	return {
+		epoch: after.slice(0, at),
+		seq: Number.isSafeInteger(seq) ? seq : Number.MAX_SAFE_INTEGER,
+	};
+}
+
+/** 等对端读走已经写出去的数据（`drain`），连接关了也算。 */
+function drained(res: ServerResponse): Promise<void> {
+	return new Promise((resolve) => {
+		const done = () => {
+			res.off("drain", done);
+			res.off("close", done);
+			resolve();
+		};
+		res.once("drain", done);
+		res.once("close", done);
+	});
+}
 
 function send(res: ServerResponse, status: number, body?: unknown): void {
 	res.writeHead(status, body === undefined ? {} : { "content-type": "application/json" });

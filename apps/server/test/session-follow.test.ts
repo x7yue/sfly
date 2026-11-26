@@ -536,3 +536,113 @@ describe("快照（#545）：补发读完、切到实时的那一刻，缓冲的
 		expect(sink.shape).toEqual(["1"]);
 	});
 });
+
+describe("实时阶段遇到序号缺口：从库里补读缺的那一段再往下发（#545）", () => {
+	/** 已经切到实时的一条流（补发了 1 到 3）。 */
+	async function live(snapshot = false) {
+		const source = new FakeSource([1, 2, 3]);
+		if (snapshot) {
+			source.makeSnapshot = () => ({
+				type: "snapshot",
+				status: "running",
+				partial_text: "",
+				running_tool: null,
+				steer_queue: [],
+				waiting_for: null,
+				queue_position: null,
+			});
+		}
+		const sink = new FakeSink();
+		const { errors } = run(source, sink);
+		await settle();
+		return { source, sink, errors };
+	}
+	/** 库里已经有这条，但只发布、不再写库一次：造「序号大的先发布」。 */
+	const inDb = (source: FakeSource, ...seqs: number[]) => {
+		for (const seq of seqs) source.db.push(persistent(seq));
+	};
+
+	it("序号大的先发布：库里补读出缺的，按序号发，页面这一次连接里收到的持久事件连续、不缺、不重", async () => {
+		const { source, sink, errors } = await live();
+		inDb(source, 4, 5);
+		source.publish(persistent(5)); // 5 先到
+		source.publish(persistent(4)); // 4 后到：以前会被当成「已经发过」丢掉
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "5"]);
+		// 补读之后接着是实时的，不再缓冲。
+		source.append(6);
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "5", "6"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("缺的不止一条、补读分好几批：全部补上；补读期间到的事件（持久的和不持久的）排在后面，按到达先后", async () => {
+		const { source, sink, errors } = await live();
+		inDb(source, 4, 5, 6, 7, 8);
+		const catchUp = source.hold(source.reads.length + 1);
+		source.publish(persistent(8)); // 缺 4 到 7
+		await catchUp.started;
+		source.publish(delta("补读期间的增量"));
+		source.append(9); // 补读期间落库、发布
+		catchUp.release();
+		await settle();
+		// 持久的事件连续、不缺、不重；补读期间到的增量放在补读到的那几条之后（和第一次补发一样：补读读到的先发，缓冲的后放，
+		// 缓冲里已经补读过的持久事件按 seq 丢掉）。
+		expect(sink.shape.filter((item) => /^\d+$/.test(item))).toEqual([
+			"1",
+			"2",
+			"3",
+			"4",
+			"5",
+			"6",
+			"7",
+			"8",
+			"9",
+		]);
+		expect(sink.shape.filter((item) => item === "补读期间的增量")).toHaveLength(1);
+		expect(sink.shape.slice(0, 8)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("库里读不到缺的（序号有跳跃）：不空等，照到达的发；之后的事件照常", async () => {
+		const { source, sink, errors } = await live();
+		source.publish(persistent(7)); // 库里没有 4 到 6
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "7"]);
+		source.publish(persistent(8));
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "7", "8"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("接得上的事件不触发补读；不持久的事件没有序号，也不触发", async () => {
+		const { source, sink } = await live();
+		const reads = source.reads.length;
+		source.append(4);
+		source.publish(delta("增量"));
+		source.append(5);
+		await settle();
+		expect(source.reads).toHaveLength(reads);
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "增量", "5"]);
+	});
+
+	it("补读不再发快照（快照只在这条连接补发读完的那一刻发一次）", async () => {
+		const { source, sink } = await live(true);
+		expect(sink.shape).toEqual(["1", "2", "3", "snapshot"]);
+		inDb(source, 4, 5);
+		source.publish(persistent(5));
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "snapshot", "4", "5"]);
+	});
+
+	it("补读出错：当作这条流出错，调用 onError，之后不再推送", async () => {
+		const { source, sink, errors } = await live();
+		source.failRead = new Error("读库失败");
+		source.publish(persistent(5));
+		await settle();
+		expect(errors).toHaveLength(1);
+		source.publish(persistent(6));
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3"]);
+	});
+});

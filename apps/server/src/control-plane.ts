@@ -235,6 +235,8 @@ export interface ControlPlane {
 	readonly sessions: SessionStore;
 	/** 会话的写和后台（测试用：`idle()` 等排队中的会话开始完）。 */
 	readonly sessionService: SessionService;
+	/** 和助手服务的事件连接此刻连着没有（测试等它断开、重连用；没有配置助手服务时恒为 false）。 */
+	readonly assistantConnected: () => boolean;
 	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts）：测试用它给假 Agent 签发凭据。 */
 	readonly agentCredentials: AgentCredentialService;
 	/**
@@ -537,6 +539,10 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
 		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
+		// 事件连接连不上时兜底不判中断（连接在后面才建，这里只在被问到时才看它）。
+		...(assistantClient && {
+			assistantConnected: (): boolean => assistantConnection?.connected ?? true,
+		}),
 		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
 	const api = buildHttpApi({
@@ -675,10 +681,14 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	).replace(/\/+$/, "");
 
 	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
-	const assistantConnection = assistantClient
+	const assistantConnection: AssistantConnection | undefined = assistantClient
 		? new AssistantConnection({
 				client: assistantClient,
 				sessions,
+				recovery: {
+					restarted: (candidates): Promise<number> => sessionService.assistantRestarted(candidates),
+					eventsLost: (): Promise<number> => sessionService.assistantEventsLost(),
+				},
 				log: (message, error) => logError(`sfly: ${message}`, error),
 				reconnect: options.assistantReconnectMs && {
 					minMs: options.assistantReconnectMs.min,
@@ -761,6 +771,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		grpcUrl: gateway.url,
 		sessions,
 		sessionService,
+		assistantConnected: () => assistantConnection?.connected ?? false,
 		agentCredentials,
 		close: () => {
 			closing ??= close();

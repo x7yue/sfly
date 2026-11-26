@@ -35,7 +35,7 @@ import {
  * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；`turn` 那一轮没有在做：409 `no_turn_running` | #544 |
  * | `POST /sessions/:id/abort` | {@link AbortCommandBody} | 202，总是；重复调用无害 | #540、#544 |
  * | `POST /sessions/:id/end` | — | 会话 ID 格式对的总是 202（不认识的会话也是）；重复调用无害；会话 ID 不合格式是 400 `invalid_request`，和别的命令一样 | #544 |
- * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳** | #540；续传 #545 |
+ * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳**；`after` 写得不对 400 `invalid_request`；**续传见 {@link AssistantEventsQuery}、{@link AssistantStreamHello}** | #540；续传 #545 |
  * | `GET /health` | — | 200 {@link AssistantHealth} | #540；模型 #548；进程数 #545 |
  *
  * 失败的回应体是 {@link AssistantErrorBody}。
@@ -477,8 +477,29 @@ export const AssistantEpoch = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 export type AssistantEpoch = z.infer<typeof AssistantEpoch>;
 
 /**
- * `GET /events` 的 query：`after` 写成 `<纪元>:<序号>`，从这条之后续传（#545 实现；在那之前 `after` 被忽略，
- * 只推实时的）。
+ * 助手服务在内存里留多少条**持久**的事件用来续传（{@link AssistantEventsQuery}）：最近的这么多条；不持久的事件（增量、
+ * 工具输出、思考、排队状态）不留，断线期间错过的增量由控制面的 `snapshot` 补上（`sessions.ts` 的 `SnapshotEvent`）。
+ */
+export const ASSISTANT_REPLAY_BUFFER_EVENTS = 10_000;
+
+/**
+ * 事件流连接上写出去、对端还没读走的字节超过多少，助手服务就断开这条连接（对端读得太慢，不能把整段事件堆进助手服务的内存）：
+ * 控制面带着最后收到的（纪元、序号）重连，持久的事件从缓冲里补发，不持久的丢掉（由快照补上）。
+ */
+export const ASSISTANT_STREAM_BACKLOG_BYTES = 8 * 1024 * 1024;
+
+/**
+ * `GET /events` 的 query（#545）：`after` 写成 `<纪元>:<序号>`，是控制面**最后收到的那条持久事件**的纪元和助手服务内的序号
+ * （{@link AssistantStreamRecord} 的 `epoch`、`seq`）。助手服务在内存里留着最近 {@link ASSISTANT_REPLAY_BUFFER_EVENTS} 条持久的事件，
+ * 连上之后：
+ * - **没有 `after`**（控制面从没收过助手服务的事件）：不补发，只推实时的，`hello.gap` 为 false；
+ * - **纪元相同、`after` 之后的持久事件缓冲里都还在**（缓冲里最早的一条的序号不大于 `after` 的序号加一）：先把 `after` 之后的
+ *   持久事件按序号补发，再接实时的；补发和实时之间不漏、不重（补发的一批和订阅实时在同一步里切换）；`hello.gap` 为 false；
+ * - **纪元不同**（助手服务重启过）、**`after` 早于缓冲里最早的一条**（中间有事件被挤出去了）、或者 **`after` 的序号比助手服务已经发出的
+ *   最大序号还大**（对不上，不是这个助手服务给的）：不补发，只推实时的，`hello.gap` 为 true。
+ *
+ * 补发的事件是原样的 {@link AssistantStreamRecord}（`at` 还是当时盖的）；补发的写会看对端有没有读走（背压），实时的事件在补发期间先排着，
+ * 补发完再放出，排着的和还没读走的合计超过 {@link ASSISTANT_STREAM_BACKLOG_BYTES} 就断开这条连接（对端重连续传）。
  */
 export const AssistantEventsQuery = z.object({
 	after: z
@@ -490,7 +511,9 @@ export type AssistantEventsQuery = z.infer<typeof AssistantEventsQuery>;
 
 /**
  * 事件流的第一行：`epoch` 是助手服务当前的纪元；`gap` 为 true 表示 `after` 的纪元和当前的不同，或者 `after` 早于
- * 助手服务内存里保留的最早一条，中间有事件已经补不回来（控制面要写一条 `events_lost`，#545）。
+ * 助手服务内存里保留的最早一条，中间有事件已经补不回来（见 {@link AssistantEventsQuery}）。控制面据此：
+ * - **纪元和它记着的不同**（助手服务重启了）：在做的会话补一条 `interrupted` 的 `turn_end`、改回空闲，排队的接着开始；
+ * - **纪元相同、`gap` 为 true**（断开太久，事件被挤出缓冲）：在做的会话各补一条 `events_lost` 的提示，照常接着收。
  */
 export const AssistantStreamHello = z.object({
 	type: z.literal("hello"),
@@ -502,7 +525,7 @@ export type AssistantStreamHello = z.infer<typeof AssistantStreamHello>;
 /**
  * 事件流的心跳：助手服务每隔 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 在事件流里写一行 `{"type":"heartbeat"}`，不论有没有事件。
  * 没有会话在做时事件流可以几个小时没有任何内容；HTTP 客户端的响应体超时（Node 的 `fetch` 默认 300 秒）会把这样的连接
- * 掐断，而协议现在没有续传（#545），断开期间的事件就丢了。心跳让连接不空闲，也让控制面能分清「静默」和「死了」：
+ * 掐断，断开期间的持久事件靠续传（{@link AssistantEventsQuery}）补回，不持久的丢了。心跳让连接不空闲，也让控制面能分清「静默」和「死了」：
  * 超过 {@link ASSISTANT_STREAM_IDLE_INTERVALS} 个间隔没有收到任何字节（心跳、事件都算），控制面就认为连接已经死了
  * （半开的连接、对端挂住），主动断开重连，不等响应体超时。**只增，不影响已有的行**：不认识心跳的控制面按「不是约定的形状」
  * 跳过它（但会因此没有死连接检测）。

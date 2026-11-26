@@ -88,7 +88,8 @@ docker logs sfly-aeval-1-assistant      # 「助手服务在 :8090（pi 1.6.0）
 ### 4. 不经控制面，直接驱动一轮
 
 协议是 HTTP：`POST /sessions/<会话 ID>/prompt` 开始一轮（202，先回应再拉起 pi），`POST /sessions/<会话 ID>/abort`
-停止（请求体带轮次），`GET /events` 是 NDJSON 的事件流（第一行 `hello`，之后是事件记录），`GET /health` 看版本和进程数；
+停止（请求体带轮次），`GET /events` 是 NDJSON 的事件流（第一行 `hello`，之后是事件记录；带 `?after=<纪元>:<序号>` 时补发那条之后的持久事件，
+内存里留最近 1 万条，补不全时 `hello.gap` 为真），`GET /health` 看版本和进程数；
 每个请求带 `Authorization: Bearer <共享密钥>`。在助手容器里用 node 发（它有 `fetch`）：
 
 ```sh

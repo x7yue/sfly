@@ -964,7 +964,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(assistant.streams).toBe(1);
 		});
 
-		it("断了按退避重连：重连之后的事件照常落库（断线期间的丢掉，续传是 #545）", async () => {
+		it("断了按退避重连：重连之后的事件照常落库，断线期间的持久事件由助手服务补发（#545，细节见 session-reconnect.test.ts）", async () => {
 			const view = await json<SessionView>(await create());
 			assistant.dropStreams();
 			assistant.emit(view.id, 1, assistantMessage("断线期间的"));
@@ -975,7 +975,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 				const texts = detail.events.flatMap((e) =>
 					e.type === "assistant_message" ? [e.text] : [],
 				);
-				expect(texts).toEqual(["重连之后的"]);
+				expect(texts).toEqual(["断线期间的", "重连之后的"]);
 			});
 		});
 
@@ -1280,13 +1280,14 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 		await eventually(async () => expect((await sessionRow(cp, second.id))?.status).toBe("running"));
 	});
 
-	it("控制面启动时先收拾一遍：重启之前一直在做的会话回到空闲，没过期的不动", async () => {
-		// 单独起一个控制面，扫描间隔很长：只有启动时那一遍。
+	it("控制面重启：重启之前一直在做的会话，事件连接连上之后的第一次兜底回到空闲，没过期的不动（连不上助手服务时兜底不动，#545）", async () => {
+		// 单独起一个控制面：兜底的扫描调快；启动时那一遍在连接连上之前，不判（连不上不等于这一轮没在做）。
 		const other = await startTestControlPlane({
 			assistantUrl: assistant.url,
 			assistantSecret: assistant.secret,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			sessionSweepIntervalMs: 50,
 		});
 		try {
 			const stale = await seedSession(other.database.url, {
@@ -1295,12 +1296,14 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				lastActivityAt: new Date(other.clock.now().getTime() - 40 * 60_000),
 			});
 			await other.restart();
-			const list = await json<SessionListResponse>(
-				await new ApiClient(asUsers(other)).get("/projects/default/sessions"),
-			);
-			expect(list.sessions).toEqual([
-				expect.objectContaining({ id: stale, status: "idle", last_turn_outcome: "interrupted" }),
-			]);
+			await eventually(async () => {
+				const list = await json<SessionListResponse>(
+					await new ApiClient(asUsers(other)).get("/projects/default/sessions"),
+				);
+				expect(list.sessions).toEqual([
+					expect.objectContaining({ id: stale, status: "idle", last_turn_outcome: "interrupted" }),
+				]);
+			}, 10_000);
 			// 新的在做的会话（刚有活动）重启之后不动。
 			const fresh = await seedSession(other.database.url, {
 				status: "running",
@@ -1308,6 +1311,9 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				lastActivityAt: other.clock.now(),
 			});
 			await other.restart();
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			// 连上之后至少扫过一遍，没过期的不动。
+			await new Promise((resolve) => setTimeout(resolve, 200));
 			const after = await json<SessionListResponse>(
 				await new ApiClient(asUsers(other)).get("/projects/default/sessions"),
 			);
@@ -1323,6 +1329,7 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 			assistantSecret: assistant.secret,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			sessionSweepIntervalMs: 50,
 		});
 		try {
 			const user = (n: number) =>
@@ -1347,10 +1354,15 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				],
 			});
 			await other.restart();
+			await eventually(async () => {
+				const view = await json<SessionDetailResponse>(
+					await new ApiClient(asUsers(other)).get(`/sessions/${id}`),
+				);
+				expect(view.status).toBe("idle");
+			}, 10_000);
 			const detail = await json<SessionDetailResponse>(
 				await new ApiClient(asUsers(other)).get(`/sessions/${id}`),
 			);
-			expect(detail.status).toBe("idle");
 			expect(detail.events.filter((e) => e.type === "turn_end")).toHaveLength(2);
 			expect(detail.events.at(-1)).toMatchObject({
 				type: "turn_end",
@@ -1368,6 +1380,7 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 			assistantSecret: assistant.secret,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			sessionSweepIntervalMs: 50,
 		});
 		let agent: FakeAgent | undefined;
 		try {
@@ -1396,8 +1409,11 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 			});
 			await other.restart();
 			const api = new ApiClient(asUsers(other));
+			await eventually(async () => {
+				const view = await json<SessionDetailResponse>(await api.get(`/sessions/${id}`));
+				expect(view.status).toBe("idle");
+			}, 10_000);
 			const detail = await json<SessionDetailResponse>(await api.get(`/sessions/${id}`));
-			expect(detail.status).toBe("idle");
 			expect(detail.events.map((e) => e.type)).toEqual([
 				"user_message",
 				"turn_started",

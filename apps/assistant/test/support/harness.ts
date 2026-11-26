@@ -92,9 +92,9 @@ export class Harness {
 		readonly workbench: FakeWorkbench,
 		public sessions: SessionManager,
 		/** 起 SessionManager 用的选项：{@link restart} 照它再起一个。 */
-		readonly managerOptions: SessionManagerOptions,
-		readonly bus: EventBus,
-		readonly server: Server,
+		public managerOptions: SessionManagerOptions,
+		public bus: EventBus,
+		public server: Server,
 		readonly url: string,
 		/** 助手服务写的日志。 */
 		readonly logs: string[],
@@ -206,6 +206,36 @@ export class Harness {
 		await this.sessions.shutdown();
 		this.sessions = new SessionManager(this.managerOptions);
 		return this.sessions;
+	}
+
+	/**
+	 * 助手服务**被杀掉再起来**（容器重启，#545）：先断开所有连接、关掉 HTTP 服务（所以旧的会话管理器收尾时发的事件到不了任何人，
+	 * 和 SIGKILL 一样），再换一个新的事件总线（新纪元，序号从头数）、新的会话管理器，在**原来的端口**上重新监听；数据目录、工作台、
+	 * 模型是原来的（pi 的会话文件还在卷上）。`events`（Harness 自己连着的那条事件流）跟着断了，要看新纪元的事件用 {@link reconnectEvents}。
+	 */
+	async restartService(): Promise<void> {
+		const port = Number(new URL(this.url).port);
+		this.events.close();
+		this.server.closeAllConnections();
+		await new Promise<void>((done) => this.server.close(() => done()));
+		await this.sessions.shutdown();
+		this.bus = new EventBus();
+		this.managerOptions = { ...this.managerOptions, bus: this.bus };
+		this.sessions = new SessionManager(this.managerOptions);
+		this.server = createAssistantServer({
+			secret: SECRET,
+			bus: this.bus,
+			sessions: this.sessions,
+			versions: { assistant: "0.0.0-test", pi: piPackage().version },
+			model: () => this.modelHealth.snapshot(),
+			log: (message) => this.logs.push(message),
+		});
+		await new Promise<void>((done) => this.server.listen(port, "127.0.0.1", done));
+	}
+
+	/** 重新连上事件流（新纪元的）。 */
+	async reconnectEvents(): Promise<void> {
+		this.events = await EventsClient.connect(this.url);
 	}
 
 	prompt(
