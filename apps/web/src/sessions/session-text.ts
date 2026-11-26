@@ -57,13 +57,34 @@ export function toolLine(tool: SessionTool | null, title: string): string {
 }
 
 /**
- * 工具结果的摘要（放在那一行的右边）：命令写「退出码 N · 用时 …」，其余写「用时 …」；出错的开头写「出错」；
- * 结果太长只留了头尾的，写明「只显示了头尾」。
+ * 工具那一行的标题：有调用的就是 {@link toolLine}；**只有结果、没有对上的调用**（会话超过一页，调用在更早的一页里，翻页边界上最早的那一条）
+ * 写明是哪一次调用的结果：命令的结果带退出码、编辑的结果带差异，能判断的写出是命令还是编辑（读和写分不出来，写「工具调用」），
+ * 再写调用在哪里——还有更早的内容就是「加载更早的内容后显示」，已经没有更早的了、调用还是没有，就是它没有记在时间线上。
  */
-export function toolResultSummary(tool: SessionTool | null, result: ToolResultInfo): string {
+export function toolRowTitle(
+	item: { tool: SessionTool | null; title: string; result: ToolResultInfo | null },
+	hasMore: boolean,
+): string {
+	if (item.tool !== null || item.result === null) return toolLine(item.tool, item.title);
+	const earlier = SESSION.tool.earlier;
+	const kind =
+		item.result.exitCode !== undefined
+			? earlier.command
+			: item.result.diff !== undefined
+				? earlier.edit
+				: earlier.other;
+	return `${kind}的结果 · ${hasMore ? earlier.note : earlier.missing}`;
+}
+
+/**
+ * 工具结果的摘要（放在那一行的右边）：命令写「退出码 N · 用时 …」，其余写「用时 …」；出错的开头写「出错」；
+ * 结果太长、只显示了一部分的，写明「输出太长，只显示了一部分」（事件里的文字超过上限只留头尾，pi 自己只留末尾，两种都是它）。
+ */
+export function toolResultSummary(result: ToolResultInfo): string {
 	const parts: string[] = [];
 	if (result.isError) parts.push(SESSION.tool.failed);
-	if (tool === "command" && result.exitCode !== undefined) {
+	// 退出码只有命令的结果才有（所以只有结果、没有对上的调用，翻页边界上，也能照写）。
+	if (result.exitCode !== undefined) {
 		parts.push(SESSION.tool.exitCode(result.exitCode));
 	}
 	parts.push(SESSION.tool.duration(formatDuration(result.durationMs)));

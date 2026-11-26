@@ -39,7 +39,6 @@ import {
 } from "./session-text";
 import { hasBehind, type TimelineItem, type TimelineState } from "./timeline";
 import { useSessionTimeline } from "./use-session-timeline";
-import { useStickToBottom } from "./use-stick-to-bottom";
 
 /**
  * 会话页（#542、#544）：顶栏是标题、状态（排队中写排第几）和「停止」（在做、排队中时；排队中点它是移出队列）、「结束会话」，
@@ -56,6 +55,8 @@ export function SessionPage({ id }: { id: string }) {
 		staleTime: Number.POSITIVE_INFINITY,
 		gcTime: 0,
 	});
+	// 读到之后会话页占满外壳的主区域（页头和输入框固定，时间线自己滚）；加载中和出错照常是一个普通的页面。
+	if (detail.data !== undefined) return <LiveSession key={detail.data.id} detail={detail.data} />;
 	return (
 		<Page>
 			<QueryView
@@ -69,7 +70,7 @@ export function SessionPage({ id }: { id: string }) {
 				}
 				errorTitle={SESSION.page.loadFailed}
 			>
-				{(data) => <LiveSession key={data.id} detail={data} />}
+				{() => null}
 			</QueryView>
 		</Page>
 	);
@@ -114,10 +115,6 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	useEffect(() => {
 		if (gone) goBack();
 	}, [gone, goBack]);
-	const last = state.items.at(-1);
-	useStickToBottom(
-		`${state.items.length}:${last?.kind === "assistant" ? last.text.length : ""}:${state.thinking}`,
-	);
 	const status = SESSION_STATUS[state.status];
 	const said = useAnnouncement(state);
 	const mode = composerMode(state);
@@ -125,60 +122,63 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	// 空闲的会话此刻说不了话（模型没有配置或连不上）：顶上写缺什么，「发送」不可用，输入框照常可以写（和助手页一样）。
 	const blocked = state.status === "idle" && hasModelProblem(readiness);
 	return (
-		<div className="mx-auto flex w-full max-w-300 flex-col">
-			<PageHeader
-				// 会话的标题是第一句话：别人写的文字（公共的不可信文字组件处理）。
-				title={detail.title}
-				untrustedTitle
-				actions={
-					<>
-						<StatusPill kind={status.kind} pulse className="text-sm">
-							<span data-testid="session-status" data-status={state.status}>
-								{sessionStatusText(state)}
-							</span>
-						</StatusPill>
-						{(state.status === "running" || state.status === "queued") && (
-							<StopButton
-								id={detail.id}
-								queued={state.status === "queued"}
-								behind={hasBehind(state.items)}
-								onGone={onGone}
-							/>
-						)}
-						{state.status !== "ended" && <EndSession id={detail.id} onGone={onGone} />}
-					</>
-				}
-			/>
-			{blocked && (
-				<div className="mb-3">
-					<ReadinessLine readiness={readiness} />
-				</div>
-			)}
-			{/* 读屏读一句：一轮结束、排到了、插话没有送到、会话被结束（时间线是逐字更新的，不整个播报）。 */}
-			<output aria-live="polite" className="sr-only">
-				{said}
-			</output>
-			{/* 左边是时间线和输入框，右边是「成果」（#547）：这个会话留下的提交、场景版本和运行，滚动时跟着。 */}
-			<div className="grid grid-cols-[minmax(0,1fr)_18rem] items-start gap-6">
-				<div className="flex min-w-0 flex-col">
-					<SessionTimeline
-						state={state}
-						onLoadOlder={() => void loadOlder()}
-						loadingOlder={loadingOlder}
-						olderError={olderError}
-					/>
-					<Composer
-						id={detail.id}
-						mode={mode}
-						items={state.items}
-						lastSeq={state.lastSeq}
-						notReady={blocked}
-						onSent={syncQueue}
-						onGone={onGone}
-					/>
-				</div>
-				<div className="sticky top-4 max-h-[calc(100vh-8rem)] overflow-y-auto">
-					<ResultsPanel results={results} partial={state.hasMore} />
+		// 占满主区域：页头、（就绪提示）、输入框固定，时间线自己滚（`SessionTimeline`）。页头不会因为时间线长而滚到顶栏下面（#550）。
+		<div className="h-full px-8 pt-5 pb-4">
+			<div className="mx-auto flex h-full w-full max-w-300 flex-col">
+				<PageHeader
+					// 会话的标题是第一句话：别人写的文字（公共的不可信文字组件处理）。
+					title={detail.title}
+					untrustedTitle
+					actions={
+						<>
+							<StatusPill kind={status.kind} pulse className="text-sm">
+								<span data-testid="session-status" data-status={state.status}>
+									{sessionStatusText(state)}
+								</span>
+							</StatusPill>
+							{(state.status === "running" || state.status === "queued") && (
+								<StopButton
+									id={detail.id}
+									queued={state.status === "queued"}
+									behind={hasBehind(state.items)}
+									onGone={onGone}
+								/>
+							)}
+							{state.status !== "ended" && <EndSession id={detail.id} onGone={onGone} />}
+						</>
+					}
+				/>
+				{blocked && (
+					<div className="mb-3">
+						<ReadinessLine readiness={readiness} />
+					</div>
+				)}
+				{/* 读屏读一句：一轮结束、排到了、插话没有送到、会话被结束（时间线是逐字更新的，不整个播报）。 */}
+				<output aria-live="polite" className="sr-only">
+					{said}
+				</output>
+				{/* 左边是时间线和输入框，右边是「成果」（#547）：这个会话留下的提交、场景版本和运行，滚动时跟着。 */}
+				<div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_18rem] grid-rows-[minmax(0,1fr)] gap-6">
+					<div className="flex min-h-0 min-w-0 flex-col">
+						<SessionTimeline
+							state={state}
+							onLoadOlder={() => void loadOlder()}
+							loadingOlder={loadingOlder}
+							olderError={olderError}
+						/>
+						<Composer
+							id={detail.id}
+							mode={mode}
+							items={state.items}
+							lastSeq={state.lastSeq}
+							notReady={blocked}
+							onSent={syncQueue}
+							onGone={onGone}
+						/>
+					</div>
+					<div className="min-h-0 overflow-y-auto">
+						<ResultsPanel results={results} partial={state.hasMore} />
+					</div>
 				</div>
 			</div>
 		</div>
@@ -353,7 +353,7 @@ function Composer({
 	if (mode.kind === "ended") {
 		// 会话被结束时（可能是别人结束的）输入框里还有没发出去的话：留在页面上，只读，可以复制。
 		return (
-			<div className="mt-4 flex flex-col gap-2">
+			<div className="mt-3 flex flex-none flex-col gap-2">
 				<p className="m-0 text-sm text-fg-3">
 					{SESSION.page.ended}
 					{text.trim() === "" ? "" : `。${SESSION.page.endedDraft}`}
@@ -383,7 +383,7 @@ function Composer({
 	return (
 		<form
 			aria-label={SESSION.page.sendLabel}
-			className="sticky bottom-0 mt-4 flex flex-col gap-2 bg-bg pt-2 pb-3"
+			className="mt-2 flex flex-none flex-col gap-2"
 			onSubmit={(event) => {
 				event.preventDefault();
 				submit();

@@ -14,6 +14,7 @@ import {
 	steerDeliveryLabel,
 	toolLine,
 	toolResultSummary,
+	toolRowTitle,
 	turnEndText,
 	turnEndTone,
 	userRoleLabel,
@@ -25,6 +26,7 @@ import {
 	prependHistory,
 	type TimelineItem,
 	type TimelineState,
+	type ToolResultInfo,
 } from "./timeline";
 
 type TurnEnd = Extract<TimelineItem, { kind: "turn_end" }>;
@@ -53,16 +55,37 @@ describe("会话页的文字", () => {
 		expect(toolLine(null, "")).toBe("工具");
 	});
 
-	it("工具结果的摘要：命令有退出码和用时；出错标出；被截断写明只显示了头尾", () => {
+	it("工具结果的摘要：命令有退出码和用时；出错标出；被截断写明只显示了一部分（头尾和 pi 只留末尾两种都说得通）", () => {
 		const base = { isError: false, text: "", truncated: false, durationMs: 420 };
-		expect(toolResultSummary("command", { ...base, exitCode: 0 })).toBe("退出码 0 · 用时 420ms");
-		expect(toolResultSummary("command", { ...base, exitCode: 2, isError: true })).toBe(
+		expect(toolResultSummary({ ...base, exitCode: 0 })).toBe("退出码 0 · 用时 420ms");
+		expect(toolResultSummary({ ...base, exitCode: 2, isError: true })).toBe(
 			"出错 · 退出码 2 · 用时 420ms",
 		);
-		expect(toolResultSummary("command", base)).toBe("用时 420ms");
-		expect(toolResultSummary("edit", { ...base, durationMs: 12_300, truncated: true })).toBe(
-			"用时 12.3s · 输出太长，只显示了头尾",
+		expect(toolResultSummary(base)).toBe("用时 420ms");
+		expect(toolResultSummary({ ...base, durationMs: 12_300, truncated: true })).toBe(
+			"用时 12.3s · 输出太长，只显示了一部分",
 		);
+	});
+
+	it("只有结果、没有对上的调用（翻页边界）：写明是哪一次调用的结果，能判断的写出是命令还是编辑，写明调用在更早的内容里", () => {
+		const base = { isError: false, text: "", truncated: false, durationMs: 44 };
+		const orphan = (result: ToolResultInfo) => ({ tool: null, title: "", result });
+		// 命令的结果带退出码，编辑的结果带差异；读和写分不出来，写「工具调用」。
+		expect(toolRowTitle(orphan({ ...base, exitCode: 0 }), true)).toBe(
+			"命令的结果 · 更早的调用，加载更早的内容后显示",
+		);
+		expect(toolRowTitle(orphan({ ...base, diff: "-1 a\n+1 b" }), true)).toBe(
+			"编辑的结果 · 更早的调用，加载更早的内容后显示",
+		);
+		expect(toolRowTitle(orphan(base), true)).toBe(
+			"工具调用的结果 · 更早的调用，加载更早的内容后显示",
+		);
+		// 已经没有更早的内容了、调用还是没有：它没有记在时间线上，不再叫人去加载。
+		expect(toolRowTitle(orphan({ ...base, exitCode: 1 }), false)).toBe(
+			"命令的结果 · 这次调用没有记下",
+		);
+		// 有调用的行照旧：命令写 $、读写改写路径。
+		expect(toolRowTitle({ tool: "command", title: "ls", result: base }, true)).toBe("$ ls");
 	});
 
 	it("一轮结束：六种结局各一句", () => {

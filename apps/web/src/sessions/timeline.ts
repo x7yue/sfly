@@ -1,13 +1,14 @@
-import type {
-	CommitFile,
-	ErrorClass,
-	NoticeKind,
-	SessionEvent,
-	SessionStatus,
-	SessionTool,
-	TurnLimit,
-	TurnOutcome,
-	WaitingFor,
+import {
+	type CommitFile,
+	type ErrorClass,
+	type NoticeKind,
+	SESSION_EVENT_LIMITS,
+	type SessionEvent,
+	type SessionStatus,
+	type SessionTool,
+	type TurnLimit,
+	type TurnOutcome,
+	type WaitingFor,
 } from "@sfly/schema";
 
 /**
@@ -43,10 +44,12 @@ import type {
 export interface ToolResultInfo {
 	isError: boolean;
 	text: string;
-	/** 结果太长，只留了头尾。 */
+	/** 结果太长，只显示了一部分：事件里的文字超过上限只留头尾，pi 自己也可能只留了末尾（命令的输出）或一部分（读文件），两种都是 true。 */
 	truncated: boolean;
 	/** 只有命令有；拿不到时没有。 */
 	exitCode?: number;
+	/** 只有编辑才有：改了什么（`tool_result.diff`）。 */
+	diff?: string;
 	durationMs: number;
 }
 
@@ -89,6 +92,16 @@ export type TimelineItem =
 			result: ToolResultInfo | null;
 			/** 这一轮已经有了结局、却一直没有结果（被停止、到了上限、中断）：不再算在做，写「已中止」。 */
 			abandoned: boolean;
+			/**
+			 * 开始这个调用时，还有别的调用在做（模型一次发出了好几个，它们同时跑）：这一行和那几行都标「并行」。
+			 * 事件的先后是调用开始的先后，不是结束的先后——后开始的先出结果是对的，标记让人看得出它们是同时跑的。
+			 */
+			parallel: boolean;
+			/**
+			 * 命令还在跑时已经输出的最后一段（`tool_output` 的增量累积；至多 `SESSION_EVENT_LIMITS.runningToolOutputBytes` 字节，超过的从前面丢）：
+			 * 展开这一行时输出实时出现。结果到了就清空（改显示结果）。没有输出时是空字符串。
+			 */
+			output: string;
 	  }
 	| {
 			kind: "notice";
@@ -219,6 +232,8 @@ export interface TimelineState {
 	queue: TimelineQueue | null;
 	/** 最近一个 `turn_started` 的轮次（还没有见到时为 0）：补提交（`leftover`）靠它认。 */
 	currentTurn: number;
+	/** 最近一条持久事件产生的时间（还没有时为 null）：等模型回复的那一行从这一刻起算已经等了多久。 */
+	lastEventAt: string | null;
 }
 
 /**
@@ -258,6 +273,7 @@ export function emptyTimeline(
 		steerQueue: [],
 		queue,
 		currentTurn: 0,
+		lastEventAt: null,
 	};
 }
 
@@ -266,6 +282,18 @@ const seqOf = (event: SessionEvent): number | undefined =>
 	"seq" in event && typeof event.seq === "number" ? event.seq : undefined;
 
 const toolKey = (callId: string) => `tool:${callId}`;
+
+/** 文字的最后 `limit` 个字节（UTF-8）：从前面丢，不把多字节的字符从中间切开。 */
+export function lastBytes(text: string, limit: number): string {
+	// 每个字符至多三个字节（再多的是代理对，两个码元四个字节）：短的文字不用编码就知道没超。
+	if (text.length * 3 <= limit) return text;
+	const bytes = new TextEncoder().encode(text);
+	if (bytes.length <= limit) return text;
+	let start = bytes.length - limit;
+	// 落在一个字符中间（延续字节 10xxxxxx）就往后挪到下一个字符的开头。
+	while (start < bytes.length && ((bytes[start] as number) & 0xc0) === 0x80) start += 1;
+	return new TextDecoder().decode(bytes.subarray(start));
+}
 
 /** 替换某一条（按 key），其余不动。 */
 const replaceItem = (
@@ -298,6 +326,7 @@ export function applyEvent(state: TimelineState, event: SessionEvent): TimelineS
 		...next,
 		lastSeq: seq,
 		oldestSeq: next.oldestSeq === null ? seq : Math.min(next.oldestSeq, seq),
+		lastEventAt: "at" in event ? event.at : next.lastEventAt,
 	};
 }
 
@@ -328,6 +357,30 @@ function markLastTurnWordsBehind(items: readonly TimelineItem[]): TimelineItem[]
 /** 有话排在这一轮后面（停止途中说的，还没有开始）。 */
 export const hasBehind = (items: readonly TimelineItem[]): boolean =>
 	items.some((item) => item.kind === "user" && item.role === "behind");
+
+/**
+ * 助手这一轮在做、可是此刻页面上没有任何别的进行中的提示（没有逐字出现的话、没有在跑的工具）：模型在想，或者在等上游的回复。
+ * 这段时间可以很长（第一次回复前二十几秒），人分不清是在想、卡住了还是断了（#550 评论 1）。
+ *
+ * - `thinking`：听到了「思考」（`thinking` 事件，**一段思考只发一次、也不存**）；
+ * - `waiting`：没有听到。页面刚打开（刷新、换一台电脑）时那一次「思考」早就发过了，补不回来，补发的历史里只有这一轮开始；
+ *   这时照样要有提示，不能等到下一条事件。`since` 是最近一条持久事件的时间，写「已等了多久」。
+ *
+ * 只在一轮在做时有：空闲、排队中、已结束没有；这一轮正在停止（有话排在后面）也没有，那时说「等模型回复」是错的。
+ */
+export function modelActivity(
+	state: Pick<
+		TimelineState,
+		"status" | "turnOpen" | "thinking" | "streamingKey" | "items" | "lastEventAt"
+	>,
+): { kind: "thinking" } | { kind: "waiting"; since: string | null } | null {
+	if (state.status !== "running" || !state.turnOpen) return null;
+	if (state.streamingKey !== null || hasBehind(state.items)) return null;
+	if (state.items.some((item) => item.kind === "tool" && item.result === null && !item.abandoned)) {
+		return null;
+	}
+	return state.thinking ? { kind: "thinking" } : { kind: "waiting", since: state.lastEventAt };
+}
 
 /**
  * 由读到的一段历史（持久事件）重新判断插话的送达：有 `steer_dropped` 的是没有送到；它之后这一轮已经有了结局的（没有 `steer_dropped`）是
@@ -480,12 +533,21 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 					),
 				};
 			}
+			// 开始它的时候还有别的调用在做：并行（两边都标）。
+			const inFlight = (item: TimelineItem) =>
+				item.kind === "tool" && item.result === null && !item.abandoned;
+			const parallel = settled.items.some(inFlight);
 			return {
 				...state,
 				...settled,
 				thinking: false,
 				items: [
-					...settled.items,
+					...(parallel
+						? settled.items.map(
+								(item): TimelineItem =>
+									inFlight(item) && item.kind === "tool" ? { ...item, parallel: true } : item,
+							)
+						: settled.items),
 					{
 						kind: "tool",
 						key,
@@ -496,6 +558,8 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 						result: null,
 						// 一轮已经有了结局（或会话已结束）才到的调用：没有结果也不会再有，不转圈。
 						abandoned: !inTurn(state),
+						parallel,
+						output: "",
 					},
 				],
 			};
@@ -507,13 +571,14 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				text: event.text,
 				truncated: event.truncated,
 				...(event.exit_code === undefined ? {} : { exitCode: event.exit_code }),
+				...(event.diff === undefined ? {} : { diff: event.diff }),
 				durationMs: event.duration_ms,
 			};
 			if (state.items.some((item) => item.key === key)) {
 				return {
 					...state,
 					items: replaceItem(state.items, key, (item) =>
-						item.kind === "tool" ? { ...item, result, abandoned: false } : item,
+						item.kind === "tool" ? { ...item, result, abandoned: false, output: "" } : item,
 					),
 				};
 			}
@@ -531,8 +596,30 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 						at: null,
 						result,
 						abandoned: false,
+						parallel: false,
+						output: "",
 					},
 				],
+			};
+		}
+		case "tool_output": {
+			// 命令跑着时的输出：累积到这一行（只留最后一段）。没有对上的调用（它在更早的一页里）、或者结果已经到了的，不处理。
+			const key = toolKey(event.call_id);
+			const row = state.items.find((item) => item.key === key);
+			if (row?.kind !== "tool" || row.result !== null || row.abandoned) return state;
+			return {
+				...state,
+				items: replaceItem(state.items, key, (item) =>
+					item.kind === "tool"
+						? {
+								...item,
+								output: lastBytes(
+									item.output + event.text,
+									SESSION_EVENT_LIMITS.runningToolOutputBytes,
+								),
+							}
+						: item,
+				),
 			};
 		}
 		case "notice": {
@@ -752,7 +839,7 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 			}
 			return state;
 		default:
-			// tool_output、snapshot，以及以后才有的类型：这一版不渲染。
+			// snapshot（#545 的快照，由它接）和以后才有的类型：这一版不渲染。
 			return state;
 	}
 }

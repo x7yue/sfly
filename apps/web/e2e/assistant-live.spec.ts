@@ -1,96 +1,22 @@
 import type { Page } from "@playwright/test";
 import type { SessionView } from "@sfly/schema";
-import { TestAccounts } from "../../server/test/support/credentials.js";
-import type { FakeAgent } from "../../server/test/support/fake-agent.js";
-import { FakeAssistant } from "../../server/test/support/fake-assistant.js";
 import { deleteSession } from "../../server/test/support/sessions.js";
+import {
+	startSession,
+	streamReady,
+	test,
+	timeline,
+	toolRows,
+	USAGE,
+	WORKBENCH,
+} from "./assistant-live-support";
 import { eventAt } from "./assistant-support";
-import { test as base, expect } from "./fixtures";
+import { expect } from "./fixtures";
 
 // 助手页和会话页对着真的控制面加假助手服务（#541 的 `FakeAssistant`，按协议的表回应）：开始一个会话 → 跳到会话页 → 依次看到这句话、
 // 逐字出现的助手的话、一个工具行、「这一轮完成」；刷新页面时间线和刷新前一样；在做时点「停止」，助手服务收到中止，
 // 时间线出现「已停止」；同一个项目另一个会话在做时新会话排队、轮到它时自动开始；在做时说话是插话（等待送达、已送到）；停止途中
 // 说的话排在这一轮后面；结束会话；排队中点停止是移出队列；会话被删后回到列表（#544）。
-
-const WORKBENCH = "workbench-a";
-const USAGE = { input: 10, output: 5, cache_read: 0, cache_write: 0 };
-
-const test = base.extend<{ assistant: FakeAssistant; workbench: FakeAgent; signedIn: undefined }>({
-	// 建会话只认用户的凭据（#547）：页面带一个登录 Cookie，登录的用户是默认项目里的编辑者，显示名就是页面上的昵称
-	// （时间线上显示「tester：…」）。
-	signedIn: [
-		async ({ controlPlane, context, nickname }, use) => {
-			const accounts = new TestAccounts(controlPlane.database.url);
-			try {
-				const name = nickname ?? "tester";
-				const user = await accounts.user(name, { displayName: name });
-				await accounts.member("default", user, "editor");
-				await context.addCookies([
-					{ name: "sfly_login", value: await accounts.login(user), url: controlPlane.httpUrl },
-				]);
-			} finally {
-				await accounts.close();
-			}
-			await use(undefined);
-		},
-		{ auto: true },
-	],
-	// biome-ignore lint/correctness/noEmptyPattern: Playwright 要求 fixture 的第一个参数是解构模式
-	assistant: async ({}, use) => {
-		const assistant = await FakeAssistant.start();
-		try {
-			await use(assistant);
-		} finally {
-			await assistant.close();
-		}
-	},
-	controlPlaneOptions: async ({ assistant }, use) => {
-		await use({
-			assistantUrl: assistant.url,
-			assistantSecret: assistant.secret,
-			workbenchAgent: WORKBENCH,
-			assistantReconnectMs: { min: 20, max: 100 },
-			// 停止慢一点的用例（假助手服务的 `stopSettleMs`）里控制面要等得住。
-			sessionStopGraceMs: 10_000,
-		});
-	},
-	// 工作台：一台在线的 Agent，上报了能力端口；控制面和助手服务都连上了才算准备好。
-	workbench: async ({ connectAgent, controlPlane, assistant }, use) => {
-		void controlPlane;
-		const agent = await connectAgent({
-			name: WORKBENCH,
-			peer: { port: 7001, publicAddress: "10.0.0.5" },
-		});
-		await assistant.connected();
-		await use(agent);
-	},
-});
-
-const timeline = (page: Page) => page.getByRole("list", { name: "会话的时间线" });
-const toolRows = (page: Page) => page.getByTestId("tool-row");
-
-/** 在助手页写一句话、点「开始」，等到会话页打开；返回会话 ID。 */
-async function startSession(page: Page, text: string): Promise<string> {
-	await page.goto("/sessions");
-	await expect(page.getByTestId("readiness")).toHaveAttribute("data-ready", "true");
-	await page.getByRole("textbox", { name: "要做什么？" }).fill(text);
-	await page.getByRole("button", { name: "开始" }).click();
-	await expect(page).toHaveURL(/\/sessions\/[0-9a-f-]{36}$/);
-	return new URL(page.url()).pathname.split("/").pop() as string;
-}
-
-/**
- * 等到页面的事件流订阅上了：不持久的事件（思考、文字增量）订阅之前推的就丢了，所以反复推「思考中」，
- * 直到页面上看到它——之后推的增量一定收得到。
- */
-async function streamReady(page: Page, assistant: FakeAssistant, id: string) {
-	await expect
-		.poll(async () => {
-			assistant.emit(id, 1, { type: "thinking" }, eventAt());
-			return page.getByTestId("thinking").count();
-		})
-		.toBe(1);
-}
 
 test("工作台不在线：就绪状态写明是哪一台工作台不在线，「开始」不可用（真的控制面）", async ({
 	page,
@@ -115,8 +41,9 @@ test("就绪：可以用 · 工作台在线；输入一句话 → 会话页依�
 
 	const id = await startSession(page, "给 http_check 加一个超时参数");
 	// 这句话（控制面收到时产生）；助手服务收到了这一轮。
-	await expect(timeline(page).getByTestId("user-message")).toHaveText(
-		"tester：给 http_check 加一个超时参数",
+	await expect(timeline(page).getByTestId("message-author")).toHaveText("tester");
+	await expect(timeline(page).getByTestId("message-text")).toHaveText(
+		"给 http_check 加一个超时参数",
 	);
 	await expect.poll(() => assistant.prompts.length).toBe(1);
 	expect(assistant.prompts[0]?.sessionId).toBe(id);
@@ -314,7 +241,7 @@ test("同一个项目另一个会话在做时开始：新会话排队，会话�
 	);
 	// 助手服务只收到第一个会话的那一句；排着的话在时间线上，没有交给它。
 	expect(assistant.prompts.map((p) => p.sessionId)).toEqual([first]);
-	await expect(timeline(page).getByTestId("user-message")).toHaveText("tester：第二个会话的话");
+	await expect(timeline(page).getByTestId("message-text")).toHaveText("第二个会话的话");
 	// 刷新：状态和排位取自会话视图，一样。
 	await page.reload();
 	await expect(statusText(page)).toHaveText("排队中 · 排在第 1 位");
@@ -556,9 +483,9 @@ test("接着说：一轮结束后发一句，助手服务收到第 2 轮；会�
 	await expect(page.getByTestId("session-status")).toHaveText("空闲");
 	await page.getByRole("textbox", { name: "接着说" }).fill("再做第二件事");
 	await page.getByRole("button", { name: "发送" }).click();
-	await expect(timeline(page).getByTestId("user-message")).toHaveText([
-		"tester：先做第一件事",
-		"tester：再做第二件事",
+	await expect(timeline(page).getByTestId("message-text")).toHaveText([
+		"先做第一件事",
+		"再做第二件事",
 	]);
 	// 控制面写下这句话之后才把这一轮交给助手服务：页面上先看到话，助手服务收到命令稍晚一点。
 	await expect.poll(() => assistant.prompts.length).toBe(2);

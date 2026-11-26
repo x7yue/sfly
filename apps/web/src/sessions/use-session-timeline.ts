@@ -74,6 +74,7 @@ const RENDERED: ReadonlySet<string> = new Set([
 	"assistant_delta",
 	"assistant_message",
 	"tool_call",
+	"tool_output",
 	"tool_result",
 	"notice",
 	"turn_end",

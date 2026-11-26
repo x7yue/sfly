@@ -309,20 +309,29 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 		files: {
 			"sessions/SessionTimeline.tsx": {
 				wrapped: [
-					"item.text",
 					"item.by",
 					"item.message",
 					"turnEndText(item)",
+					"turnEndText(item)",
 					"item.author",
 					"item.text",
-					"line",
-					"result.text",
-					'line, "text"',
 				],
+			},
+			// 助手的话（Markdown）：每个文字节点、代码块、图片的说明经组件；链接的地址和主机名放进属性和提示里，用 `untrustedPlain`。
+			"sessions/AssistantMarkdown.tsx": {
+				wrapped: ["child", "alt", "text", 'href ?? ""', "host"],
+			},
+			// 工具行：命令（标题）经截断层；展开后的命令、实时输出、结果正文是多行的正文。
+			"sessions/ToolRow.tsx": {
+				wrapped: ["line", "text", "text", 'line, "text"'],
 				truncate: 1,
 			},
-			// 提交的记录（#546）：文件的路径经截断层（`Truncate untrusted`），差异是多行的正文。
-			"sessions/CommitRow.tsx": { wrapped: ["item.diff"], truncate: 1 },
+			// 差异（提交的和编辑的）：每一行连同换行经组件。
+			"sessions/DiffBlock.tsx": {
+				wrapped: ['index < last - 1 || lines.at(-1) === "" ? `${line}\\n` : line'],
+			},
+			// 提交的记录（#546）：文件的路径经截断层（`Truncate untrusted`），差异经 `DiffBlock`。
+			"sessions/CommitRow.tsx": { truncate: 1 },
 			// 成果：提交里的文件路径和差异是模型写的东西；场景名会话令牌能写（新建、改名、保存版本），也不当作登录的人写的名字（版本号、运行 ID 不是）。
 			"sessions/RecordRow.tsx": { truncate: 1 },
 			"sessions/ResultsPanel.tsx": { wrapped: ["commit.diff"], truncate: 3 },

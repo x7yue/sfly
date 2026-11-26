@@ -64,6 +64,7 @@ import { attention, attentionRun, openOverview, overviewRun, readouts } from "./
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
+import { allItems } from "./session-timeline-support";
 import { stoppingRun } from "./stop-subflow-scenario";
 import {
 	createFeishuBot,
@@ -2149,7 +2150,32 @@ test("会话页：插话的三种状态（等待送达、已送到、没有送�
 	await expect(rows.filter({ hasText: "停下来之后的话" }).getByTestId("message-role")).toHaveText(
 		"排在这一轮后面",
 	);
-	await expect(page).toHaveScreenshot("session-steer.png");
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-steer.png", { mask: [page.locator("time")] });
+});
+
+test("会话页：全部条目（用户的话、助手的话、工具行、平台记录、提示、各种结局、会话结束）", async ({
+	page,
+	controlPlane,
+}) => {
+	// 一屏放下整条时间线：页面是固定版面（时间线自己滚），所以把窗口拉高，而不是截整页。
+	await page.setViewportSize({ width: 1440, height: 2400 });
+	const id = await seedSession(controlPlane.database.url, {
+		title: "给 http_check 加一个超时参数",
+		status: "ended",
+		events: allItems(),
+		at: new Date("2026-01-01T00:00:00Z"),
+	});
+	await page.goto(`/sessions/${id}`);
+	await expect(page.getByTestId("session-ended")).toBeVisible();
+	// 展开三处：失败的命令（颜色码去掉、空行压掉）、编辑（差异）、提交（差异）。
+	const rows = page.getByTestId("tool-row");
+	await rows.nth(2).getByRole("button").click();
+	await rows.nth(4).getByRole("button").click();
+	await page.getByTestId("commit-row").nth(1).getByRole("button").click();
+	await expect(page.getByTestId("tool-diff")).toBeVisible();
+	// 事件和它们的时间都是写进库里的固定值（运行 ID 也是写死的），没有随机的东西，不遮。
+	await expect(page).toHaveScreenshot("session-timeline-all.png");
 });
 
 test("会话页：排队中", async ({ page }) => {
@@ -2164,7 +2190,8 @@ test("会话页：排队中", async ({ page }) => {
 	await page.goto(`/sessions/${view.id}`);
 	await expect(page.getByTestId("session-status")).toHaveText("排队中 · 排在第 2 位");
 	await expect(page.getByTestId("composer-blocked")).toContainText("别人在做的事（bob）正在做");
-	await expect(page).toHaveScreenshot("session-queued.png");
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-queued.png", { mask: [page.locator("time")] });
 });
 
 test("会话页：结束会话的确认框", async ({ page }) => {
@@ -2178,7 +2205,8 @@ test("会话页：结束会话的确认框", async ({ page }) => {
 	await page.goto(`/sessions/${view.id}`);
 	await page.getByRole("button", { name: "结束会话" }).click();
 	await expect(page.getByRole("dialog", { name: "结束这个会话？" })).toBeVisible();
-	await expect(page).toHaveScreenshot("session-end-dialog.png");
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-end-dialog.png", { mask: [page.locator("time")] });
 });
 
 test("会话页：会话已结束", async ({ page }) => {
@@ -2194,7 +2222,8 @@ test("会话页：会话已结束", async ({ page }) => {
 	await pushEvent(page, turnEnd(4, "stopped", { reason: "会话结束了" }));
 	await pushEvent(page, sessionEnded(5, "bob"));
 	await expect(page.getByTestId("session-ended")).toHaveText("会话已结束（bob）");
-	await expect(page).toHaveScreenshot("session-ended.png");
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-ended.png", { mask: [page.locator("time")] });
 });
 
 test("会话页：右侧的成果（提交、场景版本、运行；运行的状态跟着运行变）和时间线上平台留下的两行", async ({
