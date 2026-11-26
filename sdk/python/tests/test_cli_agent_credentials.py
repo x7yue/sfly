@@ -357,16 +357,21 @@ class TestRegisterDev:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("SFLY_HOME", str(tmp_path / "sfly-home"))
-        monkeypatch.setenv("SFLY_API_TOKEN", PERSONAL)
-        for address in (
-            "http://user:hunter2pw@127.0.0.1",
-            plane.url.replace("//", "//user:hunter2pw@"),
-        ):
-            code, out, err = run(
-                capsys, "agent", "register-dev", "--host", "lab", "--server", address
-            )
-            assert code == 2 and out == ""
-            assert "hunter2pw" not in err and "不要带用户名和密码" in err
+        for logged_in_now in (True, False):
+            # 没有登录时地址的问题也先报（不是退出码 5：安装脚本会据此让人去登录，登录同样用这个地址）。
+            if logged_in_now:
+                monkeypatch.setenv("SFLY_API_TOKEN", PERSONAL)
+            else:
+                monkeypatch.delenv("SFLY_API_TOKEN", raising=False)
+            for address in (
+                "http://user:hunter2pw@127.0.0.1",
+                plane.url.replace("//", "//user:hunter2pw@"),
+            ):
+                code, out, err = run(
+                    capsys, "agent", "register-dev", "--host", "lab", "--server", address
+                )
+                assert code == 2 and out == "", (logged_in_now, address)
+                assert "hunter2pw" not in err and "不要带用户名和密码" in err
         assert plane.requests == []
 
     def test_a_duplicate_says_to_pick_another_host(
