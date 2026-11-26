@@ -144,6 +144,8 @@ pub struct Config {
     pub stable_connection: Duration,
     /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
     pub update_read_timeout: Duration,
+    /// 上传一个产物的请求没有进展多久算卡住（[`artifacts::DEFAULT_IDLE_TIMEOUT`]）。
+    pub upload_idle_timeout: Duration,
     /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
     /// 让同一个二进制扮演新旧两个版本。与控制面版本比较、选择 SDK 运行时都用它。
     pub version: String,
@@ -189,6 +191,7 @@ impl Config {
             log_forward_rate: 0,
             stable_connection: STABLE_CONNECTION,
             update_read_timeout: update::DEFAULT_READ_TIMEOUT,
+            upload_idle_timeout: artifacts::DEFAULT_IDLE_TIMEOUT,
             version: AGENT_VERSION.to_string(),
             agent_time_offset_file: None,
             self_update: update::SelfUpdate::detect(true, None),
@@ -383,6 +386,7 @@ struct Runtime {
 
 impl Runtime {
     async fn run_task(&self, task: AssignTask, cancel: executor::CancelSignal) {
+        let upload_cancel = cancel.clone();
         let result = match self.start_task(&task).await {
             // 安装期间收到的取消在子进程启动后立即生效。
             Ok(running) => {
@@ -393,8 +397,11 @@ impl Runtime {
                     self.ledger.cancel(&task.task_id, task.attempt, false);
                 };
                 let result = running.wait(cancel, wind_down).await;
-                // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
-                self.uploader.finish(&task, &dir, result).await
+                // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。上传期间到的取消请求打断上传
+                // （开始上传之前已经有的，包括超时进入收尾时间时发的那一次，不打断）。
+                self.uploader
+                    .finish(&task, &dir, result, upload_cancel)
+                    .await
             }
             Err(result) => result,
         };
@@ -760,6 +767,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         uploader: artifacts::Uploader {
             http: http.clone(),
             token: config.token.clone(),
+            idle_timeout: config.upload_idle_timeout,
         },
         http,
         uv: config.uv.clone(),
