@@ -7,6 +7,8 @@
 
 用法（环境变量：CP_URL 控制面的地址，ADMIN_LOGIN、ADMIN_PASSWORD 初始管理员）：
   stack_e2e.py credential <Agent 名字>   登录，给这台 Agent 签发 Agent 凭据，原值只写到标准输出一行
+  stack_e2e.py register <Agent 名字> [秒数]  登记这台 Agent 为默认项目的工作台（README「登记工作台」的 PUT /projects/default/workbench）：
+                                         工作台第一次启动要装 Agent，用自己的 Agent 凭据连上来之前登记是 409，等它连上再登记
   stack_e2e.py ready [秒数]              等控制面说助手可以用（助手服务连得上、工作台在线、
                                          能力端口有地址）
   stack_e2e.py session <剧本> [--results]  用假的模型端点的剧本（`AEVAL-SCRIPT:<名字>`）建一个会话，
@@ -61,6 +63,29 @@ def issue_credential(name: str) -> int:
         issued = json.loads(response.read())
     sys.stdout.write(str(issued["token"]) + "\n")
     return 0
+
+
+# 登记时「工作台还没连上来」的两个 409 错误码：等它连上再试；别的错误（部署里还有没换成 Agent 凭据的 Agent、被停用……）直接失败。
+REGISTER_WAIT_CODES = ("workbench_agent_unknown", "workbench_agent_not_on_credential")
+
+
+def register_workbench(name: str, seconds: float) -> int:
+    """登记工作台（和 README「登记工作台」同一个接口）：工作台要先用自己的 Agent 凭据连上来过，之前的 409 等一等再试，
+    等到时限还不行才失败。登记之后控制面只接受 Agent 凭据。"""
+    s = stack()
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            registered = e2e._request(s, "PUT", f"/projects/{PROJECT}/workbench", {"agent": name})
+        except e2e.ControlPlaneError as error:
+            waiting = any(code in str(error) for code in REGISTER_WAIT_CODES)
+            if not waiting or time.monotonic() > deadline:
+                print(f"登记工作台失败：{error}", file=sys.stderr)
+                return 1
+            time.sleep(2)
+            continue
+        print(f"已登记工作台：{json.dumps(registered, ensure_ascii=False)}")
+        return 0
 
 
 def wait_ready(seconds: float) -> int:
@@ -130,6 +155,8 @@ def main(argv: list[str]) -> int:
     command = argv[1] if len(argv) > 1 else ""
     if command == "credential" and len(argv) == 3:
         return issue_credential(argv[2])
+    if command == "register" and len(argv) in (3, 4):
+        return register_workbench(argv[2], float(argv[3]) if len(argv) > 3 else 300)
     if command == "ready":
         return wait_ready(float(argv[2]) if len(argv) > 2 else 180)
     if command == "session" and len(argv) in (3, 4):

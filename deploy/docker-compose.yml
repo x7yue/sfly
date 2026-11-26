@@ -35,10 +35,10 @@ services:
       SFLY_CORS_ORIGINS: ${SFLY_CORS_ORIGINS:-}
       # 登录限速用的来源地址（控制面在反向代理后面时设置）；留空时不看 X-Forwarded-For，来源地址是 TCP 对端。取值和写法见 .env.example。
       SFLY_TRUST_PROXY: ${SFLY_TRUST_PROXY:-}
-      # 助手（会话功能，ADR 0027）：三项都留空时助手关闭，会话的写接口返回 503；写法和不写时的表现见 .env.example。
+      # 助手（会话功能，ADR 0027）：两项都留空时助手关闭，会话的写接口返回 503；写法和不写时的表现见 .env.example。
+      # 哪台 Agent 是项目的工作台不在环境变量里：项目管理员登记（PUT /projects/:project/workbench，README「登记工作台」，存在库里）。
       SFLY_ASSISTANT_URL: ${SFLY_ASSISTANT_URL:-}
       SFLY_ASSISTANT_SECRET: ${SFLY_ASSISTANT_SECRET:-}
-      SFLY_WORKBENCH_AGENT: ${SFLY_WORKBENCH_AGENT:-}
       # 保留期、各种上限和登录的空闲期限（#577）：留空用默认值；取值范围写在 .env.example，超出范围时控制面启动就报错退出。
       SFLY_RETENTION_DAYS: ${SFLY_RETENTION_DAYS:-}
       SFLY_METRIC_RETENTION_DAYS: ${SFLY_METRIC_RETENTION_DAYS:-}
@@ -99,9 +99,8 @@ services:
       # 控制面在这个网络里的地址（服务名）：入口脚本从它下载 install.sh。安装脚本里写给 Agent 的地址是控制面的 SFLY_PUBLIC_URL
       # （浏览器看到的地址）和网关地址：它们在这个容器里也要连得到（README「助手和工作台」：给 sfly 服务加网络别名，或 extra_hosts）。
       SFLY_WORKBENCH_URL: http://sfly:8080
-      # 这台 Agent 的名字：和控制面里指名工作台的 SFLY_WORKBENCH_AGENT 是同一个变量，两边读同一个 .env 值。
-      # 没设置时入口脚本拒绝启动并写明原因。
-      SFLY_WORKBENCH_AGENT: ${SFLY_WORKBENCH_AGENT:-}
+      # 这台 Agent 的名字（管理员按这个名字签发它的凭据、再登记它作项目的工作台：README「助手和工作台」）；不写就是 workbench。
+      SFLY_WORKBENCH_NAME: ${SFLY_WORKBENCH_NAME:-workbench}
       # 控制面和助手服务连这台 Agent 的能力端口用的地址：本服务的名字。
       SFLY_WORKBENCH_PUBLIC_ADDRESS: sfly-workbench
       # 这台 Agent 自己的 Agent 凭据（只给这个服务，不是共享令牌）：管理员按上面的名字签发，步骤见 README「助手和工作台」。

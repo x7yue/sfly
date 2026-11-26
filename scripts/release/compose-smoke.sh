@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # compose 冒烟（ADR 0027、#549）：用 deploy/docker-compose.yml 本身起 `--profile assistant`，检查它起得来、连得通：
 #   - 不带 profile 只起控制面；带 `--profile assistant` 再起助手和工作台，三个服务都在跑，助手和工作台没有发布端口；
-#   - 工作台在控制面的 Agent 页上在线，用自己的 Agent 凭据（auth_kind 为 agent），版本和控制面一致；
+#   - 工作台在控制面的 Agent 页上在线，用自己的 Agent 凭据（auth_kind 为 agent），版本和控制面一致；登记为默认项目的工作台
+#     （PUT /projects/default/workbench，之后控制面只接受 Agent 凭据）；
 #   - 助手就绪，假的模型端点照剧本做完一个会话（事件顺序对，复用评测集 #543 的检查，scripts/release/stack_e2e.py）；
 #   - `docker compose rm -sf` 删掉工作台容器再 `up -d`：工作区里的文件还在，Agent 不重装。
 # compose 文件之外只加一个 override：一个 PostgreSQL（compose 里没有数据库）、一个假的模型端点、初始管理员和镜像站的环境；
@@ -79,7 +80,7 @@ compose() {
 	SFLY_VERSION=$tag SFLY_HTTP_PORT=$http_port SFLY_GRPC_PORT=$grpc_port \
 		DATABASE_URL=postgres://sfly:sfly@db:5432/sfly SFLY_PUBLIC_URL=http://sfly.example.com:8080 \
 		SFLY_ADMIN_PASSWORD=$admin_password SFLY_ASSISTANT_SECRET=$secret SFLY_ASSISTANT_URL=$assistant_url \
-		SFLY_WORKBENCH_AGENT=$agent SFLY_WORKBENCH_TOKEN=${token:-} SFLY_ASSISTANT_MODEL=fake/fake MODEL_API_KEY=k \
+		SFLY_WORKBENCH_NAME=$agent SFLY_WORKBENCH_TOKEN=${token:-} SFLY_ASSISTANT_MODEL=fake/fake MODEL_API_KEY=k \
 		SFLY_ASSISTANT_MODELS_FILE=$work_dir/models.json \
 		SFLY_PYPI_MIRROR=${SFLY_PYPI_MIRROR:-} SFLY_GITHUB_RELEASE_MIRROR=${SFLY_GITHUB_RELEASE_MIRROR:-} \
 		docker compose --env-file /dev/null -p "$project" -f deploy/docker-compose.yml -f "$work_dir/override.yml" "$@"
@@ -129,6 +130,9 @@ for service in sfly-assistant sfly-workbench; do
 	ports=$(compose --profile assistant ps --format '{{.Ports}}' "$service")
 	[[ $ports != *"->"* ]] || fail "$service 发布了端口：$ports"
 done
+# 登记工作台（README「登记工作台」：项目管理员 PUT /projects/default/workbench）：控制面里没有指名工作台的环境变量，不登记就是
+# 「没有登记工作台」；登记要工作台先用自己的 Agent 凭据连上来（上面 --wait 等的是它起来了，连上控制面再等一等）。
+client register "$agent" 300 || fail "登记工作台"
 client ready 300 || fail "助手没有就绪"
 client session walkthrough >/dev/null || fail "会话的事件顺序不对"
 # 助手的命令（经工作台 Agent 的 exec 能力）看到的运行环境：工作台的用户、家目录和工作区，工具都在 PATH 上，

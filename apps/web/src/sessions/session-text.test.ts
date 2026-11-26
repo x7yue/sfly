@@ -240,10 +240,10 @@ describe("会话页的文字", () => {
 			workbench: null,
 			problems: [
 				{ kind: "assistant_not_configured", message: "没有配置助手" },
-				{ kind: "workbench_not_set", message: "没有设置工作台" },
+				{ kind: "workbench_not_set", message: "没有登记工作台" },
 			],
 		};
-		expect(readinessProblems(none)).toEqual(["没有配置助手", "没有设置工作台"]);
+		expect(readinessProblems(none)).toEqual(["没有配置助手", "没有登记工作台"]);
 	});
 });
 

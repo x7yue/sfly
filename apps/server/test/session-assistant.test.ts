@@ -1150,11 +1150,13 @@ describe("工作台的各种不能用", () => {
 		}
 	};
 
-	it("没有设置工作台：workbench_not_set，写接口 503 assistant_unavailable，助手服务没有收到命令", async () => {
+	it("没有登记工作台：workbench_not_set、写「没有登记工作台」（不提环境变量），写接口 503 assistant_unavailable，助手服务没有收到命令", async () => {
 		await withControlPlane({}, async (cp, api) => {
 			const list = await json<SessionListResponse>(await api.get("/projects/default/sessions"));
 			expect(list.readiness).toMatchObject({ ready: false, workbench: null });
 			expect(list.readiness.problems.map((p) => p.kind)).toEqual(["workbench_not_set"]);
+			expect(list.readiness.problems[0]?.message).toContain("没有登记工作台");
+			expect(list.readiness.problems[0]?.message).not.toContain("SFLY_WORKBENCH_AGENT");
 			const res = await api.post("/projects/default/sessions", { text: "你好" });
 			expect(res.status).toBe(503);
 			expect((await json<{ error: { code: string } }>(res)).error.code).toBe(

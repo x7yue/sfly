@@ -18,6 +18,7 @@ import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { agents } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
+import type { ProjectWorkbench } from "../projects/project-workbench.js";
 import {
 	type AssistantClient,
 	AssistantError,
@@ -149,6 +150,10 @@ export const EVENTS_LOST_MESSAGE = "控制面和助手服务断开太久，这�
 export const EVENTS_NOT_CONNECTED_MESSAGE =
 	"助手服务的事件流还没有连上（控制面刚启动或正在重新连接），过几秒再试";
 
+/** 项目没有登记工作台时的就绪状态说明（`workbench_not_set`，会话页原样显示）。 */
+export const NO_WORKBENCH_MESSAGE =
+	"没有登记工作台：让项目管理员登记一台 Agent 作为这个项目的工作台（部署文档「助手和工作台」的「登记工作台」一节）";
+
 /** 关闭时最多等后台的事收尾多久（毫秒）：它们在放弃等待，只有正在发出去的命令要等它回来或超时。 */
 export const CLOSE_DRAIN_MS = 500;
 
@@ -166,8 +171,8 @@ export interface SessionServiceDeps {
 	setup: AssistantSetup;
 	/** 助手配置好了才有。 */
 	client: AssistantClient | undefined;
-	/** 哪台 Agent 是工作台（Agent 的名字，`SFLY_WORKBENCH_AGENT`）；骨架期间由部署者配置，#549 换成项目上的一列。 */
-	workbenchAgent: string | undefined;
+	/** 项目的工作台（Agent 的名字）：每次从库里读（`projects.workbench_agent`，`PUT /projects/:project/workbench` 登记，#549）。 */
+	workbench: Pick<ProjectWorkbench, "get">;
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
 	/**
@@ -348,12 +353,13 @@ export class SessionService {
 	async #workbench(
 		project: ProjectId,
 	): Promise<{ target: WorkbenchTarget } | { problem: ReadinessProblem }> {
-		const { workbenchAgent: name, hub, db } = this.deps;
+		const { hub, db } = this.deps;
+		const name = await this.deps.workbench.get(project);
 		if (!name) {
 			return {
 				problem: {
 					kind: "workbench_not_set",
-					message: "没有设置工作台（SFLY_WORKBENCH_AGENT：哪台 Agent 是工作台）",
+					message: NO_WORKBENCH_MESSAGE,
 				},
 			};
 		}
@@ -365,7 +371,7 @@ export class SessionService {
 			return {
 				problem: {
 					kind: "workbench_not_set",
-					message: `工作台 ${name} 不属于这个项目：设置的工作台要是这个项目里的 Agent`,
+					message: `登记的工作台 ${name} 不属于这个项目：工作台要是这个项目里的 Agent`,
 				},
 			};
 		}
@@ -388,7 +394,7 @@ export class SessionService {
 
 	/**
 	 * 助手此刻能不能用（每次列出会话时算一次）：没配地址或密钥、助手服务连不上（`/health` 不通）、模型没有配置或连不上
-	 * （助手服务的 `/health` 里的 `model`，#548）、没设置工作台、工作台不在线，原因都列出来；`workbench` 是设置的工作台的名字。
+	 * （助手服务的 `/health` 里的 `model`，#548）、没有登记工作台、工作台不在线，原因都列出来；`workbench` 是登记的工作台的名字。
 	 */
 	async readiness(project: ProjectId): Promise<Readiness> {
 		const { setup } = this.deps;
@@ -412,7 +418,7 @@ export class SessionService {
 		return {
 			ready: problems.length === 0,
 			problems,
-			workbench: this.deps.workbenchAgent ?? null,
+			workbench: (await this.deps.workbench.get(project)) ?? null,
 		};
 	}
 

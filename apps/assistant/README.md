@@ -133,7 +133,7 @@ for (let buf = ""; ; ) {
 ### 5. 接控制面
 
 评测集的 `./aeval.sh up --server-image <源码构建的控制面> --assistant` 一条命令起好：助手容器、控制面配上
-`SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`、`SFLY_WORKBENCH_AGENT=dev-root-dev`，Agent 在线、助手就绪才结束；
+`SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`，登记 `dev-root-dev` 为工作台（`PUT /projects/default/workbench`），Agent 在线、助手就绪才结束；
 `./aeval.sh e2e` 经控制面的接口跑一道题（见 `evals/assistant/README.md`「平台的助手」）。上面第 1–4 步是不经控制面、
 直接驱动助手服务的做法，查助手服务自己的问题时用。
 

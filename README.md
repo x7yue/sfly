@@ -164,7 +164,7 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
    ```sh
    SFLY_ASSISTANT_URL=http://sfly-assistant:8090   # compose 里助手服务的服务名；控制面和助手服务读同一个 SFLY_ASSISTANT_SECRET
    SFLY_ASSISTANT_SECRET=<openssl rand -hex 24 的输出>
-   SFLY_WORKBENCH_AGENT=workbench                  # 工作台上那台 Agent 的名字：控制面用它找工作台，工作台容器用它给自己的 Agent 起名
+   SFLY_WORKBENCH_NAME=workbench                   # 工作台容器里那台 Agent 的名字（不写就是 workbench）：下面按这个名字签发凭据、登记
    SFLY_ASSISTANT_MODEL=gateway/<模型 id>          # 模型文件和这几项的写法见下面「助手的模型」
    SFLY_ASSISTANT_MODELS_FILE=./assistant-models.json
    MODEL_API_KEY=<模型的密钥>                      # 模型文件里 "$MODEL_API_KEY" 引用的变量，只传给助手容器
@@ -179,9 +179,26 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
    sfly api POST /agents/workbench/credentials
    ```
 
-   响应里的 `token`（`sfly_agt_` 开头）是原值，**只显示这一次**，填进 `.env` 的 `SFLY_WORKBENCH_TOKEN`（`.env` 里写着凭据，权限设成只有部署的人读得到）。`workbench` 换成你在 `SFLY_WORKBENCH_AGENT` 里写的名字。等价的专用命令是 `sfly agent credentials issue workbench --token-only`（只把原值写到标准输出）。
+   响应里的 `token`（`sfly_agt_` 开头）是原值，**只显示这一次**，填进 `.env` 的 `SFLY_WORKBENCH_TOKEN`（`.env` 里写着凭据，权限设成只有部署的人读得到）。`workbench` 换成你在 `SFLY_WORKBENCH_NAME` 里写的名字。等价的专用命令是 `sfly agent credentials issue workbench --token-only`（只把原值写到标准输出）。
 4. 起助手和工作台：`docker compose --profile assistant up -d`。第一次启动工作台时它从控制面装 Agent、uv 和 sfly 命令行，要一两分钟（下面「工作台容器」）。
-5. 确认：`docker compose --profile assistant ps` 里三个服务都在；控制台的 Agent 页上 `workbench` 在线、「与控制面一致」是「是」；「助手」页顶上的就绪状态是可以用（没有就绪时它写明缺什么：模型没配、工作台不在线……）。
+5. **登记工作台**：工作台在 Agent 页上在线（它用自己的 Agent 凭据连上来过）之后，项目管理员登记它（控制面里没有指名工作台的环境变量，不登记就是「助手」页写「没有登记工作台」）：
+
+   ```sh
+   sfly api PUT /projects/default/workbench --body '{"agent": "workbench"}'
+   ```
+
+   `workbench` 换成工作台那台 Agent 的名字。**登记之后控制面只接受 Agent 凭据，共享令牌（`SFLY_AGENT_TOKEN`）和不带凭据的连接都被拒绝**，对整个部署生效、不只这个项目；条件、被拒绝时怎么办见下面「登记工作台」。
+6. 确认：`docker compose --profile assistant ps` 里三个服务都在；控制台的 Agent 页上 `workbench` 在线、「与控制面一致」是「是」；「助手」页顶上的就绪状态是可以用（没有就绪时它写明缺什么：模型没配、没有登记工作台、工作台不在线……）。
+
+**登记工作台**（`PUT /projects/<项目>/workbench`，请求体 `{"agent": "<Agent 的名字>"}`，项目管理员；用 `sfly login` 登录的个人令牌或控制台的登录，项目令牌、会话令牌不行）：
+
+- **条件**（任何一条不满足就是 409，不改任何东西，响应的 `error.code` 说是哪条）：
+  - 这台 Agent 在这个项目里，而且**用自己的 Agent 凭据连上来过**（最近一次连接用的是 Agent 凭据）、没有被停用：`workbench_agent_unknown`（没有这台 Agent，或它在别的项目里：说法一样）、`workbench_agent_not_on_credential`、`workbench_agent_disabled`；
+  - **部署里没有停用的 Agent 都已经换成 Agent 凭据**：`agents_not_on_credentials`，`error.details.agents` 列出还没换的 Agent 的名字。「换了」按每台 Agent **最近一次连接用的是不是 Agent 凭据**算：只签发过凭据、没用它连上来过的不算换了（要换进它的 `agent.env`、重启，连上来之后才算）；停用的 Agent 不算。
+- **被拒绝时怎么办**：对列出的每一台，二选一，然后再登记一次：① 给它换成 Agent 凭据（`sfly agent credentials issue <名字> --token-only` 签发，写进那台机器的 `agent.env` 里的 `SFLY_TOKEN`（`.env` 不是它的配置），重启 Agent，到 Agent 页上看它「最近一次连接用的是 Agent 凭据」；换法见用户文档「安装 Agent」的「Agent 凭据」）；② 不用它了就停用（`sfly api POST /agents/<名字>/disable`），停用的不挡登记，停用的 Agent 连不上也不派发。
+- **登记之后，各种连接的去留**：带 Agent 凭据的 Agent 照常；**共享令牌的连接和不带凭据的连接都被拒绝**（包括以前能连上的、已经登记过的名字），Agent 不退出，标准错误里写着「控制面已经登记了工作台，只接受 Agent 凭据」，换上 Agent 凭据之后它自己连上；已经连着的带 Agent 凭据的连接不受影响。登记不会断开任何已经连着的连接（条件保证登记那一刻没有以旧方式连着的 Agent）；检查和登记在引擎的锁里一起做，和连接的登记互斥，所以登记的那一刻一台旧方式的 Agent 同时连上来，要么登记被拒绝并列出它，要么它被拒绝。这个开关由库里是不是有项目登记了工作台得出，控制面重启之后照旧。
+- **换一台工作台**：用另一台 Agent 再登记一次（同样的条件）；响应里的 `previous_agent` 是换下来的。登记同一台是幂等的。**没有注销登记的接口**：共享令牌不再接受是有意的单向开关（注销等于重新打开共享令牌的口子）。确实要退回登记之前（例如要退回旧版本的控制面），停掉控制面，在库里 `update projects set workbench_agent = null`，再启动。
+- **名字被占用时**：Agent 带着有效的 Agent 凭据却被拒绝，说「这个名字已经被这个部署里另一个项目的 Agent 登记了」：过渡期里用共享令牌或不带凭据连上来的 Agent 都登记在默认项目里，一个名字在整个部署里只能属于一个项目。没有删除 Agent 的接口（停用不释放名字），所以给这台 Agent 换一个名字：用新名字签发凭据，把 `agent.env` 里的 `SFLY_AGENT_NAME` 和 `SFLY_TOKEN` 换成新的，重启 Agent。
 
 **工作台容器**（`deploy/workbench/`）：
 
