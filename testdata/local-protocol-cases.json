@@ -1,23 +1,25 @@
 {
 	"$comment": [
 		"本地协议（docs/ARCHITECTURE.md §5.4）两个读取端共用的用例表，和实现无关：Agent（agent/src/local_protocol_tests.rs）和本地调试（sdk/python/tests/test_local_protocol.py）各有一份读取实现，都要通过这里的全部用例。",
-		"每个用例由假执行器（testdata/local-protocol-executor.sh）做一遍执行器该做的事：往事件管道写 events 里的各行（一次写完）、往标准输出 / 标准错误写 stdout / stderr、把 output 写成 output.json、以 exit_code 退出；读取端读出什么写在 expect 里。run 里没写的：output 缺省是 {\"status\":\"success\",\"outputs\":{}}，exit_code 缺省是 0；output 写 null 表示不写 output.json。",
+		"每个用例由假执行器（testdata/local-protocol-executor.sh）做一遍执行器该做的事：往事件管道写 events 里的各行（一次写完；每行后面补一个换行，events_tail 是最后一段没有换行的内容）、往标准输出 / 标准错误写 stdout / stderr、把 output 写成 output.json、以 exit_code 退出；读取端读出什么写在 expect 里。run 里没写的：output 缺省是 {\"status\":\"success\",\"outputs\":{}}，exit_code 缺省是 0；output 写 null 表示不写 output.json。",
 		"event_cases 比较 expect 里的全部分区（logs、progress、metrics、notifications、actions、action_summary），没写的分区必须是空的（action_summary 是 null），结果必须是成功；result_cases 只比较 expect（结果）。event_cases 里的动作都要在 events 里写上结束：执行器退出时还开着的动作，两端读出的不同（见 known_differences）。",
 		"分区里的每个条目是读取端能读出的事实，条目里写了的键才比较；ts 写 \"now\" 表示事件没带时间、读取端取读到它的时间，落在这次执行的前后之间（ts_s 同理，单位秒）。事件产生的条目有 type（事件类型），日志条目没有 type，来源由 source 区分。",
 		"两端读出的形状不同，约定两处：Agent 把通知和动作摘要的原文整行转发（比较前再解析一次，另外检查转发的原文与写进管道的那一行逐字相同），本地调试把它们解析成对象；Agent 合并进度和指标再转发，所以每个用例只写一条进度、一条指标。",
 		"not_shown 列出读取端读不出的键（写法：类型.键），比较前先从 expect 里去掉。",
+		"dropped_head_cases：事件管道里超过 max_event_line_bytes 被丢弃的一行，读取端只留下它开头的一小段（固定大小，不随行的长度变），从里面认出事件的种类，警告按种类写后果。head 是这一小段，kind 是认出的 type（event_types 之一），认不出是 null：只认 `{\"type\": \"名字\"` 开头（type 是第一个字段，各处可以有 JSON 允许的空白），不解析整行，不猜",
 		"known_differences 是已知的、两端不一致的地方：每条分别写 agent 和 local 各自读出的，两端的测试各按自己的那份断言。某一端改了，对应的断言会红，要连同这一条一起改。",
-		"字符串可以写成 {\"$repeat\": 单元, \"times\": 次数, \"prefix\": 开头, \"suffix\": 末尾}（prefix、suffix 可省略）表示「开头 + 单元重复若干次 + 末尾」，用来写超长的字符串；读用例的一方先把它们展开成字符串。"
+		"字符串可以写成 {\"$repeat\": 单元, \"times\": 次数, \"prefix\": 开头, \"suffix\": 末尾}（prefix、suffix 可省略）表示「开头 + 单元重复若干次 + 末尾」，用来写超长的字符串；读用例的一方先把它们展开成字符串。另有 {\"$char\": \"d800\"}（空格隔开的十六进制码点）表示这些码点组成的字符串，只用来写孤立代理项（JSON 文件本身写不出）：只有 Python 一端展开它，Agent 一端不读写了它的那一份（known_differences 里的 local）。"
 	],
 	"rule": [
-		"事件管道：每行一个 JSON 对象，type 是 event_types 之一，读成对应的日志、进度、指标、通知、动作或动作摘要；其余内容（不是 JSON、不是对象、没有 type、类型不认识、字段缺少或类型不对）原样记成一行来源 sdk、级别 info 的日志，时间是读到它的时间。空行跳过。事件管道的一行不限长度。`NaN`、`Infinity`、`-Infinity` 不是合法的 JSON（Python 的 `json.loads` 默认接受，读取端要拒绝）：含它们的一行当作不是 JSON。",
+		"事件管道：每行一个 JSON 对象，type 是 event_types 之一，读成对应的日志、进度、指标、通知、动作或动作摘要；其余内容（不是 JSON、不是对象、没有 type、类型不认识、字段缺少或类型不对）原样记成一行来源 sdk、级别 info 的日志，时间是读到它的时间。空行跳过。一条日志（SDK 日志的消息、不认识的内容）超过 max_line_bytes 字节时，和标准输出的超长行一样拆成几条，每条不超过它，拆在字符（UTF-8）边界上，接起来就是原来的内容；消息里的换行和行尾的 \\r 原样保留，不像标准输出那样按换行再拆。事件管道的一行超过 max_event_line_bytes 字节时整行丢弃（包括还没读到的后半截，一直丢到这一行的换行），在它原来的位置写一行警告日志（级别 warn，文字写这一行的字节数、上限、丢的是哪一种事件和丢了以后会怎样，不带内容；种类从被丢的这一行开头固定大小的一小段里认出（见 dropped_head_cases），认不出就写不分种类的一句；来源两端不同，见 known_differences），前后的行照常；同一种事件在一个任务里只在第一次写这样的警告，读完时再写一行合计（丢了几行、最大的一行多大）。管道关闭时最后一行没有换行结尾（没写完）也丢弃，在最后写一行警告（只有大小，不认种类）。`NaN`、`Infinity`、`-Infinity` 不是合法的 JSON（Python 的 `json.loads` 默认接受，读取端要拒绝）：含它们的一行当作不是 JSON。",
 		"标准输出 / 标准错误：每行一条日志，来源 stdout / stderr，级别 info / error；行尾的 \\r 去掉，最后一行没有换行也记下，空行也是一行。一行超过 max_line_bytes 时拆开，每段不超过它，拆在字符（UTF-8）边界上（不超过的字节数里最后一个完整的字符），拆在哪里只取决于这一行的内容，和每次读到多少字节无关，两端一样，见下面的用例（Agent 一端每段另带只用来打码的上下文，不在读出的日志里）。",
 		"结果：output.json 是 success 且退出码是 0 时成功，输出取 outputs；output.json 是 failed 时失败（不看退出码），上报 error.message，有 traceback 时在后面空一行接上去掉末尾空白的 traceback；失败的位置取 error.location（节点代码里出错的那一行，「模块.函数 第 N 行」）：不是字符串、是空串、没有这个键都是没有位置，失败照常上报；失败的类型取 error.kind：是 config_error 时是配置错误（执行器在调用节点前就拒绝了输入），是 env_error 时是环境错误（节点没接住产物超限，不重试），没有或是别的值时是节点出错 node_error；其余情况（没有 output.json、不是 JSON（含 `NaN`、`Infinity`）、不是对象、status 不认识、success 但退出码不是 0）是执行器异常退出，上报「执行器异常退出（<退出状态>），没有写出结果」，空一行后接标准错误最后 stderr_tail_bytes 字节（去掉末尾空白）。退出状态的写法两端不同（Agent 是 exit status: 3，本地调试是 退出码 3），用例不比较，只比较 abnormal_exit.stderr_tail。",
 		"同一批内的日志按读到的先后（单调时钟）排，不按事件里的 ts：系统时间往回跳时，跳变之后的行不会排到之前的行前面。",
-		"constants：max_line_bytes 是标准输出 / 标准错误一行的最大字节数；drain_timeout_ms 是执行器退出后等仍持有管道的后台子进程关闭管道的最长时间；stderr_tail_bytes 是失败时附带的标准错误尾部的最大字节数；terminate_grace_ms 是取消时从 SIGTERM 到强制杀掉进程树的默认宽限期。两端各抄了一份，值要一样。"
+		"constants：max_line_bytes 是标准输出 / 标准错误一行、和一条日志的最大字节数；max_event_line_bytes 是事件管道一行的最大字节数；drain_timeout_ms 是执行器退出后等仍持有管道的后台子进程关闭管道的最长时间；stderr_tail_bytes 是失败时附带的标准错误尾部的最大字节数；terminate_grace_ms 是取消时从 SIGTERM 到强制杀掉进程树的默认宽限期。两端各抄了一份，值要一样。"
 	],
 	"constants": {
 		"max_line_bytes": 65536,
+		"max_event_line_bytes": 4194304,
 		"drain_timeout_ms": 2000,
 		"stderr_tail_bytes": 8192,
 		"terminate_grace_ms": 10000
@@ -31,6 +33,25 @@
 		"action_end",
 		"mark",
 		"action_summary"
+	],
+	"dropped_head_cases": [
+		{ "head": "{\"type\": \"log\", \"ts\": 1", "kind": "log" },
+		{ "head": "{\"type\":\"log\",\"ts\":1", "kind": "log" },
+		{ "head": "  \t\n{ \"type\" \r\n: \"progress\", ", "kind": "progress" },
+		{ "head": "{\"type\": \"metric\"", "kind": "metric" },
+		{ "head": "{\"type\": \"notify\",", "kind": "notify" },
+		{ "head": "{\"type\": \"action_summary\", \"ts\": 1", "kind": "action_summary" },
+		{ "head": "{\"type\": \"action_start\", \"id\": 1", "kind": "action_start" },
+		{ "head": "{\"type\": \"action_end\", \"id\": 1", "kind": "action_end" },
+		{ "head": "{\"type\": \"mark\", \"id\": 1", "kind": "mark" },
+		{ "head": "{\"ts\": 1, \"type\": \"log\"}", "kind": null },
+		{ "head": "{\"type\": \"weird\", \"ts\": 1", "kind": null },
+		{ "head": "{\"type\": \"log", "kind": null },
+		{ "head": "{\"type\": \"act", "kind": null },
+		{ "head": "[\"type\": \"log\"]", "kind": null },
+		{ "head": "{\"type\": 5, \"ts\": 1", "kind": null },
+		{ "head": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "kind": null },
+		{ "head": "", "kind": null }
 	],
 	"not_shown": {
 		"agent": ["metric.kind"],
@@ -177,7 +198,7 @@
 			}
 		},
 		{
-			"name": "log：事件管道的一行不受 max_line_bytes 限制",
+			"name": "log：消息超过 max_line_bytes 时拆成几条，每条不超过它，接起来就是原来的消息",
 			"events": [
 				{
 					"$repeat": "x",
@@ -193,9 +214,124 @@
 						"level": "info",
 						"message": {
 							"$repeat": "x",
-							"times": 140000
+							"times": 65536
 						},
 						"ts": 1700000000000
+					},
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": {
+							"$repeat": "x",
+							"times": 65536
+						},
+						"ts": 1700000000000
+					},
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": {
+							"$repeat": "x",
+							"times": 8928
+						},
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：消息超过 max_line_bytes 时拆在字符边界上（3 字节的字符，上限落在字符中间，往回退到字符开头）",
+			"events": [
+				{
+					"$repeat": "中",
+					"times": 30000,
+					"prefix": "{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"warn\",\"message\":\"",
+					"suffix": "\"}"
+				}
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "warn",
+						"message": {
+							"$repeat": "中",
+							"times": 21845
+						},
+						"ts": 1700000000000
+					},
+					{
+						"source": "sdk",
+						"level": "warn",
+						"message": {
+							"$repeat": "中",
+							"times": 8155
+						},
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：消息里的换行不拆，超过 max_line_bytes 才按字节拆，换行留在那一段里",
+			"events": [
+				{
+					"$repeat": "x",
+					"times": 65535,
+					"prefix": "{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\",\"message\":\"",
+					"suffix": "\\nyyyyyyyyyy\"}"
+				}
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": {
+							"$repeat": "x",
+							"times": 65535,
+							"suffix": "\n"
+						},
+						"ts": 1700000000000
+					},
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "yyyyyyyyyy",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "事件管道：不认识的内容超过 max_line_bytes 也拆成几条，接起来就是原来的一行",
+			"events": [
+				{
+					"$repeat": "z",
+					"times": 70000,
+					"prefix": "not json "
+				}
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": {
+							"$repeat": "z",
+							"times": 65527,
+							"prefix": "not json "
+						},
+						"ts": "now"
+					},
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": {
+							"$repeat": "z",
+							"times": 4473
+						},
+						"ts": "now"
 					}
 				]
 			}
@@ -1518,6 +1654,425 @@
 							"id": 1,
 							"result": "unfinished",
 							"reason": null
+						}
+					]
+				}
+			},
+			{
+				"name": "事件管道的一行超过 max_event_line_bytes，不是 JSON",
+				"why": "警告是读取端自己写的：Agent 的来源是 agent，本地调试的来源是 system（平台写的提示）；文字相同。开头认不出是哪一种事件（不是 JSON），警告不分种类。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}",
+					{
+						"$repeat": "x",
+						"times": 4194305
+					},
+					"{\"type\":\"log\",\"ts\":1700000000002,\"level\":\"info\",\"message\":\"after\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194305 字节，超过上限 4194304 字节，已丢弃：这一行是认不出种类的内容，这一行开头认不出是哪一种事件，说不清丢掉的是什么",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000002
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194305 字节，超过上限 4194304 字节，已丢弃：这一行是认不出种类的内容，这一行开头认不出是哪一种事件，说不清丢掉的是什么",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000002
+						}
+					]
+				}
+			},
+			{
+				"name": "事件管道里超过 max_event_line_bytes 的一行是日志",
+				"why": "警告是读取端自己写的：Agent 的来源是 agent，本地调试的来源是 system（平台写的提示）；文字相同。丢的是一条日志（合法的 JSON）：警告写明是日志、请拆开写；之前、之后的日志照常。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}",
+					{
+						"$repeat": "x",
+						"times": 4194304,
+						"prefix": "{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"",
+						"suffix": "\"}"
+					},
+					"{\"type\":\"log\",\"ts\":1700000000009,\"level\":\"info\",\"message\":\"after\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194365 字节，超过上限 4194304 字节，已丢弃：这一行是日志，这条日志没有记下来。日志写得太长，请拆开写",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194365 字节，超过上限 4194304 字节，已丢弃：这一行是日志，这条日志没有记下来。日志写得太长，请拆开写",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						}
+					]
+				}
+			},
+			{
+				"name": "事件管道里超过 max_event_line_bytes 的一行是动作摘要",
+				"why": "警告是读取端自己写的：Agent 的来源是 agent，本地调试的来源是 system（平台写的提示）；文字相同。丢的是一份动作摘要（合法的 JSON，名称的种类太多）：警告写明是动作摘要、摘要停在之前的一份，不说日志写得太长；没有留下摘要（action_summary 是 null）。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}",
+					{
+						"$repeat": "x",
+						"times": 4194304,
+						"prefix": "{\"type\":\"action_summary\",\"ts\":1700000000002,\"mono\":5000000,\"total\":1,\"names\":\"",
+						"suffix": "\"}"
+					},
+					"{\"type\":\"log\",\"ts\":1700000000009,\"level\":\"info\",\"message\":\"after\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194384 字节，超过上限 4194304 字节，已丢弃：这一行是动作摘要，动作摘要没有更新，停在之前的一份（动作名称的种类太多，摘要太大了）",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194384 字节，超过上限 4194304 字节，已丢弃：这一行是动作摘要，动作摘要没有更新，停在之前的一份（动作名称的种类太多，摘要太大了）",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						}
+					]
+				}
+			},
+			{
+				"name": "事件管道里超过 max_event_line_bytes 的一行开头认不出种类",
+				"why": "警告是读取端自己写的：Agent 的来源是 agent，本地调试的来源是 system（平台写的提示）；文字相同。开头不是 {\"type\": 已认识的种类 …（这里 type 不是第一个字段，行是合法的 JSON）：警告不分种类，只说认不出是哪一种事件；不去解析整行，也不写这一行的内容。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}",
+					{
+						"$repeat": "x",
+						"times": 4194304,
+						"prefix": "{\"ts\":1700000000003,\"type\":\"log\",\"level\":\"info\",\"message\":\"",
+						"suffix": "\"}"
+					},
+					"{\"type\":\"log\",\"ts\":1700000000009,\"level\":\"info\",\"message\":\"after\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194365 字节，超过上限 4194304 字节，已丢弃：这一行是认不出种类的内容，这一行开头认不出是哪一种事件，说不清丢掉的是什么",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194365 字节，超过上限 4194304 字节，已丢弃：这一行是认不出种类的内容，这一行开头认不出是哪一种事件，说不清丢掉的是什么",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						}
+					]
+				}
+			},
+			{
+				"name": "同一种事件在一个任务里超过 max_event_line_bytes 两次",
+				"why": "警告是读取端自己写的：Agent 的来源是 agent，本地调试的来源是 system（平台写的提示）；文字相同。每个任务里同一种事件只在第一次写警告，读完时再补一行合计（这一种丢了几行、最大的一行多大）：这一行排在全部日志之后。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}",
+					{
+						"$repeat": "x",
+						"times": 4194304,
+						"prefix": "{\"type\":\"action_summary\",\"ts\":1700000000002,\"mono\":5000000,\"total\":1,\"names\":\"",
+						"suffix": "\"}"
+					},
+					"{\"type\":\"log\",\"ts\":1700000000009,\"level\":\"info\",\"message\":\"after\"}",
+					{
+						"$repeat": "x",
+						"times": 4195304,
+						"prefix": "{\"type\":\"action_summary\",\"ts\":1700000000002,\"mono\":5000000,\"total\":1,\"names\":\"",
+						"suffix": "\"}"
+					}
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194384 字节，超过上限 4194304 字节，已丢弃：这一行是动作摘要，动作摘要没有更新，停在之前的一份（动作名称的种类太多，摘要太大了）",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "这个任务事件管道里超过上限的动作摘要一共被丢弃了 2 行，最大的一行有 4195384 字节",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194384 字节，超过上限 4194304 字节，已丢弃：这一行是动作摘要，动作摘要没有更新，停在之前的一份（动作名称的种类太多，摘要太大了）",
+							"ts": "now"
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "after",
+							"ts": 1700000000009
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "这个任务事件管道里超过上限的动作摘要一共被丢弃了 2 行，最大的一行有 4195384 字节",
+							"ts": "now"
+						}
+					]
+				}
+			},
+			{
+				"name": "事件管道关闭时最后一行没有写完",
+				"why": "最后一行没有换行就关闭了管道：这一行丢弃，两端都在最后写一行警告，只有大小，没有内容、也不认种类；警告的来源两端不同，Agent 是 agent，本地调试是 system。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}"
+				],
+				"events_tail": "{\"type\":\"log\",\"ts\":1700000000002,\"level\":\"info\",\"message\":\"after",
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道关闭时最后一行没有写完（没有换行结尾，有 64 字节），已丢弃",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道关闭时最后一行没有写完（没有换行结尾，有 64 字节），已丢弃",
+							"ts": "now"
+						}
+					]
+				}
+			},
+			{
+				"name": "log 的 message 是转义的孤立代理项",
+				"why": "JSON 里写成 \\ud800 这样的孤立代理项（不是一对）：Agent 的 serde_json 拒绝，整行当作不认识的内容记成一行日志；本地调试的 Python 照常读成消息（文字里就是这个代理项，写成 {\"$char\": \"d800\"}：JSON 文件本身写不出孤立代理项）。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"\\ud800\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"\\ud800\"}",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": {
+								"$char": "d800"
+							},
+							"ts": 1700000000001
+						}
+					]
+				}
+			},
+			{
+				"name": "事件管道在超长的一行中间关闭",
+				"why": "超长的一行还没有读到换行管道就关闭了（执行器写到一半就退出）：和读到换行的超长行一样整行丢弃，按它开头认出的种类（这里是日志）写警告，写的是已经读到的字节数；警告的来源两端不同，Agent 是 agent，本地调试是 system。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}"
+				],
+				"events_tail": {
+					"$repeat": "x",
+					"times": 4194304,
+					"prefix": "{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\""
+				},
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194363 字节，超过上限 4194304 字节，已丢弃：这一行是日志，这条日志没有记下来。日志写得太长，请拆开写",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194363 字节，超过上限 4194304 字节，已丢弃：这一行是日志，这条日志没有记下来。日志写得太长，请拆开写",
+							"ts": "now"
 						}
 					]
 				}

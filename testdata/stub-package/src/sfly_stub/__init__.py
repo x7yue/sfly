@@ -664,6 +664,51 @@ def long_line(ctx: Context, head: int, value: str, tail: int, stream: str = "std
     out.flush()
 
 
+@node(title="一条很长的 SDK 日志", outputs=[])
+def long_log(ctx: Context, head: int, value: str, tail: int) -> None:
+    """超长 SDK 日志拆分测试用（#674）：用 ctx.log 写一条消息（head 个 a、value、tail 个 b），
+    再写一条短的 "after"。"""
+    ctx.log("a" * head + value + "b" * tail)
+    ctx.log("after")
+
+
+@node(title="一行很长的事件", outputs=[])
+def long_event_line(
+    ctx: Context, size: int, count: int = 1, kind: str = "", newline: bool = True
+) -> None:
+    """事件管道一行超过上限的测试用（#674）：先写一条日志 "before"，再直接往事件管道写 count 行、
+    每行 size 个字节，最后写一条日志 "after"。kind 为空时每行是 size 个 x（不是 JSON）；否则是
+    合法的 JSON 事件 {"type": kind, ...}（message 填满），type 就是 kind。newline 为假时最后一行
+    后面不补换行、也不写 "after"（管道在一行中间关闭）。"""
+    ctx.log("before")
+    if kind:
+        head = f'{{"type":"{kind}","ts":1700000000000,"level":"info","message":"'
+        line = head + "x" * (size - len(head) - 2) + '"}'
+    else:
+        line = "x" * size
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        for index in range(count):
+            events.write(line + ("\n" if newline or index < count - 1 else ""))
+        events.flush()
+    if newline:
+        ctx.log("after")
+
+
+@node(title="很多种动作名称", outputs=[])
+def many_action_names(ctx: Context, per_second: int, seconds: int) -> None:
+    """动作摘要超过事件管道一行上限的测试用（#674）：每秒新开 per_second 种名称的动作（每种一个，
+    名称 64 个字符，都在文档上限以内），持续 seconds 秒；最后写一条日志 "names=总数"。"""
+    count = 0
+    for _ in range(seconds):
+        started = time.monotonic()
+        for _ in range(per_second):
+            with ctx.action(f"{count:08d}" + "x" * 56):
+                pass
+            count += 1
+        time.sleep(max(0.0, 1.0 - (time.monotonic() - started)))
+    ctx.log(f"names={count}")
+
+
 @node(title="异常文字很长", outputs=[])
 def big_exception(ctx: Context, size: int) -> None:
     """失败文字有上界的测试用（#723）：抛出一条 size 个字符的异常。"""
