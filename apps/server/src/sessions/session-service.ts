@@ -710,6 +710,8 @@ export class SessionService {
 	 * 排在这一轮后面的在做的会话（{@link SessionStore.queueOrder}，按说话的时刻排）。队列变化时调用（有会话排上队、有会话被停止或
 	 * 结束、排队的开始了）。**项目里没有会话在做时也推，`waiting_for` 是 null**（#545：排队的会话在等助手服务或工作台恢复、等下一次
 	 * 开始，没有「在等谁」可写；以前这时不推，别的标签页和别的人要等这一轮开始才看得到）。
+	 * **它不在会话的链上**（读库、发布都在链外）：事件流的快照取的排位可能比它新发布的 `turn_queued` 旧（见 `SessionStore.follow` 里的
+	 * 已知边界）：只影响排位，到下一次队列变化纠正。
 	 */
 	async #announceQueue(project: ProjectId): Promise<void> {
 		const { sessions } = this.deps;

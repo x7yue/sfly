@@ -1616,6 +1616,13 @@ export class SessionStore {
 		onError: (error: unknown) => void,
 	): () => void {
 		// 这条连接的快照里来自库的那几项（状态、排队的位置和在等谁）：补发读完的那一批（不满一批，最后一次读）在链上顺便读一次。
+		// **取自最后一次读库，不是第一次**：多批补发时中间这一轮可能结束了，第一批读库那一刻的状态到快照发出时已经过时；测试钉着
+		// （session-snapshot.test.ts「快照的状态取自最后一次补发读库」）。
+		//
+		// **已知的边界（只影响排位，到下一次队列变化纠正）**：排位和在等谁（`queueState`）读的是这一次读库那一刻的库，而 `turn_queued` 由
+		// `SessionService.#announceQueue` 在会话的链**外**读库、发布：队列变化的事务提交之后、这一次读库之前，新的 `turn_queued` 已经发布
+		// 又进了缓冲时，缓冲先放、快照后放，快照带的排位可能比缓冲里的 `turn_queued` 旧（读库在提交之前）；页面停在旧排位，直到下一次队列变化。
+		// 状态本身不受影响：状态变化（`turn_started`、`turn_end` ……）都是持久事件，在链上依次落库、发布。
 		let base: SnapshotBase | undefined;
 		return follow(
 			{
@@ -1670,12 +1677,14 @@ export class SessionStore {
 			base.status === "running"
 				? this.#liveStates.parts(sessionId)
 				: { partial_text: "", running_tool: null, steer_queue: [] };
-		return {
+		// 整条快照再按令牌的格式过一遍（纵深）：`LiveStates.parts` 已经把文字打过码，这一道让以后新加进快照的字段（标题、昵称……）
+		// 也不会漏会话令牌；没有令牌时 `maskSessionTokens` 原样返回同一个值。
+		return maskSessionTokens({
 			type: "snapshot",
 			status: base.status,
 			...live,
 			waiting_for: base.waitingFor,
 			queue_position: base.position,
-		};
+		});
 	}
 }

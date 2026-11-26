@@ -466,6 +466,79 @@ describe("事件流里的快照", () => {
 		}, 120_000);
 	});
 
+	describe("窗口开头紧挨着令牌的一串令牌字符（#761 第一次审查）", () => {
+		it("经 publishFromAssistant 的整条路：窗口开头先有 k 个令牌字符、紧接一枚令牌，后面打码变短：快照里没有原值的任何连续 8 个字符", async () => {
+			const leaks = (text: string) =>
+				Array.from({ length: HEX.length - 7 }, (_, i) => HEX.slice(i, i + 8)).some((part) =>
+					text.includes(part),
+				);
+			const WINDOW = LIMIT + 1024;
+			for (const k of [60, 72, 100, 119, 120, 127, 130]) {
+				const { id, turn } = await running();
+				await fromAssistant(id, turn, toolCall("c1"));
+				const head = `${".".repeat(40_000)}${"A".repeat(300)}`;
+				const tailLen = WINDOW - k - TOKEN.length;
+				const shrink = `\nsfly_ses_${"z".repeat(1000)}\n${"-".repeat(tailLen)}`;
+				const text = `${head}${TOKEN}${shrink.slice(0, tailLen)}`;
+				for (let at = 0; at < text.length; at += 4000) {
+					await fromAssistant(id, turn, output("c1", text.slice(at, at + 4000)));
+				}
+				const out = (await snapshotOf(id)).running_tool?.output ?? "";
+				expect(leaks(out), `k=${k}：${out.slice(0, 70)}`).toBe(false);
+				expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(LIMIT);
+			}
+		}, 120_000);
+	});
+
+	describe("快照的状态取自最后一次补发读库", () => {
+		it("多批补发、中途这一轮结束了：快照写的是结束之后的状态（空闲、没有现场），不是第一批读库那一刻的", async () => {
+			const { id, turn } = await running();
+			await fromAssistant(id, turn, delta("还没说完"));
+			// 450 条持久事件：补发分三批读库（200、200、剩下的）。
+			await database.pool.query(
+				`insert into session_events (session_id, seq, type, payload, created_at)
+				select $1::uuid, i, 'user_message',
+					jsonb_build_object('message_id', $2::text, 'text', 'x', 'steer', false, 'author', 'a', 'author_user_id', null),
+					now()
+				from generate_series(3, 452) i`,
+				[id, messageId(1)],
+			);
+			const original = store.after.bind(store);
+			let reads = 0;
+			let release!: () => void;
+			const held = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			let secondStarted!: () => void;
+			const second = new Promise<void>((resolve) => {
+				secondStarted = resolve;
+			});
+			vi.spyOn(store, "after").mockImplementation(async (sessionId, from, limit) => {
+				if (sessionId === id && ++reads === 2) {
+					secondStarted();
+					await held;
+				}
+				return original(sessionId, from, limit);
+			});
+			const { out, stop, snapshots } = open(id);
+			try {
+				await second;
+				// 补发停在第二批读库上：这一轮结束了（落库排在读库后面，不能等它）。
+				const ending = fromAssistant(id, turn, turnEnd(turn));
+				release();
+				await ending;
+				await eventually(() => expect(snapshots()).toHaveLength(1), 10_000);
+				const snapshot = snapshots()[0] as Snapshot;
+				expect(snapshot).toMatchObject({ status: "idle", partial_text: "", running_tool: null });
+				// 它在这一轮的结局之后、补发读完之后。
+				const types = out.map((event) => event.type);
+				expect(types.lastIndexOf("turn_end")).toBeLessThan(types.indexOf("snapshot"));
+			} finally {
+				stop();
+			}
+		}, 30_000);
+	});
+
 	describe("排队的位置和在等谁", () => {
 		it("项目里有会话在做：排队的会话的快照写排第几、在等谁（正在做的那个），状态是排队中", async () => {
 			const project = await newProject();
@@ -482,6 +555,16 @@ describe("事件流里的快照", () => {
 				waiting_for: { session_id: first.id, title: "在做的事", created_by: "alice" },
 			});
 			expect(await snapshotOf(third.id)).toMatchObject({ status: "queued", queue_position: 2 });
+		});
+
+		it("在做的会话的标题里有一枚令牌的样子：排队的会话快照里的 waiting_for.title 是掩码（整条快照发出前再按令牌的格式过一遍，纵深）", async () => {
+			const project = await newProject();
+			const first = await newSession(project, "idle", `用 ${TOKEN} 做点事`);
+			expect((await store.beginTurn(first.id, project, opening)).outcome).toBe("started");
+			const second = await newSession(project, "queued");
+			const snapshot = await snapshotOf(second.id);
+			expect(snapshot.waiting_for?.title).toBe(`用 ${SECRET_MASK} 做点事`);
+			expect(JSON.stringify(snapshot)).not.toContain(HEX.slice(0, 8));
 		});
 
 		it("项目里没有会话在做：排队的会话在等助手服务或工作台恢复，在等谁是 null，位置仍有", async () => {

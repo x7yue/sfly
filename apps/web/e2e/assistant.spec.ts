@@ -1595,7 +1595,7 @@ test("插话遇到 503、这句话没有记在时间线上（请求在控制面�
 	await expect(page.getByRole("button", { name: "发送插话" })).toBeEnabled();
 });
 
-test("空闲的会话说话：这句话排上了队，可是控制面没有推 turn_queued（项目里没有会话在做）：页面从会话视图得知，是排队中、有停止按钮，再说一句不会撞上 409", async ({
+test("空闲的会话说话：这句话排上了队，可是页面没有收到 turn_queued（推送漏了，兜底）：页面说完话之后核对一次会话视图，得知是排队中、有停止按钮，再说一句不会撞上 409", async ({
 	page,
 }) => {
 	const view = await openSession(page, { status: "idle" }, [
@@ -1612,7 +1612,8 @@ test("空闲的会话说话：这句话排上了队，可是控制面没有推 t
 		},
 	]);
 	await page.route(new RegExp(`/api/sessions/${view.id}/messages$`), async (route) => {
-		// 控制面：写 user_message，会话排队（项目里别的会话在等开始，没有会话在做，所以不推 turn_queued）。
+		// 控制面：写 user_message，会话排队；这一次的 turn_queued 推丢了（控制面现在项目里没有会话在做时也推，waiting_for 为 null，#545；
+		// 页面说完话之后核对一次视图是兜底，这里测的就是兜底）。
 		await fulfillJson(route, 200, { seq: 4 });
 		await pushEvent(page, userMessage(4, "接着做", { message_id: A }));
 	});

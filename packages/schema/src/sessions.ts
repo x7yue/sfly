@@ -535,8 +535,10 @@ export type RunningTool = z.infer<typeof RunningTool>;
  * - `waiting_for`、`queue_position`：排队中（`queued`，或停止途中说了话、排在这一轮后面的在做的会话）排第几、在等谁；
  *   不在排队时都是 null，项目里没有会话在做时 `waiting_for` 是 null、`queue_position` 有值（同 {@link TurnQueuedEvent}）。
  *
- * **文字都打过码**：`partial_text` 和输出的最后一段是控制面把收到的增量拼起来、整段按会话令牌的格式打码之后才发的（先打码、后截断；
- * 令牌被拆在两条增量里、跨在截断的边界上，里面都没有原值，也没有半截）。不存。#545 起（`waiting_for` #544，`queue_position` #545）。
+ * **文字都打过码**：`partial_text` 和输出的最后一段是控制面把收到的增量拼起来、整段按会话令牌的格式打码之后才发的，整条快照发出前还会再
+ * 按令牌的格式过一遍：令牌被拆在两条增量里、窗口的起点切在令牌里，里面都没有原值（窗口开头被起点切掉了前缀、认不出的令牌后半截，打码之后从
+ * 开头削掉）。输出的最后一段先整窗打码、再削开头、最后才按字节截断，所以截断落在哪里都不会留下半截原值。不存。#545 起（`waiting_for` #544，
+ * `queue_position` #545）。
  */
 export const SnapshotEvent = z.object({
 	type: z.literal("snapshot"),

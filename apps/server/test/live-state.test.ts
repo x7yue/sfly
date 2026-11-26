@@ -306,6 +306,57 @@ describe("快照里的文字打过码：先打码、后截断", () => {
 		}
 	});
 
+	/**
+	 * 窗口开头先有 `k` 个令牌字符、紧接着一枚完整的令牌，后面的文字打码之后明显变短（窗口比上限短，最后一步按字节的截断不会再削开头）：
+	 * 以前先削开头（至多 128 个令牌字符）再打码，k 在 72 到 127 之间削进了令牌（`sfly_ses_` 前缀或十六进制），剩下的认不出，原值进了快照
+	 * （#761 第一次审查）。窗口的起点正好落在令牌前 k 个字符处：总长 = 令牌前的长度 - k + 窗口大小（`TailText` 的窗口是上限加 1 KB）。
+	 */
+	const WINDOW = LIMIT + 1024;
+	function afterFragment(k: number, filler: "lines" | "run"): string {
+		const head = `${".".repeat(40_000)}${"A".repeat(300)}`;
+		const tailLen = WINDOW - k - TOKEN.length;
+		const shrink =
+			filler === "lines"
+				? `\n${TOKEN}`.repeat(Math.ceil(tailLen / (TOKEN.length + 1)))
+				: `\nsfly_ses_${"z".repeat(1000)}\n${"-".repeat(tailLen)}`;
+		const text = `${head}${TOKEN}${shrink.slice(0, tailLen)}`;
+		const live = new LiveStates();
+		live.apply(SESSION, toolCall("c1"));
+		for (let at = 0; at < text.length; at += 7000) {
+			live.apply(SESSION, output("c1", text.slice(at, at + 7000)));
+		}
+		return live.parts(SESSION).running_tool?.output ?? "";
+	}
+
+	it("窗口开头先有 k 个令牌字符、紧接一枚令牌，后面一行一枚令牌（打码后窗口比上限短）：k 从 0 到 140 逐个扫，最后一段里没有原值的任何连续 8 个字符", () => {
+		for (let k = 0; k <= 140; k++) {
+			const out = afterFragment(k, "lines");
+			expect(leaks(out), `k=${k}：${out.slice(0, 70)}`).toBe(false);
+			expect(utf8(out)).toBeLessThanOrEqual(LIMIT);
+		}
+	});
+
+	it("同上，后面是一个 sfly_ses_ 连着 1000 个令牌字符（打码一次就缩短 1000 个字符）：k 从 60 到 130", () => {
+		for (let k = 60; k <= 130; k++) {
+			const out = afterFragment(k, "run");
+			expect(leaks(out), `k=${k}：${out.slice(0, 70)}`).toBe(false);
+		}
+	});
+
+	it("先整窗打码、再削开头：窗口开头落在令牌中间（剩下的是令牌的后半截、认不出）时被削掉，削掉之后的文字原样留着", () => {
+		for (const cut of [1, 10, 20, 40, 56]) {
+			const text = `${".".repeat(30_000)}${TOKEN}\n后面的文字\n${".".repeat(LIMIT)}`;
+			const tail = new TailText(LIMIT);
+			// 让窗口的起点落在令牌里：令牌的前 `cut` 个字符在窗口外。
+			const start = text.indexOf(TOKEN) + cut;
+			const tailText = text.slice(start);
+			const trimmed = tailText.slice(Math.max(0, tailText.length - WINDOW));
+			tail.append(`${"#".repeat(WINDOW * 3)}${trimmed}`);
+			const out = tail.read();
+			expect(leaks(out), `cut ${cut}`).toBe(false);
+		}
+	});
+
 	it("令牌后面连着一大串令牌字符（比令牌长很多）：窗口开头落在这一串里也不留令牌的半截", () => {
 		const live = new LiveStates();
 		live.apply(SESSION, toolCall("c1"));
