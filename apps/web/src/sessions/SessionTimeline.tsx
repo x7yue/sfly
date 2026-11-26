@@ -200,7 +200,8 @@ function UserRow({ item }: { item: UserItem }) {
 /**
  * 一个工具调用：一行，转圈和已用时，结果到了补上摘要（命令的退出码、用时，出错标红，结果太长写明输出太长、只显示了头尾）；
  * 默认折叠，**每一行都能展开**：展开后先写完整的命令（标题一行放不下时被截断，悬停或聚焦也给全文；在做和已中止的行没有结果，
- * 展开就是看这条命令），有结果的再接结果正文（这一版结果出来时一次显示，命令输出的实时滚动在 #550）。
+ * 展开就是看这条命令），在做的再接**已经输出的最后一段**（`item.output`，实时的和快照的写在同一个字段，#545；最朴素的显示，样子和跟随滚动在 #550），
+ * 有结果的再接结果正文（结果出来时一次显示）。
  * 「已中止」（这一轮有了结局、这个调用一直没有结果）和结果的摘要不是一种灰字：带一个「已停止」形状的点，文字是正文色。
  */
 function ToolRow({ item }: { item: ToolItem }) {
@@ -271,6 +272,14 @@ function ToolRow({ item }: { item: ToolItem }) {
 					>
 						<UntrustedText text={line} mode="text" />
 					</pre>
+					{running && item.output !== "" && (
+						<pre
+							data-testid="tool-output"
+							className="m-0 max-h-80 overflow-auto border-t border-border-soft px-3 py-2 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-2"
+						>
+							<UntrustedText text={item.output} mode="text" />
+						</pre>
+					)}
 					{result && (
 						<pre
 							data-testid="tool-result"

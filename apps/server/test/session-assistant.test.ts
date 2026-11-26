@@ -228,7 +228,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			);
 			await sse.next("tool_call");
 			// 不持久的没有 ID，持久的以会话内序号作 ID（接在建会话时的两条后面）。
-			const events = sse.received.filter((e) => e.event !== "time");
+			// 快照（#545）发在补发读完、切到实时的那一刻，不算在这条链路的事件里；位置见 session-snapshot.test.ts。
+			const events = sse.received.filter((e) => e.event !== "time" && e.event !== "snapshot");
 			expect(events.map((e) => [e.event, e.id])).toEqual([
 				["user_message", "1"],
 				["turn_started", "2"],
