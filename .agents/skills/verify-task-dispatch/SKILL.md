@@ -34,9 +34,9 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 | 配置 | 时序假设 | 期望 |
 |---|---|---|
-| `Safe` | 心跳不迟到，投递及时 | 无违例，约 32.8 万个不同状态 |
-| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 541 万个不同状态 |
-| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 660 万个不同状态 |
+| `Safe` | 心跳不迟到，投递及时 | 无违例，约 36.6 万个不同状态 |
+| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 560 万个不同状态 |
+| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 684 万个不同状态 |
 
 两个时序假设的具体含义：
 - **心跳不迟到**（`LateHeartbeats = FALSE`）：连接正常时，心跳总能在 30 秒租约内被控制面处理，租约只在断线期间过期。Agent 准备环境期间不发心跳，所以这也假设了重连时手上有任务的 Agent 准备环境不超过租约（这时环境早已就绪，只做几项检查；见 #294「不专门处理的边界」）。
@@ -84,6 +84,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 | `AgentStart` | `lib.rs` `Runtime::run_task` → `start_task` → `Ledger::started`；`agent/src/executor.rs` 发 `TaskStarted` |
 | `AgentFinish` | `lib.rs` `Runtime::run_task` 末尾 `Ledger::finish`（一次持锁把执行中换成结果待发并记下结束时执行器有没有启动过，被放弃的任务的结果在这里丢弃，`Ledger::discarded` 叫醒 `serve`，只影响自更新的排空）；`Ledger::cancel` |
 | `AgentSendResult` / `AgentHeartbeat` | `lib.rs` `serve()` 的 `ledger.next_result`（`Ledger::next_result`）与 `heartbeat.tick` 分支（`Ledger::held`） |
+| `AgentReplaceResult` | `lib.rs` `run()` 里 `serve()` 以「消息超过上限」（`resource_exhausted`）结束之后、重连之前调用 `Ledger::replace_results_over`（#723）：结果待发（Handed）或待 Ack 里整条消息超过控制面一条消息上限的结果换成 `node_error` 失败。模型里没有大小，断线之后任何一条成功的结果都可能被换成失败；反过来（失败换成成功）是错的，`mutants.sh` 的 `replace-fail-to-success` 守着。台账里的阶段不变，不增减任务 |
 | 消息定义 | `proto/sfly/agent/v1/agent.proto` 的 Hello、Welcome、TaskAction、AssignTask、CancelTask、TaskResult、Heartbeat、Ack |
 
 Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里的全部，不论阶段），模型里是 `Hand` 和 `HandStarted`；Hello 和每次心跳都按它列出，每个任务的 `started` 是真实的值：执行中的看执行器现在启动了没有，结果待发和待 Ack 的看结束时启动过没有。
@@ -131,6 +132,14 @@ git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
 - 环境变量 `SFLY_TASK_TOKEN`、下载归档带 Agent 凭据：不碰派发、结果、心跳、租约、重试。
 
 `check.sh`、`mutants.sh` 重新跑过（审查之后试用中被拒绝改成算失败，又跑了一次），结果和上面一致（Safe 327997、LateHeartbeats 5410113、SlowDelivery 6596137 个不同状态，七个变异体都被抓到）。
+
+## #723 的核对（Agent 发出的结果有上界、被拒绝的结果换成失败、握手成功不马上重置重连的等待）
+
+这个改动让协议多了一种行为：**同一次尝试重发的结果可以和第一次发的不一样**（成功换成失败），所以**改了模型**：加了 `AgentReplaceResult`（只在连接断开之后、重连之前，结果待发或待 Ack 里的一条成功结果换成失败），`Next` 里加上这一项，覆盖表加一行，`mutants.sh` 加了 `replace-fail-to-success`（反过来把失败换成成功，被 `SuccessWasRun` 抓到）。三个配置的状态数从 327,997 / 5,410,113 / 6,596,137 变成 365,921 / 5,602,537 / 6,842,713，都无违例；`mutants.sh` 八个变异体都被抓到。**没有移动同步提交**（同步提交之后别的改动还没有逐个核对）。逐项对照：
+
+- **结果的内容有上界**（`executor.rs` `result_with_error`、`success`、`read_output`；SDK 的 `runner.py`）：只改任务结束时那条结果的内容。任务结束这件事（执行器结束、`Ledger::finish` 把执行中换成结果待发）没有变；`AgentFinish` 本来就可以得出成功或失败，「成功换成失败」是它已有的取值。
+- **重连之前把超过控制面单条消息上限的结果换成失败**（`lib.rs` `run()`、`Ledger::replace_results_over`）：就是上面加进模型的那一步。换的是控制面没处理过的结果（网关读到长度前缀就拒绝，没解码，没有状态迁移），只改这一条结果的状态，不改它在台账里的阶段，不增减任务；它的执行器早已结束，所以「新尝试派发之前旧尝试已结束」不受影响。控制面一侧 `engine.ts` `#resultTask` 对不在 Agent 手上的任务、尝试序号不一致的结果不处理，所以即使有一条已被记成成功的结果没收到 Ack、之后被换成失败重发，也会被忽略（`result-accepts-stale` 变异体守着这一点）。换成的失败是 `node_error`，会照 `retries` 重试，模型里所有失败本来就按 `retries` 重试。
+- **握手成功不马上重置重连的等待**（`run()` 里的 `delay`，连得稳 30 秒才重置）：只调整真实时间；模型里重连次数不限、不带时间。
 
 ## 读结果
 
