@@ -2032,6 +2032,50 @@
 						}
 					]
 				}
+			},
+			{
+				"name": "事件管道在超长的一行中间关闭",
+				"why": "超长的一行还没有读到换行管道就关闭了（执行器写到一半就退出）：和读到换行的超长行一样整行丢弃，按它开头认出的种类（这里是日志）写警告，写的是已经读到的字节数；警告的来源两端不同，Agent 是 agent，本地调试是 system。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\"before\"}"
+				],
+				"events_tail": {
+					"$repeat": "x",
+					"times": 4194304,
+					"prefix": "{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"info\",\"message\":\""
+				},
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "agent",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194363 字节，超过上限 4194304 字节，已丢弃：这一行是日志，这条日志没有记下来。日志写得太长，请拆开写",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "before",
+							"ts": 1700000000001
+						},
+						{
+							"source": "system",
+							"level": "warn",
+							"message": "事件管道里的一行有 4194363 字节，超过上限 4194304 字节，已丢弃：这一行是日志，这条日志没有记下来。日志写得太长，请拆开写",
+							"ts": "now"
+						}
+					]
+				}
 			}
 		],
 		"result_cases": [

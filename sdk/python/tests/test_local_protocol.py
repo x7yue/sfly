@@ -9,9 +9,13 @@
 from __future__ import annotations
 
 import json
+import os
+import queue
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -521,6 +525,48 @@ def test_an_event_line_of_exactly_the_cap_is_read_and_one_byte_more_is_dropped(
     assert all(line.source == "sdk" for line in pieces)
     assert all(len(line.message) <= local._MAX_LINE_BYTES for line in pieces)
     assert sum(len(line.message) for line in pieces) == padding
+
+
+def test_a_dropped_line_keeps_a_fixed_size_head_whatever_its_length() -> None:
+    """被丢弃的一行只留开头固定大小的一小段（认种类用，不随行的长度变，和 Agent 相同）；
+    管道在超长行的中间关闭、最后一行没写完，各有各的记录（#674）。"""
+    cap = local._MAX_EVENT_LINE_BYTES
+    read_fd, write_fd = os.pipe()
+    pump = SimpleNamespace(_events=SimpleNamespace(read_fd=read_fd), _event_lines=queue.Queue())
+    reader = threading.Thread(target=lambda: local._Pump._read_events(pump))  # type: ignore[arg-type]
+    reader.start()
+    head = b'{"type":"action_summary","ts":1,"names":{'
+    with os.fdopen(write_fd, "wb") as writer:
+        for filler in (cap, cap * 2 + 5):  # 带换行的两行超长的
+            writer.write(head + b"x" * filler + b"\n")
+        writer.write(b'{"type":"log","message":"' + b"y" * (cap + 3))  # 超长、中间关闭
+    reader.join(timeout=60)
+    assert not reader.is_alive()
+    items = [item for _, item in list(pump._event_lines.queue)]
+    assert [type(item).__name__ for item in items] == ["_Dropped"] * 3
+    first, second, closed = items
+    assert (first.size, second.size) == (len(head) + cap, len(head) + cap * 2 + 5)
+    assert not first.unfinished and not closed.unfinished
+    for dropped in (first, second):
+        assert len(dropped.head) == local._EVENT_HEAD_BYTES
+        assert local._kind_of_head(dropped.head) == "action_summary"
+    assert len(closed.head) == local._EVENT_HEAD_BYTES
+    assert local._kind_of_head(closed.head) == "log"
+    assert closed.size == len(b'{"type":"log","message":"') + cap + 3
+
+
+def test_the_last_line_without_a_newline_is_one_unfinished_record() -> None:
+    read_fd, write_fd = os.pipe()
+    pump = SimpleNamespace(_events=SimpleNamespace(read_fd=read_fd), _event_lines=queue.Queue())
+    reader = threading.Thread(target=lambda: local._Pump._read_events(pump))  # type: ignore[arg-type]
+    reader.start()
+    with os.fdopen(write_fd, "wb") as writer:
+        writer.write(b'{"type":"log","message":"ok"}\n{"type":"log","mess')
+    reader.join(timeout=10)
+    items = [item for _, item in list(pump._event_lines.queue)]
+    assert items[0] == b'{"type":"log","message":"ok"}'
+    assert items[1] == local._Dropped(size=len(b'{"type":"log","mess'), unfinished=True)
+    assert len(items) == 2
 
 
 def test_a_short_sdk_message_is_not_changed_by_the_splitting(tmp_path: Path) -> None:
