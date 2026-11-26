@@ -1,6 +1,6 @@
 // 每一轮结束由平台提交工作区（#546）：真的 SessionManager、假的 pi（support/fake-pi.mjs 的 `run:` 先在工作区里执行一条命令再照剧本走）、
 // 假的工作台（本机真的执行，真的 git）。事件的先后、提交的内容、提交不执行模型布下的东西、提交不成时这一轮照常结束。
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Code } from "@connectrpc/connect";
 import { ASSISTANT_STOP_WAIT_MS, type AssistantEvent, SESSION_EVENT_LIMITS } from "@sfly/schema";
@@ -485,7 +485,7 @@ describe("提交是平台做的", () => {
 		expect(new Set(tools)).toEqual(new Set(["read", "write", "edit", "bash"]));
 	}, 120_000);
 
-	it("事后在工作台上改写 git 历史（reset、commit --amend）：已经发出的事件里的提交号和差异不变", async () => {
+	it("事后在工作台上改写 git 历史（reset、commit --amend）：已经发出的事件不变；再跑一轮，新的一条按平台上次的提交算，不是改写之后的 HEAD", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { session: SESSION, text: "run:echo one > a.txt;;settle" });
@@ -493,6 +493,8 @@ describe("提交是平台做的", () => {
 		const before = JSON.stringify(commitsOf(harness, id));
 		const original = commitsOf(harness, id)[0]?.hash as string;
 
+		// 模型自己在用 git（索引里有 a.txt），把历史改写掉：平台的那个提交不在 HEAD 的历史里了。
+		git(harness.workdir, "add", "-A");
 		safeGit(harness.workdir, "reset", "--hard", "HEAD~1");
 		writeFileSync(join(harness.workdir, "other.txt"), "rewritten\n");
 		git(harness.workdir, "add", "-A");
@@ -509,14 +511,295 @@ describe("提交是平台做的", () => {
 			"改写了",
 		);
 		expect(safeGit(harness.workdir, "rev-parse", "HEAD").trim()).not.toBe(original);
-		// amend 保留原来那个提交（初次提交）的作者。
 		expect(log(harness.workdir)).toEqual(["sfly | m | 改写了"]);
-
-		// 事件里是提交那一刻的差异本身，不是指向仓库的引用：改写之后它不变。
+		// 已经发出的事件是提交那一刻的差异本身，不是指向仓库的引用：改写之后它不变。
 		expect(JSON.stringify(commitsOf(harness, id))).toBe(before);
 		expect(commitsOf(harness, id)[0]?.diff).toContain("+one");
-		expect(commitsOf(harness, id)[0]?.hash).toBe(original);
+
+		// 再跑一轮：基准是平台上次记下的提交（有 a.txt），不是改写后的 HEAD（只有 other.txt）：a.txt 记成被删掉，other.txt、b.txt 是新的。
+		await harness.prompt(id, { turn: 2, session: SESSION, text: "run:echo two > b.txt;;settle" });
+		await harness.turnEnd(id, 2);
+		const second = commitsOf(harness, id).find((c) => c.turn === 2);
+		expect(second?.files).toEqual([
+			{ path: "a.txt", additions: 0, deletions: 1 },
+			{ path: "b.txt", additions: 1, deletions: 0 },
+			{ path: "other.txt", additions: 1, deletions: 0 },
+		]);
+		expect(second?.diff).not.toContain("平台还没有记过");
+		// 第一轮那一条还是原样。
+		expect(JSON.stringify(commitsOf(harness, id).filter((c) => c.turn === 1))).toBe(
+			JSON.stringify(JSON.parse(before)),
+		);
+	}, 60_000);
+});
+
+describe("基准是平台自己上次记下的提交：模型自己用 git 也不影响这一轮的记录", () => {
+	const gitIn = (script: string) => `git -c user.name=m -c user.email=m@m.invalid ${script}`;
+
+	it("模型自己 git commit 了这一轮的全部改动：时间线上照样有这一轮（文件、差异），平台的提交接在模型的后面", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, {
+			session: SESSION,
+			text: `run:echo hi > a.txt; echo yo > b.txt; git add -A; ${gitIn("commit -qm 我自己提交")};;settle`,
+		});
+		await harness.turnEnd(id);
+		const [commit] = commitsOf(harness, id);
+		expect(commit?.files).toEqual([
+			{ path: "a.txt", additions: 1, deletions: 0 },
+			{ path: "b.txt", additions: 1, deletions: 0 },
+		]);
+		expect(commit?.diff).toContain("+hi");
+		expect(commit?.hash).toBe(safeGit(harness.workdir, "rev-parse", "HEAD").trim());
+		expect(log(harness.workdir)).toEqual([
+			`alice | sfly | ${label(id)}第 1 轮`,
+			"m | m | 我自己提交",
+			"sfly | sfly | 初始化工作区",
+		]);
 	});
+
+	it("模型只 commit 了一部分：记全部的改动", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, {
+			session: SESSION,
+			text: `run:echo a > a.txt; echo b > b.txt; echo c > c.txt; git add a.txt; ${gitIn("commit -qm 只提交 a")};;settle`,
+		});
+		await harness.turnEnd(id);
+		expect(commitsOf(harness, id)[0]?.files.map((f) => f.path)).toEqual([
+			"a.txt",
+			"b.txt",
+			"c.txt",
+		]);
+	});
+
+	it("模型 git reset --hard 退回去：这些文件记成被删掉", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { session: SESSION, text: "run:echo x > b.txt;;settle" });
+		await harness.turnEnd(id);
+		await harness.prompt(id, {
+			turn: 2,
+			session: SESSION,
+			text: "run:git add -A; git reset -q --hard HEAD~1;;settle",
+		});
+		await harness.turnEnd(id, 2);
+		const second = commitsOf(harness, id).find((c) => c.turn === 2);
+		expect(second?.files).toEqual([{ path: "b.txt", additions: 0, deletions: 1 }]);
+		expect(existsSync(join(harness.workdir, "b.txt"))).toBe(false);
+	}, 60_000);
+
+	it("助手服务数据目录里的记录丢了：退回和 HEAD 比，差异开头写明；记录在时（助手服务重启）没有这一行", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { session: SESSION, text: "run:echo one > a.txt;;settle" });
+		await harness.turnEnd(id);
+		// 重启：新的 SessionManager 从数据目录里读到上次记下的提交，补提交按它算，没有说明行。
+		const restarted = await harness.restart();
+		writeFileSync(join(harness.workdir, "left.txt"), "重启之间留下的\n");
+		expect(restarted.prompt(id, promptBody(harness, 2, "settle"))).toEqual({ ok: true });
+		await harness.turnEnd(id, 2);
+		const kept = commitsOf(harness, id).find(
+			(c) => c.turn === 1 && c.files[0]?.path === "left.txt",
+		);
+		expect(kept?.diff.startsWith("diff --git")).toBe(true);
+
+		// 记录丢了（数据卷换了）：再重启一次，没有基准，退回和 HEAD 比。
+		rmSync(join(harness.dataDir, "workspaces"), { recursive: true, force: true });
+		const again = await harness.restart();
+		writeFileSync(join(harness.workdir, "left2.txt"), "又一个\n");
+		expect(again.prompt(id, promptBody(harness, 3, "settle"))).toEqual({ ok: true });
+		await harness.turnEnd(id, 3);
+		const lost = commitsOf(harness, id).find((c) => c.files[0]?.path === "left2.txt");
+		expect(lost?.diff.startsWith("（平台还没有记过这个工作区的提交，下面是和仓库当前提交（")).toBe(
+			true,
+		);
+		expect(lost?.diff).toContain("+又一个");
+	}, 60_000);
+});
+
+describe("第 1 轮开始之前工作区里就有的改动", () => {
+	it("已经是仓库、有没提交的改动：先单独提交（说明「会话开始之前工作区里留下的改动」），发 platform 事件（turn 是 1，差异开头写明没记过）；这一轮自己的提交另算", async () => {
+		const harness = await start();
+		git(harness.workdir, "init", "-q", "-b", "main");
+		writeFileSync(join(harness.workdir, "a.txt"), "a\n");
+		git(harness.workdir, "-c", "user.name=u", "-c", "user.email=u@u", "add", "-A");
+		git(
+			harness.workdir,
+			"-c",
+			"user.name=u",
+			"-c",
+			"user.email=u@u",
+			"commit",
+			"-qm",
+			"原来的历史",
+		);
+		writeFileSync(join(harness.workdir, "a.txt"), "a\nb\n");
+		writeFileSync(join(harness.workdir, "old.txt"), "以前留下的\n");
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { session: SESSION, text: "run:echo mine > mine.txt;;settle" });
+		await harness.turnEnd(id);
+
+		const [before, own] = commitsOf(harness, id);
+		expect(commitsOf(harness, id)).toHaveLength(2);
+		expect(before).toMatchObject({
+			turn: 1,
+			files: [
+				{ path: "a.txt", additions: 1, deletions: 0 },
+				{ path: "old.txt", additions: 1, deletions: 0 },
+			],
+		});
+		expect(
+			before?.diff.startsWith("（平台还没有记过这个工作区的提交，下面是和仓库当前提交（"),
+		).toBe(true);
+		expect(own).toMatchObject({
+			turn: 1,
+			files: [{ path: "mine.txt", additions: 1, deletions: 0 }],
+		});
+		expect(own?.diff.startsWith("diff --git")).toBe(true);
+		expect(log(harness.workdir)).toEqual([
+			`alice | sfly | ${label(id)}第 1 轮`,
+			`alice | sfly | ${label(id)}会话开始之前工作区里留下的改动`,
+			"u | u | 原来的历史",
+		]);
+		// 两个事件都在 turn_end 之前，补提交的在前。
+		const types = eventsOf(harness, id).map((e) => e.type);
+		expect(types.filter((t) => t === "platform")).toHaveLength(2);
+		expect(types.indexOf("platform")).toBeLessThan(types.lastIndexOf("platform"));
+		expect(types.at(-1)).toBe("turn_end");
+	});
+
+	it("已经是仓库、没有没提交的改动：第 1 轮开始前不补提交，也没有事件", async () => {
+		const harness = await start();
+		git(harness.workdir, "init", "-q", "-b", "main");
+		writeFileSync(join(harness.workdir, "a.txt"), "a\n");
+		git(harness.workdir, "-c", "user.name=u", "-c", "user.email=u@u", "add", "-A");
+		git(
+			harness.workdir,
+			"-c",
+			"user.name=u",
+			"-c",
+			"user.email=u@u",
+			"commit",
+			"-qm",
+			"原来的历史",
+		);
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { session: SESSION, text: "settle" });
+		await harness.turnEnd(id);
+		expect(commitsOf(harness, id)).toEqual([]);
+		expect(log(harness.workdir)).toEqual(["u | u | 原来的历史"]);
+	});
+});
+
+describe("提交的时间：停止、退出、工作台冻住", () => {
+	const ended = (harness: Harness, id: string, turn: number) =>
+		harness.events.of(id).some((r) => r.turn === turn && r.event.type === "turn_end");
+	/** 第 2 轮正常结束、提交走到 write-tree 时卡住（`thenSilent`：此后工作台一句话也不回）。 */
+	const stuckCommit = async (harness: Harness, id: string, thenSilent: boolean) => {
+		await harness.prompt(id, { session: SESSION, text: "settle" });
+		await harness.turnEnd(id);
+		harness.workbench.hang = { marker: "write-tree", thenSilent };
+		const before = harness.workbench.runs.length;
+		await harness.prompt(id, { turn: 2, session: SESSION, text: "run:echo x > x.txt;;settle" });
+		await eventually(() =>
+			expect(harness.workbench.runs.slice(before).some((r) => r.argv.includes("write-tree"))).toBe(
+				true,
+			),
+		);
+	};
+	afterEach(() => {
+		if (h) {
+			h.workbench.silent = false;
+			h.workbench.hang = undefined;
+		}
+	});
+
+	it("提交进行中收到停止：提交的期限缩到停止时刻加 23 秒减余量，turn_end 赶在控制面自己补结局之前，结局还是原来的", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await stuckCommit(harness, id, false);
+		// 停止（T0）：控制面从这一刻起等 23 秒，之后自己补结局、丢掉晚到的事件。
+		await harness.abort(id, 2);
+		clock.advance(ASSISTANT_STOP_WAIT_MS);
+		await eventually(() => expect(ended(harness, id, 2)).toBe(true), 3000);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+		expect(commitsOf(harness, id)).toEqual([]);
+		expect(harness.logs.some((line) => line.includes("提交工作区") && line.includes("放弃"))).toBe(
+			true,
+		);
+	}, 60_000);
+
+	it("提交进行中结束会话：同样缩短提交的期限", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await stuckCommit(harness, id, false);
+		await harness.end(id);
+		clock.advance(ASSISTANT_STOP_WAIT_MS);
+		await eventually(() => expect(ended(harness, id, 2)).toBe(true), 3000);
+		expect(commitsOf(harness, id)).toEqual([]);
+	}, 60_000);
+
+	it("提交已经卡了一阵才收到停止、原来的期限更早：不延长", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await stuckCommit(harness, id, false);
+		clock.advance(COMMIT_BUDGET_MS - 5_000);
+		await harness.abort(id, 2);
+		expect(ended(harness, id, 2)).toBe(false);
+		clock.advance(5_000); // 原来的期限（提交开始后 30 秒）到了
+		await eventually(() => expect(ended(harness, id, 2)).toBe(true), 3000);
+	}, 60_000);
+
+	it("提交进行中工作台冻住（之后谁也不回话），助手服务退出：放弃，不等删临时仓库，几秒内退出", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await stuckCommit(harness, id, true);
+		const started = Date.now();
+		await harness.sessions.shutdown();
+		expect(Date.now() - started).toBeLessThan(5_000);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+		expect(commitsOf(harness, id)).toEqual([]);
+	}, 60_000);
+
+	it("提交的期限到了、工作台冻住：放弃之后不等 rm -rf（只给半秒），turn_end 随后就发", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await stuckCommit(harness, id, true);
+		const started = Date.now();
+		clock.advance(COMMIT_BUDGET_MS);
+		await eventually(() => expect(ended(harness, id, 2)).toBe(true), 4000);
+		expect(Date.now() - started).toBeLessThan(4000);
+		// 删临时仓库的命令发了，没有等它的回话。
+		expect(harness.workbench.runs.some((r) => r.argv[0] === "rm" && r.argv.includes("-rf"))).toBe(
+			true,
+		);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+	}, 60_000);
+
+	it("先问一声也算在提交的期限里：停止时工作台一句话不回，期限到了就放弃，不再等问话自己的期限", async () => {
+		const clock = new ManualClock();
+		// 问话的期限设得很长：要是它不受提交的期限管，turn_end 就得等它。
+		const harness = await start({ clock, agentDeadlines: { probeDeadlineMs: 30_000 } });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { session: SESSION, text: "run:echo x > x.txt;;work" });
+		await eventually(() => expect(existsSync(join(harness.workdir, "x.txt"))).toBe(true));
+		await eventually(() =>
+			expect(readFileSync(join(harness.dataDir, "sessions", id, "events.jsonl"), "utf8")).toContain(
+				"turn_start",
+			),
+		);
+		harness.workbench.silent = true; // 之后提交前的那一声问话得不到回答
+		await harness.abort(id);
+		clock.advance(ASSISTANT_STOP_WAIT_MS);
+		await eventually(() => expect(ended(harness, id, 1)).toBe(true), 4000);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+		expect(commitsOf(harness, id)).toEqual([]);
+	}, 60_000);
 });
 
 /** 直接交给 SessionManager 的第 `turn` 轮（不经 HTTP）。 */
