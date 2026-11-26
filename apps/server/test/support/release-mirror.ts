@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { type BasicAuth, hasBasicAuth } from "./pypi-stub.js";
 
 /**
  * 本地 GitHub Release 镜像桩（ADR 0012），随机端口，不访问外网；与 Agent 测试的桩
@@ -19,8 +20,10 @@ import { promisify } from "node:util";
 export interface ReleaseMirror {
 	/** 控制面配置的 GitHub Release 镜像地址。 */
 	readonly url: string;
-	/** 收到的请求路径（按到达顺序）。 */
+	/** 收到的请求路径（按到达顺序）；要认证时只记认证通过的。 */
 	readonly requests: string[];
+	/** 要认证时，因为没有（或错了）用户名和密码被回 401 的请求数。 */
+	rejected(): number;
 	/** 安装脚本被下载的次数。 */
 	uvInstalls(): number;
 	/** `LatestRelease/` 下各次请求（安装脚本、uv 发布包）带的 User-Agent，按到达顺序。 */
@@ -67,7 +70,9 @@ async function uvRelease(): Promise<[string, Buffer]> {
 	}
 }
 
-export async function startReleaseMirror(): Promise<ReleaseMirror> {
+export async function startReleaseMirror(
+	options: { auth?: BasicAuth } = {},
+): Promise<ReleaseMirror> {
 	const [name, archive] = await uvRelease();
 	const files = new Map<string, Buffer>([
 		[INSTALLER, Buffer.from(INSTALLER_STUB)],
@@ -75,8 +80,14 @@ export async function startReleaseMirror(): Promise<ReleaseMirror> {
 	]);
 	const requests: string[] = [];
 	const userAgents: (string | undefined)[] = [];
+	let rejected = 0;
 	const server = createServer((req, res) => {
 		const path = (req.url ?? "/").split(/[?#]/)[0] ?? "/";
+		if (options.auth && !hasBasicAuth(req.headers.authorization, options.auth)) {
+			rejected += 1;
+			res.writeHead(401, { "www-authenticate": 'Basic realm="private mirror"' }).end();
+			return;
+		}
 		requests.push(path);
 		userAgents.push(req.headers["user-agent"]);
 		const body = files.get(path);
@@ -88,6 +99,7 @@ export async function startReleaseMirror(): Promise<ReleaseMirror> {
 	return {
 		url: `http://127.0.0.1:${port}/github-release`,
 		requests,
+		rejected: () => rejected,
 		uvInstalls: () => requests.filter((p) => p === INSTALLER).length,
 		uvUserAgents: () =>
 			userAgents.filter((_, i) =>

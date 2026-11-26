@@ -320,16 +320,18 @@ login <用户名>
 password <密码>
 ```
 
-uv 会读它（先不带凭据请求一次，收到 401 之后带上凭据重试；`NETRC` 环境变量可以指到别的文件）。凭据只在这台机器的这个文件里：不出现在控制面的配置、`{{SFLY_URL}}/install.sh`、`sfly init` 写进新节点包的 `pyproject.toml`，也不会出现在 Agent 的日志里。
+uv 会读它（先不带凭据请求一次，收到 401 之后带上凭据重试；`NETRC` 环境变量可以指到别的文件）。`install.sh --dev` 里下载 uv 的 curl、wget 也读它（镜像是 GitHub Release 镜像时，`machine` 写它的主机）。凭据只在这台机器的这个文件里：不出现在控制面的配置、`{{SFLY_URL}}/install.sh`、`sfly init` 写进新节点包的 `pyproject.toml`，也不会出现在 Agent 的日志里。
+
+**`{{SFLY_URL}}/install.sh` 里的镜像地址不带用户名和密码**：这个脚本不用登录就能下载，控制面生成它（和 `sfly init` 读的 `/sdk/project-settings`）时把配置的镜像地址里的用户名和密码去掉，主机、端口、路径留着；`--help` 打印的也是去掉之后的。所以在控制面配了带用户名和密码的镜像时，开发机（`install.sh --dev`、`sfly init`）要认证，得靠这台机器的 `~/.netrc`，或者用 `SFLY_INDEX_URL` 等环境变量设一个带凭据的地址（只对这台机器有效）。Agent 不受影响：它握手时从控制面（经过认证的连接）拿到的仍是配置的原值。
 
 **二、凭据写在地址里：`https://<用户名>:<密码>@pypi.internal/simple`。** uv 认这种写法；密码里的 `@`、`/`、`?`、`#`、`%` 要写成百分号编码（`@` 写成 `%40`）。控制面启动时不拒绝镜像地址里的用户名和密码（`SFLY_PUBLIC_URL`、`SFLY_PUBLIC_GRPC_URL` 才拒绝，它们要拼进链接和 Agent 的配置）。写在哪里，决定谁读得到它：
 
 | 写在哪里 | 谁读得到 |
 |---|---|
-| 控制面的 `SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR` | 握手时原样下发给每台 Agent；写进 `{{SFLY_URL}}/install.sh`（任何能访问控制面的人都下载得到，`--help` 里也会打印）；`sfly init` 写进新节点包的 `pyproject.toml`（节点包目录进了 git 仓库，它就在仓库里） |
-| 一台机器的 `agent.env`、环境变量（`SFLY_INDEX_URL` 等） | 这台机器上读得到 `agent.env` 的用户；这台机器上的 `sfly init` 也把它写进新节点包的 `pyproject.toml` |
+| 控制面的 `SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR` | 握手时原样下发给每台 Agent（经过认证的连接）。**不写进** `{{SFLY_URL}}/install.sh`（任何能访问控制面的人都下载得到）和 `sfly init` 写进新节点包 `pyproject.toml` 的配置：这两处给的是去掉了用户名和密码的地址 |
+| 一台机器的 `agent.env`、环境变量（`SFLY_INDEX_URL` 等） | 这台机器上读得到 `agent.env` 的用户；这台机器上的 `sfly init` 也把它写进新节点包的 `pyproject.toml`（节点包目录进了 git 仓库，它就在仓库里） |
 
-所以要用第二种时，让凭据的读者范围尽量小：只配在要用它的那几台机器上，控制面不配（或者配一个不带凭据的公共镜像）。
+所以要用第二种时，让凭据的读者范围尽量小：控制面配的只下发给 Agent（握手时），开发机上要认证就配在那台机器上。
 
 **Agent 的日志里没有这些用户名和密码**：Agent 写进安装日志（任务的安装状态）、任务的失败原因、环境准备失败的报告和日志的地址，用户名和密码一律换成 `***`，主机、端口和路径留着，方便看出连的是哪：`https://***@pypi.internal/simple`。命令行、uv 和 curl 的输出里回显的地址、报错里的地址都一样。限度：只认「地址里的 `用户名:密码@`」这个形状；`UV_INDEX_*_PASSWORD` 这类环境变量的值、`~/.netrc` 里的凭据不在地址里，Agent 不读也不打印它们，但节点自己的输出里有什么 Agent 管不到。控制面读日志时的打码只认平台自己签发的令牌和场景的 secret 参数的值，**不认地址里的密码**，所以不要指望它兜底。
 

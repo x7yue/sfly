@@ -232,6 +232,12 @@ mod tests {
                 "Failed to fetch: `https://u:p@h/simple/x/`",
                 "Failed to fetch: `https://***@h/simple/x/`",
             ),
+            // 反引号、尖括号、反斜杠也是地址的结尾：后面的 @ 不算这个地址的。
+            ("see `https://u:p@h`@x", "see `https://***@h`@x"),
+            ("<https://u:p@h>@x", "<https://***@h>@x"),
+            ("https://u:p@h<x@y", "https://***@h<x@y"),
+            (r#""https://u:p@h"@x"#, r#""https://***@h"@x"#),
+            (r#"https://u:p@h\@x"#, r#"https://***@h\@x"#),
             // 已经是掩码的：再处理一遍不变。
             ("https://***@host/x", "https://***@host/x"),
             // 换行里的多个地址、中文紧跟。
