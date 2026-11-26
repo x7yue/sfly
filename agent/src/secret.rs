@@ -194,6 +194,22 @@ fn rules_of_one(address: &str, rules: &mut Vec<Rule>) {
             curl_authority.to_string(),
             format!("{USERINFO_MASK}@{host}"),
         );
+        // uv 回显地址时把密码换成 `****`、用户名照写（`用户名:****@主机`）：用户名里有文字规则认不出的字符时，
+        // 只有这一种写法能按值认出（密码已经被 uv 自己遮住了，用户名也不写出来）。
+        if let Some((user, _)) = userinfo.split_once(':')
+            && !user.is_empty()
+        {
+            add(
+                rules,
+                format!("://{user}:****@"),
+                format!("://{USERINFO_MASK}@"),
+            );
+            add(
+                rules,
+                format!("{user}:****@{host}"),
+                format!("{USERINFO_MASK}@{host}"),
+            );
+        }
     }
     // URL 解析器写出来的写法：凭据百分号编码、主机规范化之后。
     if let Some(url) = &parsed {
@@ -728,6 +744,27 @@ mod tests {
         assert_eq!(
             mask_known(&format!("<<{address}>> and again {address};")),
             "<<https://***@full-only.example/simple>> and again https://***@full-only.example/simple;"
+        );
+    }
+
+    /// uv 回显地址时把密码换成 `****`、用户名照写：用户名里有文字规则认不出的字符时，登记过的地址仍然认得出
+    /// （完整的 `://用户名:****@`）；只有用户名的一部分不认。
+    #[test]
+    fn the_uv_spelling_with_a_masked_password_is_known_too() {
+        let address = r#"https://Zu15 "n15:Pw15xq@uv-style.example/simple"#;
+        register_address(address);
+
+        let masked = mask_userinfo(
+            r#"error: failed to fetch https://Zu15 "n15:****@uv-style.example/simple/x/"#,
+        );
+        assert_eq!(
+            masked,
+            "error: failed to fetch https://***@uv-style.example/simple/x/"
+        );
+        // 用户名的一部分、没有 `@` 的：不认。
+        assert_eq!(
+            mask_known(r#"https://Zu15 "n15:****"#),
+            r#"https://Zu15 "n15:****"#
         );
     }
 

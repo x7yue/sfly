@@ -341,6 +341,19 @@ fn awkward_credentials() -> Vec<Awkward> {
             "k9Xt".into(),
         ],
     });
+    // 用户名里有空格和双引号：uv 回显地址时用户名照写（密码换成 `****`），文字规则在空格处停下，认不出。
+    all.push(Awkward {
+        label: "用户名里有空格和双引号",
+        user: "Zq7x Us\"er7".to_string(),
+        password: "Pw7-k9Xt".to_string(),
+        reachable: true,
+        secrets: vec![
+            "Zq7x Us\"er7".into(),
+            "Zq7x".into(),
+            "er7".into(),
+            "Pw7-k9Xt".into(),
+        ],
+    });
     // 用户名里有 `\`（AD 风格的 `域\用户名`，#756）：URL 解析器读不出凭据（`\` 之后落进路径），curl 读成用户名和密码。
     all.push(Awkward {
         label: "用户名里有反斜杠",
@@ -446,6 +459,61 @@ async fn a_failed_install_with_awkward_credentials_has_no_username_or_password_i
             ("安装状态里的输出", failed.output.as_str()),
         ] {
             assert_no_credentials(text, &format!("{label}：{what}"), &secrets);
+        }
+        assert_no_credentials(
+            &stderr.lock().unwrap().join("\n"),
+            &format!("{label}：Agent 的标准错误"),
+            &secrets,
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unreachable_index_with_awkward_credentials_is_reported_without_them() {
+    // 连不上的索引：uv 的报错里回显它要取的地址（用户名在里面，密码 uv 自己换成 `****`）。
+    // uv 对连不上的索引会重试几次，每个写法要几秒：挑三个有代表性的（密码里的引号、空格，用户名里的空格和引号）。
+    const SAMPLES: [&str; 3] = ["双引号", "空格", "用户名里有空格和双引号"];
+    for awkward in awkward_credentials()
+        .iter()
+        .filter(|a| SAMPLES.contains(&a.label))
+    {
+        let label = awkward.label;
+        let index = HttpFixture::start().await;
+        let demo = publish(&index, "sfly-demo", "1.0.0", &["sfly-dep==1.0"]);
+        let credentialed = with_credentials(
+            "http://127.0.0.1:1/simple/",
+            &awkward.user,
+            &awkward.password,
+        );
+        let venv = fresh_venv(true);
+        let cp = FakeControlPlane::start().await;
+        let mut agent = agent(&cp, "agent-awkward-index-down", &venv, &credentialed);
+        let stderr = capture_stderr(&mut agent);
+        cp.hello(0).await;
+
+        cp.assign(package_task(
+            "task-1",
+            "sfly-demo",
+            "1.0.0",
+            "about",
+            json!({}),
+            demo.archive(),
+        ))
+        .await;
+        let (result, _) = cp.result("task-1").await;
+        assert_eq!(result.status(), TaskStatus::Failed, "{label}");
+        let error = result.error.expect("error");
+        let (failed, _) = cp
+            .install_status("sfly-demo", "1.0.0", InstallState::Failed)
+            .await;
+        let secrets = refs(&awkward.secrets);
+        for (what, text) in [
+            ("任务的失败原因", error.message.as_str()),
+            ("安装状态里的输出", failed.output.as_str()),
+        ] {
+            assert_no_credentials(text, &format!("{label}：{what}"), &secrets);
+            // 主机和端口留着，方便排查连的是哪。
+            assert!(text.contains("127.0.0.1:1"), "{label}：{what}：{text}");
         }
         assert_no_credentials(
             &stderr.lock().unwrap().join("\n"),
