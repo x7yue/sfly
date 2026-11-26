@@ -5,7 +5,7 @@ import { connectAgent } from "./agent.js";
 import { EventBus } from "./bus.js";
 import { ASSISTANT_PORT, ConfigError, readConfig } from "./config.js";
 import { piPackage } from "./launch.js";
-import { checkModelsFile } from "./models.js";
+import { ModelHealth } from "./model-health.js";
 import { printError, writeLog, writeRawLog } from "./output.js";
 import { createAssistantServer } from "./server.js";
 import { SessionManager } from "./sessions.js";
@@ -32,7 +32,6 @@ function main(): void {
 	let config: ReturnType<typeof readConfig>;
 	try {
 		config = readConfig(process.env);
-		for (const warning of checkModelsFile(config.modelsFile, process.env)) log(`提醒：${warning}`);
 	} catch (error) {
 		if (error instanceof ConfigError) {
 			printError("拒绝启动", error);
@@ -46,6 +45,13 @@ function main(): void {
 	const appDir = basename(here) === "src" ? dirname(here) : here;
 	const bundledSkills = join(appDir, "skills");
 	const bus = new EventBus();
+	// 模型没有配置时照常启动（#548）：`/health` 报缺什么，新的一轮在开始之前被 503 拒绝。
+	const model = new ModelHealth({
+		modelsFile: config.modelsFile,
+		model: config.model,
+		env: process.env,
+		log,
+	});
 	const sessions = new SessionManager({
 		dataDir: config.dataDir,
 		modelsFile: config.modelsFile,
@@ -57,6 +63,7 @@ function main(): void {
 			: join(appDir, "..", "..", "docs", "guide", "skills"),
 		hostEnv: process.env,
 		bus,
+		modelGate: () => model.gate(),
 		// 会话以外用到的工作台客户端（探一下工作台）没有会话可以按值打码：按形状打码、截到上限。
 		connect: (address, agentLog = writeRawLog) => connectAgent(address, { log: agentLog }),
 		log,
@@ -69,11 +76,15 @@ function main(): void {
 		bus,
 		sessions,
 		versions: { assistant: version, pi: pi.version },
-		modelsFile: config.modelsFile,
+		model: () => model.snapshot(),
 		log,
 	});
-	server.listen(ASSISTANT_PORT, () => log(`助手服务在 :${ASSISTANT_PORT}（pi ${pi.version}）`));
+	server.listen(ASSISTANT_PORT, () => {
+		log(`助手服务在 :${ASSISTANT_PORT}（pi ${pi.version}）`);
+		model.start();
+	});
 	const stop = () => {
+		model.close();
 		server.close();
 		// shutdown 不该拒绝（结束进程的每一步都接住了失败）；万一拒绝，HTTP 已经关了，不能留着一个不干活的进程：记一行、以 1 退出。
 		sessions.shutdown().then(

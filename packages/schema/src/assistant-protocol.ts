@@ -537,7 +537,13 @@ export type AssistantVersions = z.infer<typeof AssistantVersions>;
  * 助手服务看到的模型：配没配（`configured`）、连不连得上（`reachable`，没有配或还没检查过时为 null）、
  * 上次检查的时间和原因（`reason` 是一句话，`error_class` 是它按什么分；没有检查过或没有问题时都为 null），
  * 连的是哪个端点（`endpoint`：主机和端口，没有配时为 null；**只给主机和端口，不给路径和密钥**，就绪状态里
- * 显示连的是哪）。模型的检查和这些字段的取值由 #548 做。
+ * 显示连的是哪）。#548 起的取值：
+ * - 没有配置（`configured` 为 false）时 `reason` 写明缺的是哪一项（模型文件不在、不能解析、不支持的写法、`SFLY_ASSISTANT_MODEL`
+ *   没设或不在文件里、选中的提供方引用的环境变量没有值），**只有变量名和文件路径，没有任何值**；`endpoint`、`reachable`、
+ *   `checked_at`、`error_class` 都是 null；
+ * - 配好了：启动时和之后每 5 分钟试连一次、上一次连不上时每 30 秒复试一次（只建连接，不调模型），`reachable` 是上一次试连的结果（还没试过、提供方没写 `baseUrl`
+ *   因而不知道端点时为 null），`checked_at` 是它的时间，连不上时 `reason` 写「连不上模型端点 主机:端口：<原因>」、`error_class`
+ *   是 `unreachable` 或 `timeout`。
  */
 export const AssistantModelHealth = z.object({
 	configured: z.boolean(),
