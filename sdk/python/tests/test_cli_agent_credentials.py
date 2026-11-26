@@ -358,7 +358,7 @@ class TestRegisterDev:
     ) -> None:
         monkeypatch.setenv("SFLY_HOME", str(tmp_path / "sfly-home"))
         for logged_in_now in (True, False):
-            # 没有登录时地址的问题也先报（不是退出码 5：安装脚本会据此让人去登录，登录同样用这个地址）。
+            # 没有登录时地址的问题也先报：不是退出码 5（安装脚本据此让人去登录，登录用的是同一个地址）。
             if logged_in_now:
                 monkeypatch.setenv("SFLY_API_TOKEN", PERSONAL)
             else:
