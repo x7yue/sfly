@@ -26,6 +26,8 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process"
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = "0.14"
 tonic-prost = "0.14"
+# 地址按 URL 解析器的读法写出来（uv、reqwest 打印的就是它）：已知带凭据的地址按值打码要认出这些写法（secret.rs，#757）。
+url = "2"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
