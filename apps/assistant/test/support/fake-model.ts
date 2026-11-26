@@ -19,6 +19,8 @@ export class FakeModel {
 	fallback: Step[] = [{ text: "好的。" }];
 	/** 接下来的请求依次回这些 HTTP 错误（用完了照常回剧本）：看上游出错时助手服务怎么说。 */
 	failures: Array<{ status: number; body: string }> = [];
+	/** 按这是第几个请求（从 0 起）决定回不回 HTTP 错误；优先于 `failures`：造「先做了几步、之后一直出错」。 */
+	failWhen?: (index: number) => { status: number; body: string } | undefined;
 
 	private constructor(
 		private readonly server: Server,
@@ -38,8 +40,9 @@ export class FakeModel {
 			let text = "";
 			for await (const chunk of req) text += chunk;
 			const body = JSON.parse(text) as RecordedRequest & { stream?: boolean };
+			const failWhen = model.failWhen?.(model.requests.length);
 			model.requests.push(body);
-			const failure = model.failures.shift();
+			const failure = failWhen ?? model.failures.shift();
 			if (failure) {
 				res.writeHead(failure.status, { "content-type": "application/json" });
 				res.end(failure.body);
@@ -109,7 +112,7 @@ function chunks(reply: Step & { id?: string }): unknown[] {
 }
 
 /** 指向这个假模型的 pi 模型文件。 */
-export function modelsJson(model: FakeModel): string {
+export function modelsJson(model: { baseUrl: string }): string {
 	return JSON.stringify({
 		providers: {
 			fake: {
