@@ -125,6 +125,60 @@ describe("install.sh", () => {
 		expect(await systemctlCalls()).toEqual([""]);
 	});
 
+	it("下载 Agent 的 curl 不带 --netrc-optional：坏的 ~/.netrc 不会让以前装得上的机器失败，default 项里的凭据也不会发给控制面（#755）", async () => {
+		const real = (await promisify(execFile)("sh", ["-c", "command -v curl"])).stdout.trim();
+		await stub("curl", `echo "$*" >> '${join(dir, "curl.log")}'; exec '${real}' "$@"`);
+		// 一个读不出来的 ~/.netrc（是目录）：curl 带 --netrc-optional 时会因此失败（退出码 26）。
+		await mkdir(join(home, ".netrc"));
+		const run = await install(["--name", "lab-netrc", "--no-service"], {
+			SFLY_HOME: join(dir, "sfly"),
+		});
+		expect(run.code, run.stderr).toBe(0);
+		const calls = (await readFile(join(dir, "curl.log"), "utf8")).split("\n");
+		const download = calls.find((line) => line.includes("/agent/binaries/"));
+		expect(download).toBeDefined();
+		expect(download).not.toContain("netrc");
+	});
+
+	/**
+	 * 只跑 install.sh 里的 `user_agent_config`（把最后调用 main 的那一行去掉，接上 `tail`）：看它建的临时 curl、wget 配置。
+	 * `mirror` 是 install_dev 里按镜像设的变量。
+	 */
+	async function userAgentConfig(mirror: string, env: Record<string, string> = {}) {
+		const script = (await (await cp.fetch("/install.sh")).text()).replace(/\nmain "\$@"\s*$/, "\n");
+		const target = join(dir, mirror === "" ? "ua-plain" : "ua-mirror");
+		const file = join(dir, "script.sh");
+		await writeFile(
+			file,
+			`${script}\nuser_agent='acme-lab/1.0'\nmirror='${mirror}'\nuser_agent_config '${target}'\n`,
+		);
+		await promisify(execFile)("sh", [file], {
+			env: { PATH: process.env.PATH, HOME: home, ...env },
+		});
+		const mode = async (path: string) => (await stat(path)).mode & 0o777;
+		return {
+			curlrc: await readFile(join(target, ".curlrc"), "utf8"),
+			curlrcMode: await mode(join(target, ".curlrc")),
+			wgetrcMode: await mode(join(target, "wgetrc")),
+			dirMode: await mode(target),
+		};
+	}
+
+	it("临时的 .curlrc、wgetrc 只有当前用户读得到（照抄了用户自己的 ~/.curlrc）；用镜像时才有 netrc-optional，没有镜像时没有（#755）", async () => {
+		await writeFile(join(home, ".curlrc"), 'user = "alice:curlrc-secret"\n');
+		const withMirror = await userAgentConfig("https://mirror.example/github-release");
+		expect(withMirror.curlrcMode).toBe(0o600);
+		expect(withMirror.wgetrcMode).toBe(0o600);
+		expect(withMirror.dirMode).toBe(0o700);
+		expect(withMirror.curlrc).toContain('user = "alice:curlrc-secret"');
+		expect(withMirror.curlrc).toContain('user-agent = "acme-lab/1.0"');
+		expect(withMirror.curlrc).toContain("netrc-optional");
+		const plain = await userAgentConfig("");
+		expect(plain.curlrcMode).toBe(0o600);
+		expect(plain.curlrc).toContain('user-agent = "acme-lab/1.0"');
+		expect(plain.curlrc).not.toContain("netrc");
+	});
+
 	it("默认装到 ~/.sfly；aarch64 机器下载 aarch64 的 Agent", async () => {
 		await stub("uname", "case $1 in -m) echo aarch64 ;; *) echo Linux ;; esac");
 		const run = await install(["--name", "arm-01", "--no-service"]);
