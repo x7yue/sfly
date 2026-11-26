@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import {
 	ASSISTANT_ABORT_SETTLE_MS,
 	ASSISTANT_STOP_WAIT_MS,
+	ASSISTANT_TURN_MAX_MS,
 	type AssistantErrorCode,
 	type AssistantEvent,
 	type ErrorClass,
@@ -55,8 +56,8 @@ import type { UpstreamError } from "./upstream-error.js";
 export const TURN_LIMITS = {
 	/** 一轮最多调用模型的次数（数 pi 的 `turn_start`，第 41 次之前结束）。 */
 	modelCalls: 40,
-	/** 一轮最长的时间。 */
-	durationMs: 20 * 60 * 1000,
+	/** 一轮最长的时间（协议里的 {@link ASSISTANT_TURN_MAX_MS}：控制面的会话令牌按它定有效期）。 */
+	durationMs: ASSISTANT_TURN_MAX_MS,
 } as const;
 
 /**

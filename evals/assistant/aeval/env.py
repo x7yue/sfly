@@ -144,8 +144,33 @@ class Stack:
     assistant_model: str = "fake"
     # 控制面和助手服务共用的密钥：up 时随机生成，之后从助手容器读回来；不打印、不写文件。
     assistant_secret: str | None = field(default=None, repr=False)
-    # 初始管理员的密码：控制面每次建库（up、reset）时随机生成，只放在内存里。
+    # 初始管理员的密码：控制面每次建库（up、reset）时随机生成，放在内存里，
+    # 也写进 `admin_file`（0600，给人登录控制台用）。
     admin_password: str | None = field(default=None, repr=False)
+
+    @property
+    def admin_file(self) -> Path:
+        """这个槽位的初始管理员的登录名和密码（每次建库换一个）：只有属主能读的文件，
+        `up` 打印它的路径，不打印密码。"""
+        return DATA_HOME / f"admin-slot{self.slot}.txt"
+
+    def _write_admin_file(self) -> None:
+        """把初始管理员的登录名和密码写进 `admin_file`（0600）。控制面起来之后人要在浏览器里登录才能
+        建会话（#547），密码只在这个进程的内存里的话，人拿不到；写进文件、打印路径，密码本身不进终端、
+        不进命令行参数。"""
+        assert self.admin_password
+        path = self.admin_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # 先以 0600 创建（已经存在的文件 open 不改权限，所以之后再 chmod 一次）：
+        # 不让密码在任何时刻对别人可读。
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as file:
+            file.write(
+                f"# 槽位 {self.slot} 控制面的初始管理员（每次 up、reset 换密码；down 删掉）\n"
+                f"login_name={ADMIN_LOGIN}\n"
+                f"password={self.admin_password}\n"
+            )
+        os.chmod(path, 0o600)
 
     def name(self, role: str) -> str:
         return f"sfly-aeval-{self.slot}-{role}"
@@ -361,6 +386,7 @@ class Stack:
             self.wait_agents(timeout=180)
             self.wait_assistant_ready()
             log("助手就绪：工作台是 dev 上的 Agent")
+        log(f"初始管理员（登录控制台、建会话要先登录）：登录名和密码在 {self.admin_file}")
         log(f"环境就绪：控制面 {self.cp_url}")
 
     def down(self) -> None:
@@ -379,6 +405,7 @@ class Stack:
             d.docker("rm", "-f", self.name(role), check=False)
         d.docker("volume", "rm", self.name("cpdata"), check=False)
         d.docker("network", "rm", self.network, check=False)
+        self.admin_file.unlink(missing_ok=True)
 
     def _run(
         self,
@@ -444,6 +471,7 @@ class Stack:
         # 初始管理员（库里还没有任何用户时由环境变量建出来）：给 Agent 签发凭据要登录；
         # 密码每次建库都换一个新的，参数里只写变量名。
         self.admin_password = secrets.token_hex(16)
+        self._write_admin_file()
         env["SFLY_ADMIN_LOGIN"] = ADMIN_LOGIN
         secret_env: dict[str, str] = {ADMIN_PASSWORD_ENV: self.admin_password}
         if self.assistant:
