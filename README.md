@@ -38,7 +38,7 @@
 | `pnpm fetch:previous-agent [--simulate [版本]]` | 从 GitHub Release 下载上一个发布版本的 Agent 到 `out/previous-agent/`，给 `test:bundle` 的跨版本自更新测试用（需要 `gh` 已登录）；`--simulate` 用当前打包的 Agent 扮演上一版本，本地验证自更新的全流程（见 `docs/agents/branching-and-release.md`） |
 | `pnpm pack:agent <target>` / `pnpm pack:agents` | 构建并打包 musl 静态链接的 Agent（`x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl`；在别的架构上用 rust-lld 交叉编译，不运行产物）到 `out/agent/`；后者打包两个架构 |
 | `pnpm perf [--only <项>]` / `pnpm perf:soak [--duration 1h]` | 本地性能测试（不进 CI，docs/ARCHITECTURE.md §7.6）：构建 release Agent 与打包后的控制面，用本机 PostgreSQL 跑负载测试与基准测试（约 10 分钟），报告写到仓库之外的本机结果目录（默认 `~/.local/share/sfly/perf/<时间>/report.md`），并与本机上一次、仓库里最近一个版本的发版报告（`docs/perf/<版本>/`）对比。`pnpm perf:soak` 是长时负载测试（默认 1 小时，报告在结果目录的 `soak/` 下，中途 Ctrl-C 也会写报告）。加 `--release` 时通过后把报告存进 `docs/perf/<当前版本>/`。发版前与改动关键路径的 PR 必跑，见 `docs/agents/branching-and-release.md` |
-| `pnpm release:version show \| check \| set X.Y.Z` | 查看 / 校验 / 修改版本号（Agent、SDK、API 客户端、控制面共用一个版本号） |
+| `pnpm release:version show \| check \| set X.Y.Z` | 查看 / 校验 / 修改版本号（Agent、SDK、API 客户端、控制面、助手服务共用一个版本号） |
 
 ## 发布
 
@@ -47,8 +47,10 @@
 1. 在 `release/X.Y.Z` 分支上运行 `pnpm release:version set X.Y.Z`，开 PR；在这个分支上运行 `pnpm perf --release`，把存进 `docs/perf/X.Y.Z/` 的报告提交进 PR，描述里贴结论与变化（不通过不发版）。合入 `main`，等 `main` 上的 CI 通过。
 2. `git tag vX.Y.Z <main 上的提交> && git push origin vX.Y.Z`。
 3. 工作流检查 tag 与版本号一致、`docs/perf/X.Y.Z/report.json` 已提交（没跑性能测试就发不出）、提交在 `main` 上且 CI 已通过，然后构建并发布：
-   - 镜像 `ghcr.io/x7yue/sfly-server:X.Y.Z`（另有 `X.Y`、`latest` 标签，linux/amd64 与 linux/arm64）
-   - Release 附件：Agent `sfly-agent-X.Y.Z-{x86_64,aarch64}-unknown-linux-musl.tar.gz`、离线镜像 `sfly-server-X.Y.Z-linux-{amd64,arm64}.tar.gz`、SDK `sfly-X.Y.Z-py3-none-any.whl`、`SHA256SUMS`
+   - 镜像 `ghcr.io/x7yue/sfly-server:X.Y.Z`（另有 `X.Y`、`latest` 标签，linux/amd64 与 linux/arm64）；助手镜像 `ghcr.io/x7yue/sfly-assistant:X.Y.Z` 和工作台镜像 `ghcr.io/x7yue/sfly-workbench:X.Y.Z`（可选，compose 的 `assistant` profile 用，标签和架构同上）
+   - Release 附件：Agent `sfly-agent-X.Y.Z-{x86_64,aarch64}-unknown-linux-musl.tar.gz`、离线镜像 `sfly-server-X.Y.Z-linux-{amd64,arm64}.tar.gz`、`sfly-assistant-X.Y.Z-linux-{amd64,arm64}.tar.gz`、`sfly-workbench-X.Y.Z-linux-{amd64,arm64}.tar.gz`、SDK `sfly-X.Y.Z-py3-none-any.whl`、`SHA256SUMS`
+
+助手镜像由 `pnpm bundle:assistant` 的产物构建（`apps/assistant/Dockerfile`，只复制文件，没有 RUN），工作台镜像由 `deploy/workbench/` 构建（要 apt 装工具，arm64 部分在工作流里用 QEMU 构建）。工作台镜像里没有 Agent：Agent、uv、sfly 命令行来自控制面，所以它的内容不随版本变，只是每个版本都打同版本的标签，部署的人用同一个 `SFLY_VERSION`。三个镜像在 CI 的 `package` 里各有一条冒烟检查：`pnpm test:image`（控制面）、`pnpm test:image:assistant`（助手：`/health` 返回版本）、`pnpm test:image:workbench`（工作台连上控制面、装好 Agent、在线），再加 `pnpm test:compose`（用 `deploy/docker-compose.yml` 本身起 `--profile assistant`：三个服务都在、工作台在线、假的模型端点做完一个会话、删掉工作台容器再建不重装）。要在不通外网的网络里验证整套（照评测集的 `./aeval.sh up --offline --isolated`，镜像站只用缓存），手动运行 `pnpm heavy pnpm test:offline-stack`（第一次加 `--record` 联网录一遍缓存）；它会在本机占用几分钟的 CPU 和内存，不进 CI。
 
 只支持 `X.Y.Z`，不支持预发布版本（见 ADR 0010）。不使用 Actions Artifacts；失败时直接重新运行工作流，草稿 Release 会被复用。
 CI 用上一个 Release 的 Agent 验证它能在当前控制面上跑完任务并自更新，含义与失败时的处理见 `docs/agents/branching-and-release.md`「跨版本自更新测试」。
@@ -68,6 +70,7 @@ docker compose up -d
 
 - 镜像里是打成单文件的控制面、前端产物、数据库迁移、同版本的 SDK 运行时 wheel 和 API 客户端安装包；以 `node` 用户运行，数据（节点包、日志、产物）在卷 `/data`，启动时自动执行迁移，健康检查请求 `/api/health`。
 - 无法访问 ghcr.io 时，用 Release 附件里的离线镜像：`gunzip -c sfly-server-X.Y.Z-linux-amd64.tar.gz | docker load`。
+- 助手和工作台是可选的，不带 `--profile assistant` 时只有控制面：设置和步骤见下面「助手和工作台」。
 - 控制面是单进程设计，**同一个数据库只能运行一个实例**；控制面与 Agent 要升级到同一版本（镜像只带同版本的 SDK wheel）。
 - **升级时先停掉旧版控制面，再启动新版**，不要让两个版本同时连着同一个数据库：新版的迁移给场景、运行、Agent、节点包和飞书机器人加上了所属的项目（非空的列），迁移完成之后，旧版代码再插入运行或场景会因为缺这一列而失败。
 - 镜像（ADR 0012）：控制面统一配置 PyPI 镜像 `SFLY_PYPI_MIRROR` 和 GitHub Release 镜像 `SFLY_GITHUB_RELEASE_MIRROR`，在握手时下发给所有 Agent：Agent 从 GitHub Release 镜像安装 uv、下载 Python，从 PyPI 镜像安装节点包依赖。两项都没有默认值，不配置时 Agent 用 uv 的官方来源。内网用中科大镜像时：
@@ -144,6 +147,90 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
   - 环境准备失败（没有可用的 uv、安装 uv 失败、创建 venv 失败）时 Agent 以退出码 78 退出，标准错误打印失败的命令、完整输出和镜像地址（标明来自控制面还是本机覆盖），请把它报告给平台管理员。
 - 随后若 venv 里的 SDK 运行时版本与 Agent 自身版本不一致，Agent 从控制面下载同版本的 wheel，校验 sha256 后用 `uv pip install` 安装；版本一致时不重装。控制面没有对应版本的 wheel 时保留现状并在日志里告警。
 - 节点包依赖从控制面下发的 PyPI 镜像安装；Agent 上的 `--index-url` 优先。本机的 `--github-release-mirror`、`--python-install-mirror` 同样优先于下发的 GitHub Release 镜像和由它推导的 Python 下载镜像。
+
+### 助手和工作台
+
+助手（会话功能，ADR 0027）是可选的：compose 里放在 `assistant` profile 里，不带它时只有控制面（`docker compose config` 的输出和没有这两个服务时一样），不用助手的部署不带 pi。带上 `--profile assistant`（或 `COMPOSE_PROFILES=assistant`）多两个服务，**都不映射端口**：
+
+| 服务 | 镜像 | 卷 | 谁连得到它 |
+|---|---|---|---|
+| `sfly-assistant` | `ghcr.io/x7yue/sfly-assistant:<SFLY_VERSION>`：助手服务和 pi（Node） | `sfly-assistant-data`（会话目录）；模型文件只读挂载到 `/config/models.json`；内存上限 2 GiB | 同一个网络里的容器（含工作台）都连得到它的端口，但每个请求要带共享密钥 `SFLY_ASSISTANT_SECRET`：只有控制面有它，工作台没有 |
+| `sfly-workbench` | `ghcr.io/x7yue/sfly-workbench:<SFLY_VERSION>`：Debian slim 加 git、ripgrep、fd、jq、curl、procps、python3；**没有 Node，没有 pi，没有 Agent**，非 root 用户（uid 1000） | `sfly-workbench-home`（家目录）、`sfly-workbench-work`（工作区 `/work`） | 同一个网络里的控制面和助手服务：Agent 的能力端口没有认证（`agent/src/peer.rs`），所以不映射 |
+
+**开助手，按顺序做：**
+
+1. 在 `.env` 里设置（`deploy/.env.example` 里每一项都有说明）：
+
+   ```sh
+   SFLY_ASSISTANT_URL=http://sfly-assistant:8090   # compose 里助手服务的服务名；控制面和助手服务读同一个 SFLY_ASSISTANT_SECRET
+   SFLY_ASSISTANT_SECRET=<openssl rand -hex 24 的输出>
+   SFLY_WORKBENCH_AGENT=workbench                  # 工作台上那台 Agent 的名字：控制面用它找工作台，工作台容器用它给自己的 Agent 起名
+   SFLY_ASSISTANT_MODEL=gateway/<模型 id>          # 模型文件和这几项的写法见下面「助手的模型」
+   SFLY_ASSISTANT_MODELS_FILE=./assistant-models.json
+   MODEL_API_KEY=<模型的密钥>                      # 模型文件里 "$MODEL_API_KEY" 引用的变量，只传给助手容器
+   ```
+
+   `SFLY_WORKBENCH_TOKEN` 先留空，下一步才有。
+2. 先起控制面并建好管理员：`docker compose up -d`，用启动日志里的初始化码在 `/setup` 页建第一个平台管理员（见「登录与反向代理」前面的说明）。
+3. **给工作台签发它自己的 Agent 凭据**（不用共享令牌 `SFLY_AGENT_TOKEN`：共享令牌能冒充任何一台 Agent；Agent 凭据只对签发时指定的名字有效，泄露了吊销它就行）。在装了 `sfly` 命令行的机器上（Release 附件的 wheel，或别的开发机）：
+
+   ```sh
+   sfly login --server <控制面地址>        # 管理员登录
+   sfly api POST /agents/workbench/credentials
+   ```
+
+   响应里的 `token`（`sfly_agt_` 开头）是原值，**只显示这一次**，填进 `.env` 的 `SFLY_WORKBENCH_TOKEN`（`.env` 里写着凭据，权限设成只有部署的人读得到）。`workbench` 换成你在 `SFLY_WORKBENCH_AGENT` 里写的名字。等价的专用命令是 `sfly agent credentials issue workbench --token-only`（只把原值写到标准输出）。
+4. 起助手和工作台：`docker compose --profile assistant up -d`。第一次启动工作台时它从控制面装 Agent、uv 和 sfly 命令行，要一两分钟（下面「工作台容器」）。
+5. 确认：`docker compose --profile assistant ps` 里三个服务都在；控制台的 Agent 页上 `workbench` 在线、「与控制面一致」是「是」；「助手」页顶上的就绪状态是可以用（没有就绪时它写明缺什么：模型没配、工作台不在线……）。
+
+**工作台容器**（`deploy/workbench/`）：
+
+- **Agent 不烤进镜像**，来自控制面：入口脚本（`entrypoint.sh`，开头的注释写全了约定）从控制面（compose 里的服务名 `http://sfly:8080`）下载 `install.sh`，按用户文档「安装 Agent」的 `--dev` 方式装好（Agent、uv、sfly 命令行，版本和控制面一致），然后前台启动 Agent。Agent 之后自己自更新（ADR 0014），**`sfly` 命令行不会**（它钉在装时的版本），所以每次启动入口脚本还要对一下控制面的 `install.sh`，变了就重装（下面「已经装好」）。所以镜像只在操作系统工具变化时才不同。
+- **`SFLY_PUBLIC_URL` 写浏览器看到的地址，工作台容器也要连得到它。** 它同时决定登录 Cookie 的跨站检查（见下面「登录与反向代理」：从别的地址打开控制台，写请求会被当成没有登录）和 `/install.sh` 里写给 Agent 的控制面地址、网关地址（`SFLY_PUBLIC_GRPC_URL`，不设时取同一个主机的 50051）。**不要为了让工作台连得上把它改成服务名 `http://sfly:8080`**：浏览器和飞书卡片里的链接都会指向打不开的地址。让工作台容器连得上这个地址，在 `docker-compose.override.yml` 里二选一：
+
+  - 公开地址是 `http://<主机名>:8080`、网关是 50051（容器里的端口）：给 `sfly` 服务加一个和公开地址主机名相同的网络别名，容器里这个主机名就指到控制面容器：
+
+    ```yaml
+    services:
+      sfly:
+        networks:
+          default:
+            aliases: [sfly.example.com]   # SFLY_PUBLIC_URL 里的主机名
+    ```
+
+  - 公开地址经过宿主机上的反向代理（https、80、443……），或端口不是 8080 和 50051（宿主机映射的端口和容器里的不一样）：让工作台把这个主机名指到宿主机，连宿主机上发布出来的端口。**前提两条**：宿主机的防火墙放行从容器网段到这些端口的连接；反向代理监听的是所有地址，不只 `127.0.0.1`（容器是从宿主机的网桥地址连进来的）。公开地址写的是 IP 地址时通常什么都不用改（容器里本来就连得到）：
+
+    ```yaml
+    services:
+      sfly-workbench:
+        extra_hosts: ["sfly.example.com:host-gateway"]   # 主机名换成 SFLY_PUBLIC_URL 里的
+    ```
+
+  改了公开地址之后重启工作台容器（`docker compose --profile assistant restart sfly-workbench`）：入口脚本发现 `install.sh` 变了会重装，`agent.env` 里的地址随之更新。
+- **已经装好、控制面也没变就不重装。** 入口脚本的判断（全部满足才算装好）：`~/.sfly/.workbench-installed`（第一行 `name=` 是这台 Agent 的名字，第二行 `install_sh_sha256=` 是装的时候那份 `install.sh` 的 sha256）、`~/.sfly/bin/sfly-agent`、`~/.sfly/agent.env`、`~/.local/bin/sfly` 都在。标记是安装脚本成功结束之后才写的，所以上次装到一半被打断（容器在下载或装 uv 的中途被停掉）时下次启动会重装，不会把半套当成装好；卷里留着的下载到一半的临时文件会先清掉。装好之后每次启动再用几秒的超时取一次控制面的 `install.sh`（它的内容只取决于控制面的版本和配置，不随请求变）：和标记里的 sha256 不一样（控制面升级了，或改了 `SFLY_PUBLIC_URL`、镜像）就重装（幂等，工作区和装好的节点包环境不动）；一样就直接启动；取不到（控制面连不上）也直接启动，不挡着已经装好的 Agent。**重装失败也不挡着**（升级时镜像暂时不通、离线缓存缺新版 `sfly` 命令行的依赖、切到要认证的镜像还没挂 `.netrc`）：这条分支不先删标记，失败时打印原因，`sfly-agent` 和 `agent.env` 还在就照常启动已有的 Agent，标记不动、`sfly` 命令行还是旧版本，下次启动再试；看启动日志里的「重新安装没有成功」，解决之后重启容器。要强制重装：`docker compose --profile assistant exec sfly-workbench rm /home/workbench/.sfly/.workbench-installed` 再重启容器；要从头来，删掉 `sfly-workbench-home` 卷。
+- **删掉容器再建，工作区和环境都在**：家目录（里面有 `~/.sfly` 的 Agent、共享 venv、任务目录，`~/.local`、`~/.cache` 里的 uv 和 sfly 命令行）和 `/work` 都是命名卷；`docker compose --profile assistant rm -sf sfly-workbench` 之后再 `up -d`，Agent 不重装、已经装好的节点包环境还在。卷首次挂载时沿用镜像里的属主（uid 1000）；改成挂宿主机目录时要先 `chown -R 1000:1000` 它，写不了时入口脚本写明是哪个目录、怎么改，容器不会带着半个环境起来。
+- **换工作台凭据**：只是轮换（没有怀疑泄露）：签发新的、改 `.env`、`docker compose --profile assistant up -d` 重建工作台；每次启动都把环境里的凭据交给 Agent（环境变量优先于 `agent.env`），不用重装。**凭据可能已经在工作台上泄露时（最常见的是模型把它读走了），只换凭据不够**：家目录卷里的 Agent 二进制、`~/.local/bin`、`agent.env` 都是模型写得了的，入口脚本下次启动会执行卷里的 Agent 二进制、把新凭据交给它，模型换掉的程序就拿到了新凭据。要这样做：① 吊销旧凭据（`sfly agent credentials revoke <名称> <凭据 id>`）；② `docker compose --profile assistant rm -sf sfly-workbench`，再删掉家目录卷 `sfly-workbench-home`（`docker volume rm <compose 项目名>_sfly-workbench-home`）；**`/work` 里的内容当作不可信**（脚本、`.git` 里的钩子和配置都可能被改过），要留的先审过再拷出来；③ 签发新凭据、改 `.env`、`up -d`：第一次启动重新从控制面装。
+- **控制面升级之后**：`SFLY_VERSION` 改成新版本，`docker compose --profile assistant up -d`（三个服务的镜像标签都变了，都会重建）；工作台起来时发现控制面的 `install.sh` 变了，重装：Agent 二进制、`agent.env` 和 `sfly` 命令行换成新版本。**只升级了控制面、工作台容器没有重建时**（例如镜像标签用的是 `latest`），要自己重启它：`docker compose --profile assistant restart sfly-workbench`。不要省这一步：`sfly` 命令行和控制面版本不一致时会提示「重新运行 install.sh --dev」，工作台上的模型照做、又不带 `--name`，会向控制面注册一台新的开发 Agent、改掉 `agent.env`。
+- **凭据**：`SFLY_WORKBENCH_TOKEN` 只传给工作台这一个服务（不进控制面和助手容器的环境，不写进镜像、不进日志）；入口脚本经环境变量 `SFLY_TOKEN`（不是命令行参数，`ps` 看不到）把它交给安装脚本和 Agent，并把自己的变量从环境里去掉；Agent 起的命令的环境里没有它。**但同一枚凭据还在这几处，工作台上的模型（同一个系统用户）都读得到**：`~/.sfly/agent.env`；Agent 进程的环境（`/proc/<Agent 的 pid>/environ`）；容器的 1 号进程（`docker-init`）的环境（`/proc/1/environ`：容器创建时的环境，里面一直有 `SFLY_WORKBENCH_TOKEN`，入口脚本去不掉）。这是 ADR 0029 的已知边界：凭据只对这一个名字有效，不能用来冒充别的 Agent；泄露了怎么办见上面「换工作台凭据」。入口脚本自己用的命令（`cat`、`curl`、`sh`……）只在系统目录里找，不会执行家目录里模型放的同名程序；**但这只管入口脚本自己，卷里的程序碰得到凭据**：`install.sh` 重装时在系统目录里找不到 `uv` 会用 `~/.local/bin/uv`（模型改标记就能逼出一次重装），它和卷里的 Agent 二进制一样在 exec Agent 之前执行、环境里有 `SFLY_TOKEN`。这是同一个已知边界：家目录卷里模型写得了的程序会拿到凭据，所以凭据可能泄露时要删卷（上面「换工作台凭据」）。
+- **出网**：工作台现在出网不受限（出网名单是 #498）：模型的命令能访问工作台容器能访问到的一切网络，包括内网。控制面所在的网络里有不该被它碰到的东西时，现在要用网络本身（防火墙、单独的 Docker 网络）挡。
+
+**离线部署**：先加载三个镜像附件（`gunzip -c sfly-server-X.Y.Z-linux-amd64.tar.gz | docker load`，助手和工作台同样）。工作台装 Agent、uv、Python 包走控制面下发的镜像（上面「镜像」一条的 `SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR`，内网用共享目录做镜像时写 `file://` 地址），Agent 本身来自控制面镜像，所以工作台容器不需要出网，只要连得到控制面和镜像；助手容器里的 pi 用 `--offline` 启动、只启用读、写、编辑、命令四个工具，不会去下载 `rg`、`fd`。只有助手容器要连得到模型端点（见下面「助手的模型」）。
+
+**镜像要认证时怎么配工作台**（私有索引、内网镜像站要用户名密码）：控制面不再把带凭据的镜像地址写进不用登录就能读的 `/install.sh`（#755），工作台上的安装脚本靠 `~/.netrc` 认证。工作台的家目录是卷，第一次启动时里面没有 `.netrc`：装 uv 和 `sfly` 命令行会 401、安装失败、容器反复重启。所以在 `docker-compose.override.yml` 里把一个 uid 1000 读得到的 netrc 只读挂进去：
+
+```yaml
+services:
+  sfly-workbench:
+    volumes:
+      - type: bind
+        source: ./workbench.netrc   # 宿主机上的文件：属主 uid 1000、权限 600（chown 1000:1000 workbench.netrc && chmod 600 workbench.netrc）
+        target: /home/workbench/.netrc
+        read_only: true
+```
+
+文件里每个镜像主机一段：`machine <镜像主机>`、`login <用户名>`、`password <密码>`（PyPI 镜像和 GitHub Release 镜像不在同一台主机时各写一段）。**这个文件工作台上的模型读得到**；控制面的镜像地址带用户名密码时，Agent 握手拿到的是带凭据的原值，装节点包依赖时 `uv` 的 `--default-index` 参数里就是它，`ps` 看得到（`agent/src/install.rs`；Agent 写进日志的地址里是 `***`，但进程参数里是原值）。两种配法凭据都在模型够得着的地方：**给工作台单独一个只读、最小权限的镜像账号，不要用别处也在用的账号**。
+
+**助手容器的内存**：助手服务同时最多 8 个 pi 进程（`apps/assistant/src/sessions.ts` 的 `MAX_PROCESSES`，到了上限先关掉最久没用的空闲进程），容器上限 2 GiB（compose 的 `mem_limit: 2g`）。数字按完整会话算：8 个进程 × 约 194 MiB（一个 pi 进程跑完整的一个会话，峰值 191–194 MiB，量的是 `VmHWM`）≈ 1.55 GiB，加上助手服务自己和读写，上限留出约 0.45 GiB 的余量。**这是用假的模型端点量到的下限，不是真实模型的数**：真实模型的上下文更长，每个进程的峰值只会更高；用很短的一轮（探针）量到的每个进程只有约 141 MiB（空闲常驻）到 162 MiB（一轮峰值），也不要拿它定上限。内存紧、会话多时，容器可能被内核杀掉（Docker 按 `restart` 策略重启它，正在做的一轮中断）：这时在 `docker-compose.override.yml` 里调大 `sfly-assistant` 的 `mem_limit`，上线之前用真实模型和真实长度的会话量一次。
 
 ### 助手的模型
 

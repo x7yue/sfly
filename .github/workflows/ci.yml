@@ -139,10 +139,11 @@ jobs:
         run: pnpm test:ts
 
   # 发布用的单文件控制面和镜像（ADR 0010、0011）：用打包后的控制面提供的 install.sh 安装 Agent 并跑通一条链，
-  # 上一个 Release 的 Agent 在它上面跑完任务后自更新，镜像能启动、通过健康检查并带着两个架构的 Agent。
+  # 上一个 Release 的 Agent 在它上面跑完任务后自更新，镜像能启动、通过健康检查并带着两个架构的 Agent；
+  # 助手镜像起得来、/health 返回版本，工作台镜像连上控制面镜像后装好 Agent、在线，compose 的 assistant profile 起得来（#549）。
   package:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:18
@@ -195,6 +196,16 @@ jobs:
         run: pnpm test:bundle
       - name: Image smoke test
         run: pnpm test:image
+      # 助手镜像和工作台镜像（ADR 0027、#549）：助手镜像起来后 /health 返回版本；工作台镜像连上刚才的控制面镜像，装好 Agent、在线。
+      - name: Bundle assistant
+        run: pnpm bundle:assistant
+      - name: Assistant image smoke test
+        run: pnpm test:image:assistant
+      - name: Workbench image smoke test
+        run: pnpm test:image:workbench
+      # deploy/docker-compose.yml 本身：--profile assistant 起三个服务，工作台在线，假的模型端点做完一个会话，删掉工作台容器再建。
+      - name: Compose smoke test
+        run: pnpm test:compose
 
   # main 与 dev 的规则集要求名为 check 与 e2e 的检查通过（docs/agents/branching-and-release.md）：
   # 上面四个 job 全部成功才算 check 通过，拆分或合并 job 时不用改规则集。
