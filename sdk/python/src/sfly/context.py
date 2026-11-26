@@ -398,6 +398,13 @@ def _shown(value: object) -> str:
     return text if len(text) <= 60 else f"<{type(value).__name__}，{len(text)} 个字符>"
 
 
+def _dumps(event: Any) -> str:
+    """事件写成一行的样子（不含换行）：字符串里的中文不转义。写入和算大小（`sfly.actions`
+    里一份摘要的
+    字节预算）用同一个函数，量出来的就是写出去的。"""
+    return json.dumps(event, ensure_ascii=False, default=str)
+
+
 class _EventWriter:
     """把事件逐行追加写入事件文件；多线程同时写也保证每行完整。"""
 
@@ -411,7 +418,7 @@ class _EventWriter:
     def write(self, event: dict[str, Any]) -> None:
         if self._path is None:
             return
-        line = (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+        line = (_dumps(event) + "\n").encode("utf-8")
         with self._lock:
             if self._fd is None:
                 self._fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)

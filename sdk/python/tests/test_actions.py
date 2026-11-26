@@ -35,12 +35,17 @@ from action_nodes import (
 
 from sfly import Context, TaskInfo
 from sfly.actions import (
+    _NAME_ENTRY_OVERHEAD,
     MAX_NAME_CHARS,
     MAX_REASON_CHARS,
+    MAX_SUMMARY_BYTES,
     MAX_SUMMARY_NAMES,
     MAX_VALUE_CHARS,
+    NAMES_BUDGET_BYTES,
     TRANSPORT_MARGIN_CHARS,
+    Actions,
 )
+from sfly.context import _dumps
 from sfly.testing import ActionRecord, ActionSummary, Execution, run_node
 
 
@@ -568,10 +573,12 @@ def test_the_summary_lists_only_the_first_1000_names_and_the_names_table_stops_g
     tmp_path: Path,
 ) -> None:
     """名称的种类不设上限的话，摘要（每秒一份）和 SDK 进程里记名称的表都随种类数一直涨（#694）：
-    摘要只列前 MAX_SUMMARY_NAMES 种（和控制面存下的一致），记名称的表也不再增长。"""
+    摘要只列前 MAX_SUMMARY_NAMES 种（和控制面存下的一致），记名称的表也不再增长；
+    没列出的名称合在一起
+    写成 `unlisted`，名称表不是全部（`names_complete` 为 false）。"""
     ctx, events = make_context(tmp_path)
     count = MAX_SUMMARY_NAMES + 1500
-    tail = "名" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS - 6)  # 每种名称取传输上限的最长
+    tail = "名" * 50  # 名称不太长：名称表放得下 1000 种，停下来的是种类数
     for i in range(count):
         ctx.mark(f"{i:05d}-{tail}")
 
@@ -588,38 +595,49 @@ def test_the_summary_lists_only_the_first_1000_names_and_the_names_table_stops_g
     # 合计、标记的个数、有明细的个数照常准确；每个标记都有明细（没有超过合计的上限）
     assert (summary["total"], summary["marks"], summary["reported"]) == (count, count, count)
     assert len(only(events(), "mark")) == count
-    # 摘要的大小有上界：最多 MAX_SUMMARY_NAMES 种，每种最长 4160 个字符
-    line_bytes = max(
-        len(json.dumps(e, ensure_ascii=False).encode()) for e in only(events(), "action_summary")
+    # 没列出的名称：个数、失败数、有明细的个数合在一起；名称表不是全部
+    assert summary["names_complete"] is False
+    assert summary["unlisted"] == {"total": 1500, "failed": 0, "reported": 1500}
+    assert summary["failed"] == 0
+    # 每一份摘要的大小都在字节预算以内
+    assert all(
+        len(_dumps(e).encode()) + 1 <= MAX_SUMMARY_BYTES for e in only(events(), "action_summary")
     )
-    assert line_bytes < 20 * 1024 * 1024
     # 警告（名称超过文档里的上限的那一条不算）：第 101 种一次，第 1001 种一次，
-    # 写明从第几种起不进摘要
+    # 写明从这一种起不进名称表
     warnings = [
         e["message"] for e in only(events(), "log") if e["level"] == "warn" and "种" in e["message"]
     ]
     assert len(warnings) == 2, warnings
     assert "100" in warnings[0] and "字段" in warnings[0]
-    assert str(MAX_SUMMARY_NAMES) in warnings[1] and "不进摘要" in warnings[1]
+    assert str(MAX_SUMMARY_NAMES) in warnings[1] and "名称表" in warnings[1]
 
 
-def test_names_over_the_summary_cap_still_have_details_but_no_per_name_cap_and_can_fail(
+def test_a_summary_with_every_name_listed_says_so(tmp_path: Path) -> None:
+    ctx, events = make_context(tmp_path)
+    ctx.action.start("甲").fail("拒单")
+    ctx.action.flush()  # 第一份是动作开始时发的；失败的变化不满一秒，靠这里再发一次
+    summary = only(events(), "action_summary")[-1]
+    assert (summary["failed"], summary["names_complete"], summary["unlisted"]) == (1, True, None)
+    assert (summary["running_complete"], summary["lists_trimmed"]) == (True, False)
+
+
+def test_names_over_the_summary_cap_are_one_name_under_the_per_name_cap_and_failures_backfill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """超过 MAX_SUMMARY_NAMES 种之后的名称共用一份计数（不进摘要）：它们的明细照常上报，不受
-    每种名称的上限（没有单独的计数可以数），只受合计的上限约束；失败的动作照常结束。"""
+    """进不了名称表的名称共用一份计数，当作一种名称：同样受每种名称的上限，之后只计数；失败的动作
+    照常补发明细（带 `late`），直到合计的上限（#726）。"""
     monkeypatch.setattr("sfly.actions.MAX_SUMMARY_NAMES", 3)
     monkeypatch.setattr("sfly.actions.MAX_PER_NAME", 2)
     ctx, events = make_context(tmp_path)
 
     for name in ("甲", "乙", "丙"):
         ctx.action.start(name).end()
-    for _ in range(4):  # 在表里的名称：每种名称的上限照旧（2 个）
+    for _ in range(4):  # 在表里的名称：每种名称的上限（2 个）
         ctx.action.start("甲").end()
-    for name in ("丁", "戊", "丁", "戊", "丁", "戊"):  # 超过 3 种之后的：不受每种名称的上限
+    for name in ("丁", "戊", "丁", "戊", "丁", "戊"):  # 不在表里的：合在一起也只上报 2 个
         ctx.action.start(name).end()
-    failed = ctx.action.start("己")
-    failed.fail("拒单")  # 超过 3 种之后的名称失败：结束事件照常写
+    ctx.action.start("己").fail("拒单")  # 超过上限之后失败：补发明细
 
     wait_for(lambda: only(events(), "action_summary")[-1]["total"] == 14)
     summary = only(events(), "action_summary")[-1]
@@ -628,20 +646,21 @@ def test_names_over_the_summary_cap_still_have_details_but_no_per_name_cap_and_c
         ("乙", 1, 1),
         ("丙", 1, 1),
     ]
-    starts = [e["name"] for e in only(events(), "action_start")]
-    assert starts.count("甲") == 2  # 表里的名称：只上报 2 个
-    assert [n for n in starts if n in ("丁", "戊", "己")] == [
-        "丁",
-        "戊",
-        "丁",
-        "戊",
-        "丁",
-        "戊",
-        "己",
-    ]
+    assert summary["unlisted"] == {"total": 7, "failed": 1, "reported": 3}  # 2 个加上补发的 1 个
+    assert summary["failed"] == 1 and summary["names_complete"] is False
+    assert summary["reported"] == 3 + 2 + 1 + 1  # 表里 1+1+1，甲多的 1，没列出的 2 加补发的 1
+    starts = only(events(), "action_start")
+    assert [e["name"] for e in starts if e["name"] in ("丁", "戊", "己")] == ["丁", "戊", "己"]
+    late = [e for e in starts if e.get("late")]
+    assert [e["name"] for e in late] == ["己"]
     ends = only(events(), "action_end")
     assert ends[-1]["result"] == "failed" and ends[-1]["reason"] == "拒单"
     assert [r["name"] for r in summary["recent_failed"]] == ["己"]
+    # 警告：没有列出的名称合在一起写一次，不指名称
+    warnings = [e["message"] for e in only(events(), "log") if e["level"] == "warn"]
+    shared = [w for w in warnings if "没有列出的名称" in w and "已上报 2 个" in w]
+    assert len(shared) == 1, warnings
+    assert not any("丁" in w or "戊" in w or "己" in w for w in warnings), warnings
 
 
 def test_names_over_the_summary_cap_are_still_limited_by_the_total_cap(
@@ -649,15 +668,13 @@ def test_names_over_the_summary_cap_are_still_limited_by_the_total_cap(
 ) -> None:
     """合计的上限照旧约束它们；只计数时的警告写的是合计，不是「某种名称超过每种名称的上限」。"""
     monkeypatch.setattr("sfly.actions.MAX_SUMMARY_NAMES", 2)
-    monkeypatch.setattr("sfly.actions.MAX_PER_NAME", 2)
+    monkeypatch.setattr("sfly.actions.MAX_PER_NAME", 100)
     monkeypatch.setattr("sfly.actions.MAX_TOTAL", 6)
     ctx, events = make_context(tmp_path)
 
     ctx.action.start("甲").end()
     ctx.action.start("乙").end()
-    for _ in range(
-        4
-    ):  # 丙起不在表里：共用一份计数，不受每种名称的上限（2）约束，到合计的上限（6）为止
+    for _ in range(4):  # 丙起不在表里：到合计的上限（6）为止
         ctx.action.start("丙").end()
     ctx.action.start("丁").end()  # 合计已满：只计数
     ctx.action.start("己").fail("拒单")  # 失败的动作也只计数，不抛错
@@ -673,10 +690,236 @@ def test_names_over_the_summary_cap_are_still_limited_by_the_total_cap(
         "丙",
         "丙",
     ]
+    assert summary["unlisted"] == {"total": 6, "failed": 1, "reported": 4}
     assert [r["name"] for r in summary["recent_failed"]] == ["己"]
     warnings = [e["message"] for e in only(events(), "log") if e["level"] == "warn"]
-    assert not any("已上报 2 个" in w for w in warnings), warnings  # 没有「每种名称」的上限可言
     assert sum("已上报 6 个" in w for w in warnings) == 1, warnings  # 合计的上限：整个任务一次
+    assert not any("没有列出的名称" in w and "已上报 100 个" in w for w in warnings), warnings
+
+
+def test_the_failed_total_counts_failures_of_names_that_are_not_in_the_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """控制台的失败数用 `failed`：只数名称表里各项会少算没进表的名称的失败（#726）。"""
+    monkeypatch.setattr("sfly.actions.MAX_SUMMARY_NAMES", 2)
+    ctx, events = make_context(tmp_path)
+    ctx.action.start("甲").fail("一")
+    ctx.action.start("乙").end()
+    for name in ("丙", "丁", "丙"):  # 没进表
+        ctx.action.start(name).fail("二")
+
+    wait_for(lambda: only(events(), "action_summary")[-1]["total"] == 5)
+    summary = only(events(), "action_summary")[-1]
+    assert [n["failed"] for n in summary["names"]] == [1, 0]  # 表里的只有 1 个
+    assert summary["unlisted"]["failed"] == 3
+    assert summary["failed"] == 4  # 全部名称合计
+    assert len(summary["recent_failed"]) == 4
+
+
+# ---- 一份摘要的字节上界（#726）----
+
+
+class _Sink:
+    """记下每份摘要序列化之后的字节数（含换行）和最后一份摘要；别的事件丢掉。"""
+
+    def __init__(self) -> None:
+        self.last: dict[str, Any] | None = None
+        self.sizes: list[int] = []
+
+    def write(self, event: dict[str, Any]) -> None:
+        if event["type"] == "action_summary":
+            self.last = event
+            self.sizes.append(len(_dumps(event).encode()) + 1)
+
+
+def sink_actions() -> tuple[Actions, _Sink]:
+    sink = _Sink()
+    seen: set[tuple[str, str]] = set()
+
+    def warn(reason: str, name: str, message: str) -> None:
+        seen.add((reason, name))
+
+    actions = Actions(sink, warn)  # type: ignore[arg-type]
+    actions.warned = seen  # type: ignore[attr-defined]
+    return actions, sink
+
+
+def fill_with_the_longest_texts(actions: Actions, char: str, *, names: int) -> None:
+    """名称、字段的键和值、失败原因都取 SDK 能发出的最长：正在做的 60 个（超过列表的 50 个）、
+    结束的 25 个（其中 6 个失败，超过最近失败的 5 个）、`names` 种名称各一个标记。"""
+    name = char * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS - 8)
+    fields = {
+        f"{k}{char * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS - 1)}": char
+        * (MAX_VALUE_CHARS + TRANSPORT_MARGIN_CHARS)
+        for k in range(8)
+    }
+    reason = char * (MAX_REASON_CHARS + TRANSPORT_MARGIN_CHARS + 100)
+    for i in range(60):
+        actions.start(f"进行中{i:02d}{name}", **fields)  # type: ignore[arg-type]
+    for i in range(25):
+        handle = actions.start(f"结束{i:02d}{name}", **fields)  # type: ignore[arg-type]
+        handle.fail(reason) if i < 6 else handle.end()
+    for i in range(names):
+        actions.mark(f"{i:05d}{name}")
+    actions.flush()
+
+
+@pytest.mark.parametrize(
+    "char", ["名", "\U00020000", "\x01"], ids=["三字节", "四字节", "要转义的控制字符"]
+)
+def test_a_summary_never_exceeds_the_byte_budget_whatever_the_texts_are(char: str) -> None:
+    """名称、字段、失败原因在传输时各自可以比显示的上限多四千多个字符（3 字节、4 字节、转义成 6
+    字节的
+    字符各有各的写出来的大小）：1000 种名称加三个列表列满，不设字节预算时是几十 MiB。
+    按写出去的字节算。"""
+    actions, sink = sink_actions()
+    fill_with_the_longest_texts(actions, char, names=MAX_SUMMARY_NAMES + 200)
+
+    assert sink.last is not None
+    assert max(sink.sizes) <= MAX_SUMMARY_BYTES
+    summary = sink.last
+    # 名称表放不下：按第一次出现的先后进，进了就不出；剩下的合并成 unlisted
+    assert summary["names_complete"] is False
+    assert 0 < len(summary["names"]) < MAX_SUMMARY_NAMES
+    assert (
+        summary["unlisted"]["total"] + sum(n["total"] for n in summary["names"]) == summary["total"]
+    )
+    names_bytes = sum(len(_dumps(n).encode()) + 2 for n in summary["names"])
+    assert names_bytes <= NAMES_BUDGET_BYTES
+    # 最近失败的最后省：名称表放不下三个列表时，它们里至少还留着最近失败的
+    assert summary["failed"] == 6
+    assert summary["recent_failed"], "最近失败的先留"
+    # 列表装不下时标明
+    if len(summary["running"]) < 50 or len(summary["recent"]) < 20:
+        assert summary["lists_trimmed"] is True
+    if len(summary["running"]) < 60:
+        assert summary["running_complete"] is False
+
+
+def test_normal_names_and_full_lists_fit_far_below_the_budget_and_nothing_is_trimmed() -> None:
+    """名称几十个字符的正常用法：1000 种名称加三个列表列满，远小于预算，行为不变。"""
+    actions, sink = sink_actions()
+    for i in range(920):  # 加上下面的 75 个，名称一共不超过 1000 种
+        actions.mark(f"订单{i:04d}的处理与回报流程节点名称")
+    for i in range(50):
+        actions.start(f"进行中{i}", 订单=i, 价格="1.5", 账户="acc-1")
+    for i in range(25):
+        h = actions.start(f"结束{i}", 订单=i)
+        h.fail("拒单：余额不足") if i < 8 else h.end()
+    actions.flush()
+
+    assert sink.last is not None
+    summary = sink.last
+    assert (summary["names_complete"], summary["unlisted"]) == (True, None)
+    assert (len(summary["running"]), len(summary["recent"]), len(summary["recent_failed"])) == (
+        50,
+        20,
+        5,
+    )
+    assert (summary["running_complete"], summary["lists_trimmed"]) == (True, False)
+    assert sink.sizes[-1] < MAX_SUMMARY_BYTES // 2  # 量到的约 0.3 MiB
+
+
+def test_when_the_lists_do_not_fit_the_lowest_priority_is_dropped_first_and_it_is_marked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """三个列表按「最近失败的、正在做的、最近结束的」的先后留；一项装不下就停，后面的列表不再装。"""
+    actions, sink = sink_actions()
+    actions.mark("m")
+    for i in range(3):
+        actions.start(f"进行中{i}", 说明="x" * 100)
+    for i in range(4):
+        actions.start(f"结束{i}", 说明="x" * 100).end()
+    for i in range(2):
+        actions.start(f"失败{i}", 说明="x" * 100).fail("拒单")
+    actions.flush()
+    assert sink.last is not None
+    full = sink.last
+
+    def cost(entries: list[dict[str, Any]]) -> list[int]:
+        return [len(_dumps(e).encode()) + 2 for e in entries]
+
+    failed, running, recent = (
+        cost(full["recent_failed"]),
+        cost(full["running"]),
+        cost(full["recent"]),
+    )
+    assert (len(failed), len(running), len(recent)) == (2, 3, 6)  # 结束的 4 个加失败的 2 个
+    # 装列表之前的大小（两个标记都按最长的写：`false`）
+    empty = {**full, "running": [], "recent": [], "recent_failed": [], "running_complete": False}
+    base = len(_dumps(empty).encode()) + 1
+
+    def with_room(room: int) -> dict[str, Any]:
+        monkeypatch.setattr("sfly.actions.MAX_SUMMARY_BYTES", base + room)
+        actions._dirty = True
+        actions.flush()
+        assert sink.last is not None
+        assert sink.sizes[-1] <= base + room  # 实际的大小不超过预算，差一个字节也不行
+        return sink.last
+
+    # 差一个字节：最近结束的少最后一项（最老的），别的都在
+    a = with_room(sum(failed) + sum(running) + sum(recent) - 1)
+    assert (len(a["recent_failed"]), len(a["running"]), len(a["recent"])) == (2, 3, 5)
+    assert (a["lists_trimmed"], a["running_complete"]) == (True, True)
+    # 少到正在做的最后一个装不下：最近结束的一项也不留（优先级低的先省），最近失败的都在
+    b = with_room(sum(failed) + sum(running) - 1)
+    assert (len(b["recent_failed"]), len(b["running"]), len(b["recent"])) == (2, 2, 0)
+    assert (b["lists_trimmed"], b["running_complete"]) == (True, False)
+    # 只装得下最近失败的第一项（最近的）
+    c = with_room(failed[0])
+    assert [e["name"] for e in c["recent_failed"]] == ["失败1"]
+    assert (c["running"], c["recent"]) == ([], [])
+    assert (c["lists_trimmed"], c["running_complete"]) == (True, False)
+    # 什么都装不下：三个列表都空，摘要的其余部分照旧
+    d = with_room(0)
+    assert (d["recent_failed"], d["running"], d["recent"]) == ([], [], [])
+    assert (d["total"], d["failed"]) == (full["total"], 2)
+
+
+def test_running_complete_says_whether_every_running_action_is_listed() -> None:
+    actions, sink = sink_actions()
+    for i in range(50):
+        actions.start(f"a{i}")
+    actions.flush()
+    assert sink.last is not None and sink.last["running_complete"] is True  # 正好 50 个：全部
+    actions.start("a50")
+    actions._dirty = True
+    actions.flush()
+    assert sink.last["running_complete"] is False and len(sink.last["running"]) == 50
+
+
+def test_a_name_that_does_not_fit_the_names_budget_goes_to_the_shared_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """名称太长、名称表的字节预算放不下时，这一种并进共用的一份（警告一次）；后面放得下的名称照常进表。"""
+    monkeypatch.setattr("sfly.actions.NAMES_BUDGET_BYTES", 1200)
+    actions, sink = sink_actions()
+    actions.mark("短")
+    actions.mark("长" * 900)  # 放不下
+    actions.mark("长" * 901)  # 放不下，另一种
+    actions.mark("又短")
+    actions.mark("长" * 900)  # 同一种名称再来：还是共用的那一份
+    actions.flush()
+    assert sink.last is not None
+    assert [n["name"] for n in sink.last["names"]] == ["短", "又短"]
+    assert sink.last["unlisted"] == {"total": 3, "failed": 0, "reported": 3}
+    assert sink.last["names_complete"] is False
+    warned = actions.warned  # type: ignore[attr-defined]
+    assert [r for r, _ in warned if r == "names-over-bytes"] == ["names-over-bytes"]
+    assert len(actions._names) == 2  # 记名称的表也没有记它们
+
+
+def test_the_names_budget_bounds_every_table_entry_even_with_the_biggest_counters() -> None:
+    """名称表一项最多占的字节（计数取最大的位数）：进表时按它记账，所以名称表的大小有上界。"""
+    entry = {
+        "name": "",
+        "total": 10**15 - 1,
+        "failed": 10**15 - 1,
+        "reported": 10**15 - 1,
+        "capped_ts": 10**15 - 1,
+        "capped_mono": 10**15 - 1,
+    }
+    assert len(_dumps(entry).encode()) - 2 + 2 <= _NAME_ENTRY_OVERHEAD
 
 
 def test_warnings_never_quote_the_cut_text(tmp_path: Path) -> None:
@@ -799,6 +1042,9 @@ def test_the_summary_event_lists_names_running_recent_and_recent_failed(tmp_path
         "reported": 1,
         "capped_ts": None,
         "capped_mono": None,
+        "failed": 0,
+        "names_complete": True,
+        "unlisted": None,
         "names": [
             {
                 "name": "等回报",
@@ -809,6 +1055,8 @@ def test_the_summary_event_lists_names_running_recent_and_recent_failed(tmp_path
                 "capped_mono": None,
             }
         ],
+        "running_complete": True,
+        "lists_trimmed": False,
         "running": [
             {"id": 1, "parent": None, "depth": 0, "name": "等回报", "fields": {"订单": "1"}}
             | {"ts": running["ts"], "mono": running["mono"]}

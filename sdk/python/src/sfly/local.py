@@ -187,7 +187,9 @@ class ActionSummary:
     - `total`：记录的动作和标记的个数，`marks`：其中标记的个数，`reported`：上报了明细的个数；
       `capped_ts`：第一个因为合计已满而被丢弃明细的时刻（之后仍可能有已上报的明细），
       没有丢弃过时为 None；
-    - `names`：每种名称的计数；
+    - `names`：每种名称的计数（最多 1000 种，名称很长时更少）；`names_complete` 为 false 时
+      还有名称没有列出，它们合计的个数、失败数、有明细的个数在 `unlisted`；
+    - `failed`：全部名称合计失败的动作数（包括没有列出的名称）；
     - `running`：正在做的动作（最多 50 个，层级浅的优先，按 ID 排列）；
     - `recent`：最近结束的 20 个动作，最近的在前；`recent_failed`：最近失败的 5 个，最近的在前。
 
@@ -203,6 +205,10 @@ class ActionSummary:
     running: list[ActionRecord]
     recent: list[ActionRecord]
     recent_failed: list[ActionRecord]
+    failed: int = 0
+    names_complete: bool = True
+    #: 没有列出的名称合在一起的 `total`、`failed`、`reported`；名称都列出了时为 None。
+    unlisted: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -511,6 +517,13 @@ def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
         running=[_summary_record(e) for e in event["running"]],
         recent=[_summary_record(e) for e in event["recent"]],
         recent_failed=[_summary_record(e) for e in event["recent_failed"]],
+        failed=int(event.get("failed", 0)),
+        names_complete=bool(event.get("names_complete", True)),
+        unlisted=(
+            {key: int(value) for key, value in event["unlisted"].items()}
+            if event.get("unlisted")
+            else None
+        ),
     )
 
 
