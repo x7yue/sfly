@@ -34,10 +34,22 @@ export const ACTION_LIMITS = {
 	/** 全部名称合计最多记录的明细个数。 */
 	total: 100_000,
 	/**
-	 * 摘要里最多列出的名称种类，按第一次出现的先后：SDK 只列这么多种（之后新的名称不进摘要、不单独计数，SDK 里记名称的表也
-	 * 不再增长），控制面也只存这么多种。
+	 * 摘要里最多列出的名称种类，按第一次出现的先后：SDK 只列这么多种（之后新的名称并进共用的一份、不单独计数，
+	 * SDK 里记名称的表也不再增长），控制面也只存这么多种。名称很长时更少（`summaryNamesBytes`）。
 	 */
 	summaryNames: 1000,
+	/**
+	 * SDK 写进事件管道的一份摘要（一行，含换行）最多多少字节，按写出去的字节算（转义也算），不论名称、字段、失败原因
+	 * 写成什么样：名称、字段、失败原因在传输时各自可以比显示的上限多 `transportMargin` 个字符，列满 1000 种名称和三个列表
+	 * 乘起来是几十 MiB，所以摘要自己要有字节上的上界。控制面不按它拒收（旧的 SDK 没有这个上界）。
+	 */
+	summaryBytes: 1_048_576,
+	/**
+	 * 名称表（摘要里的 `names`）最多占多少字节，每一项按名称写出去的字节数加上计数的字段算：按第一次出现的先后进表，
+	 * 进了就不出；剩下的字节给三个列表（装不下时按最近失败的、正在做的、最近结束的先后留）。名称几十个字符时
+	 * 1000 种名称约 0.3 MiB，不受它限制。
+	 */
+	summaryNamesBytes: 524_288,
 	/** 摘要里「正在做」「最近结束」「最近失败」最多列出的个数。 */
 	running: 50,
 	recent: 20,
@@ -116,12 +128,34 @@ export const ActionSummaryView = z.object({
 	capped_at: Timestamp.nullable(),
 	/** 同 `capped_at`，用 Agent 时间表示。 */
 	agent_capped_at: Timestamp.nullable(),
-	/** 每种名称一项，按第一次出现的先后。 */
+	/**
+	 * 全部名称合计失败的动作数：包括没进 `names` 的名称的失败（`names` 里各项的 `failed` 加起来会少算它们）。
+	 * 控制台的失败数用它。
+	 */
+	failed_total: z.number().int(),
+	/**
+	 * 每种名称一项，按第一次出现的先后，最多 `ACTION_LIMITS.summaryNames` 种，名称很长时更少（名称表的字节预算
+	 * `ACTION_LIMITS.summaryNamesBytes`）。没进表的名称合在一起写在 `unlisted`；`names_complete` 为 false。
+	 */
 	names: z.array(ActionNameCount),
-	/** 正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。 */
+	/** `names` 是不是全部的名称。 */
+	names_complete: z.boolean(),
+	/**
+	 * 没进 `names` 的名称合在一起的计数（动作和标记的个数、其中失败的动作数、有明细的个数）：`names_complete` 为
+	 * false 时有，否则为 null。不写名称，也没有它们有几种名称的数（SDK 不记）。
+	 */
+	unlisted: z
+		.object({ total: z.number().int(), failed: z.number().int(), reported: z.number().int() })
+		.nullable(),
+	/**
+	 * 正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列；摘要装不下
+	 * （`ACTION_LIMITS.summaryBytes`）时更少，优先级低的先省。
+	 */
 	running: z.array(RunningActionView),
-	/** `running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。 */
+	/** `running` 是不是全部正在做的动作：没列全（超过 `ACTION_LIMITS.running` 个，或因为摘要的大小被省去了）时为 false。 */
 	running_complete: z.boolean(),
+	/** `running`、`recent`、`recent_failed` 里有没有因为摘要的大小（`ACTION_LIMITS.summaryBytes`）被省去的项。 */
+	lists_trimmed: z.boolean(),
 	/** 最近结束的 `ACTION_LIMITS.recent` 个动作，最近结束的在前。 */
 	recent: z.array(EndedActionView),
 	/** 最近失败的 `ACTION_LIMITS.recentFailed` 个动作，最近失败的在前。 */

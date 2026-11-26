@@ -131,12 +131,36 @@ export interface ActionSummaryView {
 	capped_at: Timestamp | null;
 	/** 同 `capped_at`，用 Agent 时间表示。 */
 	agent_capped_at: Timestamp | null;
-	/** 每种名称一项，按第一次出现的先后。 */
+	/**
+	 * 全部名称合计失败的动作数：包括没进 `names` 的名称的失败（`names` 里各项的 `failed` 加起来会少算它们）。
+	 * 控制台的失败数用它。
+	 */
+	failed_total: number;
+	/**
+	 * 每种名称一项，按第一次出现的先后，最多 `ACTION_LIMITS.summaryNames` 种，名称很长时更少（名称表的字节预算
+	 * `ACTION_LIMITS.summaryNamesBytes`）。没进表的名称合在一起写在 `unlisted`；`names_complete` 为 false。
+	 */
 	names: ActionNameCount[];
-	/** 正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。 */
+	/** `names` 是不是全部的名称。 */
+	names_complete: boolean;
+	/**
+	 * 没进 `names` 的名称合在一起的计数（动作和标记的个数、其中失败的动作数、有明细的个数）：`names_complete` 为
+	 * false 时有，否则为 null。不写名称，也没有它们有几种名称的数（SDK 不记）。
+	 */
+	unlisted: {
+		total: number;
+		failed: number;
+		reported: number;
+	} | null;
+	/**
+	 * 正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列；摘要装不下
+	 * （`ACTION_LIMITS.summaryBytes`）时更少，优先级低的先省。
+	 */
 	running: RunningActionView[];
-	/** `running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。 */
+	/** `running` 是不是全部正在做的动作：没列全（超过 `ACTION_LIMITS.running` 个，或因为摘要的大小被省去了）时为 false。 */
 	running_complete: boolean;
+	/** `running`、`recent`、`recent_failed` 里有没有因为摘要的大小（`ACTION_LIMITS.summaryBytes`）被省去的项。 */
+	lists_trimmed: boolean;
 	/** 最近结束的 `ACTION_LIMITS.recent` 个动作，最近结束的在前。 */
 	recent: EndedActionView[];
 	/** 最近失败的 `ACTION_LIMITS.recentFailed` 个动作，最近失败的在前。 */
