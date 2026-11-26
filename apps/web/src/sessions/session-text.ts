@@ -33,6 +33,13 @@ export function readinessProblems(readiness: Readiness): string[] {
 	);
 }
 
+/** 就绪状态里有模型的问题（没有配置、连不上，#548）：空闲的会话说不了话。别的问题（助手、工作台）在助手页的就绪状态里写，会话页不管。 */
+export function hasModelProblem(readiness: Readiness): boolean {
+	return readiness.problems.some(
+		(problem) => problem.kind === "model_not_configured" || problem.kind === "model_unreachable",
+	);
+}
+
 /** 工具调用那一行的文字：命令写成 `$ <命令>`，读、写、编辑写成「读 / 写 / 改 <路径>」。 */
 export function toolLine(tool: SessionTool | null, title: string): string {
 	switch (tool) {
@@ -95,7 +102,9 @@ export function turnEndText(item: Extract<TimelineItem, { kind: "turn_end" }>): 
 		case "interrupted":
 			return t.interrupted(oneLine(item.reason));
 		case "model_unavailable":
-			return t.modelUnavailable(oneLine(item.reason));
+			return item.errorClass === "context_overflow"
+				? t.contextOverflow
+				: t.modelUnavailable(oneLine(item.reason), item.steps);
 		case "failed":
 			return t.failed(oneLine(item.reason));
 	}
