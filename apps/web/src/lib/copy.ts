@@ -701,6 +701,13 @@ export const ACTION_PAGE = {
 	/** 每种名称的个数按钮那一组的可访问名称。 */
 	nameCounts: "各名称的个数",
 	failedCount: (count: string) => `${NODE_ACTIONS.results.failed} ${count}`,
+	/**
+	 * 名称表没列全（名称太多或太长，SDK 的摘要只列一部分，`names_complete` 为 false）：表的末尾写一行，没列出的名称
+	 * 合在一起有多少个${TERM.action}和${TERM.mark}、其中多少个失败。写个数不写种类数：SDK 不记没列出的名称有几种
+	 * （要记就得有一张不封顶的表）。
+	 */
+	unlistedNames: (total: string, failed: string) =>
+		`另有一些名称没有列出：共 ${total} 个${TERM.action}和${TERM.mark}，其中 ${failed} 个${NODE_ACTIONS.results.failed}`,
 	/** 表格里的时间显示哪一种（Agent 时间或控制面时间）。 */
 	timeKind: "表格里的时间",
 	/** 一行总数；有标记时接上「、N 个标记」。 */

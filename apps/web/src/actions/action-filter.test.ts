@@ -19,9 +19,13 @@ const summary = (names: ActionNameCount[], marks = 0): ActionSummaryView => ({
 	control_plane_capped: false,
 	capped_at: null,
 	agent_capped_at: null,
+	failed_total: names.reduce((n, c) => n + c.failed, 0),
 	names,
+	names_complete: true,
+	unlisted: null,
 	running: [],
 	running_complete: true,
+	lists_trimmed: false,
 	recent: [],
 	recent_failed: [],
 });
@@ -61,6 +65,18 @@ describe("失败的个数", () => {
 
 	it("摘要里没有这个名称时是 0", () => {
 		expect(failedTotal(s, "没有")).toBe(0);
+	});
+
+	it("名称表没列全时用合计好的失败数：没进表的名称的失败不在各项里，加起来会少算（#726）", () => {
+		const partial: ActionSummaryView = {
+			...summary([count("下单", 100, 2), count("预热", 1)]),
+			failed_total: 7,
+			names_complete: false,
+			unlisted: { total: 40, failed: 5, reported: 40 },
+		};
+		expect(failedTotal(partial)).toBe(7); // 不是 2
+		expect(failedTotal(partial, "下单")).toBe(2); // 给名称还是表里那一项
+		expect(filterAnnouncement(partial, { failed: true })).toBe("筛选后 7 个动作");
 	});
 });
 

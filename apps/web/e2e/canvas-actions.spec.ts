@@ -285,6 +285,84 @@ test("检查器：正在做列满 50 个时写明可能有遗漏", async ({
 	await expect(doing).not.toContainText("可能还有没列出的");
 });
 
+test("检查器：名称太多、表里只列了一部分时，失败数用合计的，表的末尾写没列出的名称；旧的摘要照旧", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const setup = await runningScenario(controlPlane, connectAgent, clock);
+	const verify = setup.tasks.verify as AssignedTask;
+	const now = clock.now().getTime();
+	// 失败落在没进名称表的名称上（SDK 的名称表只列 1000 种，名称很长时更少）：表里各项的失败数是 0，加起来也是 0。
+	const failure = (id: number) => ({
+		id,
+		parent: null,
+		depth: 0,
+		name: `晚到 ${id}`,
+		fields: {},
+		...setup.agent.stamp(now - 60_000 - id * 1_000),
+		end_ts: setup.agent.stamp(now - 59_000 - id * 1_000).ts,
+		end_mono: setup.agent.stamp(now - 59_000 - id * 1_000).mono,
+		result: "failed" as const,
+		reason: "拒单：余额不足",
+	});
+	// 监控详情的「动作」页签没有明细行时写「没有记录动作」、不画工具条：失败的 5 个有补发的明细。
+	setup.agent.actions(
+		verify,
+		[1, 2, 3, 4, 5].flatMap((id) => [
+			setup.agent.actionStart(id, `晚到 ${id}`, now - 4_500 + id * 100, { late: true }),
+			setup.agent.actionEnd(id, "failed", now - 4_450 + id * 100, { reason: "拒单：余额不足" }),
+		]),
+	);
+	setup.agent.actionSummary(verify, {
+		total: 1_040,
+		reported: 1_040,
+		failed: 5,
+		names: [counted("下单", 1_000)],
+		names_complete: false,
+		unlisted: { total: 40, failed: 5, reported: 40 },
+		recent_failed: [1, 2, 3, 4, 5].map(failure),
+	});
+	await setup.agent.sync();
+	const panel = await openNode(page, setup, clock, "verify");
+
+	const area = panel.getByRole("region", { name: "动作" });
+	await expect(area.getByRole("list", { name: "最近的失败" }).getByRole("listitem")).toHaveCount(5);
+	// 失败列表的标题旁边是合计的失败数 5（不是名称表里各项加起来的 0）
+	await expect(area.getByRole("heading", { name: /^最近的失败/ })).toHaveText(/5$/);
+	await expect(area.getByTestId("unlisted-names")).toHaveText(
+		"另有一些名称没有列出：共 40 个动作和标记，其中 5 个失败",
+	);
+
+	// 监控详情「动作」页签的工具条：失败数同样是合计的，没列出的名称写在计数按钮后面。
+	await panel.getByRole("link", { name: "打开动作明细" }).click();
+	await expect(page.getByRole("button", { name: /^失败 5$/ })).toBeVisible();
+	await expect(page.getByTestId("unlisted-names")).toHaveText(
+		"另有一些名称没有列出：共 40 个动作和标记，其中 5 个失败",
+	);
+});
+
+test("检查器：名称都列出来了（旧的 SDK 没有这几项）时不写没列出的名称，失败数是名称表里加起来的", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const setup = await runningScenario(controlPlane, connectAgent, clock);
+	setup.agent.actionSummary(setup.tasks.verify as AssignedTask, {
+		total: 12,
+		reported: 12,
+		names: [counted("下单", 10, 2), counted("撤单", 2, 1)],
+	});
+	await setup.agent.sync();
+	const panel = await openNode(page, setup, clock, "verify");
+
+	const area = panel.getByRole("region", { name: "动作" });
+	await expect(area.getByRole("table", { name: "每种名称的总数和失败数" })).toBeVisible();
+	await expect(area.getByTestId("unlisted-names")).toHaveCount(0);
+});
+
 test("检查器：每个只计数的名称都列出来；合计满了时说满了以后开始的动作，不说那个时刻之后都没有明细", async ({
 	page,
 	controlPlane,

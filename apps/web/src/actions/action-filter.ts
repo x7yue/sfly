@@ -23,12 +23,14 @@ const build = (name: string | undefined, failed: boolean | undefined): ActionFil
 	...(failed && { failed: true }),
 });
 
-/** 失败的动作一共有多少个（不论有没有明细）：不给名称是所有名称的合计。 */
+/**
+ * 失败的动作一共有多少个（不论有没有明细）：不给名称是所有名称的合计（摘要里合计好的 `failed_total`：
+ * 名称表没列全时，没进表的名称的失败不在各项的 `failed` 里，加起来会少算）。
+ */
 export const failedTotal = (summary: ActionSummaryView, name?: string): number =>
-	summary.names.reduce(
-		(sum, n) => (name === undefined || n.name === name ? sum + n.failed : sum),
-		0,
-	);
+	name === undefined
+		? summary.failed_total
+		: (summary.names.find((n) => n.name === name)?.failed ?? 0);
 
 /**
  * 筛选之后读屏播报的话，由摘要里的个数算出（不看已经读到的明细：明细只读了一部分）。只看失败的个数是动作的；

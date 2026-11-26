@@ -33,16 +33,26 @@ asyncio 任务比 with 活得久时，跳过已经结束的。`start()` 返回�
 字段值（转成字符串后）超过 256 个字符（控制面先打码再截到上限，见下面的 `TRANSPORT_MARGIN_CHARS`）、
 字段名超过 64 个字符、字段超过 8 个（多出的丢弃）。同一个句柄结束两次，第二次忽略，警告一次；
 不同名称（动作和标记合计）超过 100 种时警告一次（名称里带了订单号这类每次都不同的内容，
-变化的内容放进字段）。
+变化的内容放进字段）。名称表（摘要里的 `names`）按第一次出现的先后进，最多 1000
+种（`MAX_SUMMARY_NAMES`），
+并且名称的字节数合计不超过 `NAMES_BUDGET_BYTES`（名称可以很长）；
+放不下的名称并进共用的一份（摘要里写成
+`unlisted`，不写名称，进程里也不记名称），再警告一次。
 
 上限：每种名称最多上报 50000 个明细，合计最多 100000 个，动作和标记都算；超过以后只计数，
 警告建议按批记录，每一笔动作的延迟用指标。超过每种名称的上限，每种名称警告一次，
 按超过上限的那一个是动作还是标记分别写（标记没有结果，不补发）；超过合计上限，整个任务警告一次，动作和标记
-都写。
+都写。进不了名称表、并进共用那一份的名称合在一起当作一种名称，同样受每种名称的上限（合计最多上报
+50000 个）。
 失败的动作不受每种名称上限的限制：结束时把开始（带 `late`）和结束补上，直到合计 100000 个；
 合计已满时补不上，明细被丢弃，也按合计上限警告。
-正在做的动作、最近结束的 20 个、最近失败的 5 个、每种名称的总数（动作和标记合计）和失败的动作数
+正在做的动作、最近结束的 20 个、最近失败的 5 个、全部名称合计的失败数、
+每种名称的总数（动作和标记合计）和失败的动作数
 始终准确，由 `action_summary` 汇总发出：有变化时才发，每秒最多一次，节点进程退出时尽力再发一次。
+一份摘要序列化之后（含换行）不超过 `MAX_SUMMARY_BYTES`（1 MiB），不论名称、字段、
+失败原因写成什么样：
+名称表最多占 `NAMES_BUDGET_BYTES`，三个列表放不下时按「最近失败的、正在做的、最近结束的」的先后留，
+省去的在摘要里标明（`lists_trimmed`、`running_complete`）。
 
 事件的格式（`action_start`、`action_end`、`mark`、`action_summary`）见 `sfly.context` 的模块说明。
 """
@@ -60,7 +70,7 @@ from collections.abc import Callable, Collection, Mapping
 from contextvars import ContextVar, Token
 from typing import Any
 
-from sfly.context import ActionResult, Cancelled, _EventWriter, _now_ms, monotonic_ms
+from sfly.context import ActionResult, Cancelled, _dumps, _EventWriter, _now_ms, monotonic_ms
 
 # 下面的上限和 packages/schema/src/http/actions.ts 的 ACTION_LIMITS 一致
 # （控制面按同一组执行），有测试检查。
@@ -85,8 +95,30 @@ MAX_REASON_CHARS = 4096
 #: 转义的写法可以比值本身长）的长度不超过这个余量的 secret 值，不论落在哪里都能整个认出来；
 #: 某种写法比它还长的值，跨在传输上限处时可能留下这种写法开头的一段。
 TRANSPORT_MARGIN_CHARS = 4096
-#: 不同的名称超过这么多种时警告一次（不限制）。
+#: 不同的名称超过这么多种时警告一次。
 MAX_NAMES = 100
+#: 摘要里最多列出的名称种类，按第一次出现的先后
+#: （和控制面存下的一致，`ACTION_LIMITS.summaryNames`）：
+#: 之后新出现的名称并进共用的一份（`unlisted`），不单独计数、不进摘要，SDK
+#: 进程里记名称的表也不再增长
+#: （每种名称最长 `MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS` 个字符，
+#: 种类不设上限的话摘要和内存都随种类数一直涨）。
+#: 共用的那一份当作一种名称：明细照常上报，同样受每种名称的上限（`MAX_PER_NAME`）
+#: 和合计的上限（`MAX_TOTAL`）约束，
+#: 失败的动作照常补发；合计、失败数照常统计。
+MAX_SUMMARY_NAMES = 1000
+#: 一份 `action_summary`（事件管道里的一行，含换行）最多多少字节，按写出去的字节算（转义也算）
+#: （`ACTION_LIMITS.summaryBytes`）：名称、字段、失败原因在传输时各自可以比显示的上限多
+#: `TRANSPORT_MARGIN_CHARS` 个字符，列满 1000 种名称和三个列表乘起来是几十 MiB，
+#: 所以摘要自己要有字节上的上界。
+#: 也不碰 Agent 一行的上限（#732）。
+MAX_SUMMARY_BYTES = 1_048_576
+#: 名称表（摘要里的 `names`）最多占多少字节（每一项按名称写出去的字节数加上计数的字段算，
+#: 计数取最大的位数）：
+#: 按第一次出现的先后进表，进了就不出，所以名称表的大小有上界；剩下的字节（`MAX_SUMMARY_BYTES`
+#: 减去它和摘要的
+#: 其余部分）给三个列表。名称几十个字符时 1000 种名称约 0.15 MiB，远小于这个预算，行为不变。
+NAMES_BUDGET_BYTES = 524_288
 #: 每种名称最多上报的明细个数。
 MAX_PER_NAME = 50_000
 #: 全部名称合计最多上报的明细个数。
@@ -107,6 +139,31 @@ _CURRENT: ContextVar[ActionScope | None] = ContextVar("sfly_action", default=Non
 
 #: 摘要有变化、还没发出的 Actions：进程退出时发出（这里持有引用，节点函数返回后它们不会先被回收）。
 _PENDING: set[Actions] = set()
+
+
+def _json_len(value: object) -> int:
+    """`value` 写进事件文件的字节数（和写入同一个编码，`sfly.context._dumps`）。"""
+    return len(_dumps(value).encode("utf-8", errors="surrogatepass"))
+
+
+#: 计数最多按这么多位算（10 的 15 次方个动作要跑好几年）。
+_COUNTER_MAX = 10**15 - 1
+#: 名称表里一项除了名称自己（含引号）之外最多占的字节：各个计数、时刻取最大的位数，
+#: 加上项之间的分隔。
+_NAME_ENTRY_OVERHEAD = (
+    _json_len(
+        {
+            "name": "",
+            "total": _COUNTER_MAX,
+            "failed": _COUNTER_MAX,
+            "reported": _COUNTER_MAX,
+            "capped_ts": _COUNTER_MAX,
+            "capped_mono": _COUNTER_MAX,
+        }
+    )
+    - 2
+    + 2
+)
 
 
 def _stamp() -> tuple[int, int]:
@@ -169,6 +226,7 @@ class _Record:
         "reason",
         "reported",
         "result",
+        "stats",
         "ts",
     )
 
@@ -189,6 +247,8 @@ class _Record:
         #: 计数用的名称：同一种名称的计数、每种名称的上限都按它（
         #: 名称的前 `MAX_NAME_CHARS` 个字符，和控制面一致）。
         self.key = name[:MAX_NAME_CHARS]
+        #: 这种名称的计数（超过 `MAX_SUMMARY_NAMES` 种之后的名称共用一份，不进摘要）；记录时才设。
+        self.stats: _NameStats | None = None
         #: 动作开始（标记发生）时给的字段；`note()` 给动作补充的放在 `notes`。
         self.fields = fields
         self.notes: dict[str, str] = {}
@@ -350,7 +410,14 @@ class Actions:
         self._lock = threading.Lock()
         self._ids = itertools.count(1)
         self._names: dict[str, _NameStats] = {}
+        #: 名称表里各项占的字节数合计（`NAMES_BUDGET_BYTES` 的用量）。
+        self._names_bytes = 0
+        #: 进不了名称表（超过 `MAX_SUMMARY_NAMES` 种，或字节预算用完）的名称共用的一份计数：
+        #: 当作一种名称（同样受每种名称的上限），在摘要里写成 `unlisted`，不写名称。
+        self._overflow = _NameStats("")
         self._total = 0
+        #: 全部名称合计失败的动作数（包括没进名称表的）。
+        self._failed = 0
         #: 其中标记的个数。
         self._marks = 0
         self._reported = 0
@@ -495,17 +562,7 @@ class Actions:
         ts, mono = _stamp()
         with self._lock:
             key = name[:MAX_NAME_CHARS]
-            stats = self._names.get(key)
-            if stats is None:
-                stats = self._names[key] = _NameStats(name)
-                if len(self._names) == MAX_NAMES + 1:
-                    self._warn(
-                        "too-many-names",
-                        "",
-                        f"动作和标记的名称已超过 {MAX_NAMES} 种：名称里是不是带了订单号这类"
-                        "每次都不同的内容？变化的内容放进字段"
-                        "（ctx.action(名称, 订单=订单号)），名称只写这是一件什么事",
-                    )
+            stats = self._names.get(key) or self._admit(name, key)
             stats.total += 1
             self._total += 1
             if mark:
@@ -519,6 +576,8 @@ class Actions:
                 ts,
                 mono,
             )
+            rec.stats = stats
+            # 共用的那一份（进不了名称表的名称）当作一种名称，同样受每种名称的上限。
             if stats.reported < MAX_PER_NAME and self._reported < MAX_TOTAL:
                 stats.reported += 1
                 self._reported += 1
@@ -530,6 +589,36 @@ class Actions:
                 self._running[rec.id] = rec
             self._changed()
         return rec
+
+    def _admit(self, name: str, key: str) -> _NameStats:
+        """第一次出现的名称（持有 `_lock`）：进名称表；表放不下（已经 `MAX_SUMMARY_NAMES` 种，
+        或名称的字节
+        预算用完）时并进共用的一份，各警告一次。"""
+        room = NAMES_BUDGET_BYTES - self._names_bytes - _NAME_ENTRY_OVERHEAD
+        if len(self._names) >= MAX_SUMMARY_NAMES:
+            reason, cause = "names-over-cap", f"已超过 {MAX_SUMMARY_NAMES} 种"
+        elif len(name) + 2 > room or _json_len(name) > room:
+            reason, cause = "names-over-bytes", "的名称太长、名称表（摘要里每种名称一项）放不下了"
+        else:
+            self._names_bytes += _json_len(name) + _NAME_ENTRY_OVERHEAD
+            stats = self._names[key] = _NameStats(name)
+            if len(self._names) == MAX_NAMES + 1:
+                self._warn(
+                    "too-many-names",
+                    "",
+                    f"动作和标记的名称已超过 {MAX_NAMES} 种：名称里是不是带了订单号这类"
+                    "每次都不同的内容？变化的内容放进字段"
+                    "（ctx.action(名称, 订单=订单号)），名称只写这是一件什么事",
+                )
+            return stats
+        self._warn(
+            reason,
+            "",
+            f"动作和标记的名称{cause}：从这一种起的名称不进摘要的名称表，合并成一份"
+            "「没有列出的名称」（合计、失败数仍然准确；明细照常上报，这一份合在一起当作一种名称，"
+            f"同样最多上报 {MAX_PER_NAME} 个）。变化的内容放进字段，名称只写这是一件什么事",
+        )
+        return self._overflow
 
     def _count_only(self, stats: _NameStats, rec: _Record, what: str) -> None:
         """这个动作或标记的明细因为上限没有上报（记录时就超过上限，或失败的动作补发时合计已满）：
@@ -546,12 +635,21 @@ class Actions:
                     )
                 else:
                     detail = f"。每一个都记成{what}会拖慢节点、也看不过来：按批记录{what}"
-                self._warn(
-                    "name-cap",
-                    rec.key,
-                    f"{_label(rec.name)} 的明细已上报 {MAX_PER_NAME} 个，"
-                    f"之后只计数、不再上报{detail}",
-                )
+                if stats is self._overflow:
+                    # 没有名称表里的名称可以指：共用的那一份合起来警告一次。
+                    self._warn(
+                        "unlisted-name-cap",
+                        what,
+                        f"没有列出的名称（不在摘要名称表里的）合计的明细已上报 {MAX_PER_NAME} 个，"
+                        f"之后只计数、不再上报{detail}",
+                    )
+                else:
+                    self._warn(
+                        "name-cap",
+                        rec.key,
+                        f"{_label(rec.name)} 的明细已上报 {MAX_PER_NAME} 个，"
+                        f"之后只计数、不再上报{detail}",
+                    )
         if self._reported >= MAX_TOTAL and self._capped is None:
             self._capped = (rec.ts, rec.mono)
             self._warn(
@@ -581,9 +679,11 @@ class Actions:
             rec.result, rec.reason, rec.end_ts, rec.end_mono = result, reason, ts, mono
             del self._running[rec.id]
             self._recent.append(rec)
-            stats = self._names[rec.key]
+            stats = rec.stats
+            assert stats is not None
             if result == "failed":
                 stats.failed += 1
+                self._failed += 1
                 self._recent_failed.append(rec)
             if rec.reported:
                 self._events.write(self._end_event(rec))
@@ -637,10 +737,13 @@ class Actions:
         }
 
     def _summary_event(self) -> dict[str, Any]:
+        """一份摘要，序列化之后（含换行）不超过 `MAX_SUMMARY_BYTES`：名称表受 `MAX_SUMMARY_NAMES`
+        种和
+        `NAMES_BUDGET_BYTES` 字节的限制（进表时就定了），
+        三个列表装不下的部分省去（`_fit_lists`）。"""
         ts, mono = _stamp()
-        running = heapq.nsmallest(RUNNING_LIMIT, self._running.values(), key=_depth_then_id)
-        running.sort(key=_by_id)
-        return {
+        unlisted = self._overflow
+        event: dict[str, Any] = {
             "type": "action_summary",
             "ts": ts,
             "mono": mono,
@@ -648,6 +751,19 @@ class Actions:
             "marks": self._marks,
             "reported": self._reported,
             **_capped(self._capped),
+            # 全部名称合计失败的动作数：没进名称表的名称的失败也在里面。
+            "failed": self._failed,
+            # 名称表是不是全部的名称；不是时，没进表的名称合计有多少（个数、其中失败的、有明细的）。
+            "names_complete": unlisted.total == 0,
+            "unlisted": (
+                None
+                if unlisted.total == 0
+                else {
+                    "total": unlisted.total,
+                    "failed": unlisted.failed,
+                    "reported": unlisted.reported,
+                }
+            ),
             "names": [
                 {
                     "name": s.display,
@@ -658,10 +774,49 @@ class Actions:
                 }
                 for s in self._names.values()
             ],
-            "running": [_entry(rec) for rec in running],
-            "recent": [_entry(rec) for rec in reversed(self._recent)],
-            "recent_failed": [_entry(rec) for rec in reversed(self._recent_failed)],
+            # 先按这两项写成「最长的」那个值（false 比 true 多一个字节）算字节预算，
+            # 装完列表再改成实际的：实际的摘要只会比算的小。
+            "running_complete": False,
+            "lists_trimmed": False,
+            "running": [],
+            "recent": [],
+            "recent_failed": [],
         }
+        self._fit_lists(event)
+        return event
+
+    def _fit_lists(self, event: dict[str, Any]) -> None:
+        """把三个列表装进摘要里还剩的字节：按「最近失败的、正在做的、最近结束的」的先后留，每个列表按它自己的
+        先后（最近的在前、层级浅的在前）一项一项装，装不下一项就停，后面的列表也不再装（省去的是优先级低的）。
+        每项都只量一次、用完就丢，内存不随省去的项涨。省去了就标明：`running_complete` 为
+        false（正在做的没列全，
+        也包括超过 50 个的情况），`lists_trimmed` 为 true（三个列表里有因为字节预算被省去的）。"""
+        room = MAX_SUMMARY_BYTES - 1 - _json_len(event)  # 1：行尾的换行
+        running = heapq.nsmallest(RUNNING_LIMIT, self._running.values(), key=_depth_then_id)
+        sources: tuple[tuple[str, Collection[_Record]], ...] = (
+            ("recent_failed", list(reversed(self._recent_failed))),
+            ("running", running),
+            ("recent", list(reversed(self._recent))),
+        )
+        exhausted = False
+        for key, records in sources:
+            taken: list[tuple[_Record, dict[str, Any]]] = []
+            for rec in records:
+                if exhausted:
+                    break
+                entry = _entry(rec)
+                cost = _json_len(entry) + 2  # 项之间的分隔
+                if cost > room:
+                    exhausted = True
+                    break
+                room -= cost
+                taken.append((rec, entry))
+            if key == "running":
+                taken.sort(key=lambda item: item[0].id)
+            event[key] = [entry for _, entry in taken]
+            if len(taken) < len(records):
+                event["lists_trimmed"] = True
+        event["running_complete"] = len(event["running"]) >= len(self._running)
 
     # ---- 摘要：有变化时发，每秒最多一次，退出时再发一次 ----
 
