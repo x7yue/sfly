@@ -4,10 +4,14 @@
 //! 原样打出来，而这两个消息会出现在 `{:?}` 里（`ServerMessage` 的报错、测试断言失败的输出、以后加的日志）。所以 build.rs 让 prost
 //! 不为它们生成 `Debug`（`skip_debug`），这里手写：**每个字段都列出来、不用 `..`**——proto 里加了字段，这里编译不过，
 //! 不会悄悄漏掉字段，也不会漏掉新加的凭据类字段。
+//!
+//! `Welcome` 里的镜像地址（`pypi_mirror`、`github_release_mirror`）可以带用户名和密码（控制面的 `SFLY_PYPI_MIRROR` 等原样下发，
+//! #733）：地址类的字段经 [`Masked`] 写，用户名和密码换成固定的掩码，主机和路径留着。
 
 use std::fmt;
 
-use crate::proto::{AssignTask, Hello};
+use crate::proto::{AssignTask, Hello, Welcome};
+use crate::secret::Masked;
 
 /// 凭据字段的显示：有值写 `<redacted>`，空的写 `""`（看得出「没有」）。
 struct Redacted<'a>(&'a str);
@@ -98,10 +102,72 @@ impl fmt::Debug for Hello {
     }
 }
 
+impl fmt::Debug for Welcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Welcome {
+            dispositions,
+            heartbeat_interval_ms,
+            sdk_wheel_url,
+            sdk_wheel_sha256,
+            pypi_mirror,
+            github_release_mirror,
+            target_agent_version,
+            agent_binary_url,
+            agent_binary_sha256,
+            package_index_url,
+        } = self;
+        f.debug_struct("Welcome")
+            .field("dispositions", dispositions)
+            .field("heartbeat_interval_ms", heartbeat_interval_ms)
+            .field("sdk_wheel_url", &Masked(sdk_wheel_url))
+            .field("sdk_wheel_sha256", sdk_wheel_sha256)
+            .field("pypi_mirror", &Masked(pypi_mirror))
+            .field("github_release_mirror", &Masked(github_release_mirror))
+            .field("target_agent_version", target_agent_version)
+            .field("agent_binary_url", &Masked(agent_binary_url))
+            .field("agent_binary_sha256", agent_binary_sha256)
+            .field("package_index_url", &Masked(package_index_url))
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proto::{AgentMessage, ServerMessage, agent_message, server_message};
+
+    #[test]
+    fn welcome_debug_masks_the_username_and_password_of_the_mirror_addresses() {
+        let welcome = Welcome {
+            pypi_mirror: "https://idxuser:idxpass-7a2d@pypi.example/simple".into(),
+            github_release_mirror: "https://ghuser:ghpass-1c3e@mirror.example/github-release"
+                .into(),
+            target_agent_version: "1.2.3".into(),
+            ..Default::default()
+        };
+        let shown = [
+            format!("{welcome:?}"),
+            format!("{welcome:#?}"),
+            format!(
+                "{:?}",
+                ServerMessage {
+                    body: Some(server_message::Body::Welcome(welcome.clone())),
+                }
+            ),
+        ];
+        for text in shown {
+            for secret in ["idxuser", "idxpass-7a2d", "ghuser", "ghpass-1c3e"] {
+                assert!(!text.contains(secret), "{secret}：{text}");
+            }
+            // 主机和路径留着，方便排查。
+            assert!(text.contains("https://***@pypi.example/simple"), "{text}");
+            assert!(
+                text.contains("https://***@mirror.example/github-release"),
+                "{text}"
+            );
+            assert!(text.contains("1.2.3"), "{text}");
+        }
+    }
 
     #[test]
     fn assign_task_debug_hides_the_task_token_everywhere_it_can_be_printed() {

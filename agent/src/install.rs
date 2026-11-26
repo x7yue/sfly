@@ -17,7 +17,7 @@ use pep440_rs::{Operator, Version, VersionSpecifiers};
 use sha2::{Digest, Sha256};
 
 use crate::proto::AssignTask;
-use crate::secret::Secret;
+use crate::secret::{Secret, mask_userinfo};
 use crate::venv::SharedVenv;
 
 /// 安装失败；`message` 是给任务详情看的完整说明（包含 uv 输出），`output` 是 uv 输出本身。
@@ -28,9 +28,11 @@ pub struct InstallError {
 }
 
 impl InstallError {
+    /// 说明里的地址（索引、下载地址、reqwest 报错里括号里的地址）可以带用户名和密码，经 [`mask_userinfo`] 换成掩码（#733）：
+    /// 说明会写进任务详情、项目里看得到日志的人都读得到。
     fn new(message: impl Into<String>) -> Self {
         Self {
-            message: message.into(),
+            message: mask_userinfo(&message.into()).into_owned(),
             output: String::new(),
         }
     }
@@ -208,6 +210,9 @@ impl Installer {
         let mut text = format!("{line}\n");
         text.push_str(&String::from_utf8_lossy(&output.stdout));
         text.push_str(&String::from_utf8_lossy(&output.stderr));
+        // 命令行里有索引地址（`--default-index`、`--index`），uv 的输出也可能回显它：地址里的用户名和密码换成掩码，
+        // 主机和路径留着。之后的一切（安装状态里的输出、失败原因、冲突说明）都从这份文字来（#733）。
+        let text = mask_userinfo(&text).into_owned();
         if output.status.success() {
             Ok(text)
         } else {
