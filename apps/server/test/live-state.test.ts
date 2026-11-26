@@ -344,16 +344,20 @@ describe("快照里的文字打过码：先打码、后截断", () => {
 	});
 
 	it("先整窗打码、再削开头：窗口开头落在令牌中间（剩下的是令牌的后半截、认不出）时被削掉，削掉之后的文字原样留着", () => {
+		// 后面接一枚 sfly_ses_ 连着 1500 个令牌字符：打码之后整段比上限短，最后一步的按字节截断不会替「削开头」削掉开头。
+		const shrink = `\nsfly_ses_${"z".repeat(1500)}\n`;
 		for (const cut of [1, 10, 20, 40, 56]) {
-			const text = `${".".repeat(30_000)}${TOKEN}\n后面的文字\n${".".repeat(LIMIT)}`;
+			// 窗口的起点落在令牌里：令牌的前 `cut` 个字符在窗口外，窗口里正好是令牌的后半截接着别的文字。
+			const lead = `${TOKEN.slice(cut)}\n后面的文字`;
+			const body = `${lead}${shrink}${"-".repeat(WINDOW - lead.length - shrink.length)}`;
+			expect(body).toHaveLength(WINDOW);
 			const tail = new TailText(LIMIT);
-			// 让窗口的起点落在令牌里：令牌的前 `cut` 个字符在窗口外。
-			const start = text.indexOf(TOKEN) + cut;
-			const tailText = text.slice(start);
-			const trimmed = tailText.slice(Math.max(0, tailText.length - WINDOW));
-			tail.append(`${"#".repeat(WINDOW * 3)}${trimmed}`);
+			tail.append(`${"#".repeat(WINDOW * 3)}${body}`);
 			const out = tail.read();
+			expect(utf8(out), `cut ${cut}`).toBeLessThan(LIMIT);
 			expect(leaks(out), `cut ${cut}`).toBe(false);
+			// 削掉的是令牌的后半截，换行和后面的文字原样留着。
+			expect(out.startsWith("\n后面的文字"), `cut ${cut}`).toBe(true);
 		}
 	});
 
@@ -365,6 +369,7 @@ describe("快照里的文字打过码：先打码、后截断", () => {
 		const out = tail.read();
 		expect(utf8(out)).toBeLessThan(LIMIT);
 		// 开头不是落单的低位代理，整段能原样来回转成 UTF-8（落单的代理会变成 U+FFFD）。
+		expect(/^[\udc00-\udfff]/.test(out)).toBe(false);
 		expect(out.charCodeAt(0)).toBeLessThan(0xdc00);
 		expect(Buffer.from(out, "utf8").toString("utf8")).toBe(out);
 	});
