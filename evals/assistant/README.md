@@ -59,7 +59,7 @@ docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-versi
 | `mirror` | 镜像站：PyPI 和 GitHub Release，缺的文件从中科大镜像取并缓存在 `~/.local/share/sfly/evals/mirror-cache/`，控制面把它下发给 Agent 和 `sfly init` |
 | `pg` | PostgreSQL，数据在内存里 |
 | `cp` | 控制面，HTTP 映射到宿主机 `127.0.0.1:<18100 + 槽位>`，可以在浏览器里看 |
-| `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi |
+| `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`，`--dev --name` 起的名字：评测里不走注册，凭据是给这个名字签发的 Agent 凭据）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi |
 | `sut` | 被测机：普通的 Agent（`sut-01`），上面常驻一个通用的 HTTP 被测服务（`http://sut:9000`，见 `container/demo_svc.py`） |
 | `assistant` | 只有 `up --assistant` 时：平台的助手服务，见下面「平台的助手」 |
 
