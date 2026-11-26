@@ -24,6 +24,7 @@ import { type AgentClient, WORKBENCH_UNREACHABLE, WorkbenchError } from "./agent
 import type { EventBus } from "./bus.js";
 import { type Clock, realClock, type Timer } from "./clock.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
+import type { ModelGate } from "./model-health.js";
 import { modelEnvRefs } from "./models.js";
 import { describeError } from "./output.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
@@ -84,6 +85,11 @@ export interface SessionManagerOptions {
 	skillsDir: string;
 	hostEnv: NodeJS.ProcessEnv;
 	bus: EventBus;
+	/**
+	 * 新的一轮能不能开始之前问的：模型没有配置、或者上次试连连不上时返回 503 的原因（#548，`ModelHealth.gate`）。不给就不检查
+	 * （测试里单独看看管 pi 的那部分时）。
+	 */
+	modelGate?: () => ModelGate | undefined;
 	/** 连到一台 Agent 的能力端口；`log` 是认不出的错误的原文的去处（带工作台的地址）。 */
 	connect: (address: string, log?: (line: string) => void) => AgentClient;
 	/** 助手服务的日志。写进去的原文（上游的错误、连接上的报错）先经 `#forLog`。 */
@@ -288,6 +294,9 @@ export class SessionManager {
 		if (session.turn) {
 			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
 		}
+		// 模型没有配置、或上次试连连不上：503，不登记、不起 pi（登记之前决定，和进程数满了一样）。
+		const blocked = this.options.modelGate?.();
+		if (blocked) return { ok: false, ...blocked };
 		const needsProcess = !session.stopping && (!session.process || session.process.exited);
 		if (needsProcess && this.activeProcesses >= this.#maxProcesses && !this.#evictIdle()) {
 			return {
