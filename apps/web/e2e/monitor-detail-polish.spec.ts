@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
+import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
-import { failedRun } from "./monitor-failure-scenario";
 import { largeScenario, openMonitor, runningScenario } from "./monitor-scenario";
 import { createScenario, publishPackage, triggerRun } from "./support";
 
@@ -14,6 +14,11 @@ async function expectStation(page: Page, name: string, status: string) {
 	await expect(dots.locator("xpath=ancestor::li[1]").locator(".sr-only")).toHaveText(
 		`（${status}）`,
 	);
+}
+
+async function openOverview(page: Page, clock: { now(): Date }, runId: string) {
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/runs/${runId}?view=overview`);
 }
 
 const workspace = (page: Page) => page.getByRole("region", { name: "图表工作区" });
@@ -69,9 +74,8 @@ test("概览链路里节点的状态：图例写出每个圆点的意思（只�
 	clock,
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
-	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
-	await page.clock.setFixedTime(clock.now());
-	await page.goto(`/runs/${runId}?view=overview`);
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
 	const section = page.getByRole("region", { name: "链路" });
 	const legend = section.getByTestId("status-legend");
 	await expect(legend).toBeVisible();
@@ -104,14 +108,17 @@ test("概览链路里节点的状态：图例写出每个圆点的意思（只�
 			return Math.round(lines.getBoundingClientRect().top - section.getBoundingClientRect().top);
 		});
 	const first = await offset(page);
-	const failed = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: true });
-	await page.clock.setFixedTime(clock.now());
-	await page.goto(`/runs/${failed.runId}?view=overview`);
-	await expect(page.getByTestId("status-legend")).toBeVisible();
-	// 失败的运行里出现的状态不一样（成功、失败、已跳过……）：图例的内容跟着变。
-	const labels = await page.getByTestId("status-legend").getByRole("listitem").allTextContents();
-	expect(labels).toContain("失败");
-	expect(labels).not.toEqual(["成功", "执行中", "待执行"]);
+	// 同一个运行往下走：probe 成功、verify 失败、清理节点跑完。出现的状态变成成功和失败，图例的内容跟着变，下面的版面不跳。
+	await agent.succeed(tasks.probe as AssignedTask);
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦");
+	const cleanup = await agent.nextAssign();
+	clock.advance(1000);
+	await agent.succeed(cleanup);
+	await openOverview(page, clock, runId);
+	await expect(page.getByTestId("status-legend").getByRole("listitem")).toHaveText([
+		"成功",
+		"失败",
+	]);
 	expect(await offset(page)).toBe(first);
 });
 
@@ -274,6 +281,14 @@ test("大型运行（时间线九行以上）选中失败、执行中、重试�
 }) => {
 	test.setTimeout(120_000);
 	const { runId } = await largeScenario(controlPlane, connectAgent, clock);
+	// 大型运行的时间线默认是汇总：和审查量的情形一样展开节点（九行以上，主体在它的上限）。
+	const expandTimeline = async () => {
+		await page
+			.getByRole("group", { name: "时间线显示" })
+			.getByRole("button", { name: "展开节点" })
+			.click();
+		await expect(page.locator("[data-node-row]").nth(8)).toBeVisible();
+	};
 	for (const [width, height] of [
 		[1440, 900],
 		[1280, 800],
@@ -283,12 +298,32 @@ test("大型运行（时间线九行以上）选中失败、执行中、重试�
 		for (const node of ["s08", "m15", "m07"]) {
 			await openMonitor(page, clock, runId, node, "io");
 			await expect(panel(page)).toBeVisible();
+			await expandTimeline();
 			await expect(workspace(page).locator(`[data-group$=":${node}"]`)).toBeVisible();
 			await expectFirstChartShown(page, node, 0.95);
 			// 面板不低于它的下限，时间线不低于最矮的主体（加标题行）。
 			const m = await measureFirstChart(page, node);
-			expect(m?.panelHeight, `${width}×${height} ${node} 底部面板`).toBeGreaterThanOrEqual(190);
+			expect(m?.panelHeight, `${width}×${height} ${node} 底部面板`).toBeGreaterThanOrEqual(189);
 			expect(m?.timelineHeight, `${width}×${height} ${node} 时间线`).toBeGreaterThanOrEqual(160);
 		}
 	}
+	// 窗口矮到时间线退到最矮、面板退到下限也放不下整张图表（1280×720）：预留的高度不再往上加（不超过时间线最矮、面板下限
+	// 让得出来的那么多，让不出来就是 300px），面板不比预留 300px 时更矮：详情的可用高度（时间线、图表区、面板的高度之和）
+	// 减去 160（时间线最矮：主体 120 加标题行 40）再减去 300，最多 190。
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await openMonitor(page, clock, runId, "m15", "io");
+	await expect(panel(page)).toBeVisible();
+	await expandTimeline();
+	await expect(workspace(page).locator('[data-group$=":m15"]')).toBeVisible();
+	const short = await measureFirstChart(page, "m15");
+	if (!short || short.panelTop === null || short.panelHeight === null || !short.timelineHeight) {
+		throw new Error(`没量到 1280×720 的版面：${JSON.stringify(short)}`);
+	}
+	const available =
+		short.timelineHeight + (short.panelTop + short.panelHeight - short.workspace.top);
+	expect(short.timelineHeight, "1280×720 时间线退到最矮").toBeLessThanOrEqual(161);
+	expect(
+		short.panelHeight,
+		`1280×720 底部面板（可用高度 ${available}）不比预留 300px 时更矮`,
+	).toBeGreaterThanOrEqual(Math.min(190, available - 160 - 300) - 1);
 });

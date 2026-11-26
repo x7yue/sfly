@@ -4,6 +4,7 @@ import {
 	CHARTS_RESERVED_HEIGHT,
 	chartsReservedHeight,
 	PANEL_FLOOR,
+	PANEL_SQUEEZE_FLOOR,
 	TIMELINE_BODY_MIN,
 	TIMELINE_HEADER_HEIGHT,
 	timelineBodyMax,
@@ -63,23 +64,35 @@ describe("图表工作区预留的高度（第一张图表露出 96% 以上，�
 		expect(available(800) - TIMELINE_HEADER_HEIGHT - body - 340).toBe(PANEL_FLOOR);
 	});
 
-	it("窗口矮到时间线退到最矮、面板退到下限也放不下：不再往上加，留以前的 300px", () => {
-		// 1280×720 带横幅：剩下的只有 625 − 40 − 120 − 190 = 275。
+	it("窗口矮到时间线退到最矮、面板退到最低（170px）也放不下：不再往上加，留以前的 300px", () => {
+		// 1280×720 带横幅：625 − 40 − 120 − 170 = 295 < 300。
 		expect(chartsReservedHeight(chart(190), available(720), false)).toBe(300);
 		expect(chartsReservedHeight(chart(190), 0, false)).toBe(300);
 	});
 
+	it("时间线已经最矮、面板 190px 时差一点：面板再让到 170px 为止（1600×700 没有横幅，上沿 164px）", () => {
+		// 648 − 40 − 120 − 170 = 318 ≥ 想要的 164 + 150 = 314：预留 314，面板 648 − 160 − 314 = 174px。
+		const reserved = chartsReservedHeight(chart(164), 700 - TOPBAR, false);
+		expect(reserved).toBe(314);
+		expect(timelineBodyMax(700 - TOPBAR, reserved)).toBe(TIMELINE_BODY_MIN);
+		const panel = 700 - TOPBAR - TIMELINE_HEADER_HEIGHT - TIMELINE_BODY_MIN - reserved;
+		expect(panel).toBe(174);
+		expect(panel).toBeGreaterThanOrEqual(PANEL_SQUEEZE_FLOOR);
+		expect(panel).toBeLessThan(PANEL_FLOOR);
+	});
+
 	it("放得下一部分：加到时间线和面板让得出来的那么多", () => {
-		// 视口 760、带横幅：665 − 40 − 120 − 190 = 315，想要 340，只给 315。
-		expect(chartsReservedHeight(chart(190), available(760), false)).toBe(315);
-		const body = timelineBodyMax(available(760), 315);
+		// 视口 760、带横幅：665 − 40 − 120 − 170 = 335，想要 340，只给 335。
+		expect(chartsReservedHeight(chart(190), available(760), false)).toBe(335);
+		const body = timelineBodyMax(available(760), 335);
 		expect(body).toBe(TIMELINE_BODY_MIN);
-		expect(available(760) - TIMELINE_HEADER_HEIGHT - body - 315).toBe(PANEL_FLOOR);
+		const panel = available(760) - TIMELINE_HEADER_HEIGHT - body - 335;
+		expect(panel).toBe(PANEL_SQUEEZE_FLOOR);
 	});
 
 	it("窄窗口：以前的规则（上沿 + 120px）仍是下限，也往上加到露出 96%", () => {
-		// 1024×768：工具栏折成几行，第一张图表的上沿在 230px：下限 350，想要 380，让得出来 716 − 40 − 120 − 190 = 366。
-		expect(chartsReservedHeight(chart(230), 768 - TOPBAR, true)).toBe(366);
+		// 1024×768：工具栏折成几行，第一张图表的上沿在 230px：下限 350，想要 380，让得出来 716 − 40 − 120 − 170 = 386，取想要的 380。
+		expect(chartsReservedHeight(chart(230), 768 - TOPBAR, true)).toBe(380);
 		// 让不出来时仍是以前的下限（不比以前少）。
 		expect(chartsReservedHeight(chart(230), 600 - TOPBAR, true)).toBe(350);
 	});

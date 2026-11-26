@@ -83,17 +83,17 @@ test("选中节点时，它那一组的第一张图表露出大半：选中靠�
 		.toBeGreaterThanOrEqual(height * 0.75);
 });
 
-// 选中节点时底部面板、图表区、时间线的高度，和图表区预留的改动（#686，只在窄于 1280 的窗口里加高预留）之前一样：
-// 1440×900 里面板 237px、图表区 301px、时间线 310px，1280×800 里 190px（`PANEL_FLOOR`）、300px、258px（这时图表区正好是预留的 300px）。
-// 数是在 #686 之前的 `dev`（0214f433）和之后（dd42c6c0）各量了一遍，完全一样（日志、动作、尝试三个页签都是）。
-// 选的节点是 verify：它那一组的摘要在第一张图表上面，把图表推下去，预留的高度才会因为图表的位置而变；预留误加到 1280 及以上的窗口时
-// （第一张图表上沿加 120px 比 300px 大），1440×900 里面板被压矮到 218px，1280×800 里面板已经在下限、压不矮，
-// 变的是图表区（320px）和时间线（238px）。所以三个高度都断言：只看面板的话 1280×800 里守不住。
-// fetch 那一组的摘要短，图表上沿加 120px 不到 300px，预留怎么改都不变，守不住这条，所以不用它。
+// 选中节点时底部面板、图表区、时间线的高度（#655：图表区预留到第一张图表露出 96%，时间线和面板先让）：
+// 选的节点是 verify：它那一组的摘要（状态、Agent、总耗时和一行错误）在第一张图表上面，把图表推到离工作区顶端约 218px，
+// 只留 300px 时图表的下半截被图表区的下沿截掉。预留的高度因此是图表的上沿加它高度的 96%（368px），面板和时间线让出来：
+// 1440×900 里面板 237→190px（在 `PANEL_FLOOR`）、图表区 301→368px、时间线 310→290px，
+// 1280×800 里面板仍是 190px、图表区 300→368px、时间线 258→190px。
+// 之前（#686）这四条守的是「预留只在窄于 1280 的窗口里加高」：预留误加到 1280 及以上的窗口时三个高度都会变，所以三个高度都断言。
+// fetch 那一组的摘要短，第一张图表的上沿加 150px 不到 300px，预留怎么改都不变，守不住这条，所以不用它。
 // 以后底部面板的默认高度、时间线的高度有意改了，这几个数跟着改（改之前量一遍，写在 PR 里）。
 const HEIGHTS = {
-	"1440×900": { panel: 237, workspace: 301, timeline: 310 },
-	"1280×800": { panel: 190, workspace: 300, timeline: 258 },
+	"1440×900": { panel: 190, workspace: 368, timeline: 290 },
+	"1280×800": { panel: 190, workspace: 368, timeline: 190 },
 } as const;
 
 for (const viewport of [
@@ -102,7 +102,7 @@ for (const viewport of [
 ] as const) {
 	const size = `${viewport.width}×${viewport.height}` as keyof typeof HEIGHTS;
 	for (const tab of ["logs", "actions"] as const) {
-		test(`选中节点时底部面板、图表区、时间线的高度和 #686 之前一样：${HEIGHTS[size].panel} / ${HEIGHTS[size].workspace} / ${HEIGHTS[size].timeline}px（verify 的${tab === "logs" ? "日志" : "动作"}页签，${size}）`, async ({
+		test(`选中节点时底部面板、图表区、时间线的高度：${HEIGHTS[size].panel} / ${HEIGHTS[size].workspace} / ${HEIGHTS[size].timeline}px（verify 的${tab === "logs" ? "日志" : "动作"}页签，${size}）`, async ({
 			page,
 			controlPlane,
 			connectAgent,

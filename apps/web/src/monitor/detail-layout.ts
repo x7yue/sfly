@@ -23,6 +23,13 @@ export const TIMELINE_BODY_MIN = 120;
 export const PANEL_FLOOR = 190;
 
 /**
+ * 为了让第一张图表整张露出来，底部面板在窗口很矮时再让到的下限（px）：比 {@link PANEL_FLOOR} 低 20px，只在
+ * {@link chartsReservedHeight} 算「让得出来多少」时用（1600×700 里时间线已经在最矮，面板 190px 时第一张图表差 20px 露不全，
+ * 170px 的面板仍放得下标签行、几行日志和输入输出的第一块）。窗口高的时候用不到：时间线先让，面板仍是 {@link PANEL_FLOOR} 以上。
+ */
+export const PANEL_SQUEEZE_FLOOR = 170;
+
+/**
  * 时间线主体最高的高度（px）：`available` 是详情的可用高度（失败横幅以下，时间线、图表、面板共用的高度），
  * `chartsReserved` 是图表工作区要留的高度。
  */
@@ -62,8 +69,9 @@ export interface FirstChart {
  *   下限再加到第一张图表的上沿加 {@link CHARTS_VISIBLE_FIGURE}（以前就是这样）。
  * - 想要的是第一张图表（选中节点时是它的组里那一张）露出 {@link CHARTS_FIRST_VISIBLE}：上沿加这份高度。选中节点的摘要
  *   （状态、Agent、总耗时，失败时还有错误）在图表上面，会把图表推下去，只留 300px 时图表的下半截被图表区的下沿截掉。
- * - 想要的不超过「时间线退到最矮（{@link TIMELINE_BODY_MIN}）、面板退到下限（{@link PANEL_FLOOR}）之后剩下的」：
- *   窗口高的时候时间线和面板先让（面板的默认高度就是让出来的），窗口矮到让不出来，就留以前的下限，不再往上加。
+ * - 想要的不超过「时间线退到最矮（{@link TIMELINE_BODY_MIN}）、面板退到 {@link PANEL_SQUEEZE_FLOOR} 之后剩下的」：
+ *   窗口高的时候时间线和面板先让（面板的默认高度就是让出来的；时间线先让，所以面板在 {@link PANEL_FLOOR} 以上，
+ *   只有时间线已经最矮、还差一点才再压面板），窗口矮到让不出来，就留以前的下限，不再往上加。
  *
  * `first` 是 null（没有图表）时只有下限；`available` 是详情的可用高度（窗口减顶栏、失败横幅，量出来之前是 0）。
  */
@@ -77,6 +85,6 @@ export function chartsReservedHeight(
 		? Math.max(CHARTS_RESERVED_HEIGHT, first.top + CHARTS_VISIBLE_FIGURE)
 		: CHARTS_RESERVED_HEIGHT;
 	const wanted = first.top + Math.ceil(first.height * CHARTS_FIRST_VISIBLE);
-	const room = available - TIMELINE_HEADER_HEIGHT - TIMELINE_BODY_MIN - PANEL_FLOOR;
+	const room = available - TIMELINE_HEADER_HEIGHT - TIMELINE_BODY_MIN - PANEL_SQUEEZE_FLOOR;
 	return Math.max(floor, Math.min(wanted, room));
 }
