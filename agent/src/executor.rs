@@ -124,6 +124,17 @@ pub fn failure(task: &AssignTask, kind: ErrorKind, message: impl Into<String>) -
 }
 
 /// 带出错位置的失败（节点代码里出错的那一行）；`location` 为空串表示没有。
+/// 任务被取消的结果（和执行器取消节点时的结果一样，`kind` 不设）。节点已经成功、上传产物时被取消，Agent 也这样报（#648）。
+pub fn cancelled(task: &AssignTask, message: impl Into<String>) -> TaskResult {
+    result_with_error(
+        task,
+        TaskStatus::Cancelled,
+        ErrorKind::Unspecified,
+        message.into(),
+        String::new(),
+    )
+}
+
 pub fn failure_at(
     task: &AssignTask,
     kind: ErrorKind,

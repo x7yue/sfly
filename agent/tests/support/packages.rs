@@ -60,6 +60,8 @@ struct Files {
     upload_script: Vec<u16>,
     /// 读完请求体之后一直不回应（连接留着）。
     upload_hang: bool,
+    /// 慢慢读请求体：每次最多读这么多字节，读完一次等这么久（控制面一直在读、只是读得慢的样子）。
+    upload_throttle: Option<(usize, Duration)>,
     /// PUT 失败时响应的正文；None 为 `{}`。
     upload_body: Option<String>,
     by_path: HashMap<String, File>,
@@ -227,6 +229,11 @@ impl HttpFixture {
         self.files.lock().unwrap().upload_script = statuses.to_vec();
     }
 
+    /// 之后的 PUT 慢慢读请求体：每次最多读 `bytes` 字节，读完一次等 `tick`：控制面一直在读、只是读得慢。
+    pub fn throttle_uploads(&self, bytes: usize, tick: Duration) {
+        self.files.lock().unwrap().upload_throttle = Some((bytes, tick));
+    }
+
     /// 之后的 PUT 读完请求体就不再回应：接了连接、收下内容，只是一直不说话（控制面卡住的样子）。
     pub fn hang_uploads(&self) {
         self.files.lock().unwrap().upload_hang = true;
@@ -275,6 +282,18 @@ async fn serve(
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
         let mut body = buf[end..].to_vec();
+        let throttle = files.lock().unwrap().upload_throttle;
+        if let Some((bytes, tick)) = throttle {
+            let mut slow = vec![0u8; bytes];
+            while body.len() < length {
+                let n = stream.read(&mut slow).await?;
+                if n == 0 {
+                    break;
+                }
+                body.extend_from_slice(&slow[..n]);
+                tokio::time::sleep(tick).await;
+            }
+        }
         while body.len() < length {
             let n = stream.read(&mut chunk).await?;
             if n == 0 {

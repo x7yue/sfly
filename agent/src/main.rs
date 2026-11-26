@@ -274,7 +274,8 @@ async fn main() -> anyhow::Result<()> {
         log_forward_rate: args.log_forward_rate,
         stable_connection: Duration::from_millis(args.stable_connection_ms),
         update_read_timeout: Duration::from_secs(args.update_read_timeout),
-        upload_idle_timeout: Duration::from_secs(args.upload_idle_timeout),
+        // 0 秒会让每次上传一开始就算卡住、每次都失败：至少 1 秒（和 rejected_retry_* 一样）。
+        upload_idle_timeout: Duration::from_secs(args.upload_idle_timeout.max(1)),
         version: args
             .version_override
             .unwrap_or_else(|| AGENT_VERSION.to_string()),

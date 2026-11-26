@@ -722,9 +722,9 @@ async fn an_upload_that_the_control_plane_never_answers_fails_after_the_idle_tim
         "{}",
         error.message
     );
-    // 三次尝试、每次 1 秒、之间等 0.5 秒：约 4 秒，不是永远。
+    // 三次尝试、每次 1 秒、之间等 0.5 秒：约 4 秒，不是永远（耗时只作上限）。
     assert!(
-        started.elapsed() >= Duration::from_secs(3),
+        started.elapsed() < Duration::from_secs(30),
         "{:?}",
         started.elapsed()
     );
@@ -782,14 +782,137 @@ async fn a_cancel_that_arrives_during_the_upload_gives_the_upload_up() {
         "{:?}",
         cancelled.elapsed()
     );
-    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    // 节点已经成功、上传时被取消（取消运行、停止子流程）：这是终止，不是失败（docs/SEMANTICS.md §4.1，停止不算失败），
+    // 和执行器取消节点时的结果一样报已取消、kind 不设；控制面按它是取消运行还是停止子流程记成 cancelled 或 stopped。
+    assert_eq!(result.status(), TaskStatus::Cancelled, "{result:?}");
     let error = result.error.unwrap();
+    assert_eq!(error.kind(), ErrorKind::Unspecified);
     assert!(
         error.message.contains("上传产物失败") && error.message.contains("上传已放弃"),
         "{}",
         error.message
     );
     assert_eq!(fixture.uploads().len(), 1, "被打断之后不再重试");
+}
+
+#[tokio::test]
+async fn a_failed_node_keeps_its_failure_when_a_cancel_cuts_its_upload_short() {
+    // 原来的结果就是失败的：保持原样（失败、原来的原因在前），上传放弃的说明附在后面；只有成功的结果才改报已取消。
+    let fixture = HttpFixture::start().await;
+    fixture.hang_uploads();
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(agent_with_idle_timeout(
+        &cp,
+        "agent-art-cancel-failed",
+        "60",
+    ));
+    cp.hello(0).await;
+
+    cp.assign(artifact_task(
+        "task-cancel-failed-upload",
+        &fixture,
+        json!({ "files": { "a.txt": "x" }, "fail": true }),
+    ))
+    .await;
+    wait_until("the upload request to arrive", || {
+        !fixture.uploads().is_empty()
+    })
+    .await;
+    cancel(&cp, "task-cancel-failed-upload", false).await;
+    let (result, _) = cp.result("task-cancel-failed-upload").await;
+
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    let error = result.error.unwrap();
+    assert_eq!(error.kind(), ErrorKind::NodeError);
+    let message = &error.message;
+    let own = message.find("保存产物后失败").expect("节点自己的失败原因");
+    let upload = message.find("上传已放弃").expect("上传放弃的说明");
+    assert!(own < upload, "原来的原因在前：{message}");
+}
+
+#[tokio::test]
+async fn a_timed_out_task_still_uploads_the_artifacts_it_saved_and_reports_the_timeout() {
+    // 超时进入收尾时间时 Agent 也往同一个取消信号里发一次优雅取消（#656）：它在开始上传之前，不打断上传
+    // （`upload_all` 里的 `cancel.borrow_and_update()`）。节点存了一个产物之后睡过超时：产物照常上传，结果是超时。
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-timeout"));
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let ready = dir.path().join("ready");
+    let report = dir.path().join("report");
+
+    let mut task = stub_task(
+        "task-timeout-upload",
+        "wait_cancel",
+        json!({ "ready_file": ready, "report_file": report, "artifacts": 1 }),
+    );
+    task.artifact_upload_url = format!("{}/tasks/task-timeout-upload/artifacts/", fixture.url);
+    // 给节点留够启动的时间（保存产物、写 ready 文件）：SIGTERM 来得太早的话 `finally` 还没有进入。
+    task.timeout_seconds = 2;
+    cp.assign(task).await;
+    let (result, _) = cp.result("task-timeout-upload").await;
+
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    let error = result.error.unwrap();
+    assert_eq!(error.kind(), ErrorKind::Timeout);
+    assert!(!error.message.contains("上传产物失败"), "{}", error.message);
+    let uploads = fixture.uploads();
+    assert_eq!(uploads.len(), 1, "产物照常上传：{uploads:?}");
+    assert!(
+        uploads[0]
+            .path
+            .starts_with("/tasks/task-timeout-upload/artifacts/00000-"),
+        "{}",
+        uploads[0].path
+    );
+}
+
+#[tokio::test]
+async fn an_upload_idle_timeout_of_zero_is_taken_as_one_second_not_as_failing_every_upload() {
+    // 0 秒不能让每次上传一开始就算卡住：至少 1 秒。控制面正常回应时上传照常成功。
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(agent_with_idle_timeout(&cp, "agent-art-zero", "0"));
+    cp.hello(0).await;
+
+    cp.assign(artifact_task(
+        "task-zero-idle",
+        &fixture,
+        json!({ "files": { "a.txt": "内容" } }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-zero-idle").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    assert_eq!(fixture.uploads().len(), 1);
+}
+
+#[tokio::test]
+async fn an_upload_that_keeps_being_read_slowly_is_not_cut_short_by_the_idle_timeout() {
+    // 「按进展算、不按总时间算」（#648）：控制面一直在读、只是读得慢（每读 64 KiB 等 10 毫秒），整个上传比空闲超时
+    // （2 秒）长得多（24 MiB 至少 3.8 秒）：不该超时，一次就传完。
+    // 请求体每被取走一块就记一次进展；改成读完才记、或者改成每个请求一个总时限，这条都会红。
+    let fixture = HttpFixture::start().await;
+    fixture.throttle_uploads(64 * 1024, Duration::from_millis(10));
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(agent_with_idle_timeout(&cp, "agent-art-slow", "2"));
+    cp.hello(0).await;
+
+    const SIZE: usize = 24 * 1024 * 1024;
+    let mut task = stub_task(
+        "task-slow-upload",
+        "artifact_limit",
+        json!({ "direct": { "big.bin": SIZE } }),
+    );
+    task.artifact_upload_url = format!("{}/tasks/task-slow-upload/artifacts/", fixture.url);
+    cp.assign(task).await;
+    let (result, _) = cp.result("task-slow-upload").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    let uploads = fixture.uploads();
+    assert_eq!(uploads.len(), 1, "一次就传完，没有超时重试");
+    assert_eq!(uploads[0].body.len(), SIZE);
 }
 
 #[tokio::test]

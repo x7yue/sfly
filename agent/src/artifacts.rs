@@ -170,6 +170,14 @@ async fn response_body_head(mut response: reqwest::Response) -> String {
     text
 }
 
+/// 上传没有传完的原因。
+enum Stopped {
+    /// 上传出错：被拒绝、超时没有进展、读不了文件……
+    Failed(String),
+    /// 因为任务被取消放弃（取消运行、停止子流程、Welcome 里的放弃、立即更新）：剩下的文件不传了。
+    Cancelled(String),
+}
+
 pub struct Uploader {
     pub http: reqwest::Client,
     pub token: Option<Secret>,
@@ -263,8 +271,11 @@ impl Uploader {
         if let Some(over) = &over {
             reasons.push(over.message(sent));
         }
-        if let Err(error) = upload {
+        let mut cancelled = false;
+        if let Err(stopped) = upload {
+            let (Stopped::Failed(error) | Stopped::Cancelled(error)) = &stopped;
             reasons.push(format!("上传产物失败：{error}"));
+            cancelled = matches!(stopped, Stopped::Cancelled(_));
         }
         if reasons.is_empty() {
             return result;
@@ -272,6 +283,12 @@ impl Uploader {
         let message = reasons.join("\n\n");
         eprintln!("task {}: {message}", task.task_id);
         if result.status() == TaskStatus::Success {
+            // 节点已经成功、上传时被取消（取消运行、停止子流程……）：这是终止，不是失败（docs/SEMANTICS.md §4.1，
+            // 停止不算失败），和执行器取消节点时一样报已取消：控制面按它是取消运行还是停止子流程记成 cancelled 或 stopped。
+            // 原来的结果就是失败（包括超时）的，保持原来的状态，上传的说明附在后面（下面）。
+            if cancelled {
+                return executor::cancelled(task, message);
+            }
             // 超限用 env_error：重试一遍产物还是这么大，不按 retries 重试；上传被拒绝等仍是 node_error。
             let kind = if over.is_some() {
                 ErrorKind::EnvError
@@ -289,7 +306,7 @@ impl Uploader {
         task: &AssignTask,
         dir: &Path,
         mut cancel: executor::CancelSignal,
-    ) -> (Option<OverLimit>, usize, Result<(), String>) {
+    ) -> (Option<OverLimit>, usize, Result<(), Stopped>) {
         let files = match tokio::task::spawn_blocking({
             let dir = dir.to_path_buf();
             move || collect(&dir)
@@ -301,10 +318,13 @@ impl Uploader {
                 return (
                     None,
                     0,
-                    Err(format!("读取产物目录 {} 失败：{e}", dir.display())),
+                    Err(Stopped::Failed(format!(
+                        "读取产物目录 {} 失败：{e}",
+                        dir.display()
+                    ))),
                 );
             }
-            Err(e) => return (None, 0, Err(e.to_string())),
+            Err(e) => return (None, 0, Err(Stopped::Failed(e.to_string()))),
         };
         let (to_upload, over) = plan(files, task.artifact_limit_bytes);
         // 开始上传之前已经有的取消请求不打断上传：取消的任务、超时进入收尾时间的任务照样上传它已经存下的产物。
@@ -312,13 +332,13 @@ impl Uploader {
         let mut sent = 0;
         for file in to_upload {
             let result = tokio::select! {
-                result = self.upload(task, &file.name, &file.path) => result,
+                result = self.upload(task, &file.name, &file.path) => result.map_err(Stopped::Failed),
                 () = cancel_arrived(&mut cancel) => {
-                    Err(format!("{}：任务被取消，上传已放弃", file.name))
+                    Err(Stopped::Cancelled(format!("{}：任务被取消，上传已放弃", file.name)))
                 }
             };
-            if let Err(e) = result {
-                return (over, sent, Err(e));
+            if let Err(stopped) = result {
+                return (over, sent, Err(stopped));
             }
             sent += 1;
         }
