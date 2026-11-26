@@ -368,7 +368,7 @@ describe("事件连接：核对会话和轮次", () => {
 		await database.migrate();
 		const accounts = new TestAccounts(testDb.url);
 		try {
-			author = await accounts.user("connection-author");
+			author = await accounts.user("connection_author");
 		} finally {
 			await accounts.close();
 		}

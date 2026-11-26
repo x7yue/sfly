@@ -55,7 +55,7 @@ describe("会话事件的落库和发布顺序", () => {
 		await database.migrate();
 		const accounts = new TestAccounts(testDb.url);
 		try {
-			author = await accounts.user("store-author");
+			author = await accounts.user("store_author");
 		} finally {
 			await accounts.close();
 		}
