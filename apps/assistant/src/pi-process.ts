@@ -11,7 +11,7 @@ import { LineSplitter } from "./jsonl.js";
  * 标准错误另存成文件（不当协议解析）。不用 pi 自带的 `RpcClient`：它把宿主进程的环境整个带给子进程。
  *
  * 结束的两种做法（#539 第 8 题）：
- * - {@link PiProcess.close}：关 stdin，pi 有序退出，宽限之后还没退出就 SIGKILL（协议「结束会话」）。**只在空闲时用**：
+ * - {@link PiProcess.close}：关 stdin，pi 有序退出，宽限之后还没退出就 SIGTERM，再过宽限还没退出就 SIGKILL（协议「结束会话」）。**只在空闲时用**：
  *   一轮进行中关 stdin，pi 不等这一轮做完，正在跑的命令被中止；
  * - {@link PiProcess.terminate}：先关 stdin，再 SIGTERM，{@link KILL_GRACE_MS} 之后还没退出就 SIGKILL（pi
  *   「Shutdown」：第二个信号立即退出）。停止一轮等不到 `agent_settled`、助手服务退出时用它。#539 第 8 题实测：一轮进行中关 stdin、
@@ -161,18 +161,24 @@ export class PiProcess {
 	}
 
 	/**
-	 * 关 stdin，等 pi 有序退出。**只在空闲时调用**（见类的说明）。`graceMs` 之后还没退出就 SIGKILL。
+	 * 关 stdin，等 pi 有序退出。**只在空闲时调用**（见类的说明）。`graceMs` 之后还没退出就 SIGTERM，再过 `graceMs` 还没退出就 SIGKILL
+	 * （闲置回收、到了上限关最久没用的进程、换工作区、结束会话都走这里；pi 空闲时关 stdin 0.1 秒内就退出，#539 第 8 题，
+	 * 后两步只在它卡住时才会走到）。
 	 */
 	async close(graceMs = this.#grace): Promise<void> {
 		if (this.exited) return;
 		this.#child.stdin?.end();
-		const timer = this.#clock.setTimeout(() => {
-			if (!this.exited) this.#child.kill("SIGKILL");
+		const term = this.#clock.setTimeout(() => {
+			if (!this.exited) this.#child.kill("SIGTERM");
 		}, graceMs);
+		const kill = this.#clock.setTimeout(() => {
+			if (!this.exited) this.#child.kill("SIGKILL");
+		}, graceMs * 2);
 		try {
 			await this.#exited;
 		} finally {
-			this.#clock.clearTimeout(timer);
+			this.#clock.clearTimeout(term);
+			this.#clock.clearTimeout(kill);
 		}
 	}
 
