@@ -307,6 +307,14 @@ test("检查器：名称太多、表里只列了一部分时，失败数用合�
 		result: "failed" as const,
 		reason: "拒单：余额不足",
 	});
+	// 监控详情的「动作」页签没有明细行时写「没有记录动作」、不画工具条：失败的 5 个有补发的明细。
+	setup.agent.actions(
+		verify,
+		[1, 2, 3, 4, 5].flatMap((id) => [
+			setup.agent.actionStart(id, `晚到 ${id}`, now - 4_500 + id * 100, { late: true }),
+			setup.agent.actionEnd(id, "failed", now - 4_450 + id * 100, { reason: "拒单：余额不足" }),
+		]),
+	);
 	setup.agent.actionSummary(verify, {
 		total: 1_040,
 		reported: 1_040,
