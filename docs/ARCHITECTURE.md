@@ -462,7 +462,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 | 表 | 主要字段 |
 |---|---|
-| `projects` | id（主键，就是项目的标识：小写字母、数字、连字符，不以连字符开头，最长 63 个字符，创建后不变）, display_name, created_at；迁移时建默认项目 `default` 和公共项目 `public` |
+| `projects` | id（主键，就是项目的标识：小写字母、数字、连字符，不以连字符开头，最长 63 个字符，创建后不变）, display_name, created_at, workbench_agent（项目登记的工作台，Agent 的名字，可空，没有外键，`PUT /projects/:project/workbench` 写，5.1「项目的工作台」，迁移 `0043_project_workbench`）；迁移时建默认项目 `default` 和公共项目 `public` |
 | `users` | id, login_name（唯一，小写字母、数字、下划线，长度 1–32，不含连字符：库里有约束）, display_name, password_hash（`scrypt` 存储串，只靠外部身份登录的用户为空）, disabled_at, is_platform_admin, external_identity（留给反向代理头或 OIDC，唯一）, created_at；密码哈希和外部身份至少有一个 |
 | `project_members` | (project_id, user_id) 主键, role（read_only / editor / project_admin）, created_at |
 | `api_tokens` | id, kind（personal / project / session / task：会话令牌和任务凭据的种类先留出来）, name, prefix（展示用的前缀）, token_hash（SHA-256，唯一，原值只在签发时显示一次）, user_id（个人令牌的所属用户、会话令牌的发起人）, project_id（项目令牌的所属项目；会话令牌、任务凭据、可选的个人令牌限定的项目）, session_id（组合外键 `(session_id, project_id)` 到 `sessions`，会话删除时级联；部分索引 `api_tokens_session`（`where session_id is not null`，迁移 0041）：每一轮开始、结束时按会话吊销它还有效的令牌，令牌只吊销、不删除，每一轮一行，没有索引时这条更新要顺序扫整张表）, task_id（`tasks.id`：任务凭据属于一次尝试）, agent_credential_id（外键到 `agent_credentials`，凭据行删除时级联；只有任务凭据能记：派发时连接用的那一个 Agent 凭据，旧方式连接的为空）, scopes（范围的名字数组，库里不约束）, created_at, expires_at, revoked_at, last_used_at；每种令牌用哪几列由约束保证；只吊销、不删除 |

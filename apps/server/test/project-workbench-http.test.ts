@@ -1,14 +1,18 @@
 // 登记项目的工作台经 HTTP（`PUT /projects/:project/workbench`，ADR 0027、0029「迁移与过渡」，#549）：真实控制面和数据库，
 // 假 Agent 走真实的 gRPC。登记要「管理」范围、只认人的凭据；前置条件不满足是 409 并列出没换的 Agent；登记之后共享令牌和不带凭据的
 // 连接都被拒绝，控制面重启之后照旧；没有登记时「助手」页写没有登记工作台。登记和连接的竞争的细节在 project-workbench.test.ts。
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ConnectError } from "@connectrpc/connect";
 import type { SessionListResponse } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { bearer, TestAccounts } from "./support/credentials.js";
+import { shellBlocks } from "./support/doc-commands.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { FakeAssistant } from "./support/fake-assistant.js";
+import { repoRoot, sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const SHARED = "s3cret-shared-token";
@@ -190,6 +194,43 @@ describe("登记项目的工作台", () => {
 			expect((await code("shared-one")).code).toBe("workbench_agent_not_on_credential");
 			expect(await column()).toBeNull();
 		});
+	});
+
+	describe("文档里的命令", () => {
+		it("README「助手和工作台」里登记工作台的命令照着执行一遍（真实的 sfly 命令行，个人令牌）：登记成功，响应是 {project, agent, previous_agent}，再执行一遍是幂等的", async () => {
+			await onCredential("workbench");
+			const readme = await readFile(join(repoRoot, "README.md"), "utf8");
+			const block = shellBlocks(readme).find((code) =>
+				code.includes("sfly api PUT /projects/default/workbench"),
+			);
+			expect(block, "README 里没有登记工作台的命令").toBeDefined();
+			const command = /^sfly api PUT (\S+) --body '([^']*)'$/m.exec(block ?? "");
+			expect(command, `README 里登记工作台的命令的写法变了：${block}`).not.toBeNull();
+			const [, path = "", body = ""] = command ?? [];
+			expect(JSON.parse(body)).toEqual({ agent: "workbench" });
+
+			const token = (boss.authorization ?? "").replace(/^Bearer /, "");
+			const run = () =>
+				sfly(["api", "PUT", path, "--body", body, "--server", cp.httpUrl], {
+					env: { SFLY_API_TOKEN: token },
+				});
+			const first = await run();
+			expect(first.code, first.stderr).toBe(0);
+			expect(JSON.parse(first.stdout)).toEqual({
+				project: "default",
+				agent: "workbench",
+				previous_agent: null,
+			});
+			expect(await column()).toBe("workbench");
+			const again = await run();
+			expect(again.code, again.stderr).toBe(0);
+			expect(JSON.parse(again.stdout)).toMatchObject({ agent: "workbench", previous_agent: null });
+			// 命令行没有登录时的 401（不是登记成功）：命令用的是令牌，不是共享令牌。
+			const anonymous = await sfly(["api", "PUT", path, "--body", body, "--server", cp.httpUrl], {
+				env: { SFLY_API_TOKEN: SHARED },
+			});
+			expect(anonymous.code).not.toBe(0);
+		}, 120_000);
 	});
 
 	describe("登记之后", () => {
