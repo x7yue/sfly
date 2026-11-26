@@ -49,7 +49,8 @@ pub const USERINFO_MASK: &str = "***";
 // 登记在这里：登记时按**单个地址**算出「这个地址带凭据时的原文」在日志里会有的几种写法，之后 [`mask_userinfo`] 在文字里
 // 找到这些写法的完整出现就整段换掉。
 
-/// 登记表最多留多少个地址（去重；满了丢掉最早的）：Welcome 每次重连都会再给，同一个值只占一项，不会涨。
+/// 登记表最多留多少个地址（去重；满了丢掉最久没有登记的）：Welcome 每次重连都会再给，同一个值只占一项、每次挪到最后，不会涨，
+/// 也不会被后来的挤掉。`--lib` 的测试共用这张表（每个测试登记的带凭据的地址各占一项）：加新测试时注意总数，别逼近它。
 const MAX_KNOWN_ADDRESSES: usize = 64;
 
 /// 文字里的 `needle`（一个地址带凭据的某种写法的完整出现）换成 `replacement`。
@@ -69,8 +70,9 @@ struct Registry {
 
 impl Registry {
     fn add(&mut self, address: String, rules: Vec<Rule>) {
-        if self.entries.iter().any(|(known, _)| *known == address) {
-            return;
+        // 登记过的（重连时 Welcome 又给了一遍）挪到最后：最近用过的不先被挤掉。
+        if let Some(position) = self.entries.iter().position(|(known, _)| *known == address) {
+            self.entries.remove(position);
         }
         if self.entries.len() >= MAX_KNOWN_ADDRESSES {
             self.entries.remove(0);
@@ -127,7 +129,9 @@ fn mask_known(text: &str) -> Cow<'_, str> {
 /// - **读法一致**（URL 解析器和 curl 读出同一个用户名和密码）：主机段（`://` 之后到第一个 `/`、`?`、`#` 为止）里最后一个 `@`
 ///   之前是凭据。写法有：`://凭据@`（换成 `://***@`）和 `凭据@主机`（换成 `***@主机`，没写协议或日志里去掉了协议）；
 ///   URL 解析器写出来的写法（`Url` 把凭据里的空格、`"`、`<`、`>` 等百分号编码，tab 和换行去掉，主机小写、默认端口去掉：
-///   uv、reqwest 打印的地址就是它）另算一份。
+///   uv、reqwest 打印的地址就是它）另算一份。uv 回显地址时把密码换成 `****`、用户名照写成这种百分号编码的写法
+///   （`://用户名:****@主机`）：**不为它单独登记「只有用户名」的规则**，那样的写法只看用户名，不是地址的完整出现，
+///   能被人用来单独试出用户名；它的用户名已经编码过，文字规则认得出。
 /// - **读法不一致**（用户名密码段里有 `\`：URL 解析器在 `\` 处结束主机段，主机是 `\` 之前的、读不出凭据，凭据落进了路径；
 ///   curl 不把 `\` 当分隔符，读成用户名和密码，#756）：认不准凭据在哪，**整个地址不写出来**，整段换成 `***`
 ///   （原文、URL 解析器写出来的写法、去掉末尾 `/` 的写法，这样「地址加上路径」也认得出）。读法一致的那几种写法也一并登记。
@@ -194,22 +198,6 @@ fn rules_of_one(address: &str, rules: &mut Vec<Rule>) {
             curl_authority.to_string(),
             format!("{USERINFO_MASK}@{host}"),
         );
-        // uv 回显地址时把密码换成 `****`、用户名照写（`用户名:****@主机`）：用户名里有文字规则认不出的字符时，
-        // 只有这一种写法能按值认出（密码已经被 uv 自己遮住了，用户名也不写出来）。
-        if let Some((user, _)) = userinfo.split_once(':')
-            && !user.is_empty()
-        {
-            add(
-                rules,
-                format!("://{user}:****@"),
-                format!("://{USERINFO_MASK}@"),
-            );
-            add(
-                rules,
-                format!("{user}:****@{host}"),
-                format!("{USERINFO_MASK}@{host}"),
-            );
-        }
     }
     // URL 解析器写出来的写法：凭据百分号编码、主机规范化之后。
     if let Some(url) = &parsed {
@@ -750,25 +738,29 @@ mod tests {
         );
     }
 
-    /// uv 回显地址时把密码换成 `****`、用户名照写：用户名里有文字规则认不出的字符时，登记过的地址仍然认得出
-    /// （完整的 `://用户名:****@`）；只有用户名的一部分不认。
+    /// uv 回显地址时把密码换成 `****`，用户名是百分号编码过的（URL 解析器写出来的写法）：交给文字规则，认得出。
+    /// 按值这一层**不**为「只有用户名」登记规则：那不是地址的完整出现，输出和这一层不存在时一样。
     #[test]
-    fn the_uv_spelling_with_a_masked_password_is_known_too() {
+    fn the_uv_spelling_with_a_masked_password_is_left_to_the_text_rule() {
         let address = r#"https://Zu15 "n15:Pw15xq@uv-style.example/simple"#;
         register_address(address);
 
-        let masked = mask_userinfo(
-            r#"error: failed to fetch https://Zu15 "n15:****@uv-style.example/simple/x/"#,
-        );
+        // uv 写的：用户名百分号编码，密码是 `****`：文字规则认得出。
         assert_eq!(
-            masked,
+            mask_userinfo(
+                "error: failed to fetch https://Zu15%20%22n15:****@uv-style.example/simple/x/"
+            ),
             "error: failed to fetch https://***@uv-style.example/simple/x/"
         );
-        // 用户名的一部分、没有 `@` 的：不认。
-        assert_eq!(
-            mask_known(r#"https://Zu15 "n15:****"#),
-            r#"https://Zu15 "n15:****"#
-        );
+        // 用户名原样写、密码是 `****`：只有用户名，不是这个地址的完整出现：按值这一层不认，一个字符也不动。
+        for text in [
+            r#"https://Zu15 "n15:****@uv-style.example/simple/x/"#,
+            r#"Zu15 "n15:****@uv-style.example"#,
+            r#"https://Zu15 "n15:****"#,
+        ] {
+            assert_eq!(mask_known(text), text, "{text}");
+            assert!(matches!(mask_known(text), Cow::Borrowed(_)), "{text}");
+        }
     }
 
     /// 按值那一层在文字规则之前：密码里有 `@` 又有文字规则认不出的字符时，文字规则会把 `@` 之前的当凭据、
@@ -871,6 +863,34 @@ mod tests {
                 .windows(2)
                 .all(|pair| pair[0].needle.len() >= pair[1].needle.len())
         );
+    }
+
+    #[test]
+    fn registering_a_known_address_again_moves_it_to_the_end() {
+        let mut registry = Registry::default();
+        let rule = |n: usize| Rule {
+            needle: format!("://last{n}:pw@"),
+            replacement: "://***@".into(),
+        };
+        for n in 0..MAX_KNOWN_ADDRESSES {
+            registry.add(format!("address-{n}"), vec![rule(n)]);
+        }
+        // 最早登记的地址又登记一次（重连时 Welcome 又给了一遍）：挪到最后，不占新位置，规则还在。
+        registry.add("address-0".into(), vec![rule(0)]);
+        assert_eq!(registry.entries.len(), MAX_KNOWN_ADDRESSES);
+        assert_eq!(registry.entries.last().unwrap().0, "address-0");
+        // 再来一个新的：挤掉的是现在最早的 address-1，不是刚用过的 address-0。
+        registry.add("address-new".into(), vec![rule(1000)]);
+        assert_eq!(registry.entries.len(), MAX_KNOWN_ADDRESSES);
+        let known: Vec<&str> = registry
+            .entries
+            .iter()
+            .map(|(address, _)| address.as_str())
+            .collect();
+        assert!(known.contains(&"address-0"), "{known:?}");
+        assert!(!known.contains(&"address-1"), "{known:?}");
+        assert!(registry.rules.contains(&rule(0)));
+        assert!(!registry.rules.contains(&rule(1)));
     }
 
     /// `Secret` 没有 `Display`（`format!("{secret}")`、`to_string()` 会把原值写出去）也不能被序列化
