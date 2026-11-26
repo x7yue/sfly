@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	connectProbe,
 	MODEL_PROBE_INTERVAL_MS,
+	MODEL_PROBE_RETRY_MS,
 	ModelHealth,
 	type Probe,
 	type ProbeResult,
@@ -98,7 +99,7 @@ describe("配没配好", () => {
 		const noKey = start({ env: {} }).health;
 		expect(noKey.snapshot()).toMatchObject({
 			configured: false,
-			reason: "模型文件引用了环境变量 ACME_KEY，助手服务的环境里没有值",
+			reason: "模型文件里 providers.acme.apiKey 引用了环境变量 ACME_KEY，助手服务的环境里没有值",
 		});
 		for (const { health } of [{ health: unset }, { health: absent }, { health: noKey }]) {
 			expect(health.gate()).toMatchObject({ status: 503, code: "model_not_configured" });
@@ -125,6 +126,29 @@ function readModels(): string {
 		},
 	});
 }
+
+describe("密钥误写在 $ 后面：/health、新的一轮的拒绝、日志里都没有那一串", () => {
+	it.each([
+		["${SECRET9abc}", "SECRET9abc"],
+		["k3y$SECRET6xyz", "SECRET6xyz"],
+	])("%s", (apiKey, leaked) => {
+		const path = join(dir, "leaky.json");
+		writeFileSync(
+			path,
+			JSON.stringify({
+				providers: {
+					acme: { baseUrl: "http://llm.internal:8177/v1", apiKey, models: [{ id: "big" }] },
+				},
+			}),
+		);
+		const { health, logs } = start({ path, probe: fakeProbe([]).probe });
+		health.start();
+		const text = JSON.stringify([health.snapshot(), health.gate(), logs]);
+		expect(text).toContain("是不是把密钥本身写进了 $ 后面");
+		expect(text).not.toContain(leaked);
+		health.close();
+	});
+});
 
 describe("试连：启动时一次，之后每 5 分钟一次", () => {
 	it("启动时试一次，/health 报连得上、上次检查的时间、端点的主机和端口（不带路径和参数）", async () => {
@@ -154,7 +178,7 @@ describe("试连：启动时一次，之后每 5 分钟一次", () => {
 		health.close();
 	});
 
-	it("连不上：reachable false、原因和 error_class；新的一轮 503 model_unreachable；5 分钟后再试，连上了就好了", async () => {
+	it("连不上：reachable false、原因和 error_class；新的一轮 503 model_unreachable；30 秒后复试，连上了 gate 放行，之后回到每 5 分钟", async () => {
 		const clock = new ManualClock();
 		const { probe, calls } = fakeProbe([
 			{ ok: false, errorClass: "unreachable", cause: "连接被拒绝" },
@@ -176,17 +200,36 @@ describe("试连：启动时一次，之后每 5 分钟一次", () => {
 			message: "连不上模型端点 llm.internal:8177：连接被拒绝",
 		});
 		expect(logs.join("\n")).toContain("连不上模型端点 llm.internal:8177：连接被拒绝");
-		// 5 分钟之内不再试。
-		clock.advance(MODEL_PROBE_INTERVAL_MS - 1);
+		// 连不上之后每 30 秒复试：30 秒之内不再试，到了就试。
+		clock.advance(MODEL_PROBE_RETRY_MS - 1);
 		expect(calls).toHaveLength(1);
+		expect(health.gate()).toMatchObject({ code: "model_unreachable" });
 		clock.advance(1);
 		await eventually(() => expect(health.snapshot().reachable).toBe(true));
 		expect(calls).toHaveLength(2);
 		expect(health.snapshot().checked_at).toBe(new Date(clock.now()).toISOString());
 		expect(health.gate()).toBeUndefined();
-		// 之后一直每 5 分钟一次。
-		clock.advance(MODEL_PROBE_INTERVAL_MS);
+		// 连上之后回到每 5 分钟一次：30 秒、几分钟之内都不再试。
+		clock.advance(MODEL_PROBE_RETRY_MS);
+		clock.advance(MODEL_PROBE_INTERVAL_MS - MODEL_PROBE_RETRY_MS - 1);
+		expect(calls).toHaveLength(2);
+		clock.advance(1);
 		await eventually(() => expect(calls).toHaveLength(3));
+		health.close();
+	});
+
+	it("一直连不上：每 30 秒复试一次，不等 5 分钟；试到连上为止", async () => {
+		const clock = new ManualClock();
+		const down = { ok: false as const, errorClass: "timeout" as const, cause: "连接超时" };
+		const { probe, calls } = fakeProbe([down, down, down, { ok: true }]);
+		const { health } = start({ clock, probe });
+		health.start();
+		await eventually(() => expect(calls).toHaveLength(1));
+		for (const expected of [2, 3, 4]) {
+			clock.advance(MODEL_PROBE_RETRY_MS);
+			await eventually(() => expect(calls).toHaveLength(expected));
+		}
+		await eventually(() => expect(health.snapshot().reachable).toBe(true));
 		health.close();
 	});
 
@@ -203,7 +246,8 @@ describe("试连：启动时一次，之后每 5 分钟一次", () => {
 		const { health } = start({ clock, probe });
 		health.start();
 		await eventually(() => expect(calls).toHaveLength(1));
-		expect(clock.pending).toBe(1);
+		// 试完才排下一次：在途时没有排着的定时器。
+		expect(clock.pending).toBe(0);
 		health.close();
 		expect(clock.pending).toBe(0);
 		release({ ok: false, errorClass: "unreachable", cause: "连接被拒绝" });
@@ -211,6 +255,19 @@ describe("试连：启动时一次，之后每 5 分钟一次", () => {
 		clock.advance(MODEL_PROBE_INTERVAL_MS * 3);
 		expect(calls).toHaveLength(1);
 		expect(health.snapshot().reachable).toBeNull();
+	});
+
+	it("试完排着下一次的定时器：关闭时清掉，之后到点也不再试", async () => {
+		const clock = new ManualClock();
+		const { probe, calls } = fakeProbe([{ ok: true }]);
+		const { health } = start({ clock, probe });
+		health.start();
+		await eventually(() => expect(health.snapshot().reachable).toBe(true));
+		expect(clock.pending).toBe(1);
+		health.close();
+		expect(clock.pending).toBe(0);
+		clock.advance(MODEL_PROBE_INTERVAL_MS * 2);
+		expect(calls).toHaveLength(1);
 	});
 
 	it("没配好时不试连；配好之后下一次到点就试", async () => {

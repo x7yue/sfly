@@ -9,9 +9,14 @@ import { checkModels, type ModelCheck, type ModelEndpoint } from "./models.js";
  *
  * **试连只建连接（https 含 TLS 握手），不发请求、不调模型、不花钱**：评测集的 `aeval/session.py` 的 `check_endpoint` 是同一个做法，
  * 只看能不能连上，端点回什么状态码都算连得上（401 也是连得上：密钥对不对是调用时的事，那时按上游的错误分类）。
- * 启动时试一次，之后每 {@link MODEL_PROBE_INTERVAL_MS} 一次。`/health` 报上一次试连的结果，不在请求里现连：控制面每几秒问一次 `/health`。
+ * 启动时试一次，之后每 {@link MODEL_PROBE_INTERVAL_MS} 一次；**上一次连不上时改成每 {@link MODEL_PROBE_RETRY_MS} 复试一次，连上了再回到
+ * 每 5 分钟**：上次试连连不上会挡住新的一轮（503），一次连接被重置不该挡五分钟。`/health` 报上一次试连的结果，不在请求里现连：
+ * 控制面每几秒问一次 `/health`。
  */
 export const MODEL_PROBE_INTERVAL_MS = 5 * 60 * 1000;
+
+/** 上一次试连连不上时，多久之后复试。 */
+export const MODEL_PROBE_RETRY_MS = 30 * 1000;
 
 /** 一次试连最多等多久：和评测集一样 10 秒。 */
 export const MODEL_PROBE_TIMEOUT_MS = 10_000;
@@ -93,6 +98,8 @@ export interface ModelHealthOptions {
 	clock?: Clock;
 	probe?: Probe;
 	intervalMs?: number;
+	/** 连不上时复试的间隔，默认 {@link MODEL_PROBE_RETRY_MS}。 */
+	retryMs?: number;
 	log: (message: string) => void;
 }
 
@@ -112,6 +119,7 @@ export class ModelHealth {
 	readonly #clock: Clock;
 	readonly #probe: Probe;
 	readonly #interval: number;
+	readonly #retry: number;
 	#timer: Timer | undefined;
 	#probed: Probed | undefined;
 	#probing: string | undefined;
@@ -122,6 +130,7 @@ export class ModelHealth {
 		this.#clock = options.clock ?? realClock;
 		this.#probe = options.probe ?? connectProbe();
 		this.#interval = options.intervalMs ?? MODEL_PROBE_INTERVAL_MS;
+		this.#retry = options.retryMs ?? MODEL_PROBE_RETRY_MS;
 	}
 
 	/** 现在的配置检查（每次重新读模型文件）。 */
@@ -133,22 +142,23 @@ export class ModelHealth {
 		});
 	}
 
-	/** 启动：试一次，之后每 5 分钟一次。启动时配得不好也照常排上定时器：文件修好之后下一次就试。 */
+	/**
+	 * 启动：试一次，之后每 5 分钟一次（连不上时每 30 秒一次，直到连上）。每次试完才排下一次：没配好或不知道端点时也排上，
+	 * 文件修好之后下一次就试。
+	 */
 	start(): void {
 		const check = this.#check();
 		if (!check.configured) {
 			this.options.log(`模型没有配置：${check.reason}`);
 		}
 		void this.#probeNow();
-		this.#schedule();
 	}
 
-	#schedule(): void {
+	/** 排下一次试连（换掉已经排着的）。 */
+	#schedule(delayMs: number): void {
 		if (this.#closed) return;
-		this.#timer = this.#clock.setTimeout(() => {
-			void this.#probeNow();
-			this.#schedule();
-		}, this.#interval);
+		this.#clock.clearTimeout(this.#timer);
+		this.#timer = this.#clock.setTimeout(() => void this.#probeNow(), delayMs);
 	}
 
 	/** 关闭：清掉定时器，正在试的连接断开，之后的结果不再记。 */
@@ -161,7 +171,10 @@ export class ModelHealth {
 
 	async #probeNow(): Promise<void> {
 		const check = this.#check();
-		if (!check.configured || check.endpoint === null) return;
+		if (!check.configured || check.endpoint === null) {
+			this.#schedule(this.#interval);
+			return;
+		}
 		const { endpoint } = check;
 		const key = keyOf(endpoint);
 		if (this.#probing === key) return;
@@ -175,6 +188,7 @@ export class ModelHealth {
 		if (this.#probing === key) this.#probing = undefined;
 		if (this.#closed) return;
 		this.#probed = { key, at: this.#clock.now(), result };
+		this.#schedule(result.ok ? this.#interval : this.#retry);
 		if (!result.ok) {
 			this.options.log(`连不上模型端点 ${addressOf(endpoint)}：${result.cause}`);
 		}

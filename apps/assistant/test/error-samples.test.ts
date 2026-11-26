@@ -61,7 +61,12 @@ const EXCEPTIONS: Record<string, { productClass: ErrorClass; reason: string }> =
 	"429，正文提到上下文": {
 		productClass: "rate_limit",
 		reason:
-			"状态码 429 定了是限流，正文里提到上下文不改变类别；评测集看到上下文的词就记成上下文耗尽",
+			"状态码优先：429 就是限流，正文里提到上下文不改类别；评测集看到上下文的词就记成上下文耗尽",
+	},
+	"整句只有状态码的数字（评测集 test_classify.py 里重试成功那条的 errorMessage）": {
+		productClass: "other",
+		reason:
+			"状态码只认 `NNN: 正文`、`<提供方> error (NNN): 正文` 和 SDK 的 `NNN 正文` 这几种写法，一个孤零零的数字不当状态码；评测集看到 5xx 的数字就记成环境故障",
 	},
 	"没有状态码，正文说超时": {
 		productClass: "other",

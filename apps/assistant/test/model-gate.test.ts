@@ -80,7 +80,7 @@ describe("模型没有配置：照常启动，/health 写明缺什么，新的�
 		const body = await expectRejected(
 			harness,
 			"model_not_configured",
-			"模型文件引用了环境变量 FAKE_MODEL_KEY，助手服务的环境里没有值",
+			"模型文件里 providers.fake.apiKey 引用了环境变量 FAKE_MODEL_KEY，助手服务的环境里没有值",
 		);
 		expect(body.message).not.toContain(KEY);
 	});

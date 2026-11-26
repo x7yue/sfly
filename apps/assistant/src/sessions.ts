@@ -243,7 +243,7 @@ export class SessionManager {
 				const { names } = modelEnvRefs(readFileSync(this.options.modelsFile, "utf8"));
 				this.#modelSecrets.add(names.map((name) => this.options.hostEnv[name] ?? ""));
 			} catch {
-				// 读不了模型文件（启动时已经检查过，这里不会发生）：只按形状打码。
+				// 读不了模型文件（模型没有配置时助手服务也照常启动，#548，所以会发生）：没有密钥可以按值打码，只按形状打码。
 			}
 		}
 		return forLog(text, [session.redactor, this.#modelSecrets]);
@@ -276,8 +276,10 @@ export class SessionManager {
 	 * `POST /sessions/:id/prompt`（协议「`prompt` 的判断」，先后固定）：
 	 * 1. 轮次不大于中止记号：202，以 `stopped` 结束，不起 pi；不改任何别的状态；
 	 * 2. 这个会话有一轮「在做」（包括在等的第 k 轮）：409 `turn_running`；
-	 * 3. 否则登记、202：没有一轮在停止就在后台开始；有的话等它的 `turn_end`（{@link #finish}）再开始。
-	 * 503 只在登记之前决定（进程数满了）。
+	 * 3. 模型没有配置、或上次试连连不上（{@link SessionManagerOptions.modelGate}，#548）：503 `model_not_configured`、`model_unreachable`，
+	 *    不登记、不起 pi；
+	 * 4. 否则登记、202：没有一轮在停止就在后台开始；有的话等它的 `turn_end`（{@link #finish}）再开始。
+	 * 503 只在登记之前决定（模型有问题、进程数满了）。
 	 */
 	prompt(sessionId: string, body: PromptCommandBody): CommandResult {
 		const session = this.#session(sessionId);

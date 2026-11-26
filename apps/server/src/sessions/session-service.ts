@@ -602,6 +602,13 @@ export class SessionService {
 			);
 			return;
 		}
+		// 模型没有配置或连不上（#548）：队首不白失败一次，留在队里等模型好了（兜底的扫描每分钟再来）。`#ready` 看的是缓存的 `/health`，
+		// 缓存里的「能用」可能已经过期，这里用刚问的这一份再看一次。
+		const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
+		if (model) {
+			this.deps.log?.(`项目 ${project} 里排队的会话先不开始：${model.message}`);
+			return;
+		}
 		// 不开始的：控制面在关闭（这一次是关闭之前开始的、还在路上）、这个项目暂停着（队首刚没开始成：结局触发的开始和兜底扫描触发的开始
 		// 可以同时在跑，后跑的那次走到这里时项目已经暂停）、这个会话正在结束（{@link SessionService.#endings}，排在它后面的照常）。
 		// 在会话的串行链上、开始之前再看一次。

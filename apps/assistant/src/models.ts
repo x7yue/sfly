@@ -12,12 +12,19 @@ import { existsSync, readFileSync } from "node:fs";
 export interface ModelEnvRefs {
 	/** 引用到的变量名，排好序。 */
 	names: string[];
+	/** 每一处引用：变量名和它在文件里的位置（JSON 路径，如 `.providers.p.apiKey`）。 */
+	located: Array<{ name: string; where: string }>;
 	/** 认不出、不支持的写法（每条一句话）。 */
 	problems: string[];
 }
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const NAME_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*/;
+/**
+ * 说明里可以写出来的变量名：常见的环境变量写法（大写字母、数字、下划线）。名字不像这样的不写（见 {@link checkModels}）：
+ * 密钥误写在 `$` 后面时（`${sk9abc}`、`k3y$secretXYZ`）它会被当成变量名，写出来就是把密钥写进了说明。
+ */
+const SHOWABLE_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 
 /** 一个值里引用的变量（照 pi 的模板规则）；认不出的写法记进 `problems`。 */
 function templateRefs(value: string, where: string, refs: ModelEnvRefs): void {
@@ -37,7 +44,10 @@ function templateRefs(value: string, where: string, refs: ModelEnvRefs): void {
 			const end = value.indexOf("}", i + 2);
 			if (end < 0) continue;
 			const name = value.slice(i + 2, end);
-			if (NAME.test(name)) refs.names.push(name);
+			if (NAME.test(name)) {
+				refs.names.push(name);
+				refs.located.push({ name, where });
+			}
 			// 不回显 `${}` 里的内容：写错的地方可能放着密钥本身。
 			else
 				refs.problems.push(
@@ -49,6 +59,7 @@ function templateRefs(value: string, where: string, refs: ModelEnvRefs): void {
 		const match = NAME_PREFIX.exec(value.slice(i + 1));
 		if (match) {
 			refs.names.push(match[0]);
+			refs.located.push({ name: match[0], where });
 			i += match[0].length;
 		}
 	}
@@ -56,7 +67,7 @@ function templateRefs(value: string, where: string, refs: ModelEnvRefs): void {
 
 /** 模型文件里 `apiKey`、`headers` 的值引用的环境变量（提供方和模型两层都看）。 */
 export function modelEnvRefs(modelsJson: string): ModelEnvRefs {
-	const refs: ModelEnvRefs = { names: [], problems: [] };
+	const refs: ModelEnvRefs = { names: [], located: [], problems: [] };
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(modelsJson);
@@ -123,22 +134,63 @@ function endpointOf(baseUrl: string): ModelEndpoint | undefined {
 	return { host, port: url.port === "" ? (tls ? 443 : 80) : Number(url.port), tls };
 }
 
+interface SelectedModel {
+	providerId: string;
+	provider: Record<string, unknown>;
+	model: Record<string, unknown>;
+}
+
 /** 用文件里的哪个模型：`<提供方>/<模型>`（可以带思考强度），也认文件里唯一的、没有重名的模型 id。 */
 function selectModel(
 	providers: Record<string, unknown>,
 	selection: string,
-): { provider: Record<string, unknown>; model: Record<string, unknown> } | undefined {
+): SelectedModel | undefined {
 	const wanted = selection.replace(THINKING_SUFFIX, "");
-	const bare: Array<{ provider: Record<string, unknown>; model: Record<string, unknown> }> = [];
+	const bare: SelectedModel[] = [];
 	for (const [providerId, provider] of Object.entries(providers)) {
 		if (!isRecord(provider) || !Array.isArray(provider.models)) continue;
 		for (const model of provider.models) {
 			if (!isRecord(model) || typeof model.id !== "string") continue;
-			if (`${providerId}/${model.id}` === wanted) return { provider, model };
-			if (model.id === wanted) bare.push({ provider, model });
+			if (`${providerId}/${model.id}` === wanted) return { providerId, provider, model };
+			if (model.id === wanted) bare.push({ providerId, provider, model });
 		}
 	}
 	return bare.length === 1 ? bare[0] : undefined;
+}
+
+/**
+ * 选中的提供方（和模型）引用的环境变量里用不了的：助手服务的环境里没有值，或者是助手服务自己的配置（`SFLY_ASSISTANT_` 开头：
+ * 启动 pi 时不交给它，见 launch.ts，用了也读不到）。**变量名只在像常见的环境变量名时才写进说明**：名字不像的（含小写字母、太长）
+ * 多半是把密钥本身写在了 `$` 后面（`${sk9abc}`、`k3y$secretXYZ`），这时说明只写在文件里的位置，不写名字。
+ * 像变量名的大写串没法分辨是不是密钥（`$SECRETKEY9`），文档里写明密钥放进环境变量、文件里只写变量名。
+ */
+function unusableEnvRefs(selected: SelectedModel, env: NodeJS.ProcessEnv): string[] {
+	const refs = modelEnvRefs(
+		JSON.stringify({ ...selected.provider, models: [selected.model] }),
+	).located;
+	const found = new Set<string>();
+	const problems: string[] = [];
+	for (const { name, where } of refs) {
+		const reserved = name.startsWith("SFLY_ASSISTANT_");
+		if (!reserved && env[name]) continue;
+		const place = `模型文件里 providers.${selected.providerId}${where}`;
+		const key = `${name}@${where}`;
+		if (found.has(key)) continue;
+		found.add(key);
+		const showable = SHOWABLE_NAME.test(name);
+		if (reserved && showable) {
+			problems.push(
+				`${place} 引用了环境变量 ${name}：SFLY_ASSISTANT_ 开头的是助手服务自己的配置，不会交给 pi，换个名字`,
+			);
+		} else if (showable) {
+			problems.push(`${place} 引用了环境变量 ${name}，助手服务的环境里没有值`);
+		} else {
+			problems.push(
+				`${place} 引用了一个名字不像环境变量的变量，用不了（助手服务的环境里没有值）：是不是把密钥本身写进了 $ 后面？密钥要放进环境变量，文件里只写变量名`,
+			);
+		}
+	}
+	return problems;
 }
 
 /**
@@ -191,11 +243,9 @@ export function checkModels(options: {
 			reason: `SFLY_ASSISTANT_MODEL 选的模型不在模型文件 ${path} 里：要和文件里 providers 下的提供方、models 里的 id 对上`,
 		};
 	}
-	const missing = modelEnvRefs(JSON.stringify({ ...selected.provider, models: [selected.model] }))
-		.names.filter((name) => !env[name])
-		.map((name) => `模型文件引用了环境变量 ${name}，助手服务的环境里没有值`);
-	if (missing.length > 0) {
-		return { configured: false, reason: missing.join("；") };
+	const problems = unusableEnvRefs(selected, env);
+	if (problems.length > 0) {
+		return { configured: false, reason: problems.join("；") };
 	}
 	const baseUrl = selected.model.baseUrl ?? selected.provider.baseUrl;
 	if (baseUrl === undefined) return { configured: true, endpoint: null };

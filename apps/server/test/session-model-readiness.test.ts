@@ -246,6 +246,46 @@ describe("模型的就绪状态", () => {
 			"running",
 		);
 	});
+
+	it("缓存里的 /health 说模型好、其实刚坏了：排队的队首也不白失败一次（开始之前用刚问的 /health 再看）", async () => {
+		const first = await json<{ id: string }>(await create("第一个"));
+		const queued = await json<{ id: string; status: string }>(await create("第二个"));
+		expect(queued.status).toBe("queued");
+		// 缓存是新的、说模型好；之后助手服务的 /health 才说连不上（不拨时钟：缓存还有效）。
+		expect((await readiness()).ready).toBe(true);
+		assistant.health = () => {
+			const healthy = assistant.healthy();
+			return {
+				...healthy,
+				model: {
+					...healthy.model,
+					reachable: false,
+					checked_at: agoIso(0),
+					reason: "连不上模型端点 llm.internal:8177：连接被拒绝",
+				},
+			};
+		};
+		assistant.prompts.length = 0;
+		assistant.emit(first.id, 1, {
+			type: "turn_end",
+			turn: 1,
+			outcome: "completed",
+			reason: "助手已完成",
+			steps: 0,
+			model_calls: 1,
+			duration_ms: 10,
+		});
+		await eventually(async () =>
+			expect((await api.getJson<SessionDetailResponse>(`/sessions/${first.id}`)).status).toBe(
+				"idle",
+			),
+		);
+		await cp.current.sessionService.idle();
+		expect((await api.getJson<SessionDetailResponse>(`/sessions/${queued.id}`)).status).toBe(
+			"queued",
+		);
+		expect(assistant.prompts).toHaveLength(0);
+	});
 });
 
 describe("modelProblem：助手服务的 /health 里的 model → 就绪状态的一项", () => {

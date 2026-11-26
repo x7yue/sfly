@@ -534,7 +534,7 @@ export type AssistantVersions = z.infer<typeof AssistantVersions>;
  * - 没有配置（`configured` 为 false）时 `reason` 写明缺的是哪一项（模型文件不在、不能解析、不支持的写法、`SFLY_ASSISTANT_MODEL`
  *   没设或不在文件里、选中的提供方引用的环境变量没有值），**只有变量名和文件路径，没有任何值**；`endpoint`、`reachable`、
  *   `checked_at`、`error_class` 都是 null；
- * - 配好了：启动时和之后每 5 分钟试连一次（只建连接，不调模型），`reachable` 是上一次试连的结果（还没试过、提供方没写 `baseUrl`
+ * - 配好了：启动时和之后每 5 分钟试连一次、上一次连不上时每 30 秒复试一次（只建连接，不调模型），`reachable` 是上一次试连的结果（还没试过、提供方没写 `baseUrl`
  *   因而不知道端点时为 null），`checked_at` 是它的时间，连不上时 `reason` 写「连不上模型端点 主机:端口：<原因>」、`error_class`
  *   是 `unreachable` 或 `timeout`。
  */

@@ -190,6 +190,11 @@
 			"name": "正文里的数字不当成状态码",
 			"message": "model said 404 things went wrong",
 			"eval": "认不出的错误"
+		},
+		{
+			"name": "整句只有状态码的数字（评测集 test_classify.py 里重试成功那条的 errorMessage）",
+			"message": "503",
+			"eval": "环境故障"
 		}
 	]
 }

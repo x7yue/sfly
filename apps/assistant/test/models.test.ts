@@ -18,7 +18,15 @@ describe("模型文件引用的环境变量", () => {
 				models: [{ id: "m", headers: { "X-M": "${KEY_C}" } }],
 			}),
 		);
-		expect(refs).toEqual({ names: ["KEY_A", "KEY_B", "KEY_C", "ORG"], problems: [] });
+		expect(refs.names).toEqual(["KEY_A", "KEY_B", "KEY_C", "ORG"]);
+		expect(refs.problems).toEqual([]);
+		// 每一处引用带着它在文件里的位置。
+		expect(refs.located).toEqual([
+			{ name: "KEY_A", where: ".providers.p.apiKey" },
+			{ name: "KEY_B", where: ".providers.p.headers.Authorization" },
+			{ name: "ORG", where: ".providers.p.headers.X-Org" },
+			{ name: "KEY_C", where: ".providers.p.models[0].headers.X-M" },
+		]);
 	});
 
 	it("要执行的命令（! 开头）、${} 里不是变量名：认不出，报出来；说明里没有 ${} 里写的东西", () => {
@@ -184,7 +192,7 @@ describe("启动时检查模型配置（#548）：不满足时不拒绝，写明
 		expect(missing).toEqual({
 			configured: false,
 			reason:
-				"模型文件引用了环境变量 ACME_KEY，助手服务的环境里没有值；模型文件引用了环境变量 ACME_MODEL_HEADER，助手服务的环境里没有值",
+				"模型文件里 providers.acme.apiKey 引用了环境变量 ACME_KEY，助手服务的环境里没有值；模型文件里 providers.acme.models[0].headers.X-M 引用了环境变量 ACME_MODEL_HEADER，助手服务的环境里没有值",
 		});
 		expect(
 			check(path, "acme/big", { ACME_KEY: "k", ACME_ORG: "o", ACME_MODEL_HEADER: "h" }),
@@ -192,6 +200,47 @@ describe("启动时检查模型配置（#548）：不满足时不拒绝，写明
 		// 变量的值不出现在说明里。
 		const withValue = check(path, "acme/big", { ACME_KEY: "sk-do-not-echo", ACME_ORG: "" });
 		expect(JSON.stringify(withValue)).not.toContain("do-not-echo");
+	});
+
+	it.each([
+		["${} 里是密钥（含小写字母，像变量名）", "${SECRET9abc}", "SECRET9abc"],
+		["字面的密钥里夹着 $，后面像变量名", "k3y$SECRET6xyz", "SECRET6xyz"],
+		["Bearer 后面跟着 $密钥", "Bearer $sk9LiveABC", "sk9LiveABC"],
+		["名字太长（超过 64 个字符）", `$${"A".repeat(65)}`, "A".repeat(65)],
+		["不是大写的变量名", "${my_key}", "my_key"],
+	])("密钥误写在 $ 后面又长得像变量名：说明里不写这个名字，只写位置和提示（%s）", (_name, apiKey, leaked) => {
+		const path = file("leaky.json", provider({ apiKey }));
+		const result = check(path, "acme/big", { SECRET9abc: "" });
+		expect(result).toMatchObject({
+			configured: false,
+			reason: expect.stringContaining("providers.acme.apiKey"),
+		});
+		const reason = result.configured ? "" : result.reason;
+		expect(reason).toContain("是不是把密钥本身写进了 $ 后面");
+		expect(JSON.stringify(result)).not.toContain(leaked);
+	});
+
+	it("请求头里的值同样：位置写 headers 的哪一项，不写名字", () => {
+		const path = file("leaky-header.json", provider({ headers: { "X-Key": "${SECRET9abc}" } }));
+		const result = check(path, "acme/big", { ACME_KEY: "k" });
+		expect(result).toMatchObject({
+			configured: false,
+			reason: expect.stringContaining("providers.acme.headers.X-Key"),
+		});
+		expect(JSON.stringify(result)).not.toContain("SECRET9abc");
+	});
+
+	it("引用 SFLY_ASSISTANT_ 开头的变量：启动 pi 时不会交给它，说成没配置（环境里有值也一样），写明换个名字", () => {
+		const path = file("reserved.json", provider({ apiKey: "$SFLY_ASSISTANT_SECRET" }));
+		const result = check(path, "acme/big", {
+			SFLY_ASSISTANT_SECRET: "the-shared-secret-value-0123456789abcdef",
+		});
+		expect(result).toEqual({
+			configured: false,
+			reason:
+				"模型文件里 providers.acme.apiKey 引用了环境变量 SFLY_ASSISTANT_SECRET：SFLY_ASSISTANT_ 开头的是助手服务自己的配置，不会交给 pi，换个名字",
+		});
+		expect(JSON.stringify(result)).not.toContain("the-shared-secret");
 	});
 
 	it("baseUrl 不是 http(s) 地址：配得不对", () => {
@@ -222,7 +271,10 @@ describe("部署文档「助手的模型」一节里的模板", () => {
 				configured: true,
 				endpoint: { host: "llm-gateway.internal", port: 443, tls: true },
 			});
-			expect(modelEnvRefs(template ?? "")).toEqual({ names: ["MODEL_API_KEY"], problems: [] });
+			expect(modelEnvRefs(template ?? "")).toMatchObject({
+				names: ["MODEL_API_KEY"],
+				problems: [],
+			});
 			// 没带变量时写明缺的是 MODEL_API_KEY。
 			expect(checkModels({ modelsFile: path, model: "gateway/<模型 id>", env: {} })).toMatchObject({
 				configured: false,
