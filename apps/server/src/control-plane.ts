@@ -44,6 +44,7 @@ import { FeishuClient } from "./feishu/feishu-client.js";
 import { FeishuDelivery } from "./feishu/feishu-delivery.js";
 import { TaskNotifications } from "./feishu/task-notifications.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
+import { SourceLogLimit } from "./gateway/source-log-limit.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
 import { TaskLogs } from "./logs/task-logs.js";
@@ -84,6 +85,8 @@ export interface ControlPlaneOptions {
 	clock?: Clock;
 	http?: ListenOptions;
 	grpc?: ListenOptions;
+	/** Agent 网关收一条消息最多多少字节（默认 `AGENT_MESSAGE_MAX_BYTES`，80 MiB）：测试用小的上限试超限。 */
+	agentMessageMaxBytes?: number;
 	/**
 	 * 打开 Fastify 的日志和控制面自己的控制台输出；给 `{ stream }` 时 Fastify 的日志写进这个流（测试用它检查日志里
 	 * 没有哈希、令牌这类不该出现的内容），控制台输出照常。
@@ -592,11 +595,29 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	).replace(/\/+$/, "");
 
 	const sessionError = (error: unknown) => logError("agent session error:", error);
+	// 握手之前超限的日志的限频（同一个来源地址 10 秒一行，最多记 1000 个来源）。
+	const tooLargeLog = new SourceLogLimit(10_000, 1000);
 	let gateway: Awaited<ReturnType<typeof startAgentGateway>>;
 	try {
 		gateway = await startAgentGateway({
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
+			readMaxBytes: options.agentMessageMaxBytes,
+			// 只写是哪台 Agent（握手之前是来源地址）、声明的大小和上限，不带消息的任何内容。
+			// 握手之前的（没有认证）按来源地址限频：同一个来源在一个窗口里只写一行，带上这段时间里省掉的次数。
+			onMessageTooLarge: ({ agent, source, size, limit }) => {
+				let skipped = "";
+				if (agent === undefined) {
+					const admitted = tooLargeLog.admit(source, clock.now().getTime());
+					if (admitted === undefined) return;
+					if (admitted.suppressed > 0) {
+						skipped = `（这个来源地址之前还有 ${admitted.suppressed} 次没有写）`;
+					}
+				}
+				logError(
+					`sfly: ${agent === undefined ? `来源地址 ${source} 的连接（握手之前）` : `Agent ${agent}`}发来的消息超过上限（声明 ${size} 字节，上限 ${limit} 字节），关闭这条连接${skipped}`,
+				);
+			},
 			hub,
 			// 日志、进度、指标、ctx.notify 的通知、动作摘要和安装状态不改变运行状态，不经过引擎（src/logs/task-logs.ts、
 			// src/metrics/task-metrics.ts、src/feishu/task-notifications.ts、src/actions/task-actions.ts、src/agents/agent-hub.ts）。
