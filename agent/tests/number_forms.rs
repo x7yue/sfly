@@ -1,5 +1,5 @@
 //! 数字的写法：Agent 把任务输入解析成 `serde_json::Value`（`executor.rs`）再写成 `task.json`，数字经过它。
-//! 控制面认「节点把保密值里的数字打印出来」靠的是三端写数字的规则一致，用例表 `testdata/number-form-cases.json`
+//! 控制面认「节点把 secret 值里的数字打印出来」靠的是三端写数字的规则一致，用例表 `testdata/number-form-cases.json`
 //! 三端共用：这里断言真实的 `serde_json` 把控制面发来的数字（`sent`）解析再写出就是表里的 `serde`；
 //! `cases` 是单个数字，`whole` 是整个值（对象、数组），两部分都断言。**控制面的 `serdeNumber`（`apps/server/src/logs/secrets.ts`）
 //! 的规则绑在 `serde_json` 的版本上**：升级后写法变了，这里先红，红了就要改 `serdeNumber` 并更新表里的 `serde` 列。

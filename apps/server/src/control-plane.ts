@@ -120,6 +120,8 @@ export interface ControlPlaneOptions {
 	artifactUploadIdleMs?: number;
 	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
 	retentionDays?: number;
+	/** 读日志的请求认出文件有问题后，最多等多久看保留期清理有没有在删（毫秒），默认 3 秒（#734）：不是部署者的配置，只有测试和嵌入时给。 */
+	purgeWaitMs?: number;
 	/** 指标的保留天数，默认 30 天，与日志和产物分开配置；整天超过保留期的分区被删除（#32）。 */
 	metricRetentionDays?: number;
 	/** 保留期清理（含指标分区维护）的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
@@ -261,7 +263,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const logger = options.logger ?? false;
 	/**
 	 * 控制面自己往标准错误写错误日志的唯一出口：错误先过 `safeError`，数据库错误里的参数（密码的哈希、令牌的哈希、
-	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
+	 * secret 参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
 	 */
 	const logError = (what: string, error?: unknown): void => {
 		if (logger) printError(what, error);
@@ -439,6 +441,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		clock,
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
+		purgeWaitMs: options.purgeWaitMs,
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);

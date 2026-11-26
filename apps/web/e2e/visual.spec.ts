@@ -7,6 +7,24 @@ import {
 } from "../../server/test/support/fake-agent.js";
 import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
+import {
+	assistantMessage,
+	installSessionStream,
+	pushEvent,
+	READY,
+	sessionEnded,
+	sessionView,
+	steerDropped,
+	steerMessage,
+	steerQueue,
+	streamOpens,
+	stubSessionDetail,
+	stubSessionList,
+	turnEnd,
+	turnStarted,
+	userMessage,
+	WAITING_FOR,
+} from "./assistant-support";
 import { canvasFocusRun, openCanvasRun } from "./canvas-focus-support";
 import {
 	createEditorScenario,
@@ -1156,7 +1174,7 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-zoom.png");
 	});
 
-	test("入口参数与敏感参数", async ({ page }) => {
+	test("入口参数与 secret 参数", async ({ page }) => {
 		await nodeCard(page, "entry").click();
 		await idle(page);
 		await expect(page.getByRole("group", { name: "参数 api_token" })).toBeVisible();
@@ -1372,7 +1390,16 @@ test("编排画布：引用补全里输出的说明", async ({ page, controlPlan
 	await nodeCard(page, "ping").click();
 	await page.getByRole("combobox", { name: "输入 host" }).fill("");
 	await page.keyboard.type("$");
-	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+	const list = page.getByRole("listbox", { name: "可引用的值" });
+	await expect(list).toBeVisible();
+	// 列表有最大高度，前面的入口参数（secret 参数那一行类型说明换行，更高）会把输出挤到可见区以下：
+	// 先把要拍的输出（fetch 的 status 和它后面的 report，各有一条说明）滚进可见区，并断言两条说明在视口里看得见，
+	// 不然这张图拍不到它要守的东西。
+	await list
+		.getByRole("option", { name: /nodes\.fetch\.outputs\.status/ })
+		.scrollIntoViewIfNeeded();
+	await expect(list.getByText("检查报告的文字，包含每一步的耗时")).toBeInViewport({ ratio: 1 });
+	await expect(list.getByText("HTTP 状态码")).toBeInViewport({ ratio: 1 });
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-reference-output-docs.png");
 });
@@ -2071,4 +2098,143 @@ test.describe("账号与登录", () => {
 			await expect(page).toHaveScreenshot("setup.png");
 		});
 	});
+});
+
+// ---------------------------------------------------------------- 助手页和会话页（#544）：排队、插话、结束会话
+// 会话视图和事件是拦截的（内容固定），事件流由测试推：截图里没有随机的东西。
+
+const STEER_A = "a0000000-0000-4000-8000-00000000000a";
+const STEER_B = "b0000000-0000-4000-8000-00000000000b";
+const STEER_C = "c0000000-0000-4000-8000-00000000000c";
+
+test("会话页：插话的三种状态（等待送达、已送到、没有送到）和排在这一轮后面的话", async ({
+	page,
+}) => {
+	// 有话排在这一轮后面时，会话视图里有排位（在等的是它自己正在停止的这一轮）。
+	const view = sessionView({
+		status: "running",
+		title: "给 http_check 加一个超时参数",
+		queue_position: 1,
+		waiting_for: WAITING_FOR,
+	});
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [
+		userMessage(1, "给 http_check 加一个超时参数"),
+		turnStarted(2),
+		assistantMessage(3, "我先看一下现有的节点。"),
+		steerMessage(4, STEER_A, "先别改测试"),
+		steerMessage(5, STEER_B, "再加一条日志"),
+		steerMessage(6, STEER_C, "改回原来的写法"),
+		steerDropped(7, STEER_C, "这句插话没有确认送到助手（助手服务没有及时回应），需要的话再说一次"),
+		userMessage(8, "停下来之后的话", { author: "bob" }),
+	]);
+	await page.goto(`/sessions/${view.id}`);
+	// 打开页面时在做的这一轮里的插话不知道送到了没有：之后的 steer_queue 告诉页面。事件流订阅上了再推（订阅之前推的事件就丢了）。
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
+	await pushEvent(page, steerQueue(STEER_A, STEER_B));
+	await pushEvent(page, steerQueue(STEER_B));
+	const rows = page.getByTestId("user-message");
+	await expect(rows.filter({ hasText: "先别改测试" }).getByTestId("message-delivery")).toHaveText(
+		"已送到",
+	);
+	await expect(rows.filter({ hasText: "再加一条日志" }).getByTestId("message-delivery")).toHaveText(
+		"等待送达",
+	);
+	await expect(
+		rows.filter({ hasText: "改回原来的写法" }).getByTestId("message-delivery"),
+	).toHaveText("没有送到");
+	await expect(rows.filter({ hasText: "停下来之后的话" }).getByTestId("message-role")).toHaveText(
+		"排在这一轮后面",
+	);
+	await expect(page).toHaveScreenshot("session-steer.png");
+});
+
+test("会话页：排队中", async ({ page }) => {
+	const view = sessionView({
+		status: "queued",
+		title: "给 http_check 加一个超时参数",
+		queue_position: 2,
+		waiting_for: WAITING_FOR,
+	});
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [userMessage(1, "给 http_check 加一个超时参数")]);
+	await page.goto(`/sessions/${view.id}`);
+	await expect(page.getByTestId("session-status")).toHaveText("排队中 · 排在第 2 位");
+	await expect(page.getByTestId("composer-blocked")).toContainText("别人在做的事（bob）正在做");
+	await expect(page).toHaveScreenshot("session-queued.png");
+});
+
+test("会话页：结束会话的确认框", async ({ page }) => {
+	const view = sessionView({ status: "running", title: "给 http_check 加一个超时参数" });
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [
+		userMessage(1, "给 http_check 加一个超时参数"),
+		turnStarted(2),
+		assistantMessage(3, "我先看一下现有的节点。"),
+	]);
+	await page.goto(`/sessions/${view.id}`);
+	await page.getByRole("button", { name: "结束会话" }).click();
+	await expect(page.getByRole("dialog", { name: "结束这个会话？" })).toBeVisible();
+	await expect(page).toHaveScreenshot("session-end-dialog.png");
+});
+
+test("会话页：会话已结束", async ({ page }) => {
+	const view = sessionView({ status: "running", title: "给 http_check 加一个超时参数" });
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [
+		userMessage(1, "给 http_check 加一个超时参数"),
+		turnStarted(2),
+		assistantMessage(3, "我先看一下现有的节点。"),
+	]);
+	await page.goto(`/sessions/${view.id}`);
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
+	await pushEvent(page, turnEnd(4, "stopped", { reason: "会话结束了" }));
+	await pushEvent(page, sessionEnded(5, "bob"));
+	await expect(page.getByTestId("session-ended")).toHaveText("会话已结束（bob）");
+	await expect(page).toHaveScreenshot("session-ended.png");
+});
+
+test("助手页：会话列表里排队中的写排在第几位", async ({ page }) => {
+	const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+	const item = (over: Record<string, unknown>) => {
+		const {
+			readiness: _readiness,
+			project: _project,
+			waiting_for: _waitingFor,
+			...listItem
+		} = sessionView(over);
+		return listItem;
+	};
+	await stubSessionList(page, READY, [
+		item({ title: "正在做的事", status: "running", created_by: "bob", last_activity_at: at(50) }),
+		item({
+			title: "排在第一位的事",
+			status: "queued",
+			created_by: "alice",
+			queue_position: 1,
+			last_activity_at: at(40),
+		}),
+		item({
+			title: "排在第二位的事",
+			status: "queued",
+			created_by: "carol",
+			queue_position: 2,
+			last_activity_at: at(30),
+		}),
+		item({
+			title: "做完了的事",
+			status: "idle",
+			created_by: "alice",
+			last_turn_outcome: "completed",
+			last_activity_at: at(20),
+		}),
+	]);
+	await page.goto("/sessions");
+	await expect(page.getByTestId("list-status")).toHaveText([
+		"在做",
+		"排队中 · 排在第 1 位",
+		"排队中 · 排在第 2 位",
+		"空闲",
+	]);
+	await expect(page).toHaveScreenshot("assistant-list-queue.png");
 });

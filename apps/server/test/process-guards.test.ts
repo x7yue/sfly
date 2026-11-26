@@ -1,5 +1,5 @@
 // 进程级的未捕获异常和未处理的拒绝（#563）：记一条带上下文的错误日志，有序关闭，以退出码 1 退出，不继续运行、不吞掉。
-// 两层：用假的进程对象和退出函数测逻辑（关闭的顺序、超时、关闭时又出错、日志不带保密的值）；起一个真实的进程测
+// 两层：用假的进程对象和退出函数测逻辑（关闭的顺序、超时、关闭时又出错、日志不带数据库的参数）；起一个真实的进程测
 // 「真的以退出码 1 退出」（Node 默认的行为是未捕获的异常退出，这里装了处理之后仍然要退出，而且先关闭、先记日志）。
 import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -116,7 +116,7 @@ describe("installProcessGuards（假的进程）", () => {
 		expect(exits).toEqual([1]);
 	});
 
-	it("数据库错误里的参数不进日志（过 safeError）：保密的值、密码的哈希", async () => {
+	it("数据库错误里的参数不进日志（过 safeError）：密码的哈希", async () => {
 		install(async () => {});
 		// drizzle 的查询错误：message 和属性里都带着这次查询的参数。
 		const queryError = Object.assign(

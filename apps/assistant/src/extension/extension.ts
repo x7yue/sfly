@@ -42,7 +42,7 @@ const SHORT_TIMEOUT_MS = 30_000;
  */
 export const OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
 
-/** 这一轮要打码的值（保密的环境变量，会话里到现在为止的都算）。 */
+/** 这一轮要打码的值（secret 环境变量，会话里到现在为止的都算）。 */
 function redactorFor(config: TurnConfig): Redactor {
 	const redactor = new Redactor();
 	redactor.add(config.secrets ?? []);

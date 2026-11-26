@@ -57,6 +57,7 @@ import type {
 	RunListItem,
 	RunListQuery,
 	RunLogChunk,
+	RunLogFileProblemsEvent,
 	RunLogNodesParam,
 	RunLogPage,
 	RunLogPageQuery,
@@ -82,6 +83,7 @@ import type {
 	SteerQueueEvent,
 	StoredOrchestrationDocument,
 	TaskIoView,
+	TaskLogFileProblemEvent,
 	ThinkingEvent,
 	Timestamp,
 	TokenUsage,
@@ -347,7 +349,9 @@ export interface Api {
 		 * `GET /tasks/:id/logs/events`
 		 *
 		 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
-		 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。
+		 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。连上时如果这个任务的日志文件有问题
+		 * （`LogFileProblem`），先发一条事件 `file_problem`（内容同分页的字段），之后不再发（连着期间文件才出问题的不报）；
+		 * 不认识这个事件的客户端忽略它即可（#721）。
 		 */
 		events: Stream<
 			{
@@ -361,6 +365,7 @@ export interface Api {
 			},
 			{
 				logs: LogChunk;
+				file_problem: TaskLogFileProblemEvent;
 			}
 		>;
 		/**
@@ -369,7 +374,8 @@ export interface Api {
 		 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`（说明是「保留期清理」）；有行写入过的任务日志文件
 		 * 不见了或者比数据库记的短（被删除、截短，主机掉电，数据库和数据目录分开恢复）时同样 410 `expired`，错误的 `details` 是
 		 * `{ tasks: [{ task_id, node_id, attempt, reason: "missing" | "short" }], total }`（#669）；下载进行中文件被截短时响应已经开始，
-		 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时看不出来（见 README「反向代理」）。
+		 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时传输层看不出来（见 README「反向代理」），
+		 * 所以 200 的响应带头 `LOG_EXPECT_HEADER`，客户端读完核对。
 		 */
 		download: Download<
 			{
@@ -418,6 +424,9 @@ export interface Api {
 		 *   （API 客户端的订阅自动带上），控制面只补发之后的行，不重复也不遗漏。
 		 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
 		 *
+		 * 连上时如果范围内有任务的日志文件有问题（`LogFileProblem`），先发一条事件 `file_problems`（内容同分页的字段），之后不再发；
+		 * 不认识这个事件的客户端忽略它即可（#721）。
+		 *
 		 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
 		 */
 		runEvents: Stream<
@@ -437,6 +446,7 @@ export interface Api {
 			{
 				logs: RunLogChunk;
 				reload: Record<string, never>;
+				file_problems: RunLogFileProblemsEvent;
 			}
 		>;
 	};
@@ -1042,7 +1052,7 @@ export interface Api {
 		 *
 		 * 一次运行的摘要：状态、耗时、最终失败的节点、每个失败的任务的错误（类型、失败原因一行、完整信息）和日志尾部、
 		 * 失败的动作、有异常的关注项。判断一次运行「成功且结果对」先读它。读取走运行的统一读取（`readRuns`），
-		 * 错误信息、参数里保密参数的值都已打码。运行不存在时 404。
+		 * 错误信息、参数里 secret 参数的值都已打码。运行不存在时 404。
 		 */
 		summary: Endpoint<
 			{

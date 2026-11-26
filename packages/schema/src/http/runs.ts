@@ -317,7 +317,7 @@ export const ParamDeclView = z.object({
 	default: z.unknown().optional(),
 	required: z.boolean().optional(),
 	secret: z.boolean().optional(),
-	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	/** 搭场景的人写的一行说明；secret 参数的说明照常给出，只有值打码。 */
 	description: z.string().optional(),
 });
 
@@ -572,6 +572,16 @@ export const LogLocate = z.object({
 	exact_seq: z.number().int().nullable(),
 });
 
+/**
+ * 任务的日志文件和数据库记的对不上（#669、#721）：只对有行写入过的任务——`missing` 文件不见了，`short` 文件比数据库记的短
+ * （被删除、截短，主机掉电——追加文件不 fsync、数据库提交了——数据库和数据目录分开恢复，保留期清理删到一半）。
+ * 文件比记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）、从没有日志的任务都不是问题。
+ */
+export const LogFileProblem = z.enum(["missing", "short"]);
+
+/** 运行页和实时流里最多列出几个有问题的任务（总数在 `file_problems_total`）：和下载的 410 `details` 一样。 */
+export const LOG_FILE_PROBLEMS_LIMIT = 20;
+
 export const LogPage = z.object({
 	task_id: z.string(),
 	/** offset：这一行在日志文件中的字节偏移。 */
@@ -587,6 +597,11 @@ export const LogPage = z.object({
 	truncated: z.boolean(),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+	/**
+	 * 这个任务的日志文件的问题（{@link LogFileProblem}）：写过日志但文件不在了（页是空的）或者比记录的短（页里只有剩下的行）；
+	 * 没有问题时、运行已过保留期（`expired` 已经说了）时为 null。每次读页都按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problem: LogFileProblem.nullable(),
 	/** 请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。 */
 	locate: LogLocate.nullable(),
 });
@@ -600,6 +615,9 @@ export const LogOrigin = z.object({
 	node_id: z.string(),
 	attempt: z.number().int(),
 });
+
+/** 日志文件有问题的任务（运行页、实时流）：来源 + 是什么问题（{@link LogFileProblem}）。 */
+export const RunLogFileProblem = LogOrigin.extend({ problem: LogFileProblem });
 
 /**
  * 合并日志里一行排序要用、行本身没有的信息（run-log-order.ts）：由控制面按这一行所在的任务填上，
@@ -693,6 +711,14 @@ export const RunLogPage = z.object({
 	truncated_tasks: z.array(LogOrigin),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+	/**
+	 * 范围（`nodes`）内日志文件有问题的任务（写过日志但文件不在了，或者比记录的短），按运行视图里的顺序，最多 {@link LOG_FILE_PROBLEMS_LIMIT}
+	 * 个；总数在 `file_problems_total`。有问题的任务页里读不到（或只读到剩下的）它的行：页面和命令行据此说明，不要当成「没有日志」。
+	 * 运行已过保留期时为空（`expired` 已经说了）。每个页都带，按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problems: z.array(RunLogFileProblem),
+	/** 范围内日志文件有问题的任务的总数（可能大于 `file_problems` 列出的个数）。 */
+	file_problems_total: z.number().int(),
 });
 
 /**
@@ -720,6 +746,15 @@ export const LogChunk = z.object({
 	offset: z.number().int(),
 });
 
+/** 任务实时流连上时说日志文件有问题（#721）：内容同分页的 `file_problem`。 */
+export const TaskLogFileProblemEvent = z.object({ file_problem: LogFileProblem });
+
+/** 运行实时流连上时说有任务的日志文件有问题（#721）：内容同运行分页的 `file_problems`、`file_problems_total`。 */
+export const RunLogFileProblemsEvent = z.object({
+	file_problems: z.array(RunLogFileProblem),
+	file_problems_total: z.number().int(),
+});
+
 export const logsApi = {
 	/** 按字节偏移分页读取一个任务的日志（服务端按级别、来源筛选）。 */
 	page: endpoint({
@@ -736,7 +771,9 @@ export const logsApi = {
 	}),
 	/**
 	 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
-	 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。
+	 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。连上时如果这个任务的日志文件有问题
+	 * （{@link LogFileProblem}），先发一条事件 `file_problem`（内容同分页的字段），之后不再发（连着期间文件才出问题的不报）；
+	 * 不认识这个事件的客户端忽略它即可（#721）。
 	 */
 	events: stream({
 		path: "/tasks/:id/logs/events",
@@ -749,13 +786,14 @@ export const logsApi = {
 			/** 已经读到的最大序号（分页响应的 `last_seq`）：只推送它之后写入的行。 */
 			after_seq: z.string().optional(),
 		}),
-		events: { logs: LogChunk },
+		events: { logs: LogChunk, file_problem: TaskLogFileProblemEvent },
 	}),
 	/**
 	 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`（说明是「保留期清理」）；有行写入过的任务日志文件
 	 * 不见了或者比数据库记的短（被删除、截短，主机掉电，数据库和数据目录分开恢复）时同样 410 `expired`，错误的 `details` 是
 	 * `{ tasks: [{ task_id, node_id, attempt, reason: "missing" | "short" }], total }`（#669）；下载进行中文件被截短时响应已经开始，
-	 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时看不出来（见 README「反向代理」）。
+	 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时传输层看不出来（见 README「反向代理」），
+	 * 所以 200 的响应带头 {@link LOG_EXPECT_HEADER}，客户端读完核对。
 	 */
 	download: download({
 		path: "/tasks/:id/logs/download",
@@ -803,6 +841,9 @@ export const logsApi = {
 	 *   （API 客户端的订阅自动带上），控制面只补发之后的行，不重复也不遗漏。
 	 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
 	 *
+	 * 连上时如果范围内有任务的日志文件有问题（{@link LogFileProblem}），先发一条事件 `file_problems`（内容同分页的字段），之后不再发；
+	 * 不认识这个事件的客户端忽略它即可（#721）。
+	 *
 	 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
 	 */
 	runEvents: stream({
@@ -818,7 +859,11 @@ export const logsApi = {
 			...RunLogScopeQuery.shape,
 			...RunLogLevelQuery.shape,
 		}),
-		events: { logs: RunLogChunk, reload: z.object({}) },
+		events: {
+			logs: RunLogChunk,
+			reload: z.object({}),
+			file_problems: RunLogFileProblemsEvent,
+		},
 	}),
 };
 
@@ -834,6 +879,20 @@ export const ArtifactView = z.object({
 	/** 对 Agent 可见的完整下载地址（节点输出里的产物引用）；浏览器用 `/api/tasks/:id/artifacts/<name>`。 */
 	url: z.string(),
 });
+
+/**
+ * 日志下载的响应头（#721）：`tasks=<m>; last_seq_sum=<S>`——这次下载范围内有日志的任务数 `m`，和它们各自最后一个序号（数据库记的
+ * `log_seq`）之和 `S`。「读的过程中文件被截短、连接被断开」（#669）要靠传输层传到客户端，反向代理用 HTTP/1.0 连控制面时看不出来；
+ * 有了它，客户端读完后按任务记下读到的最大序号，任务数或合计比头里的少就是没下完，不靠传输层。
+ * - 大小固定（几十个字节），和任务个数无关：逐任务列「任务:序号」，几百个任务就几 KB，超过 nginx 默认的 `proxy_buffer_size`（4 KB 或
+ *   8 KB）会回 502。
+ * - 合计的是最后一个序号，不是行数：序号不是一行一个、连续的（Agent 断线排队时丢弃的行在文件里留序号缺口）。
+ * - 每一行带自己的序号：按运行下载只读到请求那一刻的快照，读到的每个任务的最大序号不会超过它的 `log_seq`，所以合计相等当且仅当每个
+ *   任务的最后一行都读到了（运行还在写时也一样）；任务下载读到文件此刻的内容，读到的只会不少于。
+ * 只在 200 的响应里有；从没有日志的任务（没有行写入过）是 `tasks=0; last_seq_sum=0`。旧的控制面没有这个头：客户端不核对。
+ * 浏览器的下载是普通下载，不核对。
+ */
+export const LOG_EXPECT_HEADER = "x-sfly-log-expect";
 
 /** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版本 Agent 不带。 */
 export const AGENT_MODIFIED_MS_HEADER = "x-sfly-agent-modified-ms";
@@ -918,6 +977,8 @@ export type LogLineView = z.infer<typeof LogLineView>;
 export type LogLocate = z.infer<typeof LogLocate>;
 export type LogPage = z.infer<typeof LogPage>;
 export type LogChunk = z.infer<typeof LogChunk>;
+export type LogFileProblem = z.infer<typeof LogFileProblem>;
+export type RunLogFileProblem = z.infer<typeof RunLogFileProblem>;
 export type LogOrigin = z.infer<typeof LogOrigin>;
 export type RunLogTaskOrder = z.infer<typeof RunLogTaskOrder>;
 export type RunLogLine = z.infer<typeof RunLogLine>;

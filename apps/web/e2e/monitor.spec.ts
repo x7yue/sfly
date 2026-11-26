@@ -237,7 +237,7 @@ test("点选节点：时间线行高亮，底部面板切换到该节点；尝�
 		"执行中",
 	);
 
-	// 已解析的输入里，引用敏感参数的值打码。
+	// 已解析的输入里，引用 secret 参数的值打码。
 	await nodeButton(page, "fetch").click();
 	await panel(page).getByRole("tab", { name: "输入输出" }).click();
 	const io = panel(page).getByRole("tabpanel");
@@ -936,7 +936,7 @@ test("命令面板「当前页面」：已结束的失败运行是下一个失�
 	await expect.poll(() => rerun.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 });
 
-test("失败的运行：默认选中失败的节点，页内横幅写失败摘要（可收起，收起后回到顶栏）；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({
+test("失败的运行：默认选中失败的节点，页内横幅写失败摘要（可收起，收起后回到顶栏）；再次运行沿用上次的参数（secret 参数除外）进入新运行；运行切换列出同场景的运行", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -984,7 +984,7 @@ test("失败的运行：默认选中失败的节点，页内横幅写失败摘�
 	await header.getByRole("button", { name: "再次运行" }).click();
 	const rerun = page.getByRole("dialog", { name: "再次运行 · 日终数据处理" });
 	await expect(rerun.getByRole("textbox", { name: /^region/ })).toHaveValue("cn-east");
-	// 敏感参数不沿用上次的值；它的默认值读不回来（占位符），表单里留空，留空由控制面按默认值填入。
+	// secret 参数不沿用上次的值；它的默认值读不回来（占位符），表单里留空，留空由控制面按默认值填入。
 	await expect(rerun.getByRole("textbox", { name: /^token/ })).toHaveValue("");
 	await rerun.getByRole("button", { name: "触发运行" }).click();
 	await expect(page).not.toHaveURL(new RegExp(runId));

@@ -2,9 +2,21 @@ import { once } from "node:events";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { pipeline, Readable, Transform, type TransformCallback } from "node:stream";
-import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
+import {
+	LOG_EXPECT_HEADER,
+	LOG_FILE_PROBLEMS_LIMIT,
+	type LogLineView,
+	logsApi,
+	RunLogDownloadRow,
+	type RunLogLine,
+} from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { LOG_FILE_GONE_CAUSES, LogFilesGoneError, logFileProblem } from "../logs/log-files.js";
+import {
+	formatLogExpect,
+	LOG_FILE_GONE_CAUSES,
+	LogFilesGoneError,
+	logFileProblem,
+} from "../logs/log-files.js";
 import type { LogMask } from "../logs/log-mask.js";
 import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
 import {
@@ -13,7 +25,7 @@ import {
 	encodeRunLogCursor,
 	encodeRunLogLiveCursor,
 } from "../logs/run-log-cursor.js";
-import type { RunLogs } from "../logs/run-log-pages.js";
+import type { FileProblem, RunLogs } from "../logs/run-log-pages.js";
 import { type LogChunk, normalizeLogRow, type TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
 import { isUuid } from "../util/uuid.js";
@@ -55,7 +67,9 @@ const PURGED = "logs of this run were removed after retention";
  *   **断开连接看不看得出没下完取决于传输**：直连、或者反向代理用 HTTP/1.1 连控制面（响应分块，没有结尾的 0 长度块）时，curl（退出码 18）、
  *   `fetch`、`@sfly/client`、浏览器的下载都看得出；反向代理用 HTTP/1.0 连控制面时（nginx 1.29.7 之前 `proxy_http_version` 的默认值就是 1.0）
  *   响应靠关闭连接来结束，断开和正常结束分不出来，客户端拿到半截文件、不报错（HTTP/1.0 的客户端直连也一样）；所以反向代理要配
- *   `proxy_http_version 1.1`（README「反向代理」）。不靠传输层的核对办法见 #721。
+ *   `proxy_http_version 1.1`（README「反向代理」）。**不靠传输层的核对**（#721）：200 的响应带头 `x-sfly-log-expect: tasks=<m>; last_seq_sum=<S>`
+ *   （范围内有日志的任务数、各任务最后一个序号之和；大小固定，不逐任务列：几百个任务会撑破代理的头缓冲；序号有缺口，所以合计的是最后一个序号
+ *   不是行数），命令行读完按任务记下读到的最大序号核对，代理把半截当完整的发出去也看得出来。
  *   读的过程中文件被删除：任务日志已经打开的文件不受影响，照常读完；按运行下载每一批都重新打开文件，所以会断开。两种都说得通
  *   （判断的时刻是请求开始那一刻）。文件比数据库记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）不是问题。
  *   从没有日志的任务（没有行写入过）下载是空的。
@@ -76,6 +90,11 @@ export function registerLogRoutes(
 		runLogs: RunLogs;
 		sse: Sse;
 		isPurged: (runId: string) => Promise<boolean>;
+		/**
+		 * 日志文件有问题时再核对一次保留期清理有没有在删（`Retention.isPurgedAfterWait`，#734 的审查）：两种页、两种流、两种下载认出问题之后
+		 * 都先问它，是「保留期清理」就按 `expired` 说，不当成「文件不在了」。没有问题的请求不调用。
+		 */
+		isPurgedAfterWait: (runId: string) => Promise<boolean>;
 	},
 ): void {
 	contractRoute(app, logsApi.runPage, async ({ params, query }, reply) => {
@@ -96,8 +115,12 @@ export function registerLogRoutes(
 			: undefined;
 		if (!page) return sendError(reply, 404, "not_found", "run not found");
 		// 清理之后文件已经不在，读出来本来就是空的；判断放在读取之后，读取期间被清理也不会返回半页。
-		const expired = await deps.isPurged(params.id);
+		let expired = await deps.isPurged(params.id);
+		// 认出了文件的问题：保留期清理正在删（删着目录、还没提交 `purged_at`）的话，是 `expired`，不是「文件不在了」。
+		if (!expired && page.fileProblems.length > 0) expired = await deps.isPurgedAfterWait(params.id);
 		const start = new Map<number, number>();
+		// 日志文件不在了、变短了（#721）：页里说明，不当成「没有日志」；已过保留期的运行文件本来就被清理了，`expired` 已经说了。
+		const problems = expired ? [] : page.fileProblems;
 		return {
 			run_id: params.id,
 			lines: expired ? [] : page.lines,
@@ -108,24 +131,28 @@ export function registerLogRoutes(
 			live_after: encodeRunLogLiveCursor(expired ? start : page.live),
 			truncated_tasks: expired ? [] : page.truncatedTasks,
 			expired,
+			file_problems: listedProblems(problems),
+			file_problems_total: problems.length,
 		};
 	});
 
 	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply, request) => {
 		let rows: AsyncGenerator<string> | undefined;
 		let first: IteratorResult<string> | undefined;
+		let expect = "";
 		try {
-			const batches = isUuid(params.id)
+			const read = isUuid(params.id)
 				? await deps.runLogs.readAll(params.id, query.nodes)
 				: undefined;
-			if (!batches) return sendError(reply, 404, "not_found", "run not found");
-			rows = jsonRows(batches);
+			if (!read) return sendError(reply, 404, "not_found", "run not found");
+			expect = formatLogExpect(read.expect);
+			rows = jsonRows(read.batches);
 			// 第一批在响应开始之前读：检查通过之后、读第一批之前文件被删了，也是 410，不是响应还没开始就报错的 500（#669）。
 			first = await rows.next();
 		} catch (error) {
 			if (!(error instanceof LogFilesGoneError)) throw error;
-			// 过了保留期的运行文件本来就被清理了：这是「保留期清理」，说明不变，不是异常，先判断。
-			if (await deps.isPurged(params.id)) return sendError(reply, 410, "expired", PURGED);
+			// 过了保留期的运行文件本来就被清理了（清理正在删、还没提交的也算）：这是「保留期清理」，说明不变，不是异常，先判断。
+			if (await deps.isPurgedAfterWait(params.id)) return sendError(reply, 410, "expired", PURGED);
 			// 范围内有任务的日志文件不见了、变短了：不能照常 200 给一份缺内容的下载（#669）。
 			request.log.warn({ run: params.id, tasks: error.tasks }, error.message);
 			return sendError(reply, 410, "expired", GONE_RUN, error.details);
@@ -134,6 +161,7 @@ export function registerLogRoutes(
 		return reply
 			.header("content-type", `${logsApi.runDownload.contentType}; charset=utf-8`)
 			.header("content-disposition", attachment(`run-${params.id}.log.jsonl`))
+			.header(LOG_EXPECT_HEADER, expect)
 			.send(Readable.from(resumed(first, rows)));
 	});
 
@@ -160,7 +188,20 @@ export function registerLogRoutes(
 				}
 				return deps.runLogs.follow(
 					runId,
-					{ scope: query.nodes, filter: levelFilter(query), after: from },
+					{
+						scope: query.nodes,
+						filter: levelFilter(query),
+						after: from,
+						// 连上时说一次范围内有哪些任务的日志文件有问题（#721）：在 `follow` 的第一步里查（复用它列任务的那一次），
+						// 在补发之前发；保留期清理正在删的不说（#734 的审查）。
+						onProblems: async (problems) => {
+							if (await deps.isPurgedAfterWait(runId)) return;
+							stream.send("file_problems", {
+								file_problems: listedProblems(problems),
+								file_problems_total: problems.length,
+							});
+						},
+					},
 					(event) => {
 						const id = encodeRunLogLiveCursor(event.at);
 						if (event.kind === "lines") stream.send("logs", { lines: event.lines }, id);
@@ -196,6 +237,14 @@ export function registerLogRoutes(
 					? { direction: "forward", after, limit, filter, mask }
 					: { direction: "backward", before, limit, filter, mask },
 			));
+		// 文件不在了、变短了（#721）：页里说明，不当成「没有日志」；已过保留期的运行文件本来就被清理了，`expired` 已经说了。
+		let expired = await deps.isPurged(info.runId);
+		let fileProblem = expired ? null : await taskFileProblem(info);
+		// 认出了文件的问题：保留期清理正在删（删着目录、还没提交 `purged_at`）的话，是 `expired`，不是「文件不在了」。
+		if (fileProblem && (await deps.isPurgedAfterWait(info.runId))) {
+			expired = true;
+			fileProblem = null;
+		}
 		return {
 			task_id: params.id,
 			lines: page.lines,
@@ -204,7 +253,8 @@ export function registerLogRoutes(
 			size: page.size,
 			last_seq: info.seq,
 			truncated: info.truncated,
-			expired: await deps.isPurged(info.runId),
+			expired,
+			file_problem: fileProblem,
 			locate: located ? { at_offset: located.atOffset, exact_seq: located.exactSeq } : null,
 		};
 	});
@@ -216,7 +266,9 @@ export function registerLogRoutes(
 		if (await deps.isPurged(info.runId)) return sendError(reply, 410, "expired", PURGED);
 		const stats = await stat(info.file).catch(() => undefined);
 		const size = stats?.size;
-		const gone = (reason: "missing" | "short") => {
+		const gone = async (reason: "missing" | "short") => {
+			// 保留期清理正在删（删着目录、还没提交 `purged_at`）：是「保留期清理」，说明不变，不是「文件不见了」。
+			if (await deps.isPurgedAfterWait(info.runId)) return sendError(reply, 410, "expired", PURGED);
 			const error = new LogFilesGoneError([
 				{ taskId, nodeId: info.nodeId, attempt: info.attempt, reason },
 			]);
@@ -230,7 +282,12 @@ export function registerLogRoutes(
 		const headers = () =>
 			reply
 				.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
-				.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
+				.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`))
+				// 应当到的最后一个序号（#721）：数据库记的；任务还在写时读到的可以更多，不会更少。
+				.header(
+					LOG_EXPECT_HEADER,
+					formatLogExpect({ tasks: info.seq > 0 ? 1 : 0, lastSeqSum: info.seq }),
+				);
 		if (size === undefined || size === 0) {
 			headers();
 			return reply.send("");
@@ -257,7 +314,13 @@ export function registerLogRoutes(
 		if (!isUuid(taskId) || !(await deps.logs.exists(taskId))) {
 			return sendError(reply, 404, "not_found", "task not found");
 		}
+		// 连上时说一次日志文件有没有问题（#721）；已过保留期的运行不说，连着期间才出的问题也不报。
+		const info = await deps.logs.describe(taskId);
+		let problem = info && !(await deps.isPurged(info.runId)) ? await taskFileProblem(info) : null;
+		// 保留期清理正在删（删着目录、还没提交 `purged_at`）的不说（#734 的审查）。
+		if (info && problem && (await deps.isPurgedAfterWait(info.runId))) problem = null;
 		open((stream) => {
+			if (problem) stream.send("file_problem", { file_problem: problem });
 			const resume = Number(stream.lastEventId);
 			const known = Number(query.after_seq);
 			let sent = Math.max(
@@ -298,6 +361,17 @@ export function registerLogRoutes(
 		return undefined;
 	});
 }
+
+/** 这个任务日志文件的问题（#721）：不见了、比数据库记的短；没有问题时为 null。和下载是同一个判断。 */
+async function taskFileProblem(
+	info: Parameters<typeof logFileProblem>[0] & { file: string },
+): Promise<"missing" | "short" | null> {
+	return logFileProblem(info, await stat(info.file).catch(() => undefined)) ?? null;
+}
+
+/** 页里和事件里列出的有问题的任务：最多 {@link LOG_FILE_PROBLEMS_LIMIT} 个，总数另给。 */
+const listedProblems = (problems: readonly FileProblem[]) =>
+	problems.slice(0, LOG_FILE_PROBLEMS_LIMIT).map(({ origin, problem }) => ({ ...origin, problem }));
 
 /** 按级别筛选（不给 `level` 是不筛选）：按运行的分页与实时推送共用。 */
 const levelFilter = ({ level }: { level?: LogLineView["level"][] | undefined }): LogFilter => ({

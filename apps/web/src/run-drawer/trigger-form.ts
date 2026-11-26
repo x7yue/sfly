@@ -29,14 +29,14 @@ export function lockedValue(p: ParamDeclView, value: unknown): FieldValue {
 }
 
 /**
- * 敏感参数有默认值：控制面不返回它，给的是占位符（SECRET_MASK），表单里读不到、也不预填。
+ * secret 参数有默认值：控制面不返回它，给的是占位符（SECRET_MASK），表单里读不到、也不预填。
  * 没有动过这个字段（留空，布尔参数是「使用默认值」）时它不放进触发的参数，由控制面按默认值填入（{@link toParams}）。
  */
 export const hasHiddenDefault = (p: ParamDeclView): boolean =>
 	p.secret === true && p.default !== undefined && p.default !== null;
 
 /**
- * 参数的默认值在表单里的值。敏感参数的默认值读不回来，表单里是空的（{@link hasHiddenDefault}）：布尔参数是空串，
+ * 参数的默认值在表单里的值。secret 参数的默认值读不回来，表单里是空的（{@link hasHiddenDefault}）：布尔参数是空串，
  * 表示「没选」，和「选了关」（false）区分开，触发时前者用默认值、后者传 false。
  */
 export function defaultFieldValue(p: ParamDeclView): FieldValue {
@@ -50,7 +50,7 @@ function initialValue(p: ParamDeclView, initial?: Record<string, unknown>): Fiel
 		: defaultFieldValue(p);
 }
 
-/** 初始值：给了 initial（再次运行时为上次运行的参数）时沿用它，敏感参数除外；否则用声明的默认值。 */
+/** 初始值：给了 initial（再次运行时为上次运行的参数）时沿用它，secret 参数除外；否则用声明的默认值。 */
 export function initialValues(
 	decls: ParamDeclView[],
 	initial?: Record<string, unknown>,
@@ -69,7 +69,7 @@ const isJson = (text: string) => {
 
 /**
  * 一个参数的校验规则；`required` 时留空报「必填」（默认是必填且没有默认值的参数）。
- * 敏感的布尔参数可以是「没选」（空串，{@link defaultFieldValue}）：`required`（运行预设固定的值，必须选一个）时报「必填」。
+ * secret 的布尔参数可以是「没选」（空串，{@link defaultFieldValue}）：`required`（运行预设固定的值，必须选一个）时报「必填」。
  */
 export function fieldSchema(
 	p: ParamDeclView,
@@ -111,7 +111,7 @@ export function toParamValue(p: ParamDeclView, value: FieldValue | undefined): u
 }
 
 /**
- * 已通过校验的表单值 → 触发参数；留空的参数不传（控制面按默认值填充）：没有动过的敏感参数（任何类型，
+ * 已通过校验的表单值 → 触发参数；留空的参数不传（控制面按默认值填充）：没有动过的 secret 参数（任何类型，
  * 布尔参数是「使用默认值」）不放进触发的参数里，不会拿读不到的默认值（占位符）去覆盖它。
  */
 export function toParams(decls: ParamDeclView[], values: FormValues): Record<string, unknown> {

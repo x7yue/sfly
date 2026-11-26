@@ -1,4 +1,4 @@
-// 保密值里的数字，节点打印出来的写法（#479）：控制面把数字 JSON.stringify 写给 Agent，Agent 的 serde_json 解析再写成 task.json，
+// secret 值里的数字，节点打印出来的写法（#479）：控制面把数字 JSON.stringify 写给 Agent，Agent 的 serde_json 解析再写成 task.json，
 // Python 的 SDK 用 json.loads 读进来，节点用 json.dumps 或 repr 打印。三端写数字的规则各不相同，控制面认的写法要和节点里能看到的
 // 一致：直接打印拿到的值是 Python 的写法，原样打印 task.json 里的文本是 serde 的写法。
 // 用例表 testdata/number-form-cases.json 三端共用，每一列都由真实的实现产生：Agent 一端 agent/tests/number_forms.rs 断言 serde_json，
@@ -77,7 +77,7 @@ describe("数字的写法（共用用例表 testdata/number-form-cases.json）",
 		}
 	});
 
-	it("顶层是数字的保密参数（不论多短）：三种写法都盖住", () => {
+	it("顶层是数字的 secret 参数（不论多短）：三种写法都盖住", () => {
 		for (const c of table) {
 			const set = secretSetOf([JSON.parse(c.sent)]);
 			for (const form of formsOf(c)) {

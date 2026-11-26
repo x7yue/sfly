@@ -27,11 +27,15 @@ function runLogPorts(runId: string, nodes: string | undefined, level: string): R
 				params: { id: runId },
 				query: { ...filters, limit: PAGE, ...position },
 			}),
-		subscribeLive: (after, { onLines, onReload }) =>
+		subscribeLive: (after, { onLines, onReload, onFileProblems }) =>
 			openEventSource(
 				logsApi.runEvents,
 				{ params: { id: runId }, query: { ...filters, after } },
-				{ logs: (chunk) => onLines(chunk.lines), reload: onReload },
+				{
+					logs: (chunk) => onLines(chunk.lines),
+					reload: onReload,
+					file_problems: onFileProblems,
+				},
 			),
 	};
 }

@@ -114,7 +114,7 @@ def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
 
 
 class Shell:
-    """记下每次在容器里执行的脚本、保密的环境变量和标准输入。"""
+    """记下每次在容器里执行的脚本、secret 环境变量和标准输入。"""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []

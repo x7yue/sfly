@@ -1220,6 +1220,13 @@ export interface LogChunk {
 }
 
 /**
+ * 任务的日志文件和数据库记的对不上（#669、#721）：只对有行写入过的任务——`missing` 文件不见了，`short` 文件比数据库记的短
+ * （被删除、截短，主机掉电——追加文件不 fsync、数据库提交了——数据库和数据目录分开恢复，保留期清理删到一半）。
+ * 文件比记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）、从没有日志的任务都不是问题。
+ */
+export type LogFileProblem = "missing" | "short";
+
+/**
  * 一行日志，带两种时间（ADR 0018）。日志文件是 JSONL，每行就是这个对象（字段顺序也相同：页面按它算字节偏移）；
  * 升级之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
  */
@@ -1289,6 +1296,11 @@ export interface LogPage {
 	truncated: boolean;
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: boolean;
+	/**
+	 * 这个任务的日志文件的问题（`LogFileProblem`）：写过日志但文件不在了（页是空的）或者比记录的短（页里只有剩下的行）；
+	 * 没有问题时、运行已过保留期（`expired` 已经说了）时为 null。每次读页都按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problem: LogFileProblem | null;
 	/** 请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。 */
 	locate: LogLocate | null;
 }
@@ -1733,7 +1745,7 @@ export interface ParamDeclView {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
-	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	/** 搭场景的人写的一行说明；secret 参数的说明照常给出，只有值打码。 */
 	description?: string;
 }
 
@@ -2349,6 +2361,23 @@ export interface RunLogChunk {
 	lines: RunLogLine[];
 }
 
+/** 日志文件有问题的任务（运行页、实时流）：来源 + 是什么问题（`LogFileProblem`）。 */
+export interface RunLogFileProblem {
+	task_id: string;
+	chain_instance_id: string;
+	/** 所在子流程的名称（与运行视图里链的 name 相同）；主链为 null。 */
+	subflow: string | null;
+	node_id: string;
+	attempt: number;
+	problem: LogFileProblem;
+}
+
+/** 运行实时流连上时说有任务的日志文件有问题（#721）：内容同运行分页的 `file_problems`、`file_problems_total`。 */
+export interface RunLogFileProblemsEvent {
+	file_problems: RunLogFileProblem[];
+	file_problems_total: number;
+}
+
 /** 按运行合并的一行：任务日志里的一行，加上它的来源和排序要用的信息。 */
 export interface RunLogLine {
 	/** 任务内从 1 开始递增的序号，用来排序和去重。 */
@@ -2416,6 +2445,14 @@ export interface RunLogPage {
 	truncated_tasks: LogOrigin[];
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: boolean;
+	/**
+	 * 范围（`nodes`）内日志文件有问题的任务（写过日志但文件不在了，或者比记录的短），按运行视图里的顺序，最多 `LOG_FILE_PROBLEMS_LIMIT`
+	 * 个；总数在 `file_problems_total`。有问题的任务页里读不到（或只读到剩下的）它的行：页面和命令行据此说明，不要当成「没有日志」。
+	 * 运行已过保留期时为空（`expired` 已经说了）。每个页都带，按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problems: RunLogFileProblem[];
+	/** 范围内日志文件有问题的任务的总数（可能大于 `file_problems` 列出的个数）。 */
+	file_problems_total: number;
 }
 
 export interface RunLogPageQuery {
@@ -2678,7 +2715,7 @@ export interface RunReportFailedTask {
 		kind: string;
 		/** 失败原因的一行（同 `RunStateError` 的 `headline`）。 */
 		headline: string;
-		/** 完整的错误信息：异常信息加堆栈，原文（已按保密参数的值打码）。 */
+		/** 完整的错误信息：异常信息加堆栈，原文（已按 secret 参数的值打码）。 */
 		detail: string;
 		/** 节点代码里出错的位置，同 `RunStateError` 的 `location`；没有时为 null。 */
 		location: string | null;
@@ -2722,7 +2759,7 @@ export interface RunStateChain {
 	nodes: RunStateNode[];
 }
 
-/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的保密参数的值打码，和运行视图里看到的一样。 */
+/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的 secret 参数的值打码，和运行视图里看到的一样。 */
 export interface RunStateError {
 	/** 错误类型：node_error（节点代码抛出异常）、timeout、agent_lost、env_error、config_error。 */
 	kind: string;
@@ -3177,6 +3214,11 @@ export interface TaskIoView {
 	task_id: string;
 	inputs: Record<string, unknown> | null;
 	outputs: Record<string, unknown> | null;
+}
+
+/** 任务实时流连上时说日志文件有问题（#721）：内容同分页的 `file_problem`。 */
+export interface TaskLogFileProblemEvent {
+	file_problem: LogFileProblem;
 }
 
 /** 一个任务（一次尝试）的指标摘要。 */

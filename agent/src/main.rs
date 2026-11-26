@@ -127,6 +127,9 @@ struct Args {
     /// 只在测试中使用：转发器每秒最多处理这么多字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制），模拟转发跟不上节点的输出。
     #[arg(long, env = "SFLY_LOG_FORWARD_RATE", default_value_t = 0, hide = true)]
     log_forward_rate: u64,
+    /// 只在测试中使用：连上之后撑过这么多毫秒才算连得稳、重连的等待才回到最短。
+    #[arg(long, env = "SFLY_STABLE_CONNECTION_MS", default_value_t = sfly_agent::STABLE_CONNECTION.as_millis() as u64, hide = true)]
+    stable_connection_ms: u64,
     /// 自更新下载新二进制时，连接建立后等待数据的超时秒数（每次读取）；超时算「更新失败」，下一次握手后重试。
     #[arg(long, env = "SFLY_UPDATE_READ_TIMEOUT", default_value_t = sfly_agent::update::DEFAULT_READ_TIMEOUT.as_secs(), hide = true)]
     update_read_timeout: u64,
@@ -265,6 +268,7 @@ async fn main() -> anyhow::Result<()> {
         telemetry_queue_bytes: args.log_queue_bytes,
         metric_queue_points: args.metric_queue_points,
         log_forward_rate: args.log_forward_rate,
+        stable_connection: Duration::from_millis(args.stable_connection_ms),
         update_read_timeout: Duration::from_secs(args.update_read_timeout),
         version: args
             .version_override
