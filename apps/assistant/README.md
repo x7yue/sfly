@@ -132,8 +132,9 @@ for (let buf = ""; ; ) {
 「助手会话」一节。照着跑过一遍时看到的：
 
 - `GET /projects/default/sessions` 的 `readiness` 是 `{"ready": true, "workbench": "dev-root-dev"}`；
-- `POST /projects/default/sessions`（写请求带 `x-sfly-nickname`）是 201，几秒后 `GET /sessions/<ID>` 里依次是
-  `user_message`、`turn_started`、`tool_call` / `tool_result`（命令拿到了昵称）、`assistant_message`、`turn_end`（`completed`）；
+- `POST /projects/default/sessions`（建会话只认用户的凭据：登录 Cookie 或个人令牌，不带是 401；#547）是 201，几秒后
+  `GET /sessions/<ID>` 里依次是 `user_message`、`turn_started`、`tool_call` / `tool_result`（命令拿到了昵称，和这一轮的会话令牌
+  `SFLY_API_TOKEN`：命令里打印出来的令牌在事件里是 `******`）、`assistant_message`、`turn_end`（`completed`）；
 - 一条 `sleep 600` 跑着时 `POST /sessions/<ID>/stop`：1 秒左右这一轮以 `stopped`（「用户停止了这一轮」，是助手服务
   带回来的结局）结束，工作台上的 `sleep` 没了；
 - 这个会话空闲时再点一次停止（控制面带最近一轮的轮次发 `abort`，那一轮已经结束），紧接着发一句：新的一轮照常 `completed`。

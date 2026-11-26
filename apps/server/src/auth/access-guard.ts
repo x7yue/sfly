@@ -20,6 +20,7 @@ import {
 	ACCOUNT_ROUTES,
 	type AccountCredential,
 	AGENT_CREDENTIAL_ROUTES,
+	credentialRequiredMessage,
 	exhaustive,
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
@@ -301,7 +302,7 @@ export class AccessGuard {
 			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
 			if (publicWrite) return denied(401, "unauthorized", PUBLIC_WRITE_DENIED);
 			return requiresCredential(request.route)
-				? denied(401, "unauthorized", "需要登录或令牌")
+				? denied(401, "unauthorized", credentialRequiredMessage(request.route))
 				: { ok: true, access: null };
 		}
 		const resolved = await this.#resolve(presented);

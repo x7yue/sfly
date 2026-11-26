@@ -1018,6 +1018,9 @@ export const apiTokens = pgTable(
 		index("api_tokens_project").on(t.projectId),
 		// 任务结束时吊销它的凭据。
 		index("api_tokens_task").on(t.taskId).where(sql`${t.taskId} is not null`),
+		// 每一轮开始、结束时按会话吊销它还有效的会话令牌（#547，在会话那一行的行锁下做）：令牌只吊销、不删除，每一轮一行，
+		// 没有它这条更新要顺序扫整张表。
+		index("api_tokens_session").on(t.sessionId).where(sql`${t.sessionId} is not null`),
 		check("api_tokens_kind", sql`${t.kind} in ('personal', 'project', 'session', 'task')`),
 		check(
 			"api_tokens_agent_credential_task",

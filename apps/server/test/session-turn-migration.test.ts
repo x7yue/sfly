@@ -9,6 +9,7 @@ import type { SessionEventBody } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
+import { TestAccounts } from "./support/credentials.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const MIGRATION = "0036_session_current_turn";
@@ -188,6 +189,14 @@ describe("升级：会话表加 current_turn，按 turn_started 的条数回填"
 			duration_ms: 1,
 		});
 		expect(await turnOf("running_no_events")).toMatchObject({ status: "idle", current_turn: 1 });
+		// 这条测试验证轮次的回填，不是没有发起人的旧会话（那种不能再开始新的一轮，`session-token-turns.test.ts`）：给它一个发起人。
+		const accounts = new TestAccounts(cp.database.url);
+		try {
+			const author = await accounts.user("migration_author");
+			await query("update sessions set created_by_user_id = $1 where id = $2", [author, id]);
+		} finally {
+			await accounts.close();
+		}
 		const begun = await store.beginTurn(id, "p-legacy" as never, user(9));
 		expect(begun).toMatchObject({ outcome: "started", turn: 2 });
 		const stored = await store.appendFromAssistant(

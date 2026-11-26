@@ -18,6 +18,7 @@ import { FakeAssistant } from "./support/fake-assistant.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
+import { asUsers } from "./support/user-api.js";
 
 const json = async <T>(res: Response): Promise<T> => (await res.json()) as T;
 const WORKBENCH = "workbench-a";
@@ -78,7 +79,8 @@ describe("停止、插话、结束会话、排队", () => {
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
 		});
-		api = new ApiClient(cp);
+		// 「暂停按项目」的用例在乙项目里建会话：用户也是乙项目的编辑者。
+		api = new ApiClient(asUsers(cp, { projects: ["default", "proj-b"] }));
 		workbench = await FakeAgent.connect(
 			cp.grpcUrl,
 			{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },
@@ -1343,7 +1345,7 @@ describe("停止、插话、结束会话、排队", () => {
 			);
 			try {
 				await assistant.connected(2);
-				const restartApi = new ApiClient(restartCp);
+				const restartApi = new ApiClient(asUsers(restartCp));
 				const advance = () => (restartCp.clock as ManualClock).advance(1_000);
 				const make = async (text: string, nickname: string) => {
 					const created = await json<SessionView>(
@@ -1551,7 +1553,7 @@ describe("停止、插话、结束会话、排队", () => {
 						{ clock: closeCp.clock },
 					);
 					await assistant.connected(2);
-					return { closeCp, closeWorkbench, closeApi: new ApiClient(closeCp) };
+					return { closeCp, closeWorkbench, closeApi: new ApiClient(asUsers(closeCp)) };
 				})();
 				try {
 					const a = await json<SessionView>(
@@ -1696,7 +1698,7 @@ describe("停止、插话、结束会话、排队", () => {
 			);
 			try {
 				await assistant.connected(2);
-				const slowApi = new ApiClient(stopCp);
+				const slowApi = new ApiClient(asUsers(stopCp));
 				const created = await json<SessionView>(
 					await slowApi.post("/projects/default/sessions", { text: "第一句" }, "alice"),
 				);
@@ -1765,7 +1767,7 @@ describe("停止、插话、结束会话、排队", () => {
 			);
 			try {
 				await assistant.connected(2);
-				const waitApi = new ApiClient(waitCp);
+				const waitApi = new ApiClient(asUsers(waitCp));
 				assistant.stopSettleMs = 1_000;
 				const first = await json<SessionView>(
 					await waitApi.post("/projects/default/sessions", { text: "第一件事" }, "alice"),
@@ -1809,7 +1811,7 @@ describe("停止、插话、结束会话、排队", () => {
 			);
 			try {
 				await assistant.connected(2);
-				const closeApi = new ApiClient(closeCp);
+				const closeApi = new ApiClient(asUsers(closeCp));
 				// 第一轮的 prompt 超时（结果未知）：后台补发中止、等结局；中止被拒绝（没有效果），一直等不到结局。
 				assistant.promptDelayMs = 600;
 				assistant.abortReply = () => ({ status: 503, code: "start_failed", message: "没停住" });
@@ -1859,7 +1861,7 @@ describe("停止、插话、结束会话、排队", () => {
 			);
 			try {
 				await assistant.connected(2);
-				const closeApi = new ApiClient(closeCp);
+				const closeApi = new ApiClient(asUsers(closeCp));
 				const a = await json<SessionView>(
 					await closeApi.post("/projects/default/sessions", { text: "甲" }, "alice"),
 				);
@@ -1907,7 +1909,7 @@ describe("停止、插话、结束会话、排队", () => {
 				{ clock: closeCp.clock },
 			);
 			await assistant.connected(2);
-			return { closeCp, closeWorkbench, closeApi: new ApiClient(closeCp) };
+			return { closeCp, closeWorkbench, closeApi: new ApiClient(asUsers(closeCp)) };
 		};
 
 		it("关闭时在路上的插话（命令的回应关闭之后才到、是失败）：不写 steer_dropped（连接池已经关了）", async () => {
@@ -2041,7 +2043,7 @@ describe("停止、插话、结束会话、排队", () => {
 			);
 			try {
 				await assistant.connected(2);
-				const endApi = new ApiClient(endCp);
+				const endApi = new ApiClient(asUsers(endCp));
 				const created = await json<SessionView>(
 					await endApi.post("/projects/default/sessions", { text: "第一句" }),
 				);
