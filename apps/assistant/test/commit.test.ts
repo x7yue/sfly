@@ -742,6 +742,17 @@ describe("提交的时间：停止、退出、工作台冻住", () => {
 		expect(commitsOf(harness, id)).toEqual([]);
 	}, 60_000);
 
+	it("提交进行中收到停止、缩短后的期限不够 2 秒：马上放弃，不等", async () => {
+		const clock = new ManualClock();
+		// 停止的硬上限只有 2.5 秒：减掉余量不到 2 秒。
+		const harness = await start({ clock, stopWaitMs: 2_500 });
+		const id = crypto.randomUUID();
+		await stuckCommit(harness, id, false);
+		await harness.abort(id, 2);
+		await eventually(() => expect(ended(harness, id, 2)).toBe(true), 3000);
+		expect(commitsOf(harness, id)).toEqual([]);
+	}, 60_000);
+
 	it("提交已经卡了一阵才收到停止、原来的期限更早：不延长", async () => {
 		const clock = new ManualClock();
 		const harness = await start({ clock });

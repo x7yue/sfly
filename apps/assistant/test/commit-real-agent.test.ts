@@ -106,15 +106,15 @@ describe.skipIf(agentUnavailableReason() !== undefined)("真的 Agent 当工作�
 		await prompt(id, "settle");
 		await h.turnEnd(id);
 		// 子模块：父仓库的索引里有 gitlink，子仓库自己配了过滤器和 fsmonitor。
-		const nested = plantSubmodule(h.workdir);
-		await prompt(id, "run:echo changed > a.txt;;settle", 2);
+		const nested = plantSubmodule(h.workdir, "nested-two"); // 上一个用例的 plantTraps 已经布过 nested-repo
+		await prompt(id, "run:echo changed-again > a.txt;;settle", 2);
 		await h.turnEnd(id, 2);
 		expect(nested.ran()).toEqual([]);
 		expect(
 			commits(id)
 				.find((c) => c.turn === 2)
 				?.files.map((f) => f.path),
-		).toEqual(["a.txt", "nested-repo"]);
+		).toEqual(["a.txt", "nested-two"]);
 		// skip-worktree：模型自己的索引里把文件标成「不看工作区」，改了照样记。
 		git(h.workdir, "reset", "-q");
 		git(h.workdir, "update-index", "--skip-worktree", "a.txt");

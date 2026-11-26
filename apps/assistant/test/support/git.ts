@@ -100,11 +100,11 @@ const asModel = (cwd: string, ...args: string[]) =>
 		stdio: "ignore",
 	});
 
-/** 子模块那一路的陷阱：工作区里的嵌套仓库 `nested-repo`，在父仓库的索引里是 gitlink（模型自己 `git add` 的），里面有一个改过的文件。 */
+/** 子模块那一路的陷阱：工作区里的嵌套仓库（默认叫 `nested-repo`），在父仓库的索引里是 gitlink（模型自己 `git add` 的），里面有一个改过的文件。 */
 const NESTED = "nested-repo";
 
-function plantNested(kit: ReturnType<typeof trapKit>, workdir: string): void {
-	const sub = join(workdir, NESTED);
+function plantNested(kit: ReturnType<typeof trapKit>, workdir: string, name = NESTED): void {
+	const sub = join(workdir, name);
 	mkdirSync(sub);
 	asModel(sub, "init", "-q", "-b", "main");
 	writeFileSync(join(sub, "f"), "s\n");
@@ -126,15 +126,15 @@ function plantNested(kit: ReturnType<typeof trapKit>, workdir: string): void {
 		kit.script(join(sub, ".git", "fsmonitor.sh"), "submodule-fsmonitor"),
 	);
 	// 父仓库的索引里放 gitlink，再把子仓库里的文件改了（文件状态变了，`git add -A` 才会进去看）。
-	asModel(workdir, "add", NESTED);
+	asModel(workdir, "add", name);
 	writeFileSync(join(sub, "f"), "t\n");
 	utimesSync(join(sub, "f"), new Date("2001-01-01"), new Date("2001-01-01"));
 }
 
-/** 只布子模块那一路（见 {@link plantNested}）：工作区已经是 git 仓库。 */
-export function plantSubmodule(workdir: string): Traps {
+/** 只布子模块那一路（见 {@link plantNested}）：工作区已经是 git 仓库；同一个工作区里再布一次要换个 `name`。 */
+export function plantSubmodule(workdir: string, name = NESTED): Traps {
 	const kit = trapKit();
-	plantNested(kit, workdir);
+	plantNested(kit, workdir, name);
 	return kit.traps();
 }
 
