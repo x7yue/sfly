@@ -1,36 +1,23 @@
-import {
-	domainKey,
-	type Readiness,
-	SESSION_MESSAGE_MAX_CHARS,
-	type SessionListItem,
-	sessionsApi,
-} from "@sfly/schema";
+import { domainKey, type Readiness, SESSION_MESSAGE_MAX_CHARS, sessionsApi } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
-import { ApiError, callApi } from "#/lib/api";
+import { callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
-import { INLINE_LINK } from "#/lib/inline-link";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
-import { busySession, SESSION_PROJECT } from "./project";
+import { SESSION_PROJECT } from "./project";
 import { READINESS_ID } from "./ReadinessLine";
 
 /**
  * 助手页的输入框：多行输入「要做什么？」和「开始」（`POST /projects/default/sessions`，成功后跳到会话页）。
- * 助手没有就绪时输入框照常可以写，「开始」不可用（原因在页面上方的就绪状态里，不在这里再写一遍）；请求失败时留住写好的话，写明原因：
- * `project_busy`（同一个项目另一个会话在做）时给出那个会话的链接。
+ * 助手没有就绪时输入框照常可以写，「开始」不可用（原因在页面上方的就绪状态里，不在这里再写一遍）；请求失败时留住写好的话，写明原因。
+ * 同一个项目里别的会话在做时，新会话排队（#544）：照常跳到会话页，那里写排在第几位。
  */
-export function NewSession({
-	readiness,
-	sessions,
-}: {
-	readiness: Readiness;
-	sessions: readonly SessionListItem[];
-}) {
+export function NewSession({ readiness }: { readiness: Readiness }) {
 	const client = useQueryClient();
 	const navigate = useNavigate();
 	const [text, setText] = useState("");
@@ -47,7 +34,6 @@ export function NewSession({
 	// 不能用的原因只在页面上方的就绪状态里写一处（ReadinessLine，逐条写缺什么）；这里不再写一遍，读屏用 aria-describedby 指过去。
 	const notReady = !readiness.ready;
 	const empty = text.trim() === "";
-	const busy = busySession(sessions);
 	const field = useRef<HTMLTextAreaElement>(null);
 	const start = () => {
 		if (notReady || empty || create.isPending) return;
@@ -98,23 +84,7 @@ export function NewSession({
 				</Button>
 			</div>
 			{create.isError && (
-				<FormAlert>
-					{create.error instanceof ApiError && create.error.code === "project_busy" ? (
-						<>
-							{SESSION.busy}
-							{busy && (
-								<>
-									{"："}
-									<Link to="/sessions/$id" params={{ id: busy.id }} className={INLINE_LINK}>
-										{SESSION.busyLink}
-									</Link>
-								</>
-							)}
-						</>
-					) : (
-						`${SESSION.createFailed}：${errorText(create.error)}`
-					)}
-				</FormAlert>
+				<FormAlert>{`${SESSION.createFailed}：${errorText(create.error)}`}</FormAlert>
 			)}
 		</form>
 	);

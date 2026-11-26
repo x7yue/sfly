@@ -1,14 +1,27 @@
-import type { Readiness } from "@sfly/schema";
+import type { Readiness, SessionEvent } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	announcement,
+	composerMode,
 	readinessProblems,
 	SESSION_STATUS,
+	sessionStatusText,
+	statusWithQueue,
+	steerDeliveryLabel,
 	toolLine,
 	toolResultSummary,
 	turnEndText,
 	turnEndTone,
+	userRoleLabel,
 } from "./session-text";
-import type { TimelineItem } from "./timeline";
+import {
+	applyEvent,
+	emptyTimeline,
+	initialTimeline,
+	prependHistory,
+	type TimelineItem,
+	type TimelineState,
+} from "./timeline";
 
 type TurnEnd = Extract<TimelineItem, { kind: "turn_end" }>;
 const turnEnd = (over: Partial<TurnEnd> = {}): TurnEnd => ({
@@ -52,6 +65,9 @@ describe("会话页的文字", () => {
 		expect(turnEndText(turnEnd({ steps: 12 }))).toBe("这一轮完成 · 12 步 · 用时 1m 24s");
 		expect(turnEndText(turnEnd())).toBe("这一轮完成 · 用时 1m 24s");
 		expect(turnEndText(turnEnd({ outcome: "stopped" }))).toBe("已停止");
+		// 已停止不写原因：助手服务写的「用户停止了这一轮」不一定是用户点的（中止命令超时、补发的中止让它马上结束），不原样说成用户的操作。
+		expect(turnEndText(turnEnd({ outcome: "stopped", reason: "用户停止了这一轮" }))).toBe("已停止");
+		expect(turnEndText(turnEnd({ outcome: "stopped", reason: "会话结束了" }))).toBe("已停止");
 		expect(turnEndText(turnEnd({ outcome: "interrupted", reason: "助手服务重启了" }))).toBe(
 			"中断：助手服务重启了",
 		);
@@ -129,5 +145,221 @@ describe("会话页的文字", () => {
 			],
 		};
 		expect(readinessProblems(none)).toEqual(["没有配置助手", "没有设置工作台"]);
+	});
+});
+
+type UserItem = Extract<TimelineItem, { kind: "user" }>;
+const userItem = (over: Partial<UserItem> = {}): UserItem => ({
+	kind: "user",
+	key: "e1",
+	seq: 1,
+	at: "2026-01-01T00:00:00.000Z",
+	messageId: "5d1c0a7e-3b2f-4c68-9a41-000000000001",
+	author: "alice",
+	text: "好",
+	role: "turn",
+	delivery: null,
+	droppedNote: null,
+	queuedSeen: false,
+	...over,
+});
+const WAITING_FOR = {
+	session_id: "5d1c0a7e-3b2f-4c68-9a41-000000000009",
+	title: "别的会话",
+	created_by: "bob",
+};
+const modeOf = (
+	status: TimelineState["status"],
+	queue: TimelineState["queue"] = null,
+	items: TimelineItem[] = [],
+) => composerMode({ status, queue, items });
+
+describe("会话页：输入框、标记、排位的文字", () => {
+	it("输入框按会话的状态分：空闲接着说、在做是插话、排队中写排第几和在等谁、已结束没有输入框", () => {
+		expect(modeOf("idle")).toEqual({ kind: "send" });
+		expect(modeOf("running")).toEqual({ kind: "steer" });
+		expect(modeOf("queued", { position: 2, waitingFor: WAITING_FOR })).toEqual({
+			kind: "queued",
+			position: 2,
+			waitingFor: WAITING_FOR,
+		});
+		expect(modeOf("queued")).toEqual({ kind: "queued", position: null, waitingFor: null });
+		expect(modeOf("ended")).toEqual({ kind: "ended" });
+	});
+
+	it("在做、却有话排在这一轮后面（停止途中说的）：不是插话，输入框不能再说", () => {
+		expect(
+			modeOf("running", { position: 1, waitingFor: WAITING_FOR }, [userItem({ role: "behind" })]),
+		).toEqual({ kind: "behind", position: 1 });
+		// 排着的话被撤掉了：又是插话。
+		expect(modeOf("running", null, [userItem({ role: "cancelled" })])).toEqual({ kind: "steer" });
+	});
+
+	it("用户的话的标记：开一轮的话没有；插话、排在这一轮后面、已撤掉各一个", () => {
+		expect(userRoleLabel("turn")).toBeNull();
+		expect(userRoleLabel("steer")).toBe("插话");
+		expect(userRoleLabel("behind")).toBe("排在这一轮后面");
+		expect(userRoleLabel("cancelled")).toBe("已撤掉");
+	});
+
+	it("插话送到了没有：等待送达、已送到、没有送到；不知道（刷新后读到在做的一轮里的插话）和不是插话时不写", () => {
+		expect(steerDeliveryLabel("waiting")).toBe("等待送达");
+		expect(steerDeliveryLabel("delivered")).toBe("已送到");
+		expect(steerDeliveryLabel("dropped")).toBe("没有送到");
+		expect(steerDeliveryLabel("unknown")).toBeNull();
+		expect(steerDeliveryLabel(null)).toBeNull();
+	});
+
+	it("状态那一格：排队中写排第几；别的状态不写", () => {
+		expect(statusWithQueue("queued", 2)).toBe("排队中 · 排在第 2 位");
+		expect(statusWithQueue("running", 1)).toBe("在做 · 排在第 1 位");
+		expect(statusWithQueue("running", null)).toBe("在做");
+		expect(sessionStatusText({ status: "queued", queue: { position: 3, waitingFor: null } })).toBe(
+			"排队中 · 排在第 3 位",
+		);
+		expect(sessionStatusText({ status: "queued", queue: null })).toBe("排队中");
+		expect(sessionStatusText({ status: "idle", queue: { position: 3, waitingFor: null } })).toBe(
+			"空闲",
+		);
+	});
+});
+
+describe("一轮结束的那一行：结局原因里的换行", () => {
+	it("中断、模型不可用、出错的原因有好几行：连续的空白压成一个空格，分隔行和播报里不出现换行", () => {
+		const reason = "上游返回：\n第一行\n\n  第二行\t结尾  ";
+		for (const outcome of ["interrupted", "model_unavailable", "failed"] as const) {
+			const text = turnEndText(turnEnd({ outcome, reason }));
+			expect(text).toContain("上游返回： 第一行 第二行 结尾");
+			expect(text).not.toMatch(/[\n\t]/);
+		}
+	});
+
+	it("别的看不见的字符不动（由不可信文字组件写出来）；没有换行的原因原样", () => {
+		expect(turnEndText(turnEnd({ outcome: "failed", reason: "模型报错\u202e" }))).toContain(
+			"\u202e",
+		);
+		expect(turnEndText(turnEnd({ outcome: "failed", reason: "模型报错" }))).toBe("出错：模型报错");
+	});
+});
+
+describe("读屏的播报", () => {
+	const ID = "a0000000-0000-4000-8000-00000000000a";
+	const base = (n: number) => ({ seq: n, at: "2026-01-01T00:00:00.000Z" });
+	const steer = (n: number): SessionEvent => ({
+		type: "user_message",
+		...base(n),
+		message_id: ID,
+		text: "先别改测试",
+		steer: true,
+		author: "alice",
+		author_user_id: null,
+	});
+	const started = (n: number): SessionEvent => ({ type: "turn_started", ...base(n), turn: 1 });
+	const step = (state: TimelineState, event: SessionEvent) => {
+		const next = applyEvent(state, event);
+		return { state: next, said: announcement(state, next) };
+	};
+
+	it("排到了：排队中变成在做播报一句；其余的状态变化不播", () => {
+		const queued = initialTimeline("queued", [], false, { position: 1, waitingFor: null });
+		const result = step(queued, started(1));
+		expect(result.state.status).toBe("running");
+		expect(result.said).toBe("轮到这个会话了，助手开始做");
+		// 空闲的会话说话之后在做：没有排过队，不播「轮到了」。
+		const idle = emptyTimeline("idle");
+		expect(step(idle, started(1)).said).toBeNull();
+	});
+
+	it("插话没有送到：steer_dropped 对上那句话时播一句；同一句话的第二条通知不再播", () => {
+		let state = emptyTimeline("running");
+		state = applyEvent(applyEvent(state, started(1)), steer(2));
+		const notice = (n: number): SessionEvent => ({
+			type: "notice",
+			...base(n),
+			kind: "steer_dropped",
+			message: "这句插话没有送到",
+			message_id: ID,
+		});
+		const first = step(state, notice(3));
+		expect(first.said).toBe("有一句插话没有送到，看时间线");
+		expect(step(first.state, notice(4)).said).toBeNull();
+	});
+
+	it("会话被结束（可能是别人结束的）：写明是谁；一轮结束读结局那一句", () => {
+		let state = emptyTimeline("running");
+		state = applyEvent(state, started(1));
+		const end: SessionEvent = {
+			type: "turn_end",
+			...base(2),
+			turn: 1,
+			outcome: "stopped",
+			reason: "",
+			duration_ms: 1000,
+		};
+		const ended = step(state, end);
+		expect(ended.said).toBe("已停止");
+		const byBob = step(ended.state, { type: "session_ended", ...base(3), by: "bob" });
+		expect(byBob.state.status).toBe("ended");
+		expect(byBob.said).toBe("这个会话已经结束（bob）");
+	});
+
+	it("往前翻页：读进来的更早的一页里有结局、没送到的插话，也不播（只看比之前最大序号更新的事件）", () => {
+		// 审查的复现：在做的一轮在页面上，更早的一页（has_more）里有一轮的结局和一句没送到的插话。
+		const state = initialTimeline("running", [started(51)], true);
+		const older: SessionEvent[] = [
+			{
+				type: "user_message",
+				...base(1),
+				message_id: ID,
+				text: "很早的话",
+				steer: false,
+				author: "alice",
+				author_user_id: null,
+			},
+			started(2),
+			steer(3),
+			{ type: "notice", ...base(4), kind: "steer_dropped", message: "没有送到", message_id: ID },
+			{
+				type: "turn_end",
+				...base(5),
+				turn: 1,
+				outcome: "completed",
+				reason: "",
+				duration_ms: 84_000,
+			},
+		];
+		const turned = prependHistory(state, older, false);
+		expect(turned.items.some((item) => item.kind === "turn_end")).toBe(true);
+		expect(turned.items.some((item) => item.kind === "notice")).toBe(true);
+		expect(announcement(state, turned)).toBeNull();
+		// 翻到更早的几页也一样：每一页都不播。
+		expect(announcement(turned, prependHistory(turned, [started(0)], false))).toBeNull();
+	});
+
+	it("一次到了好几条（重连之后补发，合成一次渲染）：播这一批的事实——插话没送到一句、最近的一个结局，不把过去几轮逐条念一遍", () => {
+		let state = emptyTimeline("running");
+		state = applyEvent(state, started(1));
+		const turnEnd = (n: number, turn: number, outcome: "stopped" | "completed"): SessionEvent => ({
+			type: "turn_end",
+			...base(n),
+			turn,
+			outcome,
+			reason: "",
+			duration_ms: 1000,
+		});
+		let after = state;
+		for (const event of [turnEnd(2, 1, "completed"), started(3), turnEnd(4, 2, "stopped")]) {
+			after = applyEvent(after, event);
+		}
+		const said = announcement(state, after);
+		expect(said).toBe(
+			turnEndText(after.items.filter((item) => item.kind === "turn_end").at(-1) as never),
+		);
+		expect(said?.split("。")).toHaveLength(1);
+	});
+
+	it("打开页面时（前后是同一份状态）什么也不播", () => {
+		const state = initialTimeline("running", [started(1), steer(2)], false);
+		expect(announcement(state, state)).toBeNull();
 	});
 });
