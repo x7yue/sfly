@@ -363,6 +363,29 @@ function handle(command) {
 		});
 		out(assistant("好的。"));
 		settle();
+	} else if (text.startsWith("model-error:")) {
+		// `model-error:<做几步>:<上游的错误>`：先做几步工具调用，再模型出错、重试用尽（#548：每一类错误、已经做了几步）。
+		const [, steps, ...rest] = text.split(":");
+		const error = rest.join(":");
+		for (let i = 1; i <= Number(steps); i += 1) {
+			out({
+				type: "tool_execution_start",
+				toolCallId: `m${i}`,
+				toolName: "read",
+				args: { path: "a" },
+			});
+			out({
+				type: "tool_execution_end",
+				toolCallId: `m${i}`,
+				toolName: "read",
+				result: { content: [{ type: "text", text: "ok" }] },
+				isError: false,
+				durationMs: 1,
+			});
+		}
+		out(assistant("", { stopReason: "error", errorMessage: error }));
+		out({ type: "auto_retry_end", success: false, attempt: 3, finalError: error });
+		settle();
 	} else if (text.startsWith("error")) {
 		// pi 的先后：这次模型调用以出错结束，再是重试的提示；重试用尽带的是最后一次的原文。
 		out(assistant("", { stopReason: "error", errorMessage: "503 upstream" }));

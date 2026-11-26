@@ -28,7 +28,8 @@ use sfly_agent::{
 /// 镜像：默认用控制面下发的 PyPI 镜像和 GitHub Release 镜像；`--index-url`、`--github-release-mirror`、
 /// `--python-install-mirror` 在本机覆盖它们。优先级：命令行参数 > 环境变量 > `agent.env` > 控制面下发；
 /// Python 下载镜像没有覆盖时从（覆盖后的）GitHub Release 镜像推导。
-#[derive(Debug, Parser)]
+// 没有 `Debug`：`server`、`index_url` 等可以带用户名和密码，`{args:?}` 会原样写出去（#733）；也没有谁需要打印它。
+#[derive(Parser)]
 #[command(version, args_override_self = true)]
 struct Args {
     /// 控制面 Agent 网关地址。

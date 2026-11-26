@@ -308,6 +308,31 @@ SFLY_PYTHON_INSTALL_MIRROR=https://mirror.nju.edu.cn/github-release/astral-sh/py
 
 已经用控制面的镜像生成的项目不会自动改变：把 `pyproject.toml` 里 `[tool.uv]` 的 `python-install-mirror` 和名为 `pypi-mirror` 的索引地址改成同样的值，或者重新 `sfly init`。
 
+### 带用户名和密码的私有索引
+
+私有的 PyPI 索引常要用户名和密码。两种配法，**推荐第一种**。
+
+**一、凭据放在每台机器的 `~/.netrc` 里，地址不带用户名和密码（推荐）。** 控制面（`SFLY_PYPI_MIRROR`）或本机覆盖（`SFLY_INDEX_URL`）写不带凭据的地址，例如 `https://pypi.internal/simple`；在每台要访问它的机器上（测试机、开发机），运行 Agent 的那个用户的主目录里写 `~/.netrc`，权限设成 `600`：
+
+```text
+machine pypi.internal
+login <用户名>
+password <密码>
+```
+
+uv 会读它（先不带凭据请求一次，收到 401 之后带上凭据重试；`NETRC` 环境变量可以指到别的文件）。凭据只在这台机器的这个文件里：不出现在控制面的配置、`{{SFLY_URL}}/install.sh`、`sfly init` 写进新节点包的 `pyproject.toml`，也不会出现在 Agent 的日志里。
+
+**二、凭据写在地址里：`https://<用户名>:<密码>@pypi.internal/simple`。** uv 认这种写法；密码里的 `@`、`/`、`?`、`#`、`%` 要写成百分号编码（`@` 写成 `%40`）。控制面启动时不拒绝镜像地址里的用户名和密码（`SFLY_PUBLIC_URL`、`SFLY_PUBLIC_GRPC_URL` 才拒绝，它们要拼进链接和 Agent 的配置）。写在哪里，决定谁读得到它：
+
+| 写在哪里 | 谁读得到 |
+|---|---|
+| 控制面的 `SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR` | 握手时原样下发给每台 Agent；写进 `{{SFLY_URL}}/install.sh`（任何能访问控制面的人都下载得到，`--help` 里也会打印）；`sfly init` 写进新节点包的 `pyproject.toml`（节点包目录进了 git 仓库，它就在仓库里） |
+| 一台机器的 `agent.env`、环境变量（`SFLY_INDEX_URL` 等） | 这台机器上读得到 `agent.env` 的用户；这台机器上的 `sfly init` 也把它写进新节点包的 `pyproject.toml` |
+
+所以要用第二种时，让凭据的读者范围尽量小：只配在要用它的那几台机器上，控制面不配（或者配一个不带凭据的公共镜像）。
+
+**Agent 的日志里没有这些用户名和密码**：Agent 写进安装日志（任务的安装状态）、任务的失败原因、环境准备失败的报告和日志的地址，用户名和密码一律换成 `***`，主机、端口和路径留着，方便看出连的是哪：`https://***@pypi.internal/simple`。命令行、uv 和 curl 的输出里回显的地址、报错里的地址都一样。限度：只认「地址里的 `用户名:密码@`」这个形状；`UV_INDEX_*_PASSWORD` 这类环境变量的值、`~/.netrc` 里的凭据不在地址里，Agent 不读也不打印它们，但节点自己的输出里有什么 Agent 管不到。控制面读日志时的打码只认平台自己签发的令牌和场景的 secret 参数的值，**不认地址里的密码**，所以不要指望它兜底。
+
 ### 下载用的 User-Agent
 
 镜像站会封禁 curl、wget 的部分默认 User-Agent（例如中科大对老版本 curl、wget 返回 403，要求换成能看出下载用途或所在机构的值，见 [ustclug/discussions#479](https://github.com/ustclug/discussions/issues/479)）。所以安装脚本下载 Agent、`--dev` 安装 uv，以及 Agent 安装和更新 uv 时，curl、wget 都带 `sfly-agent/<版本>`。uv 官方安装脚本里的 curl、wget 改不了参数，所以运行它时用临时的 `CURL_HOME`、`WGETRC` 配置文件带上同一个 User-Agent，原有的 `~/.curlrc`、`~/.wgetrc` 内容照抄过去。uv 自己发出的请求（下载 Python、安装依赖）带的是 `uv/<版本>`，不受这一项影响。

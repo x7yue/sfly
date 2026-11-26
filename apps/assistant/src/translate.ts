@@ -240,10 +240,14 @@ export class TurnTranslator {
 		const max = positiveInt(event.maxAttempts);
 		const delay = Number(event.delayMs);
 		const error = describeUpstreamError(String(event.errorMessage ?? ""));
+		// 「模型暂时不可用（429 被限流），正在第 2/3 次重试，4 秒后」：页面原样显示这一句（#548）。
+		const what = error.status === undefined ? error.label : `${error.status} ${error.label}`;
+		const which = attempt ? `第 ${attempt}${max ? `/${max}` : ""} 次` : "";
+		const when = Number.isFinite(delay) && delay >= 0 ? `，${afterText(delay)}` : "";
 		return {
 			type: "notice",
 			kind: "retry",
-			message: `${error.text}，正在重试${attempt ? `第 ${attempt} 次` : ""}`,
+			message: `模型暂时不可用（${what}），正在${which ? `${which}重试` : "重试"}${when}`,
 			error_class: error.errorClass,
 			...(attempt && { attempt }),
 			...(max && { max_attempts: max }),
@@ -275,6 +279,11 @@ export class TurnTranslator {
 				: "";
 		return [{ type: "notice", kind: "compaction", message: `上下文太长，压缩了一次${sizes}` }];
 	}
+}
+
+/** 多久之后重试：不到 1 秒写「不到 1 秒后」，其余按秒四舍五入。 */
+function afterText(delayMs: number): string {
+	return delayMs < 1000 ? "不到 1 秒后" : `${Math.round(delayMs / 1000)} 秒后`;
 }
 
 function textOf(content: unknown): string {

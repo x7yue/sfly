@@ -26,6 +26,7 @@ import { type AgentClient, type AgentOptions, connectAgent } from "../../src/age
 import { EventBus } from "../../src/bus.js";
 import type { Clock } from "../../src/clock.js";
 import { piPackage } from "../../src/launch.js";
+import { ModelHealth, type Probe } from "../../src/model-health.js";
 import { createAssistantServer } from "../../src/server.js";
 import { SessionManager, type SessionManagerOptions } from "../../src/sessions.js";
 import { eventually } from "./eventually.js";
@@ -64,6 +65,18 @@ export interface HarnessOptions {
 	agentDeadlines?: AgentOptions;
 	/** 换掉助手服务拿到的工作台客户端的某几样（造工作台连接之外的错误）。 */
 	wrapAgent?: (client: AgentClient) => AgentClient;
+	/** 模型文件的内容；不给就是指向假模型的那份，`null` 是没有模型文件。 */
+	modelsFile?: string | null;
+	/** `SFLY_ASSISTANT_MODEL`，默认 `fake/fake`；`undefined` 是没设。 */
+	selectedModel?: string | undefined;
+	/** 不检查模型就绪状态（测试开始一轮之后才出的错：模型文件在检查之后才没了）。 */
+	noModelGate?: boolean;
+	/** 试连（测试里换成假的）；默认真的试连。 */
+	probe?: Probe;
+	/** 试连的间隔。 */
+	probeIntervalMs?: number;
+	/** 模型的计时（试连的定时器）；不给用真的时钟。 */
+	modelClock?: Clock;
 }
 
 export class Harness {
@@ -85,6 +98,8 @@ export class Harness {
 		readonly url: string,
 		/** 助手服务写的日志。 */
 		readonly logs: string[],
+		/** 模型的就绪状态（配没配好、连不连得上）。 */
+		readonly modelHealth: ModelHealth,
 	) {}
 
 	static async start(options: HarnessOptions = {}): Promise<Harness> {
@@ -96,24 +111,37 @@ export class Harness {
 		const model = await FakeModel.start();
 		const workbench = await FakeWorkbench.start();
 		const modelsFile = join(configDir, "models.json");
-		writeFileSync(modelsFile, modelsJson(model));
+		if (options.modelsFile !== null)
+			writeFileSync(modelsFile, options.modelsFile ?? modelsJson(model));
+		const hostEnv = options.hostEnv ?? {
+			PATH: process.env.PATH,
+			FAKE_MODEL_KEY: "fake-key",
+			SFLY_ASSISTANT_SECRET: SECRET,
+			UNRELATED: "not-for-pi",
+		};
+		const selectedModel = "selectedModel" in options ? options.selectedModel : "fake/fake";
 		const logs: string[] = [];
+		const modelHealth = new ModelHealth({
+			modelsFile,
+			model: selectedModel,
+			env: hostEnv,
+			clock: options.modelClock,
+			probe: options.probe,
+			intervalMs: options.probeIntervalMs,
+			log: (message) => logs.push(message),
+		});
 		const counts = { opened: 0, closed: 0 };
 		const bus = new EventBus();
 		const managerOptions: SessionManagerOptions = {
 			dataDir,
 			modelsFile,
-			model: "fake/fake",
+			model: selectedModel,
 			piArgv: options.piArgv ?? [process.execPath, piPackage().cli],
 			extension: await extensionBundle(),
 			skillsDir,
-			hostEnv: options.hostEnv ?? {
-				PATH: process.env.PATH,
-				FAKE_MODEL_KEY: "fake-key",
-				SFLY_ASSISTANT_SECRET: SECRET,
-				UNRELATED: "not-for-pi",
-			},
+			hostEnv,
 			bus,
+			...(options.noModelGate ? {} : { modelGate: () => modelHealth.gate() }),
 			connect: (address, log) => {
 				const connected = connectAgent(address, { ...options.agentDeadlines, log });
 				const client = options.wrapAgent ? options.wrapAgent(connected) : connected;
@@ -143,7 +171,7 @@ export class Harness {
 			bus,
 			sessions,
 			versions: { assistant: "0.0.0-test", pi: piPackage().version },
-			modelsFile,
+			model: () => modelHealth.snapshot(),
 			log: (message) => logs.push(message),
 			heartbeatMs: options.heartbeatMs,
 		});
@@ -161,7 +189,9 @@ export class Harness {
 			server,
 			url,
 			logs,
+			modelHealth,
 		);
+		modelHealth.start();
 		harness.events = await EventsClient.connect(url);
 		// 计数从启动时就开始：和 SessionManager 用的是同一个对象。
 		harness.connections = counts;
@@ -266,6 +296,7 @@ export class Harness {
 	}
 
 	async close(): Promise<void> {
+		this.modelHealth.close();
 		this.events.close();
 		await this.sessions.shutdown();
 		this.server.closeAllConnections();

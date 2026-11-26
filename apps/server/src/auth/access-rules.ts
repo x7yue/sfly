@@ -173,11 +173,25 @@ export const REQUIRES_CREDENTIAL_ROUTES: ReadonlySet<string> = new Set([
 	"DELETE /agents/:name/credentials/:id",
 	"POST /agents/:name/disable",
 	"POST /agents/:name/enable",
+	// 建会话（#547）：会话令牌代发起人干活，发起人是用户（`sessions.created_by_user_id` 从凭据取），所以只认用户的凭据
+	// （登录 Cookie、个人令牌）。会话的别的接口在 #494 之前照旧。
+	"POST /projects/:project/sessions",
 ]);
+
+/** 要求凭据的接口不带凭据时 401 的说明，没有写的用「需要登录或令牌」。 */
+export const CREDENTIAL_REQUIRED_MESSAGES: Readonly<Record<string, string>> = {
+	"POST /projects/:project/sessions":
+		"建会话需要登录的用户：先登录控制台，或者在命令行运行 `sfly login`，再带上登录 Cookie 或个人令牌" +
+		"（`Authorization: Bearer <个人令牌>`）；不带凭据、项目令牌、会话令牌都不行（会话令牌代发起人干活，建会话要有发起人）",
+};
 
 /** 这个接口现在就要求凭据（按资源类别，或者按接口）。 */
 export const requiresCredential = (def: Pick<RouteDef, "method" | "path" | "resource">): boolean =>
 	REQUIRES_CREDENTIAL.has(def.resource.kind) || REQUIRES_CREDENTIAL_ROUTES.has(routeKey(def));
+
+/** 要求凭据的接口不带凭据时的 401 说明。 */
+export const credentialRequiredMessage = (def: Pick<RouteDef, "method" | "path">): string =>
+	CREDENTIAL_REQUIRED_MESSAGES[routeKey(def)] ?? "需要登录或令牌";
 
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
@@ -254,6 +268,7 @@ export function checkCredentialRoutes(contract: readonly RouteDef[]): string[] {
 			Object.fromEntries([...REQUIRES_CREDENTIAL_ROUTES].map((k) => [k, true])),
 		],
 		["REVOKE_OWN_ROUTES", Object.fromEntries([...REVOKE_OWN_ROUTES].map((key) => [key, true]))],
+		["CREDENTIAL_REQUIRED_MESSAGES", CREDENTIAL_REQUIRED_MESSAGES],
 	].flatMap(([name, list]) =>
 		Object.keys(list as object)
 			.filter((key) => !known.has(key))

@@ -184,8 +184,8 @@ export interface ControlPlaneOptions {
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
 	/**
-	 * 会话结束之后调用（会话令牌合入之后在这里吊销这个会话的令牌，#544 留好的接口）：抛的错只进日志，不影响结束。
-	 * 主要给测试用；生产里由令牌那条任务接上。
+	 * 会话结束之后调用（#544 留好的接口）：抛的错只进日志，不影响结束。会话令牌的吊销不在这里：它在会话结束的事务里
+	 * （`SessionStore.end`，#547），不靠一个事后的回调。主要给测试用。
 	 */
 	onSessionEnded?: (session: SessionRow) => Promise<void>;
 	/**
@@ -322,11 +322,18 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
+	// 登录注销、用户停用、令牌吊销都从同一个广播出去：路由层据此关掉受影响的事件流。
+	const revocations = new RevocationBus();
 	// 会话令牌触发的运行、保存的场景版本，在同一个事务里给会话写平台记录（#547）：引擎和场景存储都用它。
+	// 一轮开始时签发会话令牌、一轮和会话结束时吊销它，也在这里的事务里（`./sessions/session-tokens.ts`）。
 	const sessions = new SessionStore({
 		db: database.db,
 		clock,
 		onError: (what, error) => logError(`sfly: ${what}`, error),
+		// 会话令牌吊销了（事务已经提交）：用它打开着的事件流跟着关掉。
+		onTokensRevoked: (tokenIds) => {
+			for (const tokenId of tokenIds) revocations.emit({ type: "token", tokenId });
+		},
 		...(options.sessionWriteLockTimeoutMs !== undefined && {
 			writeLockTimeoutMs: options.sessionWriteLockTimeoutMs,
 		}),
@@ -448,8 +455,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);
-	// 登录注销、用户停用、令牌吊销都从同一个广播出去：路由层据此关掉受影响的事件流。
-	const revocations = new RevocationBus();
 	const accounts = new AccountService({
 		db: database.db,
 		clock,

@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import {
 	ASSISTANT_ABORT_SETTLE_MS,
 	ASSISTANT_STOP_WAIT_MS,
+	ASSISTANT_TURN_MAX_MS,
 	type AssistantErrorCode,
 	type AssistantEvent,
 	type ErrorClass,
@@ -24,6 +25,7 @@ import { type AgentClient, WORKBENCH_UNREACHABLE, WorkbenchError } from "./agent
 import type { EventBus } from "./bus.js";
 import { type Clock, realClock, type Timer } from "./clock.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
+import type { ModelGate } from "./model-health.js";
 import { modelEnvRefs } from "./models.js";
 import { describeError } from "./output.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
@@ -66,8 +68,8 @@ import {
 export const TURN_LIMITS = {
 	/** 一轮最多调用模型的次数（数 pi 的 `turn_start`，第 41 次之前结束）。 */
 	modelCalls: 40,
-	/** 一轮最长的时间。 */
-	durationMs: 20 * 60 * 1000,
+	/** 一轮最长的时间（协议里的 {@link ASSISTANT_TURN_MAX_MS}：控制面的会话令牌按它定有效期）。 */
+	durationMs: ASSISTANT_TURN_MAX_MS,
 } as const;
 
 /**
@@ -111,6 +113,11 @@ export interface SessionManagerOptions {
 	skillsDir: string;
 	hostEnv: NodeJS.ProcessEnv;
 	bus: EventBus;
+	/**
+	 * 新的一轮能不能开始之前问的：模型没有配置、或者上次试连连不上时返回 503 的原因（#548，`ModelHealth.gate`）。不给就不检查
+	 * （测试里单独看看管 pi 的那部分时）。
+	 */
+	modelGate?: () => ModelGate | undefined;
 	/** 连到一台 Agent 的能力端口；`log` 是认不出的错误的原文的去处（带工作台的地址）。 */
 	connect: (address: string, log?: (line: string) => void) => AgentClient;
 	/** 助手服务的日志。写进去的原文（上游的错误、连接上的报错）先经 `#forLog`。 */
@@ -295,7 +302,7 @@ export class SessionManager {
 				const { names } = modelEnvRefs(readFileSync(this.options.modelsFile, "utf8"));
 				this.#modelSecrets.add(names.map((name) => this.options.hostEnv[name] ?? ""));
 			} catch {
-				// 读不了模型文件（启动时已经检查过，这里不会发生）：只按形状打码。
+				// 读不了模型文件（模型没有配置时助手服务也照常启动，#548，所以会发生）：没有密钥可以按值打码，只按形状打码。
 			}
 		}
 		return forLog(text, [session.redactor, this.#modelSecrets]);
@@ -328,8 +335,10 @@ export class SessionManager {
 	 * `POST /sessions/:id/prompt`（协议「`prompt` 的判断」，先后固定）：
 	 * 1. 轮次不大于中止记号：202，以 `stopped` 结束，不起 pi；不改任何别的状态；
 	 * 2. 这个会话有一轮「在做」（包括在等的第 k 轮）：409 `turn_running`；
-	 * 3. 否则登记、202：没有一轮在停止就在后台开始；有的话等它的 `turn_end`（{@link #finish}）再开始。
-	 * 503 只在登记之前决定（进程数满了）。
+	 * 3. 模型没有配置、或上次试连连不上（{@link SessionManagerOptions.modelGate}，#548）：503 `model_not_configured`、`model_unreachable`，
+	 *    不登记、不起 pi；
+	 * 4. 否则登记、202：没有一轮在停止就在后台开始；有的话等它的 `turn_end`（{@link #finish}）再开始。
+	 * 503 只在登记之前决定（模型有问题、进程数满了）。
 	 */
 	prompt(sessionId: string, body: PromptCommandBody): CommandResult {
 		const session = this.#session(sessionId);
@@ -346,6 +355,9 @@ export class SessionManager {
 		if (session.turn) {
 			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
 		}
+		// 模型没有配置、或上次试连连不上：503，不登记、不起 pi（登记之前决定，和进程数满了一样）。
+		const blocked = this.options.modelGate?.();
+		if (blocked) return { ok: false, ...blocked };
 		const needsProcess = !session.stopping && (!session.process || session.process.exited);
 		if (needsProcess && this.activeProcesses >= this.#maxProcesses && !this.#evictIdle()) {
 			return {

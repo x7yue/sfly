@@ -97,7 +97,7 @@ docker compose up -d
     - **端口的空串**是行为变化，不是启动失败：以前读成 0（让系统随机选端口），现在用默认端口，仍然能启动。
     - **地址类的变量**（#619，compose 和直接设环境变量的都受影响）：`SFLY_PUBLIC_URL`、`SFLY_PUBLIC_GRPC_URL`、`SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR` 以前原样往下传。没写协议（`sfly.internal:8080`、`mirrors.ustc.edu.cn/pypi/simple`）以前也能启动：对外地址残缺，Agent 拿到的下载地址和网关地址是坏的，镜像到 Agent 装依赖时才失败；现在启动时就报错。要写成 `http://` 或 `https://` 开头、有主机的地址（镜像还认 `file://`，见下面「镜像」一条）；对外地址和网关地址另外不能带用户名密码、`?`、`#`，网关地址不能带路径。compose 会把 `SFLY_PUBLIC_URL` 和两个镜像传进容器，升级前看一眼 `.env` 里这几项的写法。协议写错（`http//sfly:8080`）以前是 HTTP 已经开始监听之后才带着堆栈崩溃，现在启动前就是一行说明。`SFLY_TRUST_PROXY`、`SFLY_CORS_ORIGINS`、`SFLY_ADMIN_LOGIN` 和 `SFLY_ADMIN_PASSWORD` 写错以前也是启动失败（带堆栈的未捕获错误），现在和别的一起、一次报完，没有堆栈。
     - **`DATABASE_URL`**（#619）：以前原样交给连接库（pg），现在启动时先用连接库自己解析连接串的那个函数检查，**只拒连接库也解析不了的写法**（端口不是数字或超出范围、地址里有不该有的字符、写了多个主机、`sslcert`、`sslkey`、`sslrootcert` 指的文件读不到……）：这些以前在第一次连数据库时才失败（带堆栈），现在启动前就是一行说明（说明里不回显填的值，里面有密码）。连接库认的写法都照旧能用，包括 Unix 套接字的三种（`postgres://用户:密码@/库名?host=/var/run/postgresql`、`/var/run/postgresql 库名`、`socket:/var/run/postgresql?db=库名`，主机写成 `%2F` 编码的目录也行）、多个参数、`sslmode`、IPv6 地址；**写成 `用户:密码@主机/库名`（带 `@`、没有 `://`）的启动时就拒绝**：连接库不是照这个写法的意思用它，而是把整串当成库名、主机取默认值，第一次连库时把这串（含密码）当库名发给默认的主机；说明是固定的文字（「看起来带了用户名和密码，但没有写协议」，不回显填的值）。别的不带 `://` 的写法照旧放行：Unix 套接字的路径、单独一个库名。**空串（`DATABASE_URL=`）和只有空白的行为变了**：以前原样交给连接库，它退回去读 `PG*` 环境变量（`PGHOST`、`PGUSER`、`PGDATABASE`……）；现在和别的变量一个规矩，当作没设置，用内置的默认地址 `postgres://sfly:sfly@127.0.0.1:5432/sfly`。靠「`DATABASE_URL` 留空加 `PG*`」连数据库的部署（直接设环境变量的；compose 里 `DATABASE_URL` 是必填的，不能留空），升级前把 `DATABASE_URL` 写成完整的连接串。`reset-password` 子命令读 `DATABASE_URL` 用的是同一个函数，写法和结果和控制面一致。
-    - **镜像**（#619）：`SFLY_PYPI_MIRROR` 和 `SFLY_GITHUB_RELEASE_MIRROR` 认 uv 认的写法：`http://`、`https://` 地址（可以带用户名密码），PyPI 镜像还认 `file://` 地址和绝对路径（`/mnt/mirror/pypi/simple`），GitHub Release 镜像还认 `file://` 地址（裸的绝对路径 curl 不认，要写成 `file:///mnt/mirror/github-release`）。
+    - **镜像**（#619）：`SFLY_PYPI_MIRROR` 和 `SFLY_GITHUB_RELEASE_MIRROR` 认 uv 认的写法：`http://`、`https://` 地址（可以带用户名密码；Agent 的日志和失败原因里写 `***`，#733。凭据写在地址里会下发给每台 Agent、写进 `/install.sh` 和 `sfly init` 生成的 `pyproject.toml`：私有索引更稳妥的配法是地址不带凭据、凭据放各台机器的 `~/.netrc`，见用户文档「安装 Agent」的「带用户名和密码的私有索引」），PyPI 镜像还认 `file://` 地址和绝对路径（`/mnt/mirror/pypi/simple`），GitHub Release 镜像还认 `file://` 地址（裸的绝对路径 curl 不认，要写成 `file:///mnt/mirror/github-release`）。
     - compose 里 `.env` 的 `SFLY_HTTP_PORT`、`SFLY_GRPC_PORT` 只是宿主机端口的映射，控制面看不到，不受影响。
   - **`SFLY_TRUST_PROXY`、`SFLY_PUBLIC_GRPC_URL`**（#650）：以前 `.env` 里写了也传不进容器（compose 的 `environment` 里没有它们），现在传进去了。`.env` 里已经写着它们的部署，升级后行为会变，这正是写它们时想要的行为：写了 `SFLY_TRUST_PROXY` 的，登录限速开始按它取来源地址（反向代理后面不再所有人共用一个来源地址）；写了 `SFLY_PUBLIC_GRPC_URL` 的，下发给 Agent 的网关地址开始用它（以前取 `SFLY_PUBLIC_URL` 的主机加 50051），之后新装的 Agent 才会写进新的地址。**写错的值现在会让控制面启动失败**（#619 起启动时检查：代理信任只认地址段、层数、关键字；网关地址要带协议、不带路径）：升级前对着 `deploy/.env.example` 和下面「登录与反向代理」看一眼 `.env` 里这两项写的值。初始管理员（`SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`）有意不在 compose 里传，说明在 `deploy/.env.example`。
   - **数据目录、监听地址**（#651）：`SFLY_DATA_DIR` 指的目录写不了（Docker 卷、挂载的宿主机目录的属主不对最常见：镜像里控制面以 `node`（uid 1000）运行）以前控制面照常启动，要到第一次写文件（上传产物、写任务日志、存节点包）才报错；现在启动时试写一次，写不了就启动失败，说明里写目录、当前用户和怎么改（`docker compose logs sfly` 第一行）。目录不存在时控制面会建它。`SFLY_HTTP_HOST`、`SFLY_GRPC_HOST` 现在只认 IP 地址或主机名（空串当作没设置），写成带协议、用户名密码、端口或路径的地址启动失败（以前原样交给监听，失败的报错会把整串带出来）；compose 没有把这两个变量传进容器（容器里监听的就是 0.0.0.0），直接设环境变量运行的才会碰到。**空串的行为变了**：以前空串原样交给监听，同时监听 IPv4 和 IPv6（`::`）；现在和没设置一样，只监听 IPv4 的 `0.0.0.0`。靠空串同时监听 IPv6 的，改写成 `::`。**主机名只认字母、数字、连字符、下划线和点**（每一段不超过 63 个字符、总长不超过 253 个字符；IPv6 地址不带方括号，带区域标识时区域标识也算在总长里）；以前能监听的写法里，带别的字符的现在启动失败。检查认的写法监听时仍可能失败（解析不了、本机没有这个地址）：说明只写变量名、端口和错误码，不带地址。`SFLY_DATA_DIR` 写成 `~` 开头的现在不合法（环境变量里没有人展开它，以前会在当前目录下建出一个叫 `~` 的目录），要写绝对路径；数据目录写不了时说明里写它的完整路径（启动输出和 `docker compose logs` 里都看得到：不要把要保护的东西写进目录的路径）。
@@ -144,6 +144,42 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
   - 环境准备失败（没有可用的 uv、安装 uv 失败、创建 venv 失败）时 Agent 以退出码 78 退出，标准错误打印失败的命令、完整输出和镜像地址（标明来自控制面还是本机覆盖），请把它报告给平台管理员。
 - 随后若 venv 里的 SDK 运行时版本与 Agent 自身版本不一致，Agent 从控制面下载同版本的 wheel，校验 sha256 后用 `uv pip install` 安装；版本一致时不重装。控制面没有对应版本的 wheel 时保留现状并在日志里告警。
 - 节点包依赖从控制面下发的 PyPI 镜像安装；Agent 上的 `--index-url` 优先。本机的 `--github-release-mirror`、`--python-install-mirror` 同样优先于下发的 GitHub Release 镜像和由它推导的 Python 下载镜像。
+
+### 助手的模型
+
+助手（ADR 0027）用的模型和它的密钥只放在**助手容器**里：模型的四个工具都在工作台上执行，够不着助手容器，所以密钥不需要经过工作台，工作台也不需要连得到模型端点。**离线部署时只有助手容器要连得到模型端点**（内网的模型网关，或离线的模型服务）；控制面、工作台、浏览器都不用。
+
+- **模型文件**：给助手容器挂一份 pi 的 `models.json`（容器里的路径 `SFLY_ASSISTANT_MODELS`，默认 `/config/models.json`）。格式就是 pi 的，字段见 pi 文档的「Models Configuration」一页（[models-configuration.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models-configuration.md)，助手镜像里装的 pi 版本的同一页随包带在 `node_modules` 里）：内网的兼容端点常要按它验证过的差异开兼容开关（`compat`），所以不自己另定一套格式。下面的模板对应 `evals/assistant/models.example.json` 里内网档的那一项（`endpoint` 是 `baseUrl`，`model` 是 `id`），不含任何供应商的名字：
+
+  ```json
+  {
+    "providers": {
+      "gateway": {
+        "name": "内网模型网关",
+        "baseUrl": "https://llm-gateway.internal/v1",
+        "api": "openai-completions",
+        "apiKey": "$MODEL_API_KEY",
+        "models": [
+          {
+            "id": "<模型 id>",
+            "name": "<显示名>",
+            "reasoning": false,
+            "input": ["text"],
+            "contextWindow": 131072,
+            "maxTokens": 16384,
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          }
+        ]
+      }
+    }
+  }
+  ```
+
+- **密钥用环境变量引用，不写进文件**：`apiKey`、`headers` 的值里写 `"$变量名"` 或 `"${变量名}"`（可以夹在文字里，`"Bearer $MODEL_API_KEY"`），值由助手容器的环境变量给出（`docker run -e MODEL_API_KEY`、compose 的 `environment`，不要把值写在命令行或镜像里）；助手服务只把模型文件引用到的变量交给 pi，别的环境（含共享密钥 `SFLY_ASSISTANT_SECRET`）都不给。不支持 `"!命令"` 的写法。密钥的值不会出现在会话事件、日志、`/health` 和接口的响应里。
+- **`SFLY_ASSISTANT_MODEL`**：用文件里的哪个模型，写成 `<提供方>/<模型 id>`，和文件里 `providers` 下的名字、`models` 里的 `id` 对上，例如 `gateway/<模型 id>`；末尾可以带思考强度（`:high`）。页面上没有选择，一个部署一个模型。
+- **配得对不对在页面上看得到**：助手服务**不会因为模型没配好而拒绝启动**，而是照常起来，`GET /health` 的 `model.configured` 为 false，`reason` 写明缺的是哪一项（模型文件不在或读不了、不是合法的 JSON、有不支持的写法、`SFLY_ASSISTANT_MODEL` 没设或不在文件里、选中的提供方引用的环境变量没有值）：只写变量名和文件路径，不写任何值（变量名只在像常见的环境变量名——大写字母、数字、下划线——时才写；名字不像的，多半是把密钥本身写在了 `$` 后面，这时只写它在文件里的位置并提示）。引用 `SFLY_ASSISTANT_` 开头的变量（助手服务自己的配置）也算没配好：启动 pi 时不会交给它，换个名字。页面「助手」顶上的就绪状态写「没有配置模型：<缺什么>」，「开始」不可用；改好文件之后不用重启（环境变量要重启容器）。共享密钥太短（少于 32 个字符）仍然拒绝启动。
+- **试连**：助手服务启动时和之后每 5 分钟（上一次连不上时每 30 秒，连上了再回到 5 分钟）对模型端点（`baseUrl` 的主机和端口）建一次连接，https 含 TLS 握手，**只建连接，不发请求、不调模型、不花钱**；`/health` 报连得上还是连不上、上次检查的时间和端点的主机端口（不带路径和参数）。连不上时就绪状态写「连不上模型端点 主机:端口：<原因>（上次检查：N 分钟前）」，新的一轮开始之前被拒绝（503 `model_unavailable`）。证书照默认规则验（pi 调模型时也一样）：验不过时试连失败，原因写「证书验不过」。
+- **模型出故障时**：一轮里模型报错，pi 自己重试（时间线写「模型暂时不可用（429 被限流），正在第 2/3 次重试，4 秒后」），重试用尽或不该重试的错误（密钥被拒绝、额度不足）这一轮以「模型不可用」结束，原因写类别和状态码（上游的错误原文不进事件，只进助手服务的日志，打过码），已经做的步骤和工作区的改动还在。
 
 ## 约定
 

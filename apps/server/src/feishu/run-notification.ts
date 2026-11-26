@@ -12,7 +12,13 @@ import type { RunRow, Step } from "../engine/step.js";
 import { readNodeError, readRuns } from "../runs/run-read.js";
 import { registeredBots } from "./bot-checks.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
-import { type CardColor, type CardElement, fitCard, interactiveCard } from "./messages.js";
+import {
+	type CardColor,
+	type CardElement,
+	escapeCardMarkdown,
+	fitCard,
+	interactiveCard,
+} from "./messages.js";
 
 /** 运行结束时的状态。 */
 type FinishedStatus = Exclude<RunStatus, "running">;
@@ -45,7 +51,7 @@ interface FirstFailure {
 	location: string | null;
 }
 
-interface RunNotificationFacts {
+export interface RunNotificationFacts {
 	/** 卡片标题：设置里的标题，空时已换成场景名。 */
 	title: string;
 	status: "failed" | "cancelled";
@@ -71,25 +77,28 @@ function clipReason(text: string): string {
  * 第一个失败的节点（所在的链和节点）、失败原因、出错位置（有失败的节点时；出错位置没有时不写）；最后是「查看运行」按钮（有链接时）。
  * 请求体超过 20 KB 时截断附加说明（{@link fitCard}），其余都不动；截了还放不下返回 `too_large`。
  */
-function runNotificationCard(facts: RunNotificationFacts) {
+export function runNotificationCard(facts: RunNotificationFacts) {
 	const result = RESULT[facts.status];
+	// 拼进 Markdown 的每一段别人写的文字（场景名、触发人、子流程名称、节点显示名称、失败原因、出错位置）都先转义，
+	// 在卡片上按原样显示（{@link escapeCardMarkdown}）；失败原因先按原文截断、再转义。运行编号是十六进制，标签是固定的字。
+	const text = escapeCardMarkdown;
 	const lines = [
-		`**场景**：${facts.scenarioName}`,
+		`**场景**：${text(facts.scenarioName)}`,
 		`**运行编号**：${facts.runId.slice(0, 8)}`,
-		`**触发人**：${facts.triggeredBy}`,
+		`**触发人**：${text(facts.triggeredBy)}`,
 	];
 	const failure: CardElement[] = facts.failure
 		? [
 				{
 					tag: "markdown",
 					content: [
-						`**失败的节点**：${facts.failure.chain}：${facts.failure.node}`,
+						`**失败的节点**：${text(facts.failure.chain)}：${text(facts.failure.node)}`,
 						...(facts.failure.reason === ""
 							? []
-							: [`**失败原因**：${clipReason(facts.failure.reason)}`]),
+							: [`**失败原因**：${text(clipReason(facts.failure.reason))}`]),
 						...(facts.failure.location === null
 							? []
-							: [`**${ERROR_LOCATION_LABEL}**：${facts.failure.location}`]),
+							: [`**${ERROR_LOCATION_LABEL}**：${text(facts.failure.location)}`]),
 					].join("\n"),
 				},
 			]

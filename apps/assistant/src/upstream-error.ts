@@ -15,7 +15,9 @@ export interface UpstreamError {
 	errorClass: ErrorClass;
 	/** 上游返回的 HTTP 状态码（认得出时）。 */
 	status?: number;
-	/** 给人看的一句话，不带原文，例如「上游出错（上游返回 502）」「连不上上游模型」。 */
+	/** 类别的说法，不带状态码，例如「被限流」「额度不足」「连不上模型端点」。 */
+	label: string;
+	/** 给人看的一句话，不带原文：类别的说法加状态码，例如「额度不足（402）」「连不上模型端点」。页面在前面加「模型不可用：」。 */
 	text: string;
 }
 
@@ -101,25 +103,30 @@ function statusClass(status: number, raw: string): ErrorClass {
 	return CONTEXT_WORDS.test(raw) ? "context_overflow" : "other";
 }
 
-const TEXT: Record<ErrorClass, string> = {
-	unreachable: "连不上上游模型",
-	timeout: "上游模型超时",
-	auth: "上游拒绝了密钥",
-	quota: "上游的额度不足",
-	rate_limit: "上游限流",
-	upstream: "上游出错",
-	context_overflow: "上下文超出了模型的上限",
-	other: "模型调用出错",
+/** 各类别的说法（#548 页面）：给人看的，不是上游的原文。 */
+const LABEL: Record<ErrorClass, string> = {
+	unreachable: "连不上模型端点",
+	timeout: "模型端点超时",
+	auth: "密钥被拒绝",
+	quota: "额度不足",
+	rate_limit: "被限流",
+	upstream: "模型端点出错",
+	context_overflow: "对话太长，模型装不下",
+	other: "其他错误",
 };
 
 export function describeUpstreamError(raw: string): UpstreamError {
 	const status = statusOf(raw);
 	if (status === undefined) {
 		const errorClass = connectionClass(raw);
-		return { errorClass, text: TEXT[errorClass] };
+		return { errorClass, label: LABEL[errorClass], text: LABEL[errorClass] };
 	}
 	const errorClass = statusClass(status, raw);
-	// 其余的 4xx：上游看了请求、不收（参数不对、模型不存在这一类）。
-	const said = errorClass === "other" ? "上游拒绝了这次请求" : TEXT[errorClass];
-	return { errorClass, status, text: `${said}（上游返回 ${status}）` };
+	// 其余的 4xx（`other`）：上游看了请求、不收（参数不对、模型不存在这一类），只有状态码。
+	return {
+		errorClass,
+		status,
+		label: LABEL[errorClass],
+		text: `${LABEL[errorClass]}（${status}）`,
+	};
 }

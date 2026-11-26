@@ -117,6 +117,113 @@ test("就绪：「可以用 · 工作台 X 在线」；工作台不在线时逐�
 	await expect(page.getByRole("button", { name: "开始" })).toBeDisabled();
 });
 
+test("模型没有配置、连不上：就绪状态写明缺什么（连不上的写上次检查的时间），「开始」不可用，输入框照常可以写；好了之后恢复", async ({
+	page,
+}) => {
+	const problem = (kind: "model_not_configured" | "model_unreachable", message: string) => ({
+		ready: false,
+		workbench: "bench-1",
+		problems: [{ kind, message }],
+	});
+	const start = page.getByRole("button", { name: "开始" });
+	const states: Array<[ReturnType<typeof problem>, RegExp]> = [
+		[
+			problem(
+				"model_not_configured",
+				"没有配置模型：没有模型文件 /config/models.json（SFLY_ASSISTANT_MODELS）",
+			),
+			/没有配置模型：没有模型文件 \/config\/models\.json/,
+		],
+		[
+			problem(
+				"model_not_configured",
+				"没有配置模型：模型文件引用了环境变量 ACME_KEY，助手服务的环境里没有值",
+			),
+			/没有配置模型：模型文件引用了环境变量 ACME_KEY，助手服务的环境里没有值/,
+		],
+		[
+			problem(
+				"model_not_configured",
+				"没有配置模型：SFLY_ASSISTANT_MODEL 选的模型不在模型文件 /config/models.json 里",
+			),
+			/SFLY_ASSISTANT_MODEL 选的模型不在模型文件/,
+		],
+		[
+			problem(
+				"model_unreachable",
+				"连不上模型端点 llm.internal:8177：连接被拒绝（上次检查：3 分钟前）",
+			),
+			/连不上模型端点 llm\.internal:8177：连接被拒绝（上次检查：3 分钟前）/,
+		],
+	];
+	for (const [readiness, text] of states) {
+		await stubSessionList(page, readiness);
+		await page.goto("/sessions");
+		const line = page.getByTestId("readiness");
+		await expect(line).toHaveAttribute("data-ready", "false");
+		await expect(line).toContainText("现在不能用：");
+		await expect(line).toContainText(text);
+		await assistantInput(page).fill("做点事");
+		await expect(assistantInput(page)).toHaveValue("做点事");
+		await expect(start).toBeDisabled();
+		await expect(start).toHaveAccessibleDescription(text);
+		await page.unrouteAll({ behavior: "ignoreErrors" });
+	}
+	// 模型好了：就绪，「开始」可点。
+	await stubSessionList(page, READY);
+	await page.goto("/sessions");
+	await expect(page.getByTestId("readiness")).toHaveText("可以用 · 工作台 bench-1 在线");
+	await assistantInput(page).fill("做点事");
+	await expect(start).toBeEnabled();
+});
+
+test("会话页：模型有问题时空闲的会话顶上写缺什么，「发送」不可用、输入框照常可以写；模型好了页面自己恢复；在做的会话不受影响", async ({
+	page,
+}) => {
+	const down = {
+		ready: false,
+		workbench: "bench-1",
+		problems: [
+			{
+				kind: "model_unreachable" as const,
+				message: "连不上模型端点 llm.internal:8177：连接被拒绝（上次检查：2 分钟前）",
+			},
+		],
+	};
+	const idle = sessionView({ status: "idle", readiness: down });
+	const running = sessionView({ status: "running", readiness: down });
+	await installSessionStream(page);
+	await stubSessionDetail(page, idle, [userMessage(1), turnStarted(2), turnEnd(3, "completed")]);
+	await stubSessionDetail(page, running, [userMessage(1), turnStarted(2)]);
+	// 项目的会话列表：打开时有模型的问题的会话页据此刷新就绪状态；这里先说连不上，之后改成好了。
+	let listed: unknown = down;
+	await page.route("**/api/projects/*/sessions", (route) =>
+		fulfillJson(route, 200, { readiness: listed, sessions: [], truncated: false }),
+	);
+
+	await page.goto(`/sessions/${idle.id}`);
+	const line = page.getByTestId("readiness");
+	await expect(line).toContainText(
+		"连不上模型端点 llm.internal:8177：连接被拒绝（上次检查：2 分钟前）",
+	);
+	await composer(page).fill("再来一次");
+	await expect(composer(page)).toHaveValue("再来一次");
+	const send = page.getByRole("button", { name: "发送" });
+	await expect(send).toBeDisabled();
+	await expect(send).toHaveAccessibleDescription(/连不上模型端点/);
+	// 模型好了：不用重新打开页面（有问题时每 5 秒查一次）。
+	listed = READY;
+	await expect(line).toHaveCount(0, { timeout: 15_000 });
+	await expect(send).toBeEnabled();
+
+	// 在做的会话：说的是插话，不看模型的就绪状态，页面上也不写。
+	await page.goto(`/sessions/${running.id}`);
+	await expect(page.getByTestId("session-status")).toHaveText("在做");
+	await expect(page.getByTestId("readiness")).toHaveCount(0);
+	await composer(page).fill("改一下");
+	await expect(page.getByRole("button", { name: "发送插话" })).toBeEnabled();
+});
+
 test("会话列表：本项目的会话，在做的在前、其余最近活动在前；写标题、发起人、状态、最近活动；点进会话页", async ({
 	page,
 	controlPlane,
@@ -273,8 +380,25 @@ test("一轮的六种结局：各一行；到了上限按 limit_kind 写是哪�
 			duration_ms: 1_200_000,
 		},
 		{ type: "turn_end", ...base, turn: 5, outcome: "interrupted", reason: "助手服务重启了" },
-		{ type: "turn_end", ...base, turn: 6, outcome: "model_unavailable", reason: "模型连不上" },
+		{
+			type: "turn_end",
+			...base,
+			turn: 6,
+			outcome: "model_unavailable",
+			reason: "额度不足（402）",
+			error_class: "quota",
+			steps: 7,
+		},
 		{ type: "turn_end", ...base, turn: 7, outcome: "failed", reason: "出了点问题" },
+		{
+			type: "turn_end",
+			...base,
+			turn: 8,
+			outcome: "model_unavailable",
+			reason: "对话太长，模型装不下（400）",
+			error_class: "context_overflow",
+			steps: 3,
+		},
 	];
 	const id = await seedSession(controlPlane.database.url, { events });
 	await page.goto(`/sessions/${id}`);
@@ -284,8 +408,9 @@ test("一轮的六种结局：各一行；到了上限按 limit_kind 写是哪�
 		"到了上限：40 次模型调用",
 		"到了上限：用时 20m 00s",
 		"中断：助手服务重启了",
-		"模型不可用：模型连不上",
+		"模型不可用：额度不足（402）。这一轮做了 7 步，都在上面；工作区的改动已经提交，已触发的运行不受影响。稍后说一句话可以接着做。",
 		"出错：出了点问题",
+		"这次对话太长，模型装不下了。开一个新会话，工作区还在。",
 	]);
 });
 
