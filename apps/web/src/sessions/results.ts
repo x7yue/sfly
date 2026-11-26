@@ -96,24 +96,6 @@ export function addResults(
 	return events.reduce(addResult, results);
 }
 
-/** 一个提交的统计：改了几个文件、增删的行数（二进制文件没有行数，不算在行数里）。 */
-export function commitStat(files: readonly CommitFile[]): {
-	files: number;
-	additions: number;
-	deletions: number;
-} {
-	let additions = 0;
-	let deletions = 0;
-	for (const file of files) {
-		additions += file.additions ?? 0;
-		deletions += file.deletions ?? 0;
-	}
-	return { files: files.length, additions, deletions };
-}
-
-/** 提交号的短写：前 7 位。 */
-export const shortCommit = (hash: string): string => hash.slice(0, 7);
-
 /** 有没有任何成果。 */
 export const hasResults = (results: SessionResults): boolean =>
 	results.commits.length + results.versions.length + results.runs.length > 0;

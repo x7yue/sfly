@@ -1,4 +1,5 @@
 import type {
+	CommitFile,
 	ErrorClass,
 	NoticeKind,
 	SessionEvent,
@@ -31,9 +32,12 @@ import type {
  *   所以 `steer_queue` 只在一轮在做时才算，`turn_queued` 只在排队时才算，别的时候是晚到的、按「这一轮已经过去」丢掉；「已送到」只由
  *   「之前出现过、现在不在了」推出来，不因为一句话不在列表里就算送到；
  * - `turn_queued`（排第几、在等谁）记在 {@link TimelineState.queue}；`session_ended` 一行写会话已结束；
+ * - `platform`（`commit`）是平台在一轮结束时提交工作区的记录（#546）：一行「这一轮改了 N 个文件 +a −b」，展开是文件列表和差异（{@link CommitItem}）；
+ *   被打断那一轮留下的改动在下一轮开始前补提交，事件的 `turn` 比它所在的这一轮小（`leftover`）；第 1 轮开始之前工作区里就有的改动也在这一轮
+ *   开始前补提交（`beforeSession`），事件的 `turn` 就是这一轮，靠位置认：它出现在这一轮的模型说话、调工具之前；
  * - `platform`（平台在会话里留下的记录，只有控制面写，助手说的话不进来）：`run`（助手触发了一次运行）和 `scenario_version`（保存了场景的一个版本）
  *   各一行（{@link RecordItem}，#547）；右侧的「成果」也从这些事件生成（`results.ts`）；
- * - 这一版不渲染的类型（`tool_output`、`platform` 的 `commit`、`snapshot`）和不认识的类型原样放过，不抛错。
+ * - 这一版不渲染的类型（`tool_output`、`snapshot`）和不认识的类型原样放过，不抛错。
  */
 
 export interface ToolResultInfo {
@@ -110,6 +114,7 @@ export type TimelineItem =
 			errorClass: ErrorClass | undefined;
 	  }
 	| RecordItem
+	| CommitItem
 	| {
 			kind: "session_ended";
 			key: string;
@@ -118,6 +123,29 @@ export type TimelineItem =
 			/** 结束它的人的昵称。 */
 			by: string;
 	  };
+
+/** 平台在一轮结束时提交工作区的记录（`platform` 事件的 `commit`）：提交那一刻的文件统计和差异，事后改写 git 历史也改不了。 */
+export interface CommitItem {
+	kind: "commit";
+	key: string;
+	seq: number;
+	at: string;
+	/** 这个提交属于第几轮。 */
+	turn: number;
+	/**
+	 * 这一轮之前留下的改动，在这一轮开始前补提交的（不是这一轮做的）：上一轮被打断留下的（它的 `turn` 比这一轮小），或者
+	 * 会话开始之前工作区里就有的（{@link CommitItem.beforeSession}）。不知道这一轮是第几轮时（`turn_started` 在更早的一页里）
+	 * 按这一轮自己的提交算。
+	 */
+	leftover: boolean;
+	/** 会话开始之前工作区里就有的改动（第 1 轮开始前补提交的）：事件的 `turn` 是 1，它出现在这一轮的模型说话、调工具之前。`leftover` 也是 true。 */
+	beforeSession: boolean;
+	hash: string;
+	files: CommitFile[];
+	diff: string;
+	/** 差异太长，只存了开头。 */
+	truncated: boolean;
+}
 
 /**
  * 平台在会话里留下的记录（`platform` 事件的 `run`、`scenario_version`，#547）：助手用会话令牌触发了运行、保存了场景的版本，控制面在记下
@@ -189,6 +217,26 @@ export interface TimelineState {
 	steerQueue: readonly string[];
 	/** 排队中的位置和在等谁；不在排队时为 null。 */
 	queue: TimelineQueue | null;
+	/** 最近一个 `turn_started` 的轮次（还没有见到时为 0）：补提交（`leftover`）靠它认。 */
+	currentTurn: number;
+}
+
+/**
+ * 这个提交是不是会话开始之前留下的改动（第 1 轮开始前补提交的）：事件的 `turn` 是现在在做的第 1 轮，而这一轮里模型还没有说过话、
+ * 没有调过工具、也没有出现过这样的提交（从最后一条往前数到这一轮自己的那句话为止）。平台的补提交在把 `prompt` 交给模型之前做，
+ * 所以排在这些前面；这一轮自己的提交排在后面（做了事的一轮有模型的话或工具调用在前）。
+ */
+function beforeSession(state: TimelineState, turn: number): boolean {
+	if (state.currentTurn !== 1 || turn !== 1) return false;
+	for (let i = state.items.length - 1; i >= 0; i -= 1) {
+		const item = state.items[i] as TimelineItem;
+		// 运行和场景版本那一行（#547）是模型做的事留下的，和说话、调工具一样：在它们后面的提交不是补提交。
+		if (item.kind === "assistant" || item.kind === "tool") return false;
+		if (item.kind === "run" || item.kind === "version") return false;
+		if (item.kind === "commit" && item.beforeSession) return false;
+		if (item.kind === "turn_end" || (item.kind === "user" && item.role === "turn")) return true;
+	}
+	return true;
 }
 
 export function emptyTimeline(
@@ -209,6 +257,7 @@ export function emptyTimeline(
 		awaitingStart: status === "queued",
 		steerQueue: [],
 		queue,
+		currentTurn: 0,
 	};
 }
 
@@ -347,6 +396,7 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				...state,
 				status: "running",
 				turnOpen: true,
+				currentTurn: event.turn,
 				awaitingStart: false,
 				steerQueue: [],
 				queue: null,
@@ -641,7 +691,30 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				],
 			};
 		case "platform":
-			// `commit` 不在这里渲染（#546）；运行和场景版本各一行。
+			// 提交（#546）、运行和场景版本（#547）各一行；别的 `platform` 类型这一版不渲染。
+			if (event.kind === "commit") {
+				return {
+					...state,
+					items: [
+						...state.items,
+						{
+							kind: "commit",
+							key: `e${event.seq}`,
+							seq: event.seq,
+							at: event.at,
+							turn: event.turn,
+							leftover:
+								state.currentTurn > 0 &&
+								(event.turn < state.currentTurn || beforeSession(state, event.turn)),
+							beforeSession: beforeSession(state, event.turn),
+							hash: event.hash,
+							files: event.files,
+							diff: event.diff,
+							truncated: event.truncated,
+						},
+					],
+				};
+			}
 			if (event.kind === "run") {
 				return {
 					...state,

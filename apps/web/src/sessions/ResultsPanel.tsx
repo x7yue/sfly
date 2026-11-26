@@ -9,14 +9,8 @@ import { untrustedPlain } from "#/lib/untrusted-text";
 import { useRunStatus } from "#/monitor/live-run";
 import { runStatus } from "#/monitor/run-model";
 import { Truncate } from "@/components/ui/truncate";
-import {
-	commitStat,
-	type ResultCommit,
-	type ResultRun,
-	type ResultVersion,
-	type SessionResults,
-	shortCommit,
-} from "./results";
+import type { ResultCommit, ResultRun, ResultVersion, SessionResults } from "./results";
+import { commitTotals, shortHash } from "./session-text";
 
 /**
  * 会话页右侧的「成果」（#547）：这个会话留下了什么，三块——工作区的提交（第几轮、提交号前 7 位、改了几个文件、增删行数，展开看差异）、
@@ -120,7 +114,7 @@ const ITEM = "min-w-0 rounded-md border border-border-soft bg-surface text-xs";
 function CommitResult({ commit }: { commit: ResultCommit }) {
 	const [open, setOpen] = useState(false);
 	const bodyId = useId();
-	const stat = commitStat(commit.files);
+	const stat = commitTotals(commit.files);
 	return (
 		<li data-testid="result-commit" className={ITEM}>
 			<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-2.5 pt-1.5">
@@ -128,8 +122,8 @@ function CommitResult({ commit }: { commit: ResultCommit }) {
 					{SESSION.results.commitTurn(commit.turn)}
 				</span>
 				<span data-testid="result-commit-hash" title={commit.hash} className="font-mono text-fg-1">
-					<span className="sr-only">{SESSION.results.hash} </span>
-					{shortCommit(commit.hash)}
+					<span className="sr-only">{SESSION.commit.hash} </span>
+					{shortHash(commit.hash)}
 				</span>
 			</div>
 			<div data-testid="result-commit-stat" className="px-2.5 text-fg-2">
@@ -152,7 +146,7 @@ function CommitResult({ commit }: { commit: ResultCommit }) {
 			{open && (
 				<div id={bodyId} className="border-t border-border-soft bg-sunk">
 					<ul
-						aria-label={SESSION.results.files}
+						aria-label={SESSION.commit.files}
 						data-testid="result-commit-files"
 						className="m-0 flex list-none flex-col gap-0.5 px-2.5 py-1.5"
 					>
@@ -162,12 +156,12 @@ function CommitResult({ commit }: { commit: ResultCommit }) {
 									{file.path}
 								</Truncate>
 								{file.additions === null || file.deletions === null ? (
-									<span className="flex-none text-fg-3">{SESSION.results.binary}</span>
+									<span className="flex-none text-fg-3">{SESSION.commit.binary}</span>
 								) : (
 									<span className="flex flex-none gap-1.5">
-										<span className="text-ok">{SESSION.results.additions(file.additions)}</span>
+										<span className="text-ok">{SESSION.commit.additions(file.additions)}</span>
 										<span className="text-danger-fg">
-											{SESSION.results.deletions(file.deletions)}
+											{SESSION.commit.deletions(file.deletions)}
 										</span>
 									</span>
 								)}
@@ -189,7 +183,7 @@ function CommitResult({ commit }: { commit: ResultCommit }) {
 							data-testid="result-commit-truncated"
 							className="m-0 border-t border-border-soft px-2.5 py-1.5 text-fg-3"
 						>
-							{SESSION.results.truncated}
+							{SESSION.commit.truncated}
 						</p>
 					)}
 				</div>

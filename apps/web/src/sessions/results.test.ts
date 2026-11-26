@@ -1,13 +1,7 @@
 import type { SessionDetailResponse, SessionEvent } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import {
-	addResult,
-	addResults,
-	commitStat,
-	emptyResults,
-	hasResults,
-	shortCommit,
-} from "./results";
+import { addResult, addResults, emptyResults, hasResults } from "./results";
+import { commitTotals, shortHash } from "./session-text";
 import { applyEvent, emptyTimeline, initialTimeline, prependHistory } from "./timeline";
 import { initialSession, reduceSession } from "./use-session-timeline";
 
@@ -106,19 +100,21 @@ describe("成果：只从 platform 事件生成", () => {
 
 	it("提交的统计：改了几个文件、增删的行数（二进制文件没有行数，不算在行数里，但算一个文件）；提交号前 7 位", () => {
 		const event = commit(3) as Extract<SessionEvent, { kind: "commit" }>;
-		expect(commitStat(event.files)).toEqual({ files: 3, additions: 13, deletions: 3 });
-		expect(commitStat([])).toEqual({ files: 0, additions: 0, deletions: 0 });
-		expect(shortCommit(event.hash)).toBe("3f1c2ab");
+		expect(commitTotals(event.files)).toEqual({ files: 3, additions: 13, deletions: 3 });
+		expect(commitTotals([])).toEqual({ files: 0, additions: 0, deletions: 0 });
+		expect(shortHash(event.hash)).toBe("3f1c2ab");
 	});
 });
 
 describe("时间线上的平台记录：运行和场景版本各一行", () => {
-	it("run、scenario_version 各一行，带事件的序号、轮次和名字；commit 不在这里渲染（#546）", () => {
+	it("run、scenario_version 各一行，带事件的序号、轮次和名字；commit 是另一种行（#546）", () => {
 		const state = [version(3, 2, 1), run(4, RUN, 1), commit(5)].reduce(
 			applyEvent,
 			emptyTimeline("running"),
 		);
-		expect(state.items).toEqual([
+		// 提交（#546）是另一种行（`CommitRow`）：在前面这两行后面，不影响它们。
+		expect(state.items.map((i) => i.kind)).toEqual(["version", "run", "commit"]);
+		expect(state.items.slice(0, 2)).toEqual([
 			{
 				kind: "version",
 				key: "e3",
@@ -139,7 +135,7 @@ describe("时间线上的平台记录：运行和场景版本各一行", () => {
 				scenarioName: "接口巡检",
 			},
 		]);
-		// 提交事件不渲染，但序号照常推进（重连时从它之后接）。
+		// 提交事件是另一种行（`CommitRow`），序号照常推进（重连时从它之后接）。
 		expect(state.lastSeq).toBe(5);
 	});
 

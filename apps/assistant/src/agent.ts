@@ -152,10 +152,14 @@ export function connectAgent(address: string, options: AgentOptions = {}) {
 	const files = createClient(AgentFiles, transport);
 	const peer = createClient(AgentPeer, transport);
 
-	/** 工作台还连不连得上：{@link PROBE_DEADLINE_MS} 之内能回 `describe`。 */
-	const reachable = async (): Promise<boolean> => {
+	/**
+	 * 工作台还连不连得上：{@link PROBE_DEADLINE_MS} 之内能回 `describe`。调用方给了 `signal`（提交的期限）时，它先到就不再等：
+	 * 探不通和被放弃都返回 false，调用方自己看它的信号。
+	 */
+	const reachable = async (outer?: AbortSignal): Promise<boolean> => {
+		const deadline = AbortSignal.timeout(probeDeadline);
 		try {
-			await peer.describe({}, { signal: AbortSignal.timeout(probeDeadline) });
+			await peer.describe({}, { signal: outer ? AbortSignal.any([outer, deadline]) : deadline });
 			return true;
 		} catch {
 			return false;

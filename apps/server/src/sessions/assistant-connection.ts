@@ -86,7 +86,10 @@ export class AssistantConnection {
 	 * 一条助手服务发来的记录：**落库或发布之前先核对**——会话存在、在做、记录里的 `turn` 是会话此刻在做的那一轮，
 	 * `turn_end` 的轮次和记录的轮次一致；不符合的（上一轮迟到的事件、空闲或已结束的会话收到的事件）不落库、不推给
 	 * 浏览器、不改状态，记一条日志（会话、轮次、事件类型，不含内容）。只该由控制面产生的事件（用户的话、一轮开始、
-	 * 平台记录、会话结束……）不在 `AssistantEvent` 里，整行过不了 schema，在 `AssistantClient.events` 就跳过了。
+	 * 会话结束……，和 `platform` 的 `run`、`scenario_version`：控制面在记下那条记录的事务里自己写）不在 `AssistantEvent` 里，
+	 * 整行过不了 schema，在 `AssistantClient.events` 就跳过了。助手服务发的 `platform`（`commit`，一轮结束时工作区的提交，#546）
+	 * 在里面，照别的持久事件落库、发布：它的 `turn` 是提交属于第几轮，被打断那一轮的补提交在下一轮的事件流里发出，所以
+	 * 事件里的 `turn` 可以比记录的 `turn` 小，核对的是记录的 `turn`。
 	 */
 	async #handle(record: AssistantStreamRecord): Promise<void> {
 		const { sessions, log } = this.options;

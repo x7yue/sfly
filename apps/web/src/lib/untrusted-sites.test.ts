@@ -321,6 +321,8 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				],
 				truncate: 1,
 			},
+			// 提交的记录（#546）：文件的路径经截断层（`Truncate untrusted`），差异是多行的正文。
+			"sessions/CommitRow.tsx": { wrapped: ["item.diff"], truncate: 1 },
 			// 成果：提交里的文件路径和差异是模型写的东西；场景名会话令牌能写（新建、改名、保存版本），也不当作登录的人写的名字（版本号、运行 ID 不是）。
 			"sessions/RecordRow.tsx": { truncate: 1 },
 			"sessions/ResultsPanel.tsx": { wrapped: ["commit.diff"], truncate: 3 },

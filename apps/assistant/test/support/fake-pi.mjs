@@ -1,6 +1,6 @@
 // 照 RPC 协议说话的假 pi（pi docs/rpc.md）：读 stdin 的命令，按 prompt 的文字决定这一轮怎么走。
 // 一起动先把自己的环境写成一条记录（测试看助手服务给了它哪些环境变量）；stdin 被关时写一条记录再退出。
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 
 const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -122,7 +122,7 @@ function handle(command) {
 		return respond(command);
 	}
 	if (command.type !== "prompt") return respond(command);
-	const text = String(command.message);
+	let text = String(command.message);
 	if (text.startsWith("reject-late")) {
 		// `reject-late:<毫秒>`：收下这句话过这么久才拒绝，其间不理 stdin 被关和 SIGTERM（只有 SIGKILL 结束得了它）：
 		// 拒绝到的时候助手服务已经在结束进程（#677 复审的探测 R）。
@@ -176,6 +176,12 @@ function handle(command) {
 	onSteer = undefined;
 	// 默认：收到 abort 就停下（agent_settled，aborted）。
 	onAbort = () => settle(true);
+	if (text.startsWith("run:")) {
+		// `run:<命令>;;<剧本>`：先在 pi 的工作目录里用 sh 执行这条命令（改工作区、往 .git 里放东西……），再照后面的剧本走。
+		const split = text.indexOf(";;");
+		execFileSync("sh", ["-c", text.slice("run:".length, split)], { stdio: "ignore" });
+		text = text.slice(split + 2);
+	}
 	if (text.startsWith("race2")) {
 		// 命令执行中；收到 abort 之后 80 毫秒才收尾，收尾时把队列里的插话放进对话（各一条用户消息）再 agent_settled
 		// （rpcprobe 第 13 题「命令执行中、同一次写」时真的 pi 就是这样）。
