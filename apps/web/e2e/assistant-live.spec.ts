@@ -761,11 +761,14 @@ test("排队中断线重连：断线期间前面的会话被移出队列，重�
 	page,
 	assistant,
 	workbench,
+	clock,
 }) => {
 	void workbench;
 	await installStreamCut(page);
 	await startSession(page, "第一个会话");
 	const second = await startSession(page, "第二个会话的话");
+	// 排队的先后按排队的时刻：控制面的时钟是手动的，不走一秒的话两个会话同一时刻，先后由会话 ID 定（随机）。
+	clock.advance(1_000);
 	await startSession(page, "第三个会话的话");
 	await expect(statusText(page)).toHaveText("排队中 · 排在第 2 位");
 	const opened = await streamsOpened(page);

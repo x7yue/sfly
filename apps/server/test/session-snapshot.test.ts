@@ -272,12 +272,14 @@ describe("事件流里的快照", () => {
 			await fromAssistant(id, turn, toolCall("c1", "sfly run start 巡检"));
 			await fromAssistant(id, turn, output("c1", "第一行\n"));
 			await fromAssistant(id, turn, output("c1", "第二行\n"));
-			expect((await snapshotOf(id)).running_tool).toEqual({
+			const snapshot = await snapshotOf(id);
+			expect(snapshot.running_tool).toEqual({
 				call_id: "c1",
 				tool: "command",
 				title: "sfly run start 巡检",
 				output: "第一行\n第二行\n",
 			});
+			expect(sessionEventSchemas.snapshot.safeParse(snapshot).success).toBe(true);
 			await fromAssistant(id, turn, toolResult("c1"));
 			expect((await snapshotOf(id)).running_tool).toBeNull();
 		});
@@ -299,7 +301,10 @@ describe("事件流里的快照", () => {
 			const [a, b] = [messageId(1), messageId(2)];
 			await fromAssistant(id, turn, steerQueue(a, b));
 			await fromAssistant(id, turn, steerQueue(b));
-			expect((await snapshotOf(id)).steer_queue.map((m) => m.message_id)).toEqual([b]);
+			const snapshot = await snapshotOf(id);
+			expect(snapshot.steer_queue.map((m) => m.message_id)).toEqual([b]);
+			// 带着非空队列的快照过读的一方的 schema（read-only-routes.test.ts 里这个数组的元素靠它对照）。
+			expect(sessionEventSchemas.snapshot.safeParse(snapshot).success).toBe(true);
 			await fromAssistant(id, turn, steerQueue());
 			expect((await snapshotOf(id)).steer_queue).toEqual([]);
 		});
