@@ -9,6 +9,8 @@ import { SESSION } from "#/lib/copy";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
+import { CommitRow } from "./CommitRow";
+import { RecordRow } from "./RecordRow";
 import {
 	steerDeliveryLabel,
 	toolLine,
@@ -87,6 +89,11 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 			);
 		case "tool":
 			return <ToolRow item={item} />;
+		case "commit":
+			return <CommitRow item={item} />;
+		case "run":
+		case "version":
+			return <RecordRow item={item} />;
 		case "notice":
 			return (
 				<li

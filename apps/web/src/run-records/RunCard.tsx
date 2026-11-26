@@ -63,7 +63,12 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				</span>
 			</div>
 			<div className="text-xs text-fg-3">
-				<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
+				<TriggeredAt
+					by={run.triggered_by}
+					via={run.triggered_via}
+					session={run.session}
+					at={run.started_at}
+				/>
 				{failedSubflows.length > 0 && (
 					<>
 						{" · "}

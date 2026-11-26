@@ -69,7 +69,11 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 			cell: ({ row }) => (
 				<>
 					{row.original.triggered_by}
-					<ViaTag via={row.original.triggered_via} className="text-fg-3" />
+					<ViaTag
+						via={row.original.triggered_via}
+						session={row.original.session}
+						className="text-fg-3"
+					/>
 				</>
 			),
 		}),

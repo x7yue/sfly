@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ApiError, callApi } from "#/lib/api";
 import { openEventSource } from "#/lib/sse";
+import { addResult, addResults, emptyResults, type SessionResults } from "./results";
 import { queueOf } from "./session-text";
 import {
 	applyEvent,
@@ -17,19 +18,51 @@ import {
 	type TimelineState,
 } from "./timeline";
 
-type Action =
+export type SessionAction =
 	| { type: "event"; event: SessionEvent }
 	| { type: "older"; events: readonly SessionEvent[]; hasMore: boolean }
 	| { type: "queued"; queue: TimelineQueue; after: number };
 
-function reduce(state: TimelineState, action: Action): TimelineState {
+/**
+ * 页面上的状态：时间线，和右侧「成果」（`results.ts`）。两个都由同一批事件算出来（读到的历史、事件流、往前翻页），
+ * 成果不另开连接，也不再读一遍历史。
+ */
+export interface SessionState {
+	timeline: TimelineState;
+	results: SessionResults;
+}
+
+/** 打开页面时的状态：读到的最近一页事件（历史）。 */
+export function initialSession(d: SessionDetailResponse): SessionState {
+	return {
+		timeline: initialTimeline(
+			d.status,
+			d.events,
+			d.has_more,
+			queueOf(d.queue_position, d.waiting_for),
+		),
+		results: addResults(emptyResults, d.events),
+	};
+}
+
+/** 三条路读到的事件都进同一个状态：事件流推来的（`event`）、往前翻页读到的（`older`），和打开页面时的历史（{@link initialSession}）。 */
+export function reduceSession(state: SessionState, action: SessionAction): SessionState {
 	switch (action.type) {
 		case "event":
-			return applyEvent(state, action.event);
+			return {
+				timeline: applyEvent(state.timeline, action.event),
+				results: addResult(state.results, action.event),
+			};
 		case "older":
-			return prependHistory(state, action.events, action.hasMore);
+			return {
+				timeline: prependHistory(state.timeline, action.events, action.hasMore),
+				results: addResults(state.results, action.events),
+			};
 		case "queued":
-			return applyQueuedView(state, action.queue, action.after);
+			return {
+				...state,
+				timeline: applyQueuedView(state.timeline, action.queue, action.after),
+			};
 	}
 }
 
@@ -47,6 +80,7 @@ const RENDERED: ReadonlySet<string> = new Set([
 	"session_ended",
 	"turn_queued",
 	"steer_queue",
+	"platform",
 ]);
 
 /**
@@ -57,8 +91,10 @@ const RENDERED: ReadonlySet<string> = new Set([
  */
 export function useSessionTimeline(detail: SessionDetailResponse) {
 	const id = detail.id;
-	const [state, dispatch] = useReducer(reduce, detail, (d) =>
-		initialTimeline(d.status, d.events, d.has_more, queueOf(d.queue_position, d.waiting_for)),
+	const [{ timeline: state, results }, dispatch] = useReducer(
+		reduceSession,
+		detail,
+		initialSession,
 	);
 	const [gone, setGone] = useState(false);
 	// 事件流从读到的历史之后开始：先读历史再接流，两边的重叠由序号去重。
@@ -123,5 +159,5 @@ export function useSessionTimeline(detail: SessionDetailResponse) {
 		[id],
 	);
 
-	return { state, loadOlder, loadingOlder, olderError, gone, syncQueue };
+	return { state, results, loadOlder, loadingOlder, olderError, gone, syncQueue };
 }

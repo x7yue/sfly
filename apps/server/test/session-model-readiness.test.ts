@@ -15,6 +15,7 @@ import { FakeAgent } from "./support/fake-agent.js";
 import { FakeAssistant } from "./support/fake-assistant.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
+import { asUsers } from "./support/user-api.js";
 
 const json = async <T>(res: Response): Promise<T> => (await res.json()) as T;
 const WORKBENCH = "workbench-a";
@@ -45,7 +46,7 @@ describe("模型的就绪状态", () => {
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
 		});
-		api = new ApiClient(cp);
+		api = new ApiClient(asUsers(cp));
 		workbench = await FakeAgent.connect(
 			cp.grpcUrl,
 			{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },

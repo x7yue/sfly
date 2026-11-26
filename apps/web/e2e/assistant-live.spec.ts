@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { SessionView } from "@sfly/schema";
+import { TestAccounts } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { FakeAssistant } from "../../server/test/support/fake-assistant.js";
 import { deleteSession } from "../../server/test/support/sessions.js";
@@ -14,7 +15,26 @@ import { test as base, expect } from "./fixtures";
 const WORKBENCH = "workbench-a";
 const USAGE = { input: 10, output: 5, cache_read: 0, cache_write: 0 };
 
-const test = base.extend<{ assistant: FakeAssistant; workbench: FakeAgent }>({
+const test = base.extend<{ assistant: FakeAssistant; workbench: FakeAgent; signedIn: undefined }>({
+	// 建会话只认用户的凭据（#547）：页面带一个登录 Cookie，登录的用户是默认项目里的编辑者，显示名就是页面上的昵称
+	// （时间线上显示「tester：…」）。
+	signedIn: [
+		async ({ controlPlane, context, nickname }, use) => {
+			const accounts = new TestAccounts(controlPlane.database.url);
+			try {
+				const name = nickname ?? "tester";
+				const user = await accounts.user(name, { displayName: name });
+				await accounts.member("default", user, "editor");
+				await context.addCookies([
+					{ name: "sfly_login", value: await accounts.login(user), url: controlPlane.httpUrl },
+				]);
+			} finally {
+				await accounts.close();
+			}
+			await use(undefined);
+		},
+		{ auto: true },
+	],
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright 要求 fixture 的第一个参数是解构模式
 	assistant: async ({}, use) => {
 		const assistant = await FakeAssistant.start();

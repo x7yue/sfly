@@ -281,8 +281,8 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			const id = crypto.randomUUID();
 			await h.prompt(id, { text: "剧本：字面的连不上" });
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed", steps: 2, model_calls: 3 });
-			// 写 skill 一次、探工作台一次，用完都关了（不留下空闲的连接一直 ping）。
-			await eventually(() => expect(h.connections).toEqual({ opened: 2, closed: 2 }));
+			// 写 skill 一次、整理工作区一次、探工作台一次、提交一次，用完都关了（不留下空闲的连接一直 ping）。
+			await eventually(() => expect(h.connections).toEqual({ opened: 4, closed: 4 }));
 		} finally {
 			await h.close();
 		}

@@ -162,6 +162,26 @@ export const toolResult = (
 	duration_ms: 420,
 	...extra,
 });
+/** 平台在一轮结束时提交工作区的记录（`platform` 的 `commit`，#546）。 */
+export const commitEvent = (
+	seq: number,
+	extra: Partial<Persisted<"platform">> = {},
+): Persisted<"platform"> =>
+	({
+		type: "platform",
+		kind: "commit",
+		seq,
+		at: eventAt(),
+		turn: 1,
+		hash: "3f1c2ab9d0e4a5b6c7d8e9f00112233445566778",
+		files: [
+			{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+			{ path: "assets/logo.png", additions: null, deletions: null },
+		],
+		diff: "diff --git a/nodes/http_check.py b/nodes/http_check.py\n+timeout = 30\n",
+		truncated: false,
+		...extra,
+	}) as Persisted<"platform">;
 export const turnEnd = (
 	seq: number,
 	outcome: Persisted<"turn_end">["outcome"],

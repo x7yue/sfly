@@ -394,6 +394,68 @@ export const SESSION = {
 		expand: "展开",
 		collapse: "收起",
 	},
+	/**
+	 * 平台在一轮结束时提交工作区的记录（#546）：一行摘要，展开是文件列表和差异。样式和平台记录的其他两类一起在 #550 统一。
+	 * 加号和减号：新增、删除的行数；二进制文件没有行数。
+	 */
+	commit: {
+		summary: (files: number, additions: number, deletions: number) =>
+			`这一轮改了 ${files} 个文件 +${additions} −${deletions}`,
+		/** 上一轮（被打断的）留下的改动，在这一轮开始前补提交的。 */
+		leftover: (turn: number, files: number, additions: number, deletions: number) =>
+			`第 ${turn} 轮被打断时留下的改动：${files} 个文件 +${additions} −${deletions}`,
+		/** 会话开始之前工作区里就有的改动，在第 1 轮开始前补提交的。 */
+		beforeSession: (files: number, additions: number, deletions: number) =>
+			`会话开始之前工作区里留下的改动：${files} 个文件 +${additions} −${deletions}`,
+		/** 提交号（短写）旁边的读屏名称。 */
+		hash: "提交号",
+		binary: "二进制文件",
+		additions: (n: number) => `+${n}`,
+		deletions: (n: number) => `−${n}`,
+		files: "改动的文件",
+		truncated: "差异太长，只显示了开头",
+	},
+	/**
+	 * 「经 会话「<标题>」」：运行的触发人、场景版本的作者后面，操作是哪个会话的令牌做的（ADR 0029「经 …」，#547）。标题是别人写的文字
+	 * （会话的第一句话），夹在两段控制台的文案中间，只有它自己进隔离。
+	 */
+	via: { prefix: "经 会话「", suffix: "」", open: "打开这个会话" },
+	/**
+	 * 时间线上平台留下的记录（`platform` 的 `run`、`scenario_version`，#547）：助手用会话令牌触发了运行、保存了场景的版本。
+	 * 只有控制面写，助手在对话里说的不进来。统一的样式在 #550。
+	 */
+	record: {
+		run: "触发了运行",
+		/** 「场景「<名称>」」：名称是登录的人写的，不是不可信文字，但夹在文案中间，和 `via` 一样拆开写。 */
+		scenario: { prefix: "场景「", suffix: "」" },
+		version: { prefix: "保存了场景「", suffix: "」的" },
+		versionLabel: (number: number) => `版本 ${number}`,
+		turn: (turn: number) => `第 ${turn} 轮`,
+		openRun: "打开运行监控",
+		openVersion: "打开版本历史",
+	},
+	/**
+	 * 会话页右侧的「成果」（#547）：这个会话留下了什么，三块，全部来自这个会话的 `platform` 事件；运行的状态跟着运行变（和运行监控共用同一份缓存，定时重新读，不开运行事件流）。
+	 */
+	results: {
+		title: "成果",
+		commits: "工作区的提交",
+		versions: "场景版本",
+		runs: "运行",
+		emptyCommits: "还没有提交",
+		emptyVersions: "还没有保存场景的版本",
+		emptyRuns: "还没有触发运行",
+		/** 事件只读到了最近一页：更早的成果在「加载更早的」之后才会列出来。 */
+		partial: "更早的成果在加载更早的内容后列出",
+		commitTurn: (turn: number) => `第 ${turn} 轮`,
+		commitStat: (files: number, additions: number, deletions: number) =>
+			`${files} 个文件 +${additions} −${deletions}`,
+		showDiff: "展开看差异",
+		hideDiff: "收起差异",
+		noDiff: "（没有差异）",
+		/** 运行的状态读不到（运行已经被清理、没有权限）。 */
+		runUnknown: "状态未知",
+	},
 	turnEnd: {
 		completed: "这一轮完成",
 		steps: (n: number) => `${n} 步`,

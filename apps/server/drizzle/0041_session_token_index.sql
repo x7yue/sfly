@@ -1,0 +1,1 @@
+CREATE INDEX "api_tokens_session" ON "api_tokens" USING btree ("session_id") WHERE "api_tokens"."session_id" is not null;
