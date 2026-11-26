@@ -2162,6 +2162,7 @@ mod batch_tests {
             let chunk = EventChunk {
                 bytes: mark_event(i, name_bytes),
                 monotonic_ms: i as i64,
+                dropped: Vec::new(),
             };
             forwarder.events(&chunk).await;
             tokio::task::yield_now().await;
