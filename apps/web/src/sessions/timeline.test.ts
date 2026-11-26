@@ -400,6 +400,7 @@ describe("平台提交工作区的记录（platform 的 commit，#546）", () =>
 			at: expect.any(String),
 			turn: 1,
 			leftover: false,
+			beforeSession: false,
 			hash: "3f1c2ab9d0e4a5b6c7d8e9f00112233445566778",
 			files: [
 				{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
@@ -438,6 +439,32 @@ describe("平台提交工作区的记录（platform 的 commit，#546）", () =>
 			[1, true],
 			[2, false],
 		]);
+	});
+
+	it("会话开始之前工作区里留下的改动（第 1 轮开始前补提交）：事件的轮次就是这一轮，靠位置认——排在模型说话、调工具之前；这一轮自己的提交不是", () => {
+		const state = run([
+			user(1),
+			started(2, 1),
+			commit(3, 1),
+			message(4, "做好了"),
+			commit(5, 1),
+			end(6, "completed", { turn: 1 }),
+		]);
+		const commits = state.items.filter((item) => item.kind === "commit");
+		expect(commits.map((item) => [item.leftover, item.beforeSession])).toEqual([
+			[true, true],
+			[false, false],
+		]);
+		// 上一轮被打断留下的那种不是「会话开始之前」。
+		const interrupted = run([
+			user(1),
+			started(2, 1),
+			end(3, "interrupted", { turn: 1 }),
+			user(4, "接着做"),
+			started(5, 2),
+			commit(6, 1),
+		]);
+		expect(interrupted.items.at(-1)).toMatchObject({ leftover: true, beforeSession: false });
 	});
 
 	it("这一页里没有 turn_started（它在更早的一页）：不判补提交；往前翻页读进来的提交也不改状态", () => {

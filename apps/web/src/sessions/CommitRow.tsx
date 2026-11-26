@@ -19,6 +19,7 @@ export function CommitRow({ item }: { item: CommitItem }) {
 		<li
 			data-testid="commit-row"
 			data-leftover={item.leftover || undefined}
+			data-before-session={item.beforeSession || undefined}
 			className="overflow-hidden rounded-lg border border-border-soft bg-surface"
 		>
 			<button

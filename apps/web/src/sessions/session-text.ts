@@ -114,9 +114,12 @@ export function commitTotals(
 	return { files: files.length, additions, deletions };
 }
 
-/** 提交那一行的文字：「这一轮改了 N 个文件 +a −b」；补提交的写是哪一轮留下的。 */
+/** 提交那一行的文字：「这一轮改了 N 个文件 +a −b」；补提交的写是哪一轮留下的、或者是会话开始之前就有的。 */
 export function commitSummary(item: Extract<TimelineItem, { kind: "commit" }>): string {
 	const total = commitTotals(item.files);
+	if (item.beforeSession) {
+		return SESSION.commit.beforeSession(total.files, total.additions, total.deletions);
+	}
 	return item.leftover
 		? SESSION.commit.leftover(item.turn, total.files, total.additions, total.deletions)
 		: SESSION.commit.summary(total.files, total.additions, total.deletions);

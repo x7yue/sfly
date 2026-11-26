@@ -254,6 +254,7 @@ describe("提交那一行的文字（#546）", () => {
 		at: "2026-01-01T00:00:00.000Z",
 		turn: 2,
 		leftover: false,
+		beforeSession: false,
 		hash: "3f1c2ab9d0e4a5b6c7d8e9f00112233445566778",
 		files: [
 			{ path: "a.py", additions: 12, deletions: 3 },
@@ -276,6 +277,12 @@ describe("提交那一行的文字（#546）", () => {
 	it("上一轮被打断时留下的改动（补提交）写是第几轮留下的", () => {
 		expect(commitSummary(commit({ leftover: true, turn: 1 }))).toBe(
 			"第 1 轮被打断时留下的改动：3 个文件 +13 −3",
+		);
+	});
+
+	it("会话开始之前工作区里就有的改动（第 1 轮开始前补提交的）写明是会话开始之前留下的", () => {
+		expect(commitSummary(commit({ leftover: true, beforeSession: true, turn: 1 }))).toBe(
+			"会话开始之前工作区里留下的改动：3 个文件 +13 −3",
 		);
 	});
 

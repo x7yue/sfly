@@ -115,7 +115,9 @@ for (let buf = ""; ; ) {
 - 工作台上：`docker exec sfly-aeval-1-dev cat /work/proj/notes/a.txt`；skill 在 `/work/proj/.agents/skills/`，和镜像里的一致。
 - 工作区的提交（#546）：第一轮之前助手服务把 `/work/proj` 初始化成 git 仓库（`.gitignore` 加初次提交），每一轮结束提交这一轮的改动，
   `turn_end` 之前有一条 `platform`（`commit`）事件：`docker exec sfly-aeval-1-dev git -C /work/proj log --format='%an | %s'`。
-  工作台上要有 `git`（评测集的工作台镜像里有）。
+  工作台上要有 `git`（评测集的工作台镜像里有）。一轮改了什么按助手服务自己记的「上次提交」算（`/data/workspaces/`，每个工作区一个小文件，
+  不在工作台上）：模型自己 `git commit` 过也照样记；这个目录丢了就退回和 `HEAD` 比，差异开头有一行说明。
+  提交不更新模型的索引（暂存在工作台 `/tmp` 的临时仓库里），所以在工作台上直接 `git status` 会看到上一轮的改动像没暂存，`git add -A` 一下就对了。
 - 助手容器里：`/work/proj/.agents/skills/` 是同一份（pi 从这里读），别的文件都在工作台上；
   `/data/sessions/<会话 ID>/` 下是 pi 的原始事件 `events.jsonl`、`pi-stderr.log`、pi 的会话文件 `pi-session/`。
 - 发给模型的请求：`docker exec sfly-aeval-1-dev ls /tmp/fm/dump`。
@@ -143,7 +145,8 @@ for (let buf = ""; ; ) {
 ### 常见问题
 
 - **时间线上没有「这一轮改了…」那一行、工作区里有没提交的改动**：这一轮的提交没做成（连不上工作台、工作台上没有 `git`、仓库坏了），
-  原因在助手服务的日志里（「提交工作区……失败」）；这一轮照常结束，改动在下一轮开始前单独提交（「第 N 轮被打断时留下的改动」）。
+  原因在助手服务的日志里（「提交工作区……失败」）；这一轮照常结束，改动在下一轮开始前单独提交（「第 N 轮被打断时留下的改动」；
+  第 1 轮开始前留着的是「会话开始之前工作区里留下的改动」）。
 
 - **这一轮以 `failed` 结束、原因是写不了 skill**：连不上工作台的能力端口。在助手容器里试
   `node -e 'require("net").connect(50052,"dev").on("connect",()=>{console.log("ok");process.exit()})'`。

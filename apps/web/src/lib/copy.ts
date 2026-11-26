@@ -404,6 +404,9 @@ export const SESSION = {
 		/** 上一轮（被打断的）留下的改动，在这一轮开始前补提交的。 */
 		leftover: (turn: number, files: number, additions: number, deletions: number) =>
 			`第 ${turn} 轮被打断时留下的改动：${files} 个文件 +${additions} −${deletions}`,
+		/** 会话开始之前工作区里就有的改动，在第 1 轮开始前补提交的。 */
+		beforeSession: (files: number, additions: number, deletions: number) =>
+			`会话开始之前工作区里留下的改动：${files} 个文件 +${additions} −${deletions}`,
 		/** 提交号（短写）旁边的读屏名称。 */
 		hash: "提交号",
 		binary: "二进制文件",

