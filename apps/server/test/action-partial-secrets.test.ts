@@ -1,6 +1,6 @@
 // 打不打码只看完整的出现（#517，docs/SEMANTICS.md §2.1）：动作的字段的值（上限 256）、失败原因（上限 4096）在读取时按此刻的
 // secret 值再打一遍码；文字的结尾是某个值的前缀（半截）时，输出里有没有掩码不能成为猜这个值的依据，所以半截原样留着，
-// 完整的出现照常盖住。这里用真实的控制面和假 Agent：保密值是子流程创建之后才知道的，动作已经原样写下，读一页明细、读摘要。
+// 完整的出现照常盖住。这里用真实的控制面和假 Agent：secret 值是子流程创建之后才知道的，动作已经原样写下，读一页明细、读摘要。
 // 值都是明显的假值。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { ACTION_LIMITS, SECRET_MASK as MASK } from "@sfly/schema";

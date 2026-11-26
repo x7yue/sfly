@@ -18,7 +18,7 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 const TOKEN = "tok-summary-5d1f0e83";
 const HOOK = `/open-apis/bot/v2/hook/${TOKEN}`;
-/** 入口声明的保密参数的值：出现在失败节点的错误信息里，不能出现在汇总节点收到的输入、任务的 task.json、卡片里。 */
+/** 入口声明的 secret 参数的值：出现在失败节点的错误信息里，不能出现在汇总节点收到的输入、任务的 task.json、卡片里。 */
 const SECRET = "pw-7c3e91a4-do-not-leak";
 
 type Node = Record<string, unknown> & { id: string };
@@ -157,7 +157,7 @@ describeWithAgent("全栈：运行汇总节点用 ${{ run.state }} 读整个运�
 			run: { self: { node_id: string }; failures: string[] };
 		};
 		expect(inputs.run).toMatchObject({ self: { node_id: "summary" }, failures: ["pay"] });
-		// 保密参数的值（它出现在失败节点的错误信息里）在汇总节点收到的输入里已经打码：运行视图里记着的输入，
+		// secret 参数的值（它出现在失败节点的错误信息里）在汇总节点收到的输入里已经打码：运行视图里记着的输入，
 		// 和 Agent 为这个任务写下的 task.json 里都搜不到原值。
 		expect(JSON.stringify(inputs)).not.toContain(SECRET);
 		const taskId = (await api.node(runId, "summary")).attempts[0]?.task_id as string;

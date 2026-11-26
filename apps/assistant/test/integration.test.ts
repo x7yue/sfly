@@ -535,7 +535,7 @@ describe("真的 pi：一轮进行中被结束，工作台上的命令不留下�
 	}, 120_000);
 });
 
-describe("真的 pi：保密环境变量不出助手服务", () => {
+describe("真的 pi：secret 环境变量不出助手服务", () => {
 	it("工作台上的命令打印出 secret_env 的值：发出的所有事件、pi 原始事件、助手服务的日志里都没有它", async () => {
 		const h = await Harness.start();
 		try {

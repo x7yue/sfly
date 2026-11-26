@@ -709,6 +709,32 @@ def many_action_names(ctx: Context, per_second: int, seconds: int) -> None:
     ctx.log(f"names={count}")
 
 
+@node(title="异常文字很长", outputs=[])
+def big_exception(ctx: Context, size: int) -> None:
+    """失败文字有上界的测试用（#723）：抛出一条 size 个字符的异常。"""
+    raise RuntimeError("e" * size)
+
+
+@node(title="直接写 output.json", outputs=[])
+def raw_output(
+    ctx: Context, kind: str, size: int, traceback_size: int = 0, char: str = "m"
+) -> None:
+    """Agent 自己判断输出大小的测试用（#723）：绕过执行器的检查（也是旧版本的执行器的写法：
+    说明和堆栈都不限长），直接写 output.json 然后退出。kind 是 success（outputs 里一个
+    size 个字符的文字）或 failed（message 是 size 个 `char`，traceback 是 traceback_size 个
+    `char`）。"""
+    if kind == "success":
+        doc: dict[str, Any] = {"status": "success", "outputs": {"text": "x" * size}}
+    else:
+        doc = {
+            "status": "failed",
+            "error": {"message": char * size, "traceback": char * traceback_size},
+        }
+    with open(os.environ["SFLY_OUTPUT"], "w", encoding="utf-8") as output:
+        json.dump(doc, output)
+    os._exit(0)
+
+
 @node(title="写盘失败", outputs=[])
 def write_failure(ctx: Context, message: str = "OSError: [Errno 122] Disk quota exceeded") -> None:
     """错误摘要测试用（#70）：往标准错误打一行 message，然后模拟磁盘写满——

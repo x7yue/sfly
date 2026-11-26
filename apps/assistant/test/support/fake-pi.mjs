@@ -371,7 +371,7 @@ function handle(command) {
 		out({ type: "auto_retry_end", success: false, attempt: 1, finalError: "503 upstream" });
 		settle();
 	} else if (text.startsWith("stderr:")) {
-		// 保密值分两次写进标准错误（一个值跨两块）。
+		// secret 环境变量的值分两次写进标准错误（一个值跨两块）。
 		const value = text.slice("stderr:".length);
 		const half = Math.floor(value.length / 2);
 		process.stderr.write(`warning: token ${value.slice(0, half)}`);
@@ -420,7 +420,7 @@ function handle(command) {
 			isError: false,
 			durationMs: 3,
 		});
-		// 上游把保密值、模型的密钥（FAKE_MODEL_KEY 的值）、请求头和带凭据的地址回显在错误里，还很长。
+		// 上游把 secret 环境变量的值、模型的密钥（FAKE_MODEL_KEY 的值）、请求头和带凭据的地址回显在错误里，还很长。
 		const upstream =
 			`bad key ${value} (fake-key) Authorization: Bearer sk-shape-123\n` +
 			`via https://user:pw-shape@proxy.example/ ${"x".repeat(600)}`;

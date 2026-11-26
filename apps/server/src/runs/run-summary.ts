@@ -22,7 +22,7 @@ import { runStateSource } from "./run-state-source.js";
 /*
  * 运行摘要（`GET /runs/:id/summary`，契约见 @sfly/schema 的 `RunReport`）：运行状态（`RunState`）加上只有接口给得起的内容。
  *
- * - 运行状态从运行的统一读取（`readRuns`）投影出来（`projectRunState`），不另写一套加载；错误信息、参数里保密参数的值
+ * - 运行状态从运行的统一读取（`readRuns`）投影出来（`projectRunState`），不另写一套加载；错误信息、参数里 secret 参数的值
  *   在读取时已经打码。
  * - 失败的任务的日志尾部读日志文件（每个任务一次文件读取，不查库）；失败的动作取任务动作摘要里最近失败的那几个，
  *   一次查询读出全运行的；有异常的关注项只在场景设了关注项时取（最多 8 项）。
@@ -162,7 +162,7 @@ function failedTaskView(
 
 /**
  * 失败的动作：取每个任务动作摘要里最近失败的那几个（任务的动作摘要最多留 5 个），全运行一次查询，
- * 最近结束的在前，最多 `RUN_REPORT_LIMITS.failedActions` 个。名称、字段、原因按这次运行此刻的保密参数的值再打一遍码
+ * 最近结束的在前，最多 `RUN_REPORT_LIMITS.failedActions` 个。名称、字段、原因按这次运行此刻的 secret 参数的值再打一遍码
  * （和任务进度、正在做的动作同一个口径）。
  */
 async function failedActionsOf(db: Db | Tx, read: RunReadFull): Promise<RunReportFailedAction[]> {

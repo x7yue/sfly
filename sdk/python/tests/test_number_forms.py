@@ -1,4 +1,4 @@
-"""数字的写法：节点在 Python 里把保密值里的数字打印出来的样子。
+"""数字的写法：节点在 Python 里把 secret 值里的数字打印出来的样子。
 
 SDK 用 `json.loads` 读 Agent 写的 task.json（runner.py），节点打印时用 `json.dumps` 或 `repr`。
 用例表 testdata/number-form-cases.json 三端共用（控制面、Agent、这里）：这里断言

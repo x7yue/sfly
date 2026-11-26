@@ -4,7 +4,7 @@ import { createScenario, publishPackage } from "./support";
 
 /**
  * 编排画布测试用的场景：主链 entry → fetch(http_check) → dispatch(异步任务) → ping，
- * dispatch 调度子流程 sub_entry → sub_ping。入口参数 biz_date（必填）、api_token（敏感，有默认值）。
+ * dispatch 调度子流程 sub_entry → sub_ping。入口参数 biz_date（必填）、api_token（secret，有默认值）。
  */
 export const editorDocument = {
 	default_agent: "agent-linux",

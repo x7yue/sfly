@@ -151,7 +151,7 @@ describe("助手服务产生的事件（AssistantEvent）", () => {
 });
 
 describe("命令", () => {
-	it("开始一轮：第几轮、这句话的 ID、话、会话的标题和发起人、工作台、普通和保密的环境变量", () => {
+	it("开始一轮：第几轮、这句话的 ID、话、会话的标题和发起人、工作台、普通和 secret 环境变量", () => {
 		expect(PromptCommandBody.parse(prompt)).toEqual(prompt);
 		expect(PromptCommandBody.safeParse({ ...prompt, env: {}, secret_env: {} }).success).toBe(true);
 	});
@@ -184,7 +184,7 @@ describe("命令", () => {
 				false,
 			);
 		}
-		// 普通的和保密的环境变量都按环境变量名和字符串值检查。
+		// 普通的和 secret 环境变量都按环境变量名和字符串值检查。
 		for (const field of ["env", "secret_env"]) {
 			expect(PromptCommandBody.safeParse({ ...prompt, [field]: { "1BAD": "x" } }).success).toBe(
 				false,

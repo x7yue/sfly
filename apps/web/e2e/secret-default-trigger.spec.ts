@@ -3,8 +3,8 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage } from "./support";
 
-// 敏感参数有默认值时，从界面（运行抽屉、预设表单）触发（#467）：控制台读不到默认值，表单里不预填；
-// 没有动过的敏感参数不放进触发的参数，由控制面按默认值填入，节点收到的是默认值，布尔参数也一样；
+// secret 参数有默认值时，从界面（运行抽屉、预设表单）触发（#467）：控制台读不到默认值，表单里不预填；
+// 没有动过的 secret 参数不放进触发的参数，由控制面按默认值填入，节点收到的是默认值，布尔参数也一样；
 // 动过的（填了新值、选了开或关）才传。
 
 const SECRET = "test-secret-value";
@@ -27,7 +27,7 @@ const ECHO_NODE = {
 	outputs: { type: "object", properties: {} },
 };
 
-/** 入口参数：敏感的字符串、数字、布尔（都有默认值）和一个普通参数；每个都原样传给节点。 */
+/** 入口参数：secret 的字符串、数字、布尔（都有默认值）和一个普通参数；每个都原样传给节点。 */
 const SCENARIO = {
 	default_agent: "agent-a",
 	nodes: [
@@ -69,7 +69,7 @@ async function openDrawer(page: Page) {
 	return drawer;
 }
 
-test("从运行抽屉触发，不动敏感参数：表单里没有默认值，节点收到的是默认值（字符串、数字、布尔都一样）", async ({
+test("从运行抽屉触发，不动 secret 参数：表单里没有默认值，节点收到的是默认值（字符串、数字、布尔都一样）", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -100,7 +100,7 @@ test("从运行抽屉触发，不动敏感参数：表单里没有默认值，�
 	});
 });
 
-test("从运行抽屉触发，动过的敏感参数才传：选「false」传 false，填了新值传新值，其余仍用默认值", async ({
+test("从运行抽屉触发，动过的 secret 参数才传：选「false」传 false，填了新值传新值，其余仍用默认值", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -121,7 +121,7 @@ test("从运行抽屉触发，动过的敏感参数才传：选「false」传 fa
 	});
 });
 
-test("运行预设的表单：勾选敏感的布尔参数要选 true 或 false（没有「使用默认值」），选了才能保存", async ({
+test("运行预设的表单：勾选 secret 的布尔参数要选 true 或 false（没有「使用默认值」），选了才能保存", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -150,7 +150,7 @@ test("运行预设的表单：勾选敏感的布尔参数要选 true 或 false�
 	await expect(form).toBeHidden();
 	await dialog.getByRole("button", { name: "关闭", exact: true }).click();
 
-	// 用预设触发：预设固定的 flag 是 false，其余敏感参数没动，用默认值。
+	// 用预设触发：预设固定的 flag 是 false，其余 secret 参数没动，用默认值。
 	await page
 		.getByRole("article", { name: "巡检" })
 		.getByRole("button", { name: "运行", exact: true })

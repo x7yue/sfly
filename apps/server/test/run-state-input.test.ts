@@ -35,7 +35,7 @@ const summary = (id: string, extra: Record<string, unknown> = {}): Node => ({
 	...extra,
 });
 
-/** 入口加给定的节点串成的单链；入口声明一个保密参数 token。 */
+/** 入口加给定的节点串成的单链；入口声明一个 secret 参数 token。 */
 function flow(nodes: Node[]) {
 	const all: Node[] = [
 		{
@@ -85,7 +85,7 @@ describe("节点输入里的运行状态 ${{ run.state }}", () => {
 	const nodeOf = (state: RunState, nodeId: string) =>
 		state.chains.flatMap((c) => c.nodes).find((n) => n.node_id === nodeId);
 
-	it("总是执行的汇总节点收到整个运行的状态：失败的节点、原因、被跳过的节点，自己是 dispatched；保密参数的值已打码", async () => {
+	it("总是执行的汇总节点收到整个运行的状态：失败的节点、原因、被跳过的节点，自己是 dispatched；secret 参数的值已打码", async () => {
 		const runId = await start(flow([echo("a"), echo("b"), echo("c"), summary("sum")]));
 		await agent.succeed(await agent.nextAssign());
 		const b = await agent.nextAssign();
@@ -128,20 +128,20 @@ describe("节点输入里的运行状态 ${{ run.state }}", () => {
 		});
 		expect(nodeOf(state, "c")).toMatchObject({ error: null, started_at: null });
 		expect(nodeOf(state, "sum")).toMatchObject({ started_at: null, ended_at: null, error: null });
-		// 保密参数的值打了码，不管在节点收到的输入里，还是记在这次尝试上、运行视图里读到的。
+		// secret 参数的值打了码，不管在节点收到的输入里，还是记在这次尝试上、运行视图里读到的。
 		expect(JSON.stringify(task.inputs)).not.toContain(TOKEN);
 		const recorded = (await api.node(runId, "sum")).attempts[0]?.inputs;
 		expect(recorded).toEqual(task.inputs);
 		expect(JSON.stringify(recorded)).not.toContain(TOKEN);
 	});
 
-	describe("保密参数的值打码：和运行摘要同一个口径（readRuns 的读取时打码）", () => {
+	describe("secret 参数的值打码：和运行摘要同一个口径（readRuns 的读取时打码）", () => {
 		const LATER = "later-pw-3f9d2a71";
 
 		/**
-		 * 主链 entry → spawn0（子流程「前」，里面有 x）→ gate → spawn1（子流程「后」，保密参数 pw 的值 LATER 由它传入）→ sum。
-		 * 子流程「前」的 x 失败时，LATER 还不是这次运行的保密参数的值：错误信息存进库时没有打码，
-		 * 子流程「后」创建出来之后，读取时按这次运行此刻的保密参数的值再打码。
+		 * 主链 entry → spawn0（子流程「前」，里面有 x）→ gate → spawn1（子流程「后」，secret 参数 pw 的值 LATER 由它传入）→ sum。
+		 * 子流程「前」的 x 失败时，LATER 还不是这次运行的 secret 参数的值：错误信息存进库时没有打码，
+		 * 子流程「后」创建出来之后，读取时按这次运行此刻的 secret 参数的值再打码。
 		 */
 		const document = () => {
 			const doc = orchestration(
@@ -429,7 +429,7 @@ describe("节点输入里的运行状态 ${{ run.state }}", () => {
 					(await res.json()) as {
 						warnings: Array<{ code: string; node_id?: string; input?: string }>;
 					}
-				).warnings // 只看 run.state 的警告：场景里别的警告（例如保密参数写了默认值）和这里无关。
+				).warnings // 只看 run.state 的警告：场景里别的警告（例如 secret 参数写了默认值）和这里无关。
 					.filter((w) => /^(reference|input)_run_state_/.test(w.code))
 					.map((w) => [w.code, w.node_id, w.input]);
 			};

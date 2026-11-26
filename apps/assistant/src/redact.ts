@@ -1,13 +1,13 @@
 import { SECRET_MASK } from "@sfly/schema";
 
 /**
- * 保密环境变量（`PromptCommandBody.secret_env`）的值按值打码（#540 的要求）：助手服务发出的每一条事件、写下的
+ * secret 环境变量（`PromptCommandBody.secret_env`）的值按值打码（#540 的要求）：助手服务发出的每一条事件、写下的
  * pi 原始事件（`events.jsonl`）和自己的日志，在出去之前过一遍。
  *
  * 规则（和控制面给 secret 参数打码的 `apps/server/src/logs/secrets.ts` 一致）：
  * - 认的写法：原文；放进 JSON 之后的转义写法（引号、反斜杠、换行转义）；非 ASCII 字符写成 `\uXXXX` 的写法；
  *   值有几行时，每一行（去掉两头空白后不少于 4 个字符的）单独也认（值被换行拆开、分几次打出来）。
- * - 值本身再短也打码（使用者明确说了它保密）；空串不算。
+ * - 值本身再短也打码（使用者明确说了它是 secret）；空串不算。
  * - 替换成 {@link SECRET_MASK}；长的写法先换，免得短的写法把长的拆坏。
  * - 一个值跨两条增量（`assistant_delta`、`tool_output`）时：每条流留下末尾「最长的写法减一个字符」不发，
  *   和下一段拼起来再认（{@link StreamRedactor}）；这条流结束时（这条消息完整了、这个工具结束了）发出剩下的。
