@@ -78,6 +78,8 @@ describe.skipIf(agentUnavailableReason() !== undefined)("真的 Agent 当工作�
 		const types = h.events.of(id).map((r) => r.event.type);
 		expect(types.at(-2)).toBe("platform");
 		expect(types.at(-1)).toBe("turn_end");
+		// 提交之后临时索引换成了真的索引：工作台上 git status 是干净的。
+		expect(safeGit(h.workdir, "status", "--porcelain")).toBe("");
 	}, 120_000);
 
 	it("模型布下的陷阱（钩子、fsmonitor、过滤器、textconv、外部 diff、gpg、include）：真的 Agent 上提交也不执行，标记文件都不存在", async () => {
