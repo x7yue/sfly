@@ -66,12 +66,19 @@ services:
     environment:
       SFLY_ADMIN_LOGIN: $admin_login
       SFLY_ADMIN_PASSWORD: \${SFLY_ADMIN_PASSWORD}
+    # README「助手和工作台」里的第一个 override 示例：公开地址的主机名在工作台容器里解析到控制面容器。
+    networks:
+      default:
+        aliases: [sfly.example.com]
 EOF
 
+# 控制面的助手地址：不带 profile 的第一步里是空的（默认部署没有助手），后面再设。
+assistant_url=
 compose() {
+	# SFLY_PUBLIC_URL 写「浏览器看到的地址」（和 README 一致，不是服务名）；上面的网络别名让工作台容器连得上它。
 	SFLY_VERSION=$tag SFLY_HTTP_PORT=$http_port SFLY_GRPC_PORT=$grpc_port \
-		DATABASE_URL=postgres://sfly:sfly@db:5432/sfly SFLY_PUBLIC_URL=http://sfly:8080 \
-		SFLY_ADMIN_PASSWORD=$admin_password SFLY_ASSISTANT_SECRET=$secret SFLY_ASSISTANT_URL=http://sfly-assistant:8090 \
+		DATABASE_URL=postgres://sfly:sfly@db:5432/sfly SFLY_PUBLIC_URL=http://sfly.example.com:8080 \
+		SFLY_ADMIN_PASSWORD=$admin_password SFLY_ASSISTANT_SECRET=$secret SFLY_ASSISTANT_URL=$assistant_url \
 		SFLY_WORKBENCH_AGENT=$agent SFLY_WORKBENCH_TOKEN=${token:-} SFLY_ASSISTANT_MODEL=fake/fake MODEL_API_KEY=k \
 		SFLY_ASSISTANT_MODELS_FILE=$work_dir/models.json \
 		SFLY_PYPI_MIRROR=${SFLY_PYPI_MIRROR:-} SFLY_GITHUB_RELEASE_MIRROR=${SFLY_GITHUB_RELEASE_MIRROR:-} \
@@ -108,6 +115,13 @@ running=$(compose ps --format '{{.Service}}' | sort | tr '\n' ' ')
 # ---- 给工作台签发它自己的 Agent 凭据，填进环境，再带 profile 起 ----
 token=$(client credential "$agent") || fail "签发 Agent 凭据"
 [[ $token == sfly_agt_* ]] || fail "签发的不是 Agent 凭据"
+# 控制面和助手服务之间的事件流：控制面起来时连助手服务，连不上就退避重连（1、2、4……最长 30 秒），重连的这段时间里助手发的事件
+# 直接丢（#545 要补的产品缺口），而就绪状态不看事件流是否连上。所以**先起助手（和假的模型端点）、等它健康，再起带助手地址的
+# 控制面和工作台**：控制面一起来就连得上，没有退避。第一步没有设助手地址，控制面是在没有助手的默认部署里起来的，
+# 这一步 compose 因为环境变了把它重建，这时助手已经在了。
+assistant_url=http://sfly-assistant:8090
+compose --profile assistant up -d --wait --wait-timeout 180 sfly-assistant fake-model >/dev/null ||
+	fail "助手服务没有起来"
 compose --profile assistant up -d --wait --wait-timeout 600 >/dev/null || fail "--profile assistant 没有起来"
 running=$(compose --profile assistant ps --format '{{.Service}}' | sort | tr '\n' ' ')
 [[ $running == "db fake-model sfly sfly-assistant sfly-workbench " ]] || fail "带 profile 的服务不对：$running"
@@ -125,7 +139,8 @@ for expected in user=workbench home=/home/workbench pwd=/work token-env=unset wo
 	'Python 3.'; do
 	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「$expected」：$(grep '^结果' <<<"$checked" | head -c 600)"
 done
-grep -qF "$token" <<<"$checked" && fail "凭据出现在会话的工具结果里"
+# 凭据经进程替换给 grep（不进它的命令行参数，ps 看不到）。
+if grep -qF -f <(printf '%s\n' "$token") <<<"$checked"; then fail "凭据出现在会话的工具结果里"; fi
 grep '^结果' <<<"$checked" | head -c 700; echo
 
 # 工作台：在线、Agent 凭据、版本一致、开发方式装的（sfly 命令行在）、有 git 仓库。

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,7 +40,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def render(tmp_path: Path, variables: dict[str, str], *profiles: str) -> dict[str, Any]:
+def render(
+    tmp_path: Path, variables: dict[str, str], *profiles: str, override: str | None = None
+) -> dict[str, Any]:
+    """`override`：docker-compose.override.yml 的内容（README 里给部署者的示例）。"""
     # 空的 env 文件：不读部署者放在 deploy/ 里的 .env。
     empty = tmp_path / "empty.env"
     empty.write_text("")
@@ -48,7 +52,12 @@ def render(tmp_path: Path, variables: dict[str, str], *profiles: str) -> dict[st
     command = ["docker", "compose", "--env-file", str(empty)]
     for profile in profiles:
         command += ["--profile", profile]
-    command += ["-f", str(DEPLOY / "docker-compose.yml"), "config", "--format", "json"]
+    command += ["-f", str(DEPLOY / "docker-compose.yml")]
+    if override is not None:
+        extra = tmp_path / "docker-compose.override.yml"
+        extra.write_text(override)
+        command += ["-f", str(extra)]
+    command += ["config", "--format", "json"]
     result = subprocess.run(command, env=env, capture_output=True, text=True, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     rendered: dict[str, Any] = json.loads(result.stdout)
@@ -102,6 +111,25 @@ def test_the_workbench_credential_goes_to_the_workbench_only(tmp_path: Path) -> 
         assert "model-key-value" not in json.dumps(services[other]), other
 
 
+def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> None:
+    # 工作台上的模型读得到工作台的环境：助手的共享密钥只给控制面和助手服务，模型的密钥只给助手服务，
+    # 工作台只拿它自己要的四个变量（加一个别的变量，这里就红）。
+    services = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"]
+    workbench = services["sfly-workbench"]
+
+    assert set(environment(workbench)) == {
+        "SFLY_WORKBENCH_URL",
+        "SFLY_WORKBENCH_AGENT",
+        "SFLY_WORKBENCH_PUBLIC_ADDRESS",
+        "SFLY_WORKBENCH_TOKEN",
+    }
+    for secret in (ASSISTANT["SFLY_ASSISTANT_SECRET"], ASSISTANT["MODEL_API_KEY"]):
+        assert secret not in json.dumps(workbench)
+    # 控制面和助手服务读同一个共享密钥。
+    for holder in ("sfly", "sfly-assistant"):
+        assert ASSISTANT["SFLY_ASSISTANT_SECRET"] in json.dumps(services[holder]), holder
+
+
 def test_the_workbench_is_named_by_the_variable_the_control_plane_reads(tmp_path: Path) -> None:
     services = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"]
 
@@ -148,3 +176,62 @@ def test_the_workbench_keeps_its_home_and_its_workspace_on_volumes(tmp_path: Pat
     # 没有 init 时 Agent 做 PID 1，收不了它留下的僵尸进程、也转不了信号。
     assert workbench["init"] is True
     assert services["sfly-assistant"]["init"] is True
+
+
+# ---- README「助手和工作台」里给部署者的 docker-compose.override.yml 示例（照着执行一遍）----
+
+
+def readme_override_examples() -> dict[str, str]:
+    """README 那一节里的三段 yaml，按它们各自要做的事命名。"""
+    readme = (DEPLOY.parent / "README.md").read_text(encoding="utf-8")
+    section = readme[readme.index("### 助手和工作台") : readme.index("### 助手的模型")]
+    blocks = re.findall(r"```yaml\n(.*?)```", section, flags=re.DOTALL)
+    named: dict[str, str] = {}
+    for block in blocks:
+        if "aliases:" in block:
+            named["alias"] = block
+        elif "extra_hosts:" in block:
+            named["extra_hosts"] = block
+        elif ".netrc" in block:
+            named["netrc"] = block
+    assert set(named) == {"alias", "extra_hosts", "netrc"}, f"README 里的 yaml 示例变了：{blocks}"
+    return named
+
+
+def test_the_readme_alias_example_gives_the_control_plane_the_public_host_name(
+    tmp_path: Path,
+) -> None:
+    # 公开地址的主机名在工作台容器里解析到控制面容器（浏览器看到的地址不用改成服务名）。
+    example = readme_override_examples()["alias"]
+    config = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=example)
+
+    assert config["services"]["sfly"]["networks"]["default"]["aliases"] == ["sfly.example.com"]
+    # 工作台和控制面在同一个网络里，别名对它有效。
+    assert "networks" in config["services"]["sfly-workbench"]
+
+
+def test_the_readme_extra_hosts_example_points_the_public_host_name_at_the_docker_host(
+    tmp_path: Path,
+) -> None:
+    example = readme_override_examples()["extra_hosts"]
+    config = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=example)
+
+    hosts = config["services"]["sfly-workbench"]["extra_hosts"]
+    # compose 的版本不同，输出是列表（`主机名=host-gateway`）或映射。
+    pairs = hosts if isinstance(hosts, dict) else dict(h.split("=", 1) for h in hosts)
+    assert pairs == {"sfly.example.com": "host-gateway"}
+
+
+def test_the_readme_netrc_example_mounts_a_read_only_file_next_to_the_home_volume(
+    tmp_path: Path,
+) -> None:
+    example = readme_override_examples()["netrc"]
+    config = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=example)
+
+    mounts = {v["target"]: v for v in config["services"]["sfly-workbench"]["volumes"]}
+    assert set(mounts) == {"/home/workbench", "/work", "/home/workbench/.netrc"}
+    netrc = mounts["/home/workbench/.netrc"]
+    assert netrc["type"] == "bind" and netrc["read_only"] is True
+    assert netrc["source"].endswith("workbench.netrc")
+    # 家目录还是命名卷：.netrc 是叠在它上面的一个文件，卷里的东西不受影响。
+    assert mounts["/home/workbench"]["type"] == "volume"

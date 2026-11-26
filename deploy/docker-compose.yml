@@ -85,7 +85,8 @@ services:
           create_host_path: false
 
   # 工作台：一台按开发方式（--dev）装的普通 Agent。Agent、uv、sfly 命令行第一次启动时从控制面装（deploy/workbench/entrypoint.sh），
-  # 版本和控制面一致、照常自更新，装在家目录卷里：删掉容器再建，工作区和已经装好的环境都在，不重装。
+  # 装在家目录卷里：删掉容器再建，工作区和已经装好的环境都在，不重装。每次启动入口脚本对一下控制面的 install.sh，
+  # 变了（控制面升级、改了对外地址）就重装：Agent 会自更新，sfly 命令行不会，靠这一步跟着控制面走。
   sfly-workbench:
     profiles: [assistant]
     image: ghcr.io/x7yue/sfly-workbench:${SFLY_VERSION:-latest}
@@ -96,7 +97,7 @@ services:
         condition: service_healthy
     environment:
       # 控制面在这个网络里的地址（服务名）：入口脚本从它下载 install.sh。安装脚本里写给 Agent 的地址是控制面的 SFLY_PUBLIC_URL
-      # 和网关地址：它们在这个容器里也要连得到，见 README「助手和工作台」。
+      # （浏览器看到的地址）和网关地址：它们在这个容器里也要连得到（README「助手和工作台」：给 sfly 服务加网络别名，或 extra_hosts）。
       SFLY_WORKBENCH_URL: http://sfly:8080
       # 这台 Agent 的名字：和控制面里指名工作台的 SFLY_WORKBENCH_AGENT 是同一个变量，两边读同一个 .env 值。
       # 没设置时入口脚本拒绝启动并写明原因。

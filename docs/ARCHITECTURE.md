@@ -93,7 +93,7 @@ flowchart LR
 | SDK CLI | Python | 生成节点元信息、构建并发布节点包、本地开发模式、操作平台（场景等，#238） |
 | API 客户端 | TypeScript，ESM 与类型声明，没有运行时依赖 | 自建页面和用户程序调用 HTTP API：带类型的接口调用、断线自动重连的事件流订阅、下载地址的拼接、统一的错误类型；控制台的请求层也建立在它上面（ADR 0022） |
 | 助手服务（可选） | Node、pi（`apps/assistant`），单独的容器 | 起和看管 pi 进程、把 pi 的事件翻成会话事件、执行控制面的命令（§6.9）；只和控制面说话，不碰数据库；模型和它的密钥只在这个容器里 |
-| 工作台（可选） | 一台普通的 Agent，在 Debian slim 容器里（`deploy/workbench/`）：加 git、ripgrep、fd、jq、python3；**没有 Node，没有 pi** | 助手的读、写、编辑、命令都落在这台 Agent 上（经它的能力端口，ADR 0019）；工作区 `/work` 是它持久卷上的 git 仓库。Agent、uv、sfly 命令行第一次启动时由入口脚本按 `--dev` 方式从控制面装，版本和控制面一致、照常自更新（ADR 0011、0014），不烤进镜像 |
+| 工作台（可选） | 一台普通的 Agent，在 Debian slim 容器里（`deploy/workbench/`）：加 git、ripgrep、fd、jq、python3；**没有 Node，没有 pi** | 助手的读、写、编辑、命令都落在这台 Agent 上（经它的能力端口，ADR 0019）；工作区 `/work` 是它持久卷上的 git 仓库。Agent、uv、sfly 命令行第一次启动时由入口脚本按 `--dev` 方式从控制面装，版本和控制面一致，不烤进镜像；Agent 自更新（ADR 0011、0014），sfly 命令行不会，所以入口脚本每次启动对一下控制面的 install.sh，变了就重装 |
 
 前端只负责页面，不写业务逻辑；引擎需要常驻进程（Agent 长连接、租约扫描、故障恢复），所以控制面独立部署。
 

@@ -11,12 +11,17 @@
 - 上次装到一半被打断（没有标记、缺文件、留着临时文件）：重装，临时文件清掉；换了名字也重装；
 - 安装失败：非零退出，不留标记，不启动 Agent；
 - 缺变量、卷写不了：非零退出，说清楚缺什么、怎么改；
+- 装好之后每次启动对一下控制面的 install.sh：sha256 变了就重装，没变不重装，
+  取不到照常启动（短超时、不重试）；
+- 入口脚本自己用的命令只在系统目录里找：家目录的 ~/.local/bin 里放了假的 cat、curl、sh……
+  也不执行，Agent 的 PATH 里它在最后；
 - 凭据不出现在入口脚本的输出里。
 真实的镜像、卷和控制面由 scripts/release/workbench-image-smoke.sh 检查。
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -75,7 +80,8 @@ class Harness:
         (bin_dir / "curl").write_text(FAKE_CURL)
         (bin_dir / "curl").chmod(0o755)
         (root / "install.sh").write_text(FAKE_INSTALL)
-        self.path = f"{bin_dir}:/usr/bin:/bin"
+        # 入口脚本自己用的 PATH（SFLY_WORKBENCH_BASE_PATH）：假 curl 所在的目录加系统目录。
+        self.path = f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"
 
     @property
     def sfly_home(self) -> Path:
@@ -83,7 +89,9 @@ class Harness:
 
     def run(self, **overrides: str) -> subprocess.CompletedProcess[str]:
         env = {
-            "PATH": self.path,
+            # 容器里的 PATH：~/.local/bin 在最前（Dockerfile 里原来的写法，现在入口脚本不看它）。
+            "PATH": f"{self.home}/.local/bin:{self.path}",
+            "SFLY_WORKBENCH_BASE_PATH": self.path,
             "HOME": str(self.home),
             "FAKE_LOG": str(self.log),
             "FAKE_INSTALL_SH": str(self.root / "install.sh"),
@@ -96,8 +104,26 @@ class Harness:
         env.update(overrides)
         env = {key: value for key, value in env.items() if value != "<unset>"}
         return subprocess.run(
-            ["sh", str(ENTRYPOINT)], env=env, capture_output=True, text=True, timeout=60
+            ["/bin/sh", str(ENTRYPOINT)], env=env, capture_output=True, text=True, timeout=60
         )
+
+    def change_install_script(self, note: str) -> None:
+        """控制面的 install.sh 变了（升级、改了对外地址）：内容不一样。"""
+        with (self.root / "install.sh").open("a") as file:
+            file.write(f"# {note}\n")
+
+    def plant(self, tools: list[str]) -> None:
+        """家目录的 ~/.local/bin 里放假的命令：被执行就记一行到 planted.runs。"""
+        directory = self.home / ".local" / "bin"
+        directory.mkdir(parents=True, exist_ok=True)
+        for tool in tools:
+            script = directory / tool
+            script.write_text(f'#!/bin/sh\necho {tool} >> "$FAKE_LOG/planted.runs"\nexit 0\n')
+            script.chmod(0o755)
+
+    def marker(self) -> dict[str, str]:
+        text = (self.sfly_home / ".workbench-installed").read_text()
+        return dict(line.split("=", 1) for line in text.splitlines())
 
     def lines(self, name: str) -> list[str]:
         path = self.log / name
@@ -123,9 +149,14 @@ def test_a_fresh_volume_installs_the_agent_the_dev_way_and_starts_it(harness: Ha
     assert harness.lines("install.args") == [
         f"--dev --name {NAME} --public-address sfly-workbench --no-service"
     ]
-    # 装完写下标记，然后前台启动 Agent。
-    assert (harness.sfly_home / ".workbench-installed").read_text() == f"name={NAME}\n"
+    # 装完写下标记（名字、安装的那份 install.sh 的 sha256），然后前台启动 Agent。
+    assert harness.marker() == {
+        "name": NAME,
+        "install_sh_sha256": hashlib.sha256((harness.root / "install.sh").read_bytes()).hexdigest(),
+    }
     assert harness.lines("agent.runs") == ["agent"]
+    # curl 不读家目录里的 .curlrc（模型写得了）：-q 是第一个参数。
+    assert all(line.startswith("-q ") for line in harness.lines("curl.args"))
 
 
 def test_the_credential_goes_to_the_installer_and_the_agent_by_environment_only(
@@ -149,17 +180,23 @@ def test_the_credential_goes_to_the_installer_and_the_agent_by_environment_only(
     assert "SFLY_WORKBENCH_TOKEN" not in install_env
 
 
-def test_an_installed_volume_starts_the_agent_without_downloading_or_reinstalling(
+def test_an_installed_volume_with_an_unchanged_install_script_starts_without_reinstalling(
     harness: Harness,
 ) -> None:
     assert harness.run().returncode == 0
-    downloads = len(harness.lines("curl.args"))
+    asked = len(harness.lines("curl.args"))
 
     result = harness.run()
 
     assert result.returncode == 0, result.stderr
     assert "已经装好，直接启动" in result.stdout
-    assert len(harness.lines("curl.args")) == downloads
+    assert "install.sh 没变" in result.stdout
+    # 只问了一次 install.sh（短超时，不重试），没有重新运行安装脚本。
+    assert len(harness.lines("curl.args")) == asked + 1
+    check = harness.lines("curl.args")[-1]
+    assert "--max-time 5" in check and "--retry" not in check
+    # 问 install.sh 的那一次也不读 .curlrc。
+    assert all(line.startswith("-q ") for line in harness.lines("curl.args"))
     assert harness.lines("install.runs") == ["run"]
     assert harness.lines("agent.runs") == ["agent", "agent"]
     # 重建容器之后也用环境里的凭据（换了凭据只要改 .env、重建容器）。
@@ -168,13 +205,51 @@ def test_an_installed_volume_starts_the_agent_without_downloading_or_reinstallin
     assert harness.agent_environment()["SFLY_TOKEN"] == new_token
 
 
+def test_a_changed_install_script_installs_again_and_then_stays_quiet(harness: Harness) -> None:
+    # 控制面升级、改了 SFLY_PUBLIC_URL 或镜像之后，它的 install.sh 内容变了：
+    # 工作台重装（sfly 命令行不会自己升级）。
+    assert harness.run().returncode == 0
+    harness.change_install_script("控制面升级了")
+
+    result = harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "install.sh 变了" in result.stdout
+    assert harness.lines("install.runs") == ["run", "run"]
+    assert (
+        harness.marker()["install_sh_sha256"]
+        == hashlib.sha256((harness.root / "install.sh").read_bytes()).hexdigest()
+    )
+    assert harness.lines("agent.runs") == ["agent", "agent"]
+    # 重装用的就是刚取到的那份（没有再下载第二次），之后没变就不再重装。
+    assert harness.run().returncode == 0
+    assert harness.lines("install.runs") == ["run", "run"]
+    assert harness.lines("agent.runs") == ["agent", "agent", "agent"]
+
+
+def test_a_marker_without_the_install_script_hash_installs_again_once(harness: Harness) -> None:
+    assert harness.run().returncode == 0
+    (harness.sfly_home / ".workbench-installed").write_text(f"name={NAME}\n")
+
+    assert harness.run().returncode == 0
+    assert harness.lines("install.runs") == ["run", "run"]
+    assert "install_sh_sha256" in harness.marker()
+    assert harness.run().returncode == 0
+    assert harness.lines("install.runs") == ["run", "run"]
+
+
 def test_an_installed_volume_starts_when_the_control_plane_is_unreachable(harness: Harness) -> None:
     assert harness.run().returncode == 0
 
+    harness.change_install_script("就算控制面的脚本变了，取不到时也不重装")
     result = harness.run(FAKE_CURL_FAIL="1")
 
     assert result.returncode == 0, result.stderr
+    assert "取不到" in result.stdout
+    assert harness.lines("install.runs") == ["run"]
     assert harness.lines("agent.runs") == ["agent", "agent"]
+    # 短超时、不重试：控制面不通时不让已经装好的 Agent 等很久。
+    assert "--retry" not in harness.lines("curl.args")[-1]
 
 
 @pytest.mark.parametrize(
@@ -235,7 +310,7 @@ def test_a_different_name_is_installed_again(harness: Harness) -> None:
     assert result.returncode == 0, result.stderr
     assert harness.lines("install.runs") == ["run", "run"]
     assert "--name workbench-2" in harness.lines("install.args")[0]
-    assert (harness.sfly_home / ".workbench-installed").read_text() == "name=workbench-2\n"
+    assert harness.marker()["name"] == "workbench-2"
 
 
 def test_a_failed_install_leaves_no_marker_and_does_not_start_the_agent(harness: Harness) -> None:
@@ -258,6 +333,32 @@ def test_an_unreachable_control_plane_stops_before_installing(harness: Harness) 
     assert "下载 http://sfly:8080/install.sh 失败" in result.stderr
     assert harness.lines("install.runs") == []
     assert not (harness.sfly_home / ".workbench-installed").exists()
+
+
+PLANTED = ["cat", "curl", "sed", "head", "cut", "sh", "sha256sum", "mktemp", "rm", "id", "printf"]
+
+
+@pytest.mark.parametrize("state", ["fresh", "installed", "changed"])
+def test_commands_in_the_home_volume_are_not_run_by_the_entrypoint(
+    harness: Harness, state: str
+) -> None:
+    # 家目录是卷，工作台上的模型写得了 ~/.local/bin（容器环境的 PATH 里它在最前面）：
+    # 入口脚本自己用的命令只在系统目录里找，否则模型放一个假的 cat、curl，
+    # 入口脚本下次启动就执行它，而这时手上有刚交进来的凭据。
+    if state != "fresh":
+        assert harness.run().returncode == 0
+    harness.plant(PLANTED)
+    if state == "changed":
+        harness.change_install_script("控制面升级了")
+
+    result = harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert harness.lines("planted.runs") == [], "入口脚本执行了家目录里放的命令"
+    # 装好的 Agent 看到的 PATH：系统目录在前，~/.local/bin 加在最后
+    # （sfly、uv 在那里，盖不掉系统的命令）。
+    path = harness.agent_environment()["PATH"]
+    assert path == f"{harness.path}:{harness.home}/.local/bin"
 
 
 @pytest.mark.parametrize(

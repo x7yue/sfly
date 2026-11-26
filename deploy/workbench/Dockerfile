@@ -4,8 +4,9 @@
 #
 # 镜像里只有操作系统工具：git、ripgrep、fd、jq、curl、procps、python3（和 `python` 这个命令：模型常先敲它）。
 # **没有 Node，没有 pi**（pi 在助手容器里，循环在工作台之外，ADR 0027），**也没有 Agent**：Agent、uv、`sfly` 命令行
-# 都来自控制面（入口脚本在家目录里没有它们时，下载控制面的 install.sh 按 `--dev` 方式装），版本和控制面一致，
-# 之后照常自更新（ADR 0011、0014）。所以这个镜像只在操作系统工具变化时才需要换，不随控制面的版本变。
+# 都来自控制面（入口脚本在家目录里没有它们时，下载控制面的 install.sh 按 `--dev` 方式装），版本和控制面一致。
+# Agent 自己照常自更新（ADR 0011、0014）；sfly 命令行不会自更新（钉在装时的版本），所以入口脚本每次启动都对一下控制面的
+# install.sh，变了（控制面升级、改了对外地址）就重装。镜像只在操作系统工具变化时才需要换，不随控制面的版本变。
 # 节点包自己的 Python 由 uv 管（共享 venv，ADR 0002），不是这里的 python3。
 #
 # 非 root 用户 workbench（uid 1000，和助手镜像的 node 用户同号）。两个卷归它：家目录 /home/workbench
@@ -17,6 +18,7 @@
 FROM debian:trixie-slim
 
 # 在不能直接访问 deb.debian.org 的网络里构建时指向镜像站（例如 http://mirrors.ustc.edu.cn）；Release 构建不传。
+# **不要带用户名和密码**：构建参数会留在镜像历史里（`docker history`），拿到镜像的人都读得到。
 ARG DEBIAN_MIRROR=
 
 # curl、ca-certificates：入口脚本和安装脚本下载用；procps：模型常用的 ps、pkill，也给健康检查用 pgrep。
@@ -36,8 +38,9 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash workbench \
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/sfly-workbench-entrypoint
 
 USER workbench
-# --dev 装的 uv 和 sfly 在 ~/.local/bin：助手的命令（Agent 的 exec 能力）从 Agent 的环境继承 PATH。
-ENV PATH="/home/workbench/.local/bin:${PATH}"
+# --dev 装的 uv 和 sfly 在 ~/.local/bin：放在 PATH 最后，系统目录里有的命令不会被家目录（卷，模型写得了）里的盖掉。
+# 入口脚本自己不看这个 PATH（它只用系统目录，exec Agent 之前才把 ~/.local/bin 加回去），这里是给 `docker exec` 进来的人用的。
+ENV PATH="${PATH}:/home/workbench/.local/bin"
 WORKDIR /work
 VOLUME ["/home/workbench", "/work"]
 

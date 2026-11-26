@@ -107,6 +107,18 @@ for _ in $(seq 60); do
 	sleep 1
 done
 
+# ---- 助手：模型文件指向网络里的假的模型端点，密钥变量是占位值 ----
+# 先起助手、再起控制面：控制面起来时连助手服务的事件流，连不上就退避重连（最长 30 秒），重连期间助手发的事件直接丢（#545 要补的
+# 产品缺口），而就绪状态不看事件流是否连上。助手先在，控制面一起来就连得上。
+cat >"$work_dir/models.json" <<'EOF'
+{"providers":{"fake":{"name":"fake","baseUrl":"http://fake-model.internal:8100/v1","api":"openai-completions","apiKey":"$FAKE_KEY",
+ "models":[{"id":"fake","name":"fake","reasoning":false,"input":["text"],"contextWindow":128000,"maxTokens":8192,
+ "cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}
+EOF
+SFLY_ASSISTANT_SECRET=$secret docker run -d --init --name "$prefix-assistant" --network "$network" \
+	--network-alias sfly-assistant --memory 2g -v "$work_dir/models.json:/config/models.json:ro" \
+	-e SFLY_ASSISTANT_SECRET -e SFLY_ASSISTANT_MODEL=fake/fake -e FAKE_KEY=k "$assistant_image" >/dev/null
+
 # ---- 控制面：和 compose 一样，助手的地址、共享密钥、工作台的名字；镜像是网络里的镜像站 ----
 SFLY_ADMIN_PASSWORD=$admin_password SFLY_ASSISTANT_SECRET=$secret docker run -d --init --name "$prefix-cp" \
 	--network "$network" --network-alias sfly \
@@ -121,16 +133,6 @@ for _ in $(seq 60); do
 	sleep 2
 done
 [[ $status == healthy ]] || fail "控制面的健康检查没有转为 healthy（$status）"
-
-# ---- 助手：模型文件指向网络里的假的模型端点，密钥变量是占位值 ----
-cat >"$work_dir/models.json" <<'EOF'
-{"providers":{"fake":{"name":"fake","baseUrl":"http://fake-model.internal:8100/v1","api":"openai-completions","apiKey":"$FAKE_KEY",
- "models":[{"id":"fake","name":"fake","reasoning":false,"input":["text"],"contextWindow":128000,"maxTokens":8192,
- "cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}
-EOF
-SFLY_ASSISTANT_SECRET=$secret docker run -d --init --name "$prefix-assistant" --network "$network" \
-	--network-alias sfly-assistant --memory 2g -v "$work_dir/models.json:/config/models.json:ro" \
-	-e SFLY_ASSISTANT_SECRET -e SFLY_ASSISTANT_MODEL=fake/fake -e FAKE_KEY=k "$assistant_image" >/dev/null
 
 # ---- 客户端：在网络里运行（断网的网络不映射端口），复用评测集的函数 ----
 client() { # <参数…>：评测集只读挂在 /aeval，初始管理员的密码经环境变量名交给容器
@@ -178,7 +180,8 @@ for expected in user=workbench home=/home/workbench pwd=/work token-env=unset wo
 	'Python 3.'; do
 	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「$expected」：$(grep '^结果' <<<"$checked" | head -c 600)"
 done
-grep -qF "$token" <<<"$checked" && fail "凭据出现在会话的工具结果里"
+# 凭据经进程替换给 grep（不进它的命令行参数，ps 看不到）。
+if grep -qF -f <(printf '%s\n' "$token") <<<"$checked"; then fail "凭据出现在会话的工具结果里"; fi
 grep '^结果' <<<"$checked" | head -c 700; echo
 
 # ---- README「助手和工作台」里签发凭据的两条命令照着执行一遍（在工作台上，它有 sfly 命令行；换别的名字，不动工作台自己的凭据）----
