@@ -694,21 +694,6 @@ def long_event_line(
         ctx.log("after")
 
 
-@node(title="很多种动作名称", outputs=[])
-def many_action_names(ctx: Context, per_second: int, seconds: int) -> None:
-    """动作摘要超过事件管道一行上限的测试用（#674）：每秒新开 per_second 种名称的动作（每种一个，
-    名称 64 个字符，都在文档上限以内），持续 seconds 秒；最后写一条日志 "names=总数"。"""
-    count = 0
-    for _ in range(seconds):
-        started = time.monotonic()
-        for _ in range(per_second):
-            with ctx.action(f"{count:08d}" + "x" * 56):
-                pass
-            count += 1
-        time.sleep(max(0.0, 1.0 - (time.monotonic() - started)))
-    ctx.log(f"names={count}")
-
-
 @node(title="异常文字很长", outputs=[])
 def big_exception(ctx: Context, size: int) -> None:
     """失败文字有上界的测试用（#723）：抛出一条 size 个字符的异常。"""

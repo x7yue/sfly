@@ -100,9 +100,13 @@ describe("动作摘要", () => {
 			control_plane_capped: false,
 			capped_at: null,
 			agent_capped_at: null,
+			failed_total: 0,
 			names: [],
+			names_complete: true,
+			unlisted: null,
 			running: [],
 			running_complete: true,
+			lists_trimmed: false,
 			recent: [],
 			recent_failed: [],
 		});
@@ -170,6 +174,9 @@ describe("动作摘要", () => {
 			control_plane_capped: false,
 			capped_at: iso(T0 + 3_000),
 			agent_capped_at: iso(T0 + 3_000),
+			failed_total: 1, // 旧的 SDK 没有合计的失败数：名称表里各项加起来
+			names_complete: true,
+			unlisted: null,
 			names: [
 				{
 					name: "保持 4 小时",
@@ -209,6 +216,7 @@ describe("动作摘要", () => {
 				},
 			],
 			running_complete: true,
+			lists_trimmed: false,
 			recent: [failed],
 			recent_failed: [failed],
 		});

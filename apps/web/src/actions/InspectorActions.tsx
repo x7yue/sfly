@@ -11,7 +11,7 @@ import { Elapsed } from "#/components/elapsed";
 import { SectionHeading } from "#/components/page";
 import { StatusDot } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
-import { attemptLabel, moreLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { ACTION_PAGE, attemptLabel, moreLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatClockMs,
@@ -186,6 +186,15 @@ export function ActionArea({
 					))}
 				</TableBody>
 			</Table>
+			{/* 名称太多或太长，表里只列了一部分：没列出的名称合在一起的个数写在表的末尾，失败数用的是合计的。 */}
+			{!summary.names_complete && summary.unlisted && (
+				<p data-testid="unlisted-names" className="m-0 mt-1 text-xs text-fg-3">
+					{ACTION_PAGE.unlistedNames(
+						formatInteger(summary.unlisted.total),
+						formatInteger(summary.unlisted.failed),
+					)}
+				</p>
+			)}
 			{/* 只有控制面兜底丢弃过明细（被改过的 SDK，SDK 自己没超限）时也写上限说明：丢弃的段在详情的「动作」页签里。 */}
 			{(countOnly.length > 0 || summary.capped_at !== null || summary.control_plane_capped) && (
 				<CapNote countOnly={countOnly} totalFullAt={summary.capped_at} otherDay={otherDay} />
