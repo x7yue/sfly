@@ -21,6 +21,7 @@ export interface FakeTaskLogOptions {
 }
 
 export type Position = Parameters<TaskLogPorts["readPage"]>[0];
+type TaskLiveHandlers = Parameters<TaskLogPorts["subscribeLive"]>[1];
 
 const encoder = new TextEncoder();
 const bytes = (line: LogLineView) => encoder.encode(`${JSON.stringify(line)}\n`).length;
@@ -46,7 +47,9 @@ export class FakeTaskLog implements TaskLogPorts {
 	readonly lines: FileLine[] = [];
 	size = 0;
 	readonly pages = new FakePages<Position, LogPage>((position) => this.pageAt(position));
-	readonly live = new FakeLive<number, (chunk: LogChunk) => void>();
+	readonly live = new FakeLive<number, TaskLiveHandlers>();
+	/** 页里说的日志文件的问题（#721）：不见了、比记录的短；没有问题是 null。 */
+	fileProblem: LogPage["file_problem"] = null;
 
 	constructor(
 		lines: number,
@@ -103,7 +106,12 @@ export class FakeTaskLog implements TaskLogPorts {
 
 	/** 把一批原样推给所有还连着的实时流。 */
 	emit(chunk: LogChunk) {
-		this.live.push((onChunk) => onChunk(chunk));
+		this.live.push((h) => h.onChunk(chunk));
+	}
+
+	/** 实时流连上时说日志文件有问题（#721）。 */
+	emitFileProblem(problem: NonNullable<LogPage["file_problem"]>) {
+		this.live.push((h) => h.onFileProblem(problem));
 	}
 
 	/** 文件里第 index 行（从 0 起）的偏移；超出时是文件大小。 */
@@ -151,6 +159,7 @@ export class FakeTaskLog implements TaskLogPorts {
 			last_seq: this.lines.at(-1)?.seq ?? 0,
 			truncated: false,
 			expired: false,
+			file_problem: this.fileProblem,
 			locate,
 		};
 	}

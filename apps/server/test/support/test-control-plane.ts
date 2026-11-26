@@ -76,6 +76,7 @@ export async function startTestControlPlane(
 		| "artifactLimitBytes"
 		| "artifactUploadIdleMs"
 		| "retentionDays"
+		| "purgeWaitMs"
 		| "metricRetentionDays"
 		| "leaseMs"
 		| "sseHeartbeatMs"
@@ -134,6 +135,7 @@ export async function startTestControlPlane(
 			artifactLimitBytes: options.artifactLimitBytes,
 			artifactUploadIdleMs: options.artifactUploadIdleMs,
 			retentionDays: options.retentionDays,
+			purgeWaitMs: options.purgeWaitMs,
 			metricRetentionDays: options.metricRetentionDays,
 			leaseMs: options.leaseMs,
 			sseHeartbeatMs: options.sseHeartbeatMs,

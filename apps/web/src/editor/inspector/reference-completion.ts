@@ -12,6 +12,7 @@ import {
 	WHOLE_REFERENCE,
 } from "@sfly/orchestration";
 import type { StoredOrchestrationDocument } from "@sfly/schema";
+import { TERM } from "#/lib/copy";
 
 /**
  * 引用补全的纯逻辑（检查器的 ReferenceEditor、ReferencePicker 使用，单测覆盖）：可引用的值与来源说明、
@@ -31,7 +32,7 @@ const RUN_STATE_DESCRIPTION =
 
 /**
  * 节点 id 可以引用的值（本链的入口参数、运行状态、前序节点的输出），带上来源说明：
- * 参数的类型（敏感参数标出），运行状态的类型与来源，输出的类型与所属节点（写成「显示名称（节点 ID）」）。
+ * 参数的类型（secret 参数标出），运行状态的类型与来源，输出的类型与所属节点（写成「显示名称（节点 ID）」）。
  */
 export function referenceChoices(
 	doc: StoredOrchestrationDocument,
@@ -45,7 +46,7 @@ export function referenceChoices(
 		switch (o.kind) {
 			case "param": {
 				const p = params.get(o.key);
-				return { ...o, detail: `${p?.type ?? ""}${p?.secret ? " · 敏感" : ""}` };
+				return { ...o, detail: `${p?.type ?? ""}${p?.secret ? ` · ${TERM.secret}` : ""}` };
 			}
 			case "run_state":
 				return { ...o, detail: RUN_STATE_DETAIL, description: RUN_STATE_DESCRIPTION };

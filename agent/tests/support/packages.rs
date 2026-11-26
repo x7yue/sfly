@@ -40,14 +40,23 @@ pub struct Upload {
     pub at: tokio::time::Instant,
 }
 
-/// 收到的 GET 请求：(路径, User-Agent)。
-type Requests = Arc<Mutex<Vec<(String, Option<String>)>>>;
+/// 收到的一次 GET 请求。
+#[derive(Debug, Clone)]
+struct Request {
+    path: String,
+    user_agent: Option<String>,
+    authorization: Option<String>,
+}
+
+type Requests = Arc<Mutex<Vec<Request>>>;
 
 #[derive(Default)]
 struct Files {
     uploads: Vec<Upload>,
     /// PUT 的响应状态码；None 为 201。
     upload_status: Option<u16>,
+    /// PUT 失败时响应的正文；None 为 `{}`。
+    upload_body: Option<String>,
     by_path: HashMap<String, File>,
     /// 镜像中的项目（规范化名）→ wheel 文件名。
     projects: HashMap<String, Vec<String>>,
@@ -171,7 +180,7 @@ impl HttpFixture {
     /// 收到的请求路径（按到达顺序）。
     pub fn requests(&self) -> Vec<String> {
         let requests = self.requests.lock().unwrap();
-        requests.iter().map(|(path, _)| path.clone()).collect()
+        requests.iter().map(|r| r.path.clone()).collect()
     }
 
     /// 对 `path` 的每次请求带的 User-Agent（没有这个头时为 None）。
@@ -179,8 +188,18 @@ impl HttpFixture {
         let requests = self.requests.lock().unwrap();
         requests
             .iter()
-            .filter(|(p, _)| p == path)
-            .map(|(_, ua)| ua.clone())
+            .filter(|r| r.path == path)
+            .map(|r| r.user_agent.clone())
+            .collect()
+    }
+
+    /// 对 `path` 的每次请求带的 `Authorization`（没有这个头时为 None）。
+    pub fn authorizations(&self, path: &str) -> Vec<Option<String>> {
+        let requests = self.requests.lock().unwrap();
+        requests
+            .iter()
+            .filter(|r| r.path == path)
+            .map(|r| r.authorization.clone())
             .collect()
     }
 
@@ -196,6 +215,13 @@ impl HttpFixture {
     /// 之后的 PUT 都回这个状态码。
     pub fn reject_uploads(&self, status: u16) {
         self.files.lock().unwrap().upload_status = Some(status);
+    }
+
+    /// 之后的 PUT 都回这个状态码和这段正文。
+    pub fn reject_uploads_with_body(&self, status: u16, body: &str) {
+        let mut files = self.files.lock().unwrap();
+        files.upload_status = Some(status);
+        files.upload_body = Some(body.to_string());
     }
 }
 
@@ -241,7 +267,7 @@ async fn serve(
             }
             body.extend_from_slice(&chunk[..n]);
         }
-        let status = {
+        let (status, response_body) = {
             let mut files = files.lock().unwrap();
             files.uploads.push(Upload {
                 path: head.split_whitespace().nth(1).unwrap_or("/").to_string(),
@@ -250,10 +276,14 @@ async fn serve(
                 body,
                 at: tokio::time::Instant::now(),
             });
-            files.upload_status.unwrap_or(201)
+            (
+                files.upload_status.unwrap_or(201),
+                files.upload_body.clone().unwrap_or_else(|| "{}".into()),
+            )
         };
         let reply = format!(
-            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{response_body}",
+            response_body.len()
         );
         stream.write_all(reply.as_bytes()).await?;
         return stream.shutdown().await;
@@ -266,10 +296,11 @@ async fn serve(
         .next()
         .unwrap_or("/")
         .to_string();
-    requests.lock().unwrap().push((
-        path.clone(),
-        header(&head, "user-agent").map(str::to_string),
-    ));
+    requests.lock().unwrap().push(Request {
+        path: path.clone(),
+        user_agent: header(&head, "user-agent").map(str::to_string),
+        authorization: header(&head, "authorization").map(str::to_string),
+    });
     let redirect = files.lock().unwrap().redirects.get(&path).cloned();
     if let Some(location) = redirect {
         let reply = format!(

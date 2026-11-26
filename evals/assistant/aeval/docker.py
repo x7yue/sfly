@@ -18,7 +18,7 @@ def docker(
     timeout: float | None = None,
     env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """`env`：加给 docker 命令行进程的环境变量。保密的值用它，配合参数里只写名字的 `-e 名字`：
+    """`env`：加给 docker 命令行进程的环境变量。凭据用它，配合参数里只写名字的 `-e 名字`：
     值不出现在命令行参数里（`ps` 看得到参数），出错时也不会被带进异常。"""
     result = subprocess.run(
         ["docker", *args],
@@ -58,7 +58,7 @@ def sh(
 ) -> subprocess.CompletedProcess[str]:
     """在容器里用 bash 执行一段脚本（以 root、登录 shell 的 PATH 运行）。
 
-    保密的值（凭据）不要放进命令行参数（宿主机上 `ps` 看得到参数）：环境变量用 `secret_env`
+    凭据不要放进命令行参数（宿主机上 `ps` 看得到参数）：环境变量用 `secret_env`
     （参数里只写 `-e 名字`，值经 docker 命令行进程的环境带进去），
     别的用 `input_text` 经标准输入给脚本。
     """

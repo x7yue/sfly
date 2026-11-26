@@ -9,7 +9,9 @@ import {
 	maskedByAutomaton,
 	maskedRegion,
 	mergeSpans,
+	overAutomatonLimit,
 	scanSpans,
+	totalChars,
 } from "./aho-corasick.js";
 
 /**
@@ -57,15 +59,15 @@ function tokenSpans(text: string): { starts: number[]; ends: number[] } | undefi
  * 值是对象或数组的 secret 参数，它里面的字符串、数字叶子按值打码的最短长度（字符数；数字按它的 JSON 文本算）。
  * 更短的叶子（`a`、`1`、`on`）多是配置里的标签和开关，不是凭据：按子串打码会把日志、错误、输出整片换掉，读不了
  * （#479 的决定）；它们只在整个对象被原样写出时随整段一起盖住，另给一条警告（`secret_short_leaf`）。
- * 值本身是字符串、数字、布尔的 secret 参数不受这个下限限制：使用者对这一个值明确说了保密，再短也打码。
+ * 值本身是字符串、数字、布尔的 secret 参数不受这个下限限制：使用者明确把这个参数标成了 secret，再短也打码。
  */
 export const MIN_LEAF_CHARS = 4;
 
 /**
  * 一次读取（一页、一个下载块、流上的一批、一次运行的读取）里所有打码共用的预算（{@link SecretSet.withBudget}）。
  * 预算只记一样东西：**完整的出现的次数**（`masks`，合并重叠之后的段数）。每段输出多一个掩码，限住它，输出才不会被撑大
- * （一个字符的保密值，文字里每个位置都是它，每个位置换成六个字符的掩码）；用完之后，这次读取里还有完整的出现的文字整段盖住
- * （宁可多盖，不漏），没有完整的出现的文字原样。它和保密值的内容无关（完整的出现本身除外），所以 docs/SEMANTICS.md §2.1 的规矩没有例外。
+ * （一个字符的 secret 值，文字里每个位置都是它，每个位置换成六个字符的掩码）；用完之后，这次读取里还有完整的出现的文字整段盖住
+ * （宁可多盖，不漏），没有完整的出现的文字原样。它和 secret 值的内容无关（完整的出现本身除外），所以 docs/SEMANTICS.md §2.1 的规矩没有例外。
  *
  * 没有「扫过的字符数」的预算：扫描的耗时和读到的文字成正比，每个字符最坏是总长上限（{@link MAX_AUTOMATON_CHARS}）处最刁钻的形状下
  * 的耗时，每个读取出口读多少由它自己的上限管（一页日志的字节上限、单个输入输出的 1 MiB）；再设一个会把正常的内容整段盖住的数，
@@ -425,7 +427,7 @@ export class SecretSet {
 	readonly #lazy: Lazy;
 	/** 这个视图的预算；没有时只受单次的上限（{@link READ_MASKS}）约束（写入、测试）。 */
 	readonly #budget: WorkBudget | undefined;
-	/** 保密对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
+	/** secret 对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
 	readonly #arraySizes: Set<number>;
 	readonly #objectSizes: Set<number>;
 	readonly #containerLengths: Set<number>;
@@ -518,7 +520,10 @@ export class SecretSet {
 	 */
 	#automaton(): Automaton | undefined {
 		if (!this.#lazy.built) {
-			this.#lazy.automaton = buildAutomaton(this.texts, secretLimits.automatonChars);
+			// 总长超过上限的不建（{@link oversize} 按当时的上限定下来的，建自动机用的是同一个判断）。
+			this.#lazy.automaton = this.oversize
+				? undefined
+				: buildAutomaton(this.texts, secretLimits.automatonChars);
 			this.#lazy.built = true;
 			this.#lazy.watch?.(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
 		}
@@ -537,9 +542,23 @@ export class SecretSet {
 		return this.#lazy.noticeIsValue;
 	}
 
-	/** 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。 */
+	/**
+	 * 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。
+	 * 只比总长（{@link overAutomatonLimit}，建自动机时用的就是它），**不建自动机**：预检、触发时的检查问它，
+	 * 不能为了回答「太不太大」去建一个十几 MB 的自动机。
+	 */
 	get oversize(): boolean {
-		return this.texts.length > 0 && this.#automaton() === undefined;
+		// 第一次问（或第一次要自动机）时按当时的上限定下来，之后不变：和自动机建一次是同一个说法
+		// （上限只有测试会改，改之前要清缓存，{@link clearSecretSetCache}）。
+		this.#lazy.oversize ??=
+			this.texts.length > 0 && overAutomatonLimit(this.chars, secretLimits.automatonChars);
+		return this.#lazy.oversize;
+	}
+
+	/** 所有写法的总长（UTF-16 码元个数，每种写法只算一次）；每份值集合只算一次。 */
+	get chars(): number {
+		this.#lazy.chars ??= totalChars(this.texts);
+		return this.#lazy.chars;
 	}
 
 	/**
@@ -683,6 +702,10 @@ interface Lazy {
 	built?: boolean;
 	/** 建好时通知（{@link SecretSet.watchBuild}）。 */
 	watch?: (bytes: number) => void;
+	/** 所有写法的总长（{@link SecretSet.chars}，算一次）。 */
+	chars?: number;
+	/** 总长超过上限（{@link SecretSet.oversize}，第一次问的时候按当时的上限定下来）。 */
+	oversize?: boolean;
 	/** 值集合的某个写法恰好就是 {@link OVERSIZE_NOTICE}（算一次：说明那一行每出现一次都要问，不能每次扫一遍所有的值）。 */
 	noticeIsValue?: boolean;
 }
@@ -702,7 +725,7 @@ export const NO_SECRETS: SecretSet = new SecretSet();
 /**
  * 值集合的缓存：键是这些值本身（JSON），所以运行里多了一个子流程实例带来的 secret 值，键就变了，另算一份；值一样就是同一份。
  * 写日志的每一批、读取运行的每一次都要问「这次运行此刻的 secret 值」，值没变时不用把每个值的各种写法再写一遍
- * （保密对象有几千个键时，一批要多花十几毫秒），建好的自动机也跟着复用。
+ * （secret 对象有几千个键时，一批要多花十几毫秒），建好的自动机也跟着复用。
  *
  * 按占用的字节数限大小（{@link SET_CACHE_MAX_BYTES}）：一份值集合占它的文本（每个字符按 2 字节算），加上建好的自动机
  * （{@link automatonBytes}，建好之后才计入）。自动机每个节点约 11 字节，另有最多 4 MB 的转移表和 256 KB 的字符类表，和总长无关，
@@ -726,10 +749,24 @@ function trimSetCache(): void {
 	}
 }
 
+/** 值集合的缓存里现在有几份、占多少字节（只给测试用：预检不能往运行共用的缓存里放东西，#632）。 */
+export function secretSetCacheStats(): { entries: number; bytes: number } {
+	return { entries: setCache.size, bytes: setCacheBytes };
+}
+
 /** 清掉值集合的缓存（只给测试用：改了 {@link secretLimits} 之后，缓存里按旧的上限建的值集合不能再用）。 */
 export function clearSecretSetCache(): void {
 	setCache.clear();
 	setCacheBytes = 0;
+}
+
+/**
+ * 同 {@link secretSetOf}，但**不进值集合的缓存**：预检按场景里的默认值、运行预设算大小用（`runs/secret-size*.ts`）。
+ * 它们不是哪个运行用的值集合，进了缓存会把正在跑的运行的值集合（和它的自动机）挤掉；只用来数总长（{@link SecretSet.chars}），
+ * 不要拿它打码。
+ */
+export function secretSetUncached(values: Iterable<unknown>): SecretSet {
+	return new SecretSet([...values].map(secretPartsOf));
 }
 
 /** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）；值相同的是同一个对象（不可变，可以共用）。 */
@@ -757,6 +794,16 @@ export function secretSetOf(values: Iterable<unknown>): SecretSet {
 	});
 	trimSetCache();
 	return set;
+}
+
+/**
+ * 一个 secret 参数的值单独算，所有写法的总长（{@link SecretSet.chars} 里这个值占的那部分；
+ * 几个参数里有相同的写法时，值集合里只算一次，所以各参数的和可以比值集合的总长大）。预检写明哪个参数占得多时用。
+ */
+export function secretValueChars(value: unknown): number {
+	let total = 0;
+	for (const text of secretPartsOf(value).texts) total += text.length;
+	return total;
 }
 
 /** 一个链实例起点声明为 secret 的参数的值（有值的）。 */

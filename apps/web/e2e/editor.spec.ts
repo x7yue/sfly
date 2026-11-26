@@ -312,8 +312,24 @@ test("检查器：字符串参数只有一个输入框，输入 $ 或点「插�
 	await expect(list.getByRole("group")).toHaveText([/^入口参数/, /^运行状态/, /^前序节点/]);
 	await expect(list.getByRole("group", { name: "入口参数" }).getByRole("option")).toHaveText([
 		/params\.biz_date\s*string/,
-		/params\.api_token\s*string · 敏感/,
+		/params\.api_token\s*string · secret/,
 	]);
+	// 名字比类型说明重要：名字被截短只会是因为它比整行还长，不会是类型说明（比如「string · secret」）占了地方。
+	const names = await list.getByRole("option").evaluateAll((options) =>
+		options.map((option) => {
+			const name = option.firstElementChild as HTMLElement;
+			const row = option.getBoundingClientRect().width - 16; // 左右各 8 px 的内边距
+			return {
+				text: name.textContent,
+				truncated: name.scrollWidth > name.clientWidth,
+				fillsRow: name.getBoundingClientRect().width >= row - 1,
+			};
+		}),
+	);
+	expect(names.length).toBeGreaterThan(0);
+	for (const name of names) {
+		if (name.truncated) expect(name.fillsRow, `${name.text} 被类型说明挤短了`).toBe(true);
+	}
 	await expect(list.getByRole("group", { name: "运行状态" }).getByRole("option")).toHaveText([
 		/run\.state\s*object · 这次运行/,
 	]);
@@ -555,7 +571,7 @@ test("检查器：非字符串参数没有模式切换；「插入引用」选�
 	});
 });
 
-test("异步任务参数映射、入口参数默认值用同一种输入框；敏感参数的默认值仍是密码框", async ({
+test("异步任务参数映射、入口参数默认值用同一种输入框；secret 参数的默认值仍是密码框", async ({
 	page,
 	controlPlane,
 }) => {
@@ -583,7 +599,7 @@ test("异步任务参数映射、入口参数默认值用同一种输入框；�
 	await expect(date).toHaveText("${{ params.biz_date }}-${{ params.biz_date }}");
 	await expect(panel.getByRole("button", { name: "放大编辑 date" })).toBeVisible();
 
-	// 入口参数默认值：同一种输入框，但默认值是字面量，不弹补全、不高亮；敏感参数仍是密码框。
+	// 入口参数默认值：同一种输入框，但默认值是字面量，不弹补全、不高亮；secret 参数仍是密码框。
 	await nodeCard(page, "entry").click();
 	const bizDate = panel.getByRole("group", { name: "参数 biz_date" });
 	const fallback = bizDate.getByRole("combobox", { name: "默认值" });
@@ -595,7 +611,7 @@ test("异步任务参数映射、入口参数默认值用同一种输入框；�
 	await expect(fallback.locator(".cm-line")).toHaveCount(2);
 	await expect(bizDate.getByRole("button", { name: "放大编辑 biz_date" })).toBeVisible();
 	const token = panel.getByRole("group", { name: "参数 api_token" });
-	// 已设置的敏感默认值读不回来，显示成「已设置」；换成新的值时才是密码框（下一个用例）。
+	// 已设置的 secret 默认值读不回来，显示成「已设置」；换成新的值时才是密码框（下一个用例）。
 	await expect(token.getByLabel("默认值", { exact: true })).toHaveValue("已设置");
 	await expect(token.getByRole("button", { name: "替换 api_token 的默认值" })).toBeVisible();
 	await expect(token.locator('[data-slot="reference-editor"]')).toHaveCount(0);
@@ -906,7 +922,7 @@ test("撤销到已保存的状态：字段、顶栏和节点卡片说的是同�
 	await expect(panel.getByText("需要整数")).toBeVisible();
 });
 
-test("敏感参数的默认值读不回来：显示「已设置」，替换成新的值后隐藏显示、可以临时显示；取消「敏感」需要二次确认", async ({
+test("secret 参数的默认值读不回来：显示「已设置」，替换成新的值后隐藏显示、可以临时显示；取消「secret」需要二次确认", async ({
 	page,
 	controlPlane,
 }) => {
@@ -927,18 +943,18 @@ test("敏感参数的默认值读不回来：显示「已设置」，替换成�
 	// 5 秒后自动隐藏。
 	await expect(value).toHaveAttribute("type", "password", { timeout: 8_000 });
 
-	const secret = token.getByRole("switch", { name: "敏感" });
+	const secret = token.getByRole("switch", { name: "secret" });
 	await secret.click();
-	const confirm = page.getByRole("dialog", { name: "取消参数 api_token 的「敏感」标记？" });
+	const confirm = page.getByRole("dialog", { name: "取消参数 api_token 的「secret」标记？" });
 	await expect(confirm).toBeVisible();
-	await confirm.getByRole("button", { name: "保持敏感" }).click();
+	await confirm.getByRole("button", { name: "保留 secret 标记" }).click();
 	await expect(confirm).toHaveCount(0);
 	await expect(secret).toBeChecked();
 
 	await secret.click();
-	await confirm.getByRole("button", { name: "取消敏感标记" }).click();
+	await confirm.getByRole("button", { name: "取消 secret 标记" }).click();
 	await expect(secret).not.toBeChecked();
-	// 不再敏感：换成普通的输入框，明文显示。
+	// 不再是 secret：换成普通的输入框，明文显示。
 	await expect(token.getByRole("combobox", { name: "默认值" })).toHaveText("test-secret-new");
 	await expect(token.locator('input[type="password"]')).toHaveCount(0);
 	await expect(token.getByRole("button", { name: "临时显示默认值" })).toHaveCount(0);

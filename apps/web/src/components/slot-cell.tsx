@@ -5,6 +5,7 @@ import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, STATUS, StatusDot } from "#/components/status";
 import { attemptLabel, namedChainLabel, TERM } from "#/lib/copy";
 import { shortId } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Truncate } from "@/components/ui/truncate";
 
 /**
@@ -82,7 +83,9 @@ export function SlotCell({
 			<div className="mt-0.5 flex min-w-0 text-xs text-fg-3">
 				<Truncate>{`${taskChainLabel(task)} · ${attemptLabel(task.attempt)}`}</Truncate>
 				<span className="flex-none whitespace-pre"> · </span>
-				<Truncate className="font-mono">{task.node_type}</Truncate>
+				<Truncate untrusted className="font-mono">
+					{task.node_type}
+				</Truncate>
 			</div>
 			{children}
 		</li>
@@ -111,7 +114,7 @@ export const idleSlotCount = (slots: number, running: number): number =>
 export const taskChainLabel = (task: Pick<RunningTaskView, "chain_name">): string =>
 	namedChainLabel(task.chain_name);
 
-/** 格子的可访问名称：节点、场景，以及调用方补充的说明。 */
+/** 格子的可访问名称：节点、场景，以及调用方补充的说明（正在做的动作、进度的说明：别人写的文字，先过 `untrustedPlain`）。 */
 export const slotLabel = (
 	task: Pick<RunningTaskView, "node_id" | "display_name" | "orchestration_name">,
 	summary?: string,
@@ -119,5 +122,5 @@ export const slotLabel = (
 	[
 		`${TERM.node} ${runNodeName(task)}`,
 		`${TERM.scenario} ${task.orchestration_name}`,
-		...(summary ? [summary] : []),
+		...(summary ? [untrustedPlain(summary)] : []),
 	].join("，");

@@ -67,4 +67,9 @@ mutant heartbeat-lost-no-cancel SlowDelivery NoUnstoppedDuplicate \
 mutant dispatch-before-ready Safe AssignOnlyWhenReady \
 	$'    /\\ ready\n    /\\ cp[a] = "queued"' \
 	$'    /\\ cp[a] = "queued"'
+# lib.rs run() / ledger.rs replace_results_over：反过来把失败换成成功（#723）。换结果只能是成功换失败；换成成功会让一个
+# 没有真正执行成功的尝试被控制面记成成功。
+mutant replace-fail-to-success Safe SuccessWasRun \
+	$'        /\\ r[2]\n        /\\ LET new == <<r[1], FALSE>>' \
+	$'        /\\ ~r[2]\n        /\\ LET new == <<r[1], TRUE>>'
 exit $status

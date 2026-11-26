@@ -8,6 +8,7 @@
 //! | `SFLY_OUTPUT` | `output.json`：执行器写入的结果 |
 //! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录（任务结束后由 [`crate::artifacts`] 上传） |
 //! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
+//! | `SFLY_TASK_TOKEN` | 任务凭据（`AssignTask.task_token`，为空即旧版本控制面没带时不设置）：只在这次任务尝试有效，只能下载本项目任务的产物；SDK 下载产物时只对以控制面的前缀（`SFLY_ARTIFACTS_URL` 去掉结尾的 `tasks/<任务 ID>/artifacts/`）开头、后面接着 `tasks/` 的地址带它。不写进 `task.json`、不写日志、不落在任务目录里（#492） |
 //! | `SFLY_ARTIFACT_LIMIT_BYTES` | 这个任务的产物合计上限（字节，`AssignTask.artifact_limit_bytes`，0 即旧版本控制面没带时不设置；SDK 的 `ctx.artifacts.limit_bytes`，#477） |
 //! | `SFLY_EVENTS` | `events.fifo`：结构化日志、进度与指标（命名管道，启动执行器前由 Agent 创建并打开读端，ADR 0015） |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
@@ -34,6 +35,25 @@ use crate::proto::{
     agent_message,
 };
 use crate::venv::SharedVenv;
+
+/// 节点输出（JSON 序列化之后）的大小上限：1 MB。执行器（`sdk/python/src/sfly/runner.py` 的 `MAX_OUTPUT_BYTES`）本地检查过，
+/// 控制面（`apps/server/src/engine/output-limit.ts`）收到之后再检查一次；Agent 自己也检查：超过的结果不发出去，直接判失败
+/// （#723：结果超过控制面一条消息的上限会被拒绝，没确认的结果每次重连都重发，一直被拒）。
+pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+/// 失败结果里文字（`TaskError.message`）的大小上限：1 MiB，和节点输出的上限一样。更长的把中间省掉，开头（异常的类型和消息）
+/// 和末尾（堆栈最里面的几帧）各留一半，写明省掉了多少（[`bound_error_text`]）。
+pub const MAX_ERROR_TEXT_BYTES: usize = 1024 * 1024;
+/// 出错位置（`TaskError.location`，「模块.函数 第 N 行」）的大小上限。
+const MAX_LOCATION_BYTES: usize = 1024;
+/// 读执行器写的 `output.json` 最多读这么多字节：旧版本的执行器失败时异常的文字同时写进 `message` 和 `traceback`，
+/// 一份 8 MiB 的异常文字写出 16 MiB（新版本的执行器自己限长，写出的远小于这个数，碰不到它）。更大的不读，按执行器
+/// 异常退出处理，附上标准错误的尾部（异常文字的末尾，堆栈在它前面）。读之前不知道多大，整份读进内存再解析，
+/// 所以这个数也是一个任务结束时 Agent 在这件事上最多占的内存的量级。
+const MAX_OUTPUT_FILE_BYTES: usize = 16 * 1024 * 1024;
+
+/// 失败文字太长、Agent 要省掉中间时附在末尾的一句：旧版本的 SDK（执行器）写的说明和堆栈都不限长。
+const OLDER_SDK_ADVICE: &str = "\n\n（失败的文字太长：节点包用的 SDK 是旧版本，不限长。升级 SDK 之后失败结果由执行器自己限长，\
+     留着异常的类型、出错的位置和堆栈的最后几帧；完整的堆栈在任务日志的标准错误里。）";
 
 #[derive(Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -79,11 +99,20 @@ impl RunnerError {
 }
 
 pub fn success(task: &AssignTask, outputs: &Value) -> TaskResult {
+    let outputs_json = outputs.to_string();
+    // 和控制面（output-limit.ts）同一个判断、同一句话：超过 1 MB 的输出不发出去，直接判失败。
+    if outputs_json.len() > MAX_OUTPUT_BYTES {
+        return failure(
+            task,
+            ErrorKind::NodeError,
+            format!("节点输出超过 1 MB 上限（{} 字节）", outputs_json.len()),
+        );
+    }
     TaskResult {
         task_id: task.task_id.clone(),
         attempt: task.attempt,
         status: TaskStatus::Success.into(),
-        outputs_json: outputs.to_string(),
+        outputs_json,
         error: None,
         // 结束时的 Agent 时间与单调时钟读数在交出结果时统一打上（[`stamp_end`]）。
         ..Default::default()
@@ -101,18 +130,67 @@ pub fn failure_at(
     message: impl Into<String>,
     location: String,
 ) -> TaskResult {
+    result_with_error(task, TaskStatus::Failed, kind, message.into(), location)
+}
+
+/// 带错误的结果（失败、取消）：构造它的只有这一处，所以每一条结果里的文字都过上界（[`bound_error_text`]、
+/// [`MAX_LOCATION_BYTES`]），不论是哪条路径构造的。
+fn result_with_error(
+    task: &AssignTask,
+    status: TaskStatus,
+    kind: ErrorKind,
+    message: String,
+    location: String,
+) -> TaskResult {
     TaskResult {
         task_id: task.task_id.clone(),
         attempt: task.attempt,
-        status: TaskStatus::Failed.into(),
+        status: status.into(),
         outputs_json: String::new(),
         error: Some(Box::new(TaskError {
             kind: kind.into(),
-            message: message.into(),
-            location,
+            message: bound_error_text(message),
+            location: truncate_at_boundary(location, MAX_LOCATION_BYTES),
         })),
         ..Default::default()
     }
+}
+
+/// 不超过 `max` 字节、落在字符边界上的开头。
+pub(crate) fn truncate_at_boundary(mut text: String, max: usize) -> String {
+    if text.len() > max {
+        let mut cut = max;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+    }
+    text
+}
+
+/// 失败文字超过 [`MAX_ERROR_TEXT_BYTES`] 时把中间省掉：开头和末尾各留一半（落在字符边界上），中间写明省掉了多少字节。
+/// 失败结果在没收到 Ack 之前每次重连都重发，太大的会被控制面拒绝（一条消息的上限，#674）；节点抛出一条几十 MiB 文字的
+/// 异常，不加这一道就能让这台 Agent 被卡住。
+pub fn bound_error_text(text: String) -> String {
+    if text.len() <= MAX_ERROR_TEXT_BYTES {
+        return text;
+    }
+    let keep = MAX_ERROR_TEXT_BYTES / 2;
+    let mut head = keep;
+    while !text.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = text.len() - keep;
+    while !text.is_char_boundary(tail) {
+        tail += 1;
+    }
+    format!(
+        "{}\n\n…（失败的文字有 {} 字节，超过 {MAX_ERROR_TEXT_BYTES} 字节：中间 {} 字节没有保留）…\n\n{}",
+        &text[..head],
+        text.len(),
+        tail - head,
+        &text[tail..]
+    )
 }
 
 /// 给结果打上任务结束这一刻的 Agent 时间与单调时钟读数（ADR 0018）：控制面据此记下结束时的时钟偏差。
@@ -279,6 +357,10 @@ fn spawn_process(
     if !task.artifact_upload_url.is_empty() {
         command.env("SFLY_ARTIFACTS_URL", &task.artifact_upload_url);
     }
+    // 任务凭据（#492）：只放进执行器的环境变量，不写 task.json、不写日志。
+    if !task.task_token.is_empty() {
+        command.env("SFLY_TASK_TOKEN", &task.task_token);
+    }
     // 产物合计的上限：节点在保存时就知道，不用等任务结束、传了很多之后才被拒绝（#477）。
     if task.artifact_limit_bytes > 0 {
         command.env(
@@ -386,20 +468,35 @@ impl Running {
             }
         };
 
-        let output = tokio::fs::read(&paths.output)
-            .await
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Output>(&bytes).ok());
+        let bytes = read_output(&paths.output).await;
+        if let Some(bytes) = bytes.as_ref().filter(|b| b.len() > MAX_OUTPUT_FILE_BYTES) {
+            return failure(
+                task,
+                ErrorKind::NodeError,
+                format!(
+                    "执行器写出的 output.json 超过 {MAX_OUTPUT_FILE_BYTES} 字节（至少 {} 字节），没有读：异常的类型、\
+                     出错的位置、堆栈都看不到。新版本的 SDK 写失败结果之前自己限长，升级节点包用的 SDK 就能看到；\
+                     完整的堆栈在任务日志的标准错误里。下面是标准错误的最后一段：\n\n{}",
+                    bytes.len(),
+                    String::from_utf8_lossy(&stderr).trim_end()
+                ),
+            );
+        }
+        let output = bytes.and_then(|bytes| serde_json::from_slice::<Output>(&bytes).ok());
         match output {
             Some(Output::Success { outputs }) if status.success() => success(task, &outputs),
             Some(Output::Failed { error }) => {
                 let kind = error.error_kind();
                 let location = error.location.clone().unwrap_or_default();
-                let message = if error.traceback.is_empty() {
+                let mut message = if error.traceback.is_empty() {
                     error.message
                 } else {
                     format!("{}\n\n{}", error.message, error.traceback.trim_end())
                 };
+                // 旧版本的 SDK 不限长：太长要在这里把中间省掉了，写一句能照着做的话（放在末尾，省掉的是中间，它留得下来）。
+                if message.len() > MAX_ERROR_TEXT_BYTES {
+                    message.push_str(OLDER_SDK_ADVICE);
+                }
                 failure_at(task, kind, message, location)
             }
             _ => failure(
@@ -412,6 +509,19 @@ impl Running {
             ),
         }
     }
+}
+
+/// 读执行器写的 `output.json`，最多读 [`MAX_OUTPUT_FILE_BYTES`] 加一个字节：返回的比上限长就是文件超过了上限。
+/// 读不了（文件不存在、读出错）是 None。
+async fn read_output(path: &Path) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_OUTPUT_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    Some(bytes)
 }
 
 /// 写取消标记：节点里 `ctx.cancelled()` 之后为真。取消和超时进入收尾时间时都先写它：
@@ -462,18 +572,13 @@ impl Running {
             (false, Ok(_)) => "已强制杀掉进程树".to_string(),
         };
         self.pump.finish().await;
-        TaskResult {
-            task_id: self.task.task_id.clone(),
-            attempt: self.task.attempt,
-            status: TaskStatus::Cancelled.into(),
-            outputs_json: String::new(),
-            error: Some(Box::new(TaskError {
-                kind: ErrorKind::Unspecified.into(),
-                message: format!("任务已取消，{how}"),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }
+        result_with_error(
+            &self.task,
+            TaskStatus::Cancelled,
+            ErrorKind::Unspecified,
+            format!("任务已取消，{how}"),
+            String::new(),
+        )
     }
 
     /// 超时（docs/SEMANTICS.md §3.3）：和取消一样先写取消标记，节点进入收尾时间（宽限期）时
@@ -515,5 +620,169 @@ impl Running {
             ErrorKind::Timeout,
             format!("任务执行超过 {seconds} 秒，{killed}"),
         )
+    }
+}
+
+#[cfg(test)]
+mod bound_tests {
+    use prost::Message as _;
+
+    use super::*;
+
+    fn task() -> AssignTask {
+        AssignTask {
+            task_id: "t".into(),
+            attempt: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn error_text_that_fits_is_unchanged() {
+        let exactly = "e".repeat(MAX_ERROR_TEXT_BYTES);
+        assert_eq!(bound_error_text(exactly.clone()), exactly);
+        assert_eq!(bound_error_text(String::new()), "");
+    }
+
+    #[test]
+    fn long_error_text_keeps_the_start_and_the_end_and_says_how_much_was_left_out() {
+        let text = format!(
+            "ValueError: 开头的消息{}堆栈最里面的一帧",
+            "中".repeat(MAX_ERROR_TEXT_BYTES)
+        );
+        let total = text.len();
+        let bounded = bound_error_text(text);
+        assert!(bounded.starts_with("ValueError: 开头的消息"));
+        assert!(bounded.ends_with("堆栈最里面的一帧"));
+        assert!(
+            bounded.len() < MAX_ERROR_TEXT_BYTES + 300,
+            "{} 字节",
+            bounded.len()
+        );
+        assert!(
+            bounded.contains(&format!("失败的文字有 {total} 字节")),
+            "{}",
+            &bounded[bounded.len() / 2 - 100..bounded.len() / 2 + 100]
+        );
+        // 3 字节的字符：省掉的部分两端都落在字符边界上（String 本身保证合法，这里看写出的数和实际一致）
+        let omitted: usize = bounded
+            .split("中间 ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .expect("写明了省掉多少字节");
+        // 留下的（开头加末尾）是上限那么多字节，落在字符边界上最多差几个字节
+        let kept = total - omitted;
+        assert!(
+            (MAX_ERROR_TEXT_BYTES - 8..=MAX_ERROR_TEXT_BYTES).contains(&kept),
+            "留下 {kept} 字节"
+        );
+    }
+
+    /// 多字节的文字：字符数在上限之下、字节数超过上限的也要截（按字节算，不是按字符数），整段仍是合法的文字。
+    #[test]
+    fn a_multibyte_text_is_bounded_by_bytes_not_by_characters() {
+        let characters = MAX_ERROR_TEXT_BYTES / 2;
+        let text = "中".repeat(characters);
+        assert!(text.chars().count() < MAX_ERROR_TEXT_BYTES);
+        assert!(text.len() > MAX_ERROR_TEXT_BYTES);
+        let bounded = bound_error_text(text);
+        assert!(
+            bounded.len() < MAX_ERROR_TEXT_BYTES + 300,
+            "{}",
+            bounded.len()
+        );
+        assert!(bounded.starts_with("中中中") && bounded.ends_with("中中中"));
+    }
+
+    #[test]
+    fn every_failure_result_is_bounded_whatever_built_it() {
+        let result = failure_at(
+            &task(),
+            ErrorKind::NodeError,
+            "m".repeat(5 * MAX_ERROR_TEXT_BYTES),
+            "位".repeat(5000),
+        );
+        assert!(result.encoded_len() < MAX_ERROR_TEXT_BYTES + 4000);
+        let error = result.error.expect("失败带着原因");
+        assert!(error.message.len() < MAX_ERROR_TEXT_BYTES + 300);
+        assert!(error.location.len() <= MAX_LOCATION_BYTES);
+    }
+
+    /// 读 output.json 最多读上限加一个字节：文件再大也不全读进内存；返回的比上限长，就是文件超过了上限。
+    #[tokio::test]
+    async fn output_json_is_read_at_most_one_byte_past_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.json");
+        std::fs::write(&big, vec![b'x'; MAX_OUTPUT_FILE_BYTES + 5000]).unwrap();
+        assert_eq!(
+            read_output(&big).await.unwrap().len(),
+            MAX_OUTPUT_FILE_BYTES + 1
+        );
+        let exact = dir.path().join("exact.json");
+        std::fs::write(&exact, vec![b'x'; MAX_OUTPUT_FILE_BYTES]).unwrap();
+        assert_eq!(
+            read_output(&exact).await.unwrap().len(),
+            MAX_OUTPUT_FILE_BYTES
+        );
+        assert!(
+            read_output(&dir.path().join("missing.json"))
+                .await
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn outputs_over_one_megabyte_are_a_node_error_with_the_control_planes_words() {
+        // 序列化之后正好 1 MiB 的收下，多一个字节的判失败
+        let fits = Value::String("x".repeat(MAX_OUTPUT_BYTES - 2));
+        let ok = success(&task(), &fits);
+        assert_eq!(ok.status(), TaskStatus::Success);
+        assert_eq!(ok.outputs_json.len(), MAX_OUTPUT_BYTES);
+
+        let too_big = Value::String("x".repeat(MAX_OUTPUT_BYTES - 1));
+        let failed = success(&task(), &too_big);
+        assert_eq!(failed.status(), TaskStatus::Failed);
+        assert_eq!(failed.outputs_json, "");
+        let error = failed.error.expect("失败带着原因");
+        assert_eq!(error.kind(), ErrorKind::NodeError);
+        // 和 apps/server/src/engine/output-limit.ts 同一句话
+        assert_eq!(
+            error.message,
+            format!("节点输出超过 1 MB 上限（{} 字节）", MAX_OUTPUT_BYTES + 1)
+        );
+    }
+
+    /// 带错误的结果只有一个构造的地方：失败和取消的文字、位置都过上界，不论是哪条路径构造的（#723）。
+    #[test]
+    fn every_result_with_an_error_is_bounded_whatever_its_status() {
+        let huge = "中".repeat(MAX_ERROR_TEXT_BYTES);
+        let place = "位".repeat(5_000);
+        for status in [TaskStatus::Failed, TaskStatus::Cancelled] {
+            let result = result_with_error(
+                &task(),
+                status,
+                ErrorKind::NodeError,
+                huge.clone(),
+                place.clone(),
+            );
+            assert_eq!(result.status(), status);
+            let error = result.error.expect("带着错误");
+            assert!(
+                error.message.len() < MAX_ERROR_TEXT_BYTES + 300,
+                "{status:?}"
+            );
+            assert!(error.message.contains("失败的文字有"));
+            assert!(error.location.len() <= MAX_LOCATION_BYTES, "{status:?}");
+        }
+        // 取消、失败、超时、执行器出错：这几个公开的构造函数都经过它
+        assert!(
+            failure(&task(), ErrorKind::Timeout, huge.clone())
+                .error
+                .unwrap()
+                .message
+                .len()
+                < MAX_ERROR_TEXT_BYTES + 300
+        );
     }
 }

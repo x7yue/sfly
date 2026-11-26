@@ -1,6 +1,8 @@
 import { type FocusSeries, focusSeriesName, type RunFocusItem } from "@sfly/schema";
 import { useId, useMemo, useState } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { LIST_LABEL } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { useElementWidth } from "#/lib/use-element-width";
 import type { ShownPick } from "#/monitor/charts";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
@@ -69,7 +71,7 @@ export function FocusPlot({
 				{plot && (
 					<svg
 						role="img"
-						aria-label={`${label}${gap ? "，曲线停在最后一个点" : ""}`}
+						aria-label={`${untrustedPlain(label)}${gap ? "，曲线停在最后一个点" : ""}`}
 						width={width}
 						height={height}
 						className="block"
@@ -179,7 +181,7 @@ export function FocusPlot({
 									strokeDasharray={seriesDash(s.slot)}
 								/>
 							</svg>
-							{focusSeriesName({ metrics }, s)}
+							<UntrustedText text={focusSeriesName({ metrics }, s)} />
 						</li>
 					))}
 					{hidden > 0 && <li>{hiddenNote(hidden)}</li>}

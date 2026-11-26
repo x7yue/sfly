@@ -133,7 +133,7 @@ function LoadedMonitor({ run, address }: { run: RunView; address: MonitorSearch 
 	const orchestration = useQuery(
 		apiQuery(orchestrationsApi.get, { params: { id: run.orchestration_id } }),
 	);
-	// 运行绑定的版本文档：节点的包与类型、always 标记、敏感参数。
+	// 运行绑定的版本文档：节点的包与类型、always 标记、secret 参数。
 	const version = useQuery({
 		...versionQuery(run.orchestration_id, run.orchestration_version),
 		enabled: !!run.orchestration_version,
@@ -292,7 +292,7 @@ function FailureBanner({ run, onClose }: { run: RunView; onClose: () => void }) 
 			{failure && (
 				<span data-testid="run-failure" className="block min-w-0">
 					{/* 一行放不下时截断在末尾，悬停或聚焦看全文。 */}
-					<Truncate>{failureSummary(failure)}</Truncate>
+					<Truncate untrusted>{failureSummary(failure)}</Truncate>
 				</span>
 			)}
 		</Banner>

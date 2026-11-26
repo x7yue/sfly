@@ -56,14 +56,18 @@ function ActivityRow({ activity }: { activity: CurrentActivity }) {
 			{activity.kind === "action" ? (
 				<>
 					<span className="flex-none text-fg-3">{NODE_ACTIONS.doingNow}</span>
-					<Truncate className="text-fg-1">{activity.name}</Truncate>
+					<Truncate untrusted className="text-fg-1">
+						{activity.name}
+					</Truncate>
 					<Elapsed
 						since={activity.startedAt}
 						className="ml-auto flex-none pl-1.5 font-mono text-fg-3"
 					/>
 				</>
 			) : (
-				<Truncate className="text-fg-1">{activity.message}</Truncate>
+				<Truncate untrusted className="text-fg-1">
+					{activity.message}
+				</Truncate>
 			)}
 		</div>
 	);

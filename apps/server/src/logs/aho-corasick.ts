@@ -28,6 +28,21 @@
  */
 export const MAX_AUTOMATON_CHARS = 1 << 20;
 
+/** 所有文本的总长（UTF-16 码元个数）。 */
+export function totalChars(texts: readonly string[]): number {
+	let total = 0;
+	for (const text of texts) total += text.length;
+	return total;
+}
+
+/**
+ * 总长超过上限，建不了自动机（打码时整段盖住）：**这一个判断**，{@link buildAutomaton} 和 `SecretSet.oversize` 共用，
+ * 预检、触发时的检查也只用它（总长算出来就够了，不建自动机，也不进值集合的缓存）。
+ */
+export function overAutomatonLimit(total: number, maxChars: number = MAX_AUTOMATON_CHARS): boolean {
+	return total > maxChars;
+}
+
 /** 完整转移表最多这么多项（每项 4 字节）：每个字符类一项，一行一个节点。 */
 const DENSE_ENTRIES = 1 << 20;
 
@@ -79,9 +94,8 @@ export function buildAutomaton(
 	maxChars: number = MAX_AUTOMATON_CHARS,
 	denseEntries: number = DENSE_ENTRIES,
 ): Automaton | undefined {
-	let total = 0;
-	for (const text of texts) total += text.length;
-	if (total > maxChars) return undefined;
+	const total = totalChars(texts);
+	if (overAutomatonLimit(total, maxChars)) return undefined;
 
 	// ---- 1. 字典树，节点按插入的顺序编号（0 是根）；文本新建的节点连续编号 ----
 	const chO = new Uint16Array(total + 2);
