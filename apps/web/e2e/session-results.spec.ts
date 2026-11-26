@@ -168,7 +168,8 @@ test("成果：真的触发了运行（控制面记下的 platform 事件）：�
 
 	// 点进去是运行监控。
 	await result.getByRole("link").click();
-	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+	// 运行监控会把地址再补上 `?view=…`：只比路径。
+	await expect.poll(() => new URL(page.url()).pathname).toBe(`/runs/${runId}`);
 });
 
 test("成果：提交（第几轮、提交号前 7 位、几个文件、增删行数、展开看差异）、场景版本（链到版本历史）、运行（链到运行监控）；刷新后读回的历史里也有", async ({
@@ -236,7 +237,10 @@ test("成果：提交（第几轮、提交号前 7 位、几个文件、增删�
 	await expect(versionResult).toContainText("接口巡检");
 	await expect(versionResult).toContainText("v1");
 	await versionResult.getByRole("link").click();
-	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenario}/versions\\?b=1$`));
+	await expect
+		.poll(() => new URL(page.url()).pathname)
+		.toBe(`/orchestrations/${scenario}/versions`);
+	expect(new URL(page.url()).searchParams.get("b")).toBe("1");
 });
 
 test("成果：只读到最近一页事件时说明更早的成果还没有列出", async ({ page, controlPlane }) => {
@@ -350,6 +354,6 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 
 	// 点标题进会话页。
 	await row(2).getByRole("link", { name: TITLE }).click();
-	await expect(page).toHaveURL(new RegExp(`/sessions/${sessionId}$`));
+	await expect.poll(() => new URL(page.url()).pathname).toBe(`/sessions/${sessionId}`);
 	await expect(page.getByRole("heading", { level: 1, name: TITLE })).toBeVisible();
 });
