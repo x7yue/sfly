@@ -294,6 +294,8 @@ export const SESSION = {
 	page: {
 		loadFailed: "无法加载这个会话",
 		timeline: "会话的时间线",
+		/** 时间线的滚动区域（键盘可以聚焦、用方向键滚）。 */
+		scrollRegion: "会话的内容",
 		loadOlder: "加载更早的",
 		loadingOlder: "正在加载…",
 		loadOlderFailed: "无法加载更早的内容",
@@ -309,6 +311,11 @@ export const SESSION = {
 		/** 撤掉排着的话没有成功（这一轮其实还在停止）。 */
 		cancelFailed: "没能撤掉排着的话",
 		thinking: "思考中",
+		/** 等模型回复：没有听到「思考」（它只发一次、不存，刷新之后补不回来），也没有别的进行中的提示。后面接已等了多久。 */
+		waiting: "等模型回复",
+		/** 往上翻看之后有了新内容：不自己跳走，给一个回到底部的入口。 */
+		newContent: "有新内容",
+		newContentTitle: "回到最新的内容",
 		sendLabel: "接着说",
 		sendPlaceholder: "接着说",
 		send: "发送",
@@ -375,6 +382,9 @@ export const SESSION = {
 		delivered: "已送到",
 		dropped: "没有送到",
 	},
+	/** 平台记录（控制面收到并执行了的请求、平台自己做的提交）的标签：和助手说的话分开。 */
+	platformRecord: "平台记录",
+	platformRecordTitle: "这是平台自己记下的，不是助手说的",
 	/** 会话已结束的一行：「会话已结束（<谁>）」，谁是别人写的昵称，夹在两段文案中间。 */
 	sessionEnded: { prefix: "会话已结束（", suffix: "）" },
 	tool: {
@@ -389,8 +399,28 @@ export const SESSION = {
 		failed: "出错",
 		exitCode: (code: number) => `退出码 ${code}`,
 		duration: (text: string) => `用时 ${text}`,
-		truncated: "输出太长，只显示了头尾",
+		/** 两种截断都说得通：事件里的文字超过上限只留头尾；pi 自己截断时只留了末尾（命令的输出）或一部分（读文件）。 */
+		truncated: "输出太长，只显示了一部分",
 		noOutput: "（没有输出）",
+		/** 同时有别的调用在做（模型一次发出了好几个）。 */
+		parallel: "并行",
+		parallelTitle: "和别的调用同时在做：结果先后到，不一定按开始的先后",
+		/** 只有结果、没有对上的调用（调用在更早的一页里）：写明是哪一次调用的结果。 */
+		earlier: {
+			command: "命令",
+			edit: "编辑",
+			other: "工具调用",
+			note: "更早的调用，加载更早的内容后显示",
+			/** 已经没有更早的内容了，调用还是没有：它没有记在时间线上。 */
+			missing: "这次调用没有记下",
+		},
+		/** 展开后的小标题。 */
+		outputLive: "输出（实时）",
+		outputWaiting: "还没有输出",
+		diffHeading: "改动",
+		/** 命令还在跑时展开，输出只留最后一段；人往上翻之后不再自动滚到底，这里给一个回到底部的入口。 */
+		outputTail: "只显示最后一段输出",
+		followOutput: "回到最新输出",
 		expand: "展开",
 		collapse: "收起",
 	},
@@ -480,6 +510,8 @@ export const SESSION = {
 		/** 上下文超出了模型的上限（`error_class` 为 `context_overflow`，压缩之后仍然放不下才会到这一步）。 */
 		contextOverflow: "这次对话太长，模型装不下了。开一个新会话，工作区还在。",
 		failed: (reason: string) => `出错：${reason}`,
+		/** 出了问题的几种结局（中断、出错）在原因后面写明这一轮做过的步骤还在；模型不可用的原因句里已经有了。 */
+		stepsAbove: "这一轮做过的步骤都在上面",
 	},
 } as const;
 

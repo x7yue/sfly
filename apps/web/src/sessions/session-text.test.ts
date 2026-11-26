@@ -7,6 +7,7 @@ import {
 	composerMode,
 	hasModelProblem,
 	readinessProblems,
+	resultDisplayText,
 	SESSION_STATUS,
 	sessionStatusText,
 	shortHash,
@@ -14,6 +15,7 @@ import {
 	steerDeliveryLabel,
 	toolLine,
 	toolResultSummary,
+	toolRowTitle,
 	turnEndText,
 	turnEndTone,
 	userRoleLabel,
@@ -25,6 +27,7 @@ import {
 	prependHistory,
 	type TimelineItem,
 	type TimelineState,
+	type ToolResultInfo,
 } from "./timeline";
 
 type TurnEnd = Extract<TimelineItem, { kind: "turn_end" }>;
@@ -53,16 +56,61 @@ describe("会话页的文字", () => {
 		expect(toolLine(null, "")).toBe("工具");
 	});
 
-	it("工具结果的摘要：命令有退出码和用时；出错标出；被截断写明只显示了头尾", () => {
+	it("工具结果的摘要：命令有退出码和用时；出错标出；被截断写明只显示了一部分（头尾和 pi 只留末尾两种都说得通）", () => {
 		const base = { isError: false, text: "", truncated: false, durationMs: 420 };
-		expect(toolResultSummary("command", { ...base, exitCode: 0 })).toBe("退出码 0 · 用时 420ms");
-		expect(toolResultSummary("command", { ...base, exitCode: 2, isError: true })).toBe(
+		expect(toolResultSummary({ ...base, exitCode: 0 })).toBe("退出码 0 · 用时 420ms");
+		expect(toolResultSummary({ ...base, exitCode: 2, isError: true })).toBe(
 			"出错 · 退出码 2 · 用时 420ms",
 		);
-		expect(toolResultSummary("command", base)).toBe("用时 420ms");
-		expect(toolResultSummary("edit", { ...base, durationMs: 12_300, truncated: true })).toBe(
-			"用时 12.3s · 输出太长，只显示了头尾",
+		expect(toolResultSummary(base)).toBe("用时 420ms");
+		expect(toolResultSummary({ ...base, durationMs: 12_300, truncated: true })).toBe(
+			"用时 12.3s · 输出太长，只显示了一部分",
 		);
+	});
+
+	it("只有结果、没有对上的调用（翻页边界）：写明是哪一次调用的结果，能判断的写出是命令还是编辑，写明调用在更早的内容里", () => {
+		const base = { isError: false, text: "", truncated: false, durationMs: 44 };
+		const orphan = (result: ToolResultInfo) => ({ tool: null, title: "", result });
+		// 命令的结果带退出码，编辑的结果带差异；读和写分不出来，写「工具调用」。
+		expect(toolRowTitle(orphan({ ...base, exitCode: 0 }), true)).toBe(
+			"命令的结果 · 更早的调用，加载更早的内容后显示",
+		);
+		expect(toolRowTitle(orphan({ ...base, diff: "-1 a\n+1 b" }), true)).toBe(
+			"编辑的结果 · 更早的调用，加载更早的内容后显示",
+		);
+		expect(toolRowTitle(orphan(base), true)).toBe(
+			"工具调用的结果 · 更早的调用，加载更早的内容后显示",
+		);
+		// 已经没有更早的内容了、调用还是没有：它没有记在时间线上，不再叫人去加载。
+		expect(toolRowTitle(orphan({ ...base, exitCode: 1 }), false)).toBe(
+			"命令的结果 · 这次调用没有记下",
+		);
+		// 有调用的行照旧：命令写 $、读写改写路径。
+		expect(toolRowTitle({ tool: "command", title: "ls", result: base }, true)).toBe("$ ls");
+	});
+
+	it("结果正文的显示：只有命令的输出去颜色码、压空行；读、写、改文件的结果是文件的内容，显示原文（两个空行是文件自己的）", () => {
+		const ESC = "\u001b";
+		const base = { isError: false, truncated: false, durationMs: 5 };
+		const file = "import os\n\n\ndef main():\n    pass\n";
+		for (const tool of ["read", "write", "edit"] as const) {
+			expect(resultDisplayText(tool, { ...base, text: file }), tool).toBe(file);
+		}
+		// 文件里恰好有颜色码：不当成终端的输出去掉（由不可信文字组件写成占位，如实反映文件）。
+		expect(resultDisplayText("read", { ...base, text: `${ESC}[31mred${ESC}[0m` })).toBe(
+			`${ESC}[31mred${ESC}[0m`,
+		);
+		// 命令：去颜色码，压空行。
+		expect(
+			resultDisplayText("command", {
+				...base,
+				text: `${ESC}[31mFAILED${ESC}[0m\n\n\nCommand exited with code 1`,
+				exitCode: 1,
+			}),
+		).toBe("FAILED\n\nCommand exited with code 1");
+		// 只有结果、没有对上的调用（翻页边界，`tool` 是 null）：有退出码的是命令，整理；没有的认不出是什么，显示原文。
+		expect(resultDisplayText(null, { ...base, text: `a\n\n\nb`, exitCode: 0 })).toBe("a\n\nb");
+		expect(resultDisplayText(null, { ...base, text: `a\n\n\nb` })).toBe("a\n\n\nb");
 	});
 
 	it("一轮结束：六种结局各一句", () => {

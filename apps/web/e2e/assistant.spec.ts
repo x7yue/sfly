@@ -336,8 +336,9 @@ test("开始：成功后跳到会话页；请求里是写好的话", async ({ pa
 	await page.getByRole("button", { name: "开始" }).click();
 	await expect(page).toHaveURL(new RegExp(`/sessions/${id}$`));
 	expect(posted).toEqual({ text: "给 http_check 加一个超时参数" });
-	await expect(timeline(page).getByTestId("user-message")).toHaveText(
-		"tester：给 http_check 加一个超时参数",
+	await expect(timeline(page).getByTestId("message-author")).toHaveText("tester");
+	await expect(timeline(page).getByTestId("message-text")).toHaveText(
+		"给 http_check 加一个超时参数",
 	);
 });
 
@@ -414,7 +415,7 @@ test("一轮的六种结局：各一行；到了上限按 limit_kind 写是哪�
 	]);
 });
 
-test("历史：工具行默认折叠，展开看结果；命令写 $、读写改写路径；出错标红、被截断写明只显示了头尾", async ({
+test("历史：工具行默认折叠，展开看结果；命令写 $、读写改写路径；出错标红、被截断写明只显示了一部分", async ({
 	page,
 	controlPlane,
 }) => {
@@ -486,7 +487,7 @@ test("历史：工具行默认折叠，展开看结果；命令写 $、读写改
 	await expect(rows.nth(1)).toContainText("读 nodes/a.py");
 	await expect(rows.nth(2)).toContainText("写 nodes/b.py");
 	await expect(rows.nth(3)).toContainText("改 nodes/c.py");
-	await expect(rows.nth(3)).toContainText("出错 · 用时 12.3s · 输出太长，只显示了头尾");
+	await expect(rows.nth(3)).toContainText("出错 · 用时 12.3s · 输出太长，只显示了一部分");
 	await expect(rows.nth(3)).toHaveAttribute("data-state", "error");
 	await expect(rows.nth(4)).toContainText("出错 · 退出码 1 · 用时 30ms");
 	await expect(page.getByTestId("notice")).toHaveText("上下文太长，已经压缩");
@@ -674,9 +675,8 @@ test("一轮从头到尾：这句话、思考中、逐字出现的助手的话�
 	await page.goto(`/sessions/${view.id}`);
 
 	// 这句话；会话在做：状态、「停止」、不能接着说。
-	await expect(timeline(page).getByTestId("user-message")).toHaveText(
-		"alice：给 http_check 加超时",
-	);
+	await expect(timeline(page).getByTestId("message-author")).toHaveText("alice");
+	await expect(timeline(page).getByTestId("message-text")).toHaveText("给 http_check 加超时");
 	await expect(page.getByTestId("session-status")).toHaveText("在做");
 	await expect(page.getByRole("button", { name: "停止" })).toBeVisible();
 	// 在做时输入框照常可以写，发出去的是插话：输入框下写插话什么时候送到。
@@ -722,7 +722,7 @@ test("一轮从头到尾：这句话、思考中、逐字出现的助手的话�
 
 	await push(toolCall(6, "call_2", "edit", "nodes/http_check.py"));
 	await push(toolResult(7, "call_2", { is_error: true, truncated: true, text: "没改成" }));
-	await expect(toolRows(page).nth(1)).toContainText("出错 · 用时 420ms · 输出太长，只显示了头尾");
+	await expect(toolRows(page).nth(1)).toContainText("出错 · 用时 420ms · 输出太长，只显示了一部分");
 
 	// 一轮结束：「这一轮完成」，会话回到空闲，可以接着说。
 	await push(turnEnd(8, "completed", { steps: 2, model_calls: 3 }));
@@ -731,7 +731,8 @@ test("一轮从头到尾：这句话、思考中、逐字出现的助手的话�
 	await expect(page.getByRole("button", { name: "停止" })).toHaveCount(0);
 	await expect(composer(page)).toBeEnabled();
 
-	// 刷新：时间线和刷新前一样（刷新后读回的是持久的事件）。
+	// 刷新：时间线和刷新前一样（刷新后读回的是持久的事件；会话视图是控制面此刻读的，这一轮结束了就是空闲）。
+	view.status = "idle";
 	const before = await timeline(page).innerText();
 	await page.reload();
 	await expect(page.getByTestId("turn-end")).toHaveText("这一轮完成 · 2 步 · 用时 1m 24s");
@@ -1126,9 +1127,13 @@ test("排队中点「停止」是移出队列：请求发给停止接口，时�
 	await expect(page.getByTestId("session-status")).toHaveText("空闲");
 	await expect(row(page, "要做的事")).toHaveAttribute("data-role", "cancelled");
 	await expect(row(page, "要做的事").getByTestId("message-role")).toHaveText("已撤掉");
-	// 删除线只划话本身（作者和文字两段），整行（`li`）和下面的「已撤掉」标记没有：父元素的删除线会把标记也划掉。
+	// 删除线只划话本身，整行（`li`）、名字那一行和「已撤掉」标记没有：父元素的删除线会把标记也划掉。
 	await expect(row(page, "要做的事")).toHaveCSS("text-decoration-line", "none");
-	await expect(row(page, "要做的事").locator(":scope > span").nth(1)).toHaveCSS(
+	await expect(row(page, "要做的事").getByTestId("message-role")).toHaveCSS(
+		"text-decoration-line",
+		"none",
+	);
+	await expect(row(page, "要做的事").getByTestId("message-text")).toHaveCSS(
 		"text-decoration-line",
 		"line-through",
 	);
