@@ -119,13 +119,14 @@ client ready 300 || fail "助手没有就绪"
 client session walkthrough >/dev/null || fail "会话的事件顺序不对"
 # 助手的命令（经工作台 Agent 的 exec 能力）看到的运行环境：工作台的用户、家目录和工作区，工具都在 PATH 上，
 # 环境里没有 Agent 凭据，也没有入口脚本自己的变量。
-checked=$(client session workbench-check) || fail "workbench-check 会话"
+checked=$(client session workbench-check --results) || fail "workbench-check 会话"
 for expected in user=workbench home=/home/workbench pwd=/work token-env=unset workbench-token-env=unset \
 	/home/workbench/.local/bin/sfly /home/workbench/.local/bin/uv /usr/bin/git /usr/bin/rg /usr/local/bin/fd /usr/bin/jq \
 	'Python 3.'; do
 	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「$expected」：$(grep '^结果' <<<"$checked" | head -c 600)"
 done
 grep -qF "$token" <<<"$checked" && fail "凭据出现在会话的工具结果里"
+grep '^结果' <<<"$checked" | head -c 700; echo
 
 # 工作台：在线、Agent 凭据、版本一致、开发方式装的（sfly 命令行在）、有 git 仓库。
 workbench=$(compose --profile assistant ps -q sfly-workbench)

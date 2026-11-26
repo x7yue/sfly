@@ -9,8 +9,9 @@
   stack_e2e.py credential <Agent 名字>   登录，给这台 Agent 签发 Agent 凭据，原值只写到标准输出一行
   stack_e2e.py ready [秒数]              等控制面说助手可以用（助手服务连得上、工作台在线、
                                          能力端口有地址）
-  stack_e2e.py session <剧本>            用假的模型端点的剧本（`AEVAL-SCRIPT:<名字>`）建一个会话，
-                                         跟到这一轮结束，检查持久事件的顺序；通过时退出码 0
+  stack_e2e.py session <剧本> [--results]  用假的模型端点的剧本（`AEVAL-SCRIPT:<名字>`）建一个会话，
+                                         跟到这一轮结束，检查持久事件的顺序；通过时退出码 0；
+                                         --results 把每个工具的结果也打印出来
 """
 
 from __future__ import annotations
@@ -81,7 +82,7 @@ def wait_ready(seconds: float) -> int:
     return 1
 
 
-def run_session(script: str) -> int:
+def run_session(script: str, show_results: bool = False) -> int:
     """建会话 → 跟事件流到这一轮结束 → 读控制面存下的持久事件，检查顺序
     （和 `aeval e2e` 同一份检查）。"""
     s = stack()
@@ -105,13 +106,19 @@ def run_session(script: str) -> int:
     sequence = " → ".join(str(e.get("type")) for e in persisted)
     print(f"事件（持久的）：{sequence}")
     # 工具的结果（已经打过码）：调用的一方按需检查里面的内容，
-    # 每条一行 `结果 <序号>：…`，换行换成 `⏎`。
-    for event in persisted:
+    # 每条一行 `结果 <序号>：…`，换行换成 `⏎`；剧本名后面加 `--results` 才打印。
+    for event in persisted if show_results else []:
         if event.get("type") == "tool_result":
             text = str(event.get("text", "")).replace("\n", "⏎")
             print(f"结果 {event.get('seq')}：{text[:1500]}")
     for problem in problems:
         print(f"  ✗ {problem}")
+    if problems:
+        # 出了问题时把助手的话和用时也写出来（假的模型端点认不出剧本时说的话在这里）。
+        for event in persisted:
+            if event.get("type") == "assistant_message":
+                text = str(event.get("text", "")).replace("\n", "⏎")
+                print(f"  助手说（序号 {event.get('seq')}）：{text[:300]}")
     print(
         f"{'通过' if not problems else '不通过'}：事件顺序{'对' if not problems else '不对'}，"
         f"{time.monotonic() - started:.1f} 秒"
@@ -125,8 +132,8 @@ def main(argv: list[str]) -> int:
         return issue_credential(argv[2])
     if command == "ready":
         return wait_ready(float(argv[2]) if len(argv) > 2 else 180)
-    if command == "session" and len(argv) == 3:
-        return run_session(argv[2])
+    if command == "session" and len(argv) in (3, 4):
+        return run_session(argv[2], show_results=argv[3:] == ["--results"])
     print(__doc__, file=sys.stderr)
     return 2
 

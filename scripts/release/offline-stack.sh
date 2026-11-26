@@ -62,7 +62,7 @@ trap cleanup EXIT
 
 fail() {
 	echo "整套冒烟失败：$1" >&2
-	for role in wb assistant cp mirror; do
+	for role in wb assistant cp mirror fake; do
 		echo "--- $prefix-$role 的日志（最后 25 行）" >&2
 		docker logs "$prefix-$role" 2>&1 | tail -n 25 >&2 || true
 	done
@@ -172,13 +172,14 @@ workbench sh -c 'test -x ~/.local/bin/sfly && command -v sfly' >/dev/null || fai
 
 # 助手的命令（经工作台 Agent 的 exec 能力）看到的运行环境：用工作台的用户、家目录和工作区，sfly、uv、git、rg、fd、jq、python 都在 PATH 上，
 # 环境里没有 Agent 凭据（Agent 起的命令里去掉了 SFLY_TOKEN）也没有入口脚本自己的变量。
-checked=$(client session workbench-check) || fail "workbench-check 会话"
+checked=$(client session workbench-check --results) || fail "workbench-check 会话"
 for expected in user=workbench home=/home/workbench pwd=/work token-env=unset workbench-token-env=unset \
 	/home/workbench/.local/bin/sfly /home/workbench/.local/bin/uv /usr/bin/git /usr/bin/rg /usr/local/bin/fd /usr/bin/jq \
 	'Python 3.'; do
 	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「$expected」：$(grep '^结果' <<<"$checked" | head -c 600)"
 done
 grep -qF "$token" <<<"$checked" && fail "凭据出现在会话的工具结果里"
+grep '^结果' <<<"$checked" | head -c 700; echo
 
 # ---- README「助手和工作台」里签发凭据的两条命令照着执行一遍（在工作台上，它有 sfly 命令行；换别的名字，不动工作台自己的凭据）----
 docker exec -i "$prefix-wb" sh -c 'sfly login --server http://sfly:8080 --login-name "$0" --password-stdin' "$admin_login" \
