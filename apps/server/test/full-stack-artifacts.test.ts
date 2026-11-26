@@ -1,5 +1,9 @@
 // 全栈（#18）：真实的控制面、Rust Agent 和 SDK 执行器。节点用 ctx.artifacts 保存产物，Agent 在上报结果前上传，
 // 输出里的产物引用交给后续节点，并且可以从控制面下载；完整日志可以分页读取和下载。
+import { readdir, readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
@@ -18,7 +22,13 @@ describeWithAgent("全栈：产物与完整日志", () => {
 		const bin = agentBinary();
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv()]);
 		await publishStubPackage(cp);
-		agent = await startRealAgent({ grpcUrl: cp.grpcUrl, name: "art-agent", venv: venv.path, bin });
+		agent = await startRealAgent({
+			grpcUrl: cp.grpcUrl,
+			name: "art-agent",
+			venv: venv.path,
+			bin,
+			captureStderr: true,
+		});
 	}, 600_000);
 
 	afterAll(async () => {
@@ -85,6 +95,124 @@ describeWithAgent("全栈：产物与完整日志", () => {
 		// 后续节点拿到的是同一份引用。
 		expect((await api.node(runId, "use")).outputs).toEqual({ text: refs });
 	}, 60_000);
+
+	// 任务凭据（#492）：控制面派发时签发，Agent 放进执行器的环境变量 SFLY_TASK_TOKEN，SDK 下载产物时带上；
+	// 只对控制面的地址带；任务结束之后它就失效。真实的控制面、Rust Agent 和 SDK。
+	it("节点用 SDK 下载上游节点的产物：任务凭据由 SDK 带上；别的主机的地址上不带；任务结束之后同一个凭据下载是 401", async () => {
+		// 「别的主机」：本进程里另一个端口上的服务，记下每个请求带的 Authorization。
+		const seen: Array<string | undefined> = [];
+		const elsewhere = createServer((request, response) => {
+			seen.push(request.headers.authorization);
+			response.end("别处的内容");
+		});
+		await new Promise<void>((resolve) => elsewhere.listen(0, "127.0.0.1", resolve));
+		const elsewhereUrl = `http://127.0.0.1:${(elsewhere.address() as AddressInfo).port}/x.txt`;
+		try {
+			const api = new ApiClient(cp);
+			const id = await api.orchestrationWith({
+				default_agent: "art-agent",
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{
+						id: "save",
+						kind: "package",
+						package: "sfly-stub",
+						node: "artifacts",
+						inputs: { files: { "report.txt": "报告内容" } },
+					},
+					{
+						id: "get",
+						kind: "package",
+						package: "sfly-stub",
+						node: "artifact_download",
+						inputs: { refs: "${{ nodes.save.outputs.refs }}" },
+					},
+					{
+						id: "foreign",
+						kind: "package",
+						package: "sfly-stub",
+						node: "artifact_download",
+						inputs: { refs: { x: elsewhereUrl } },
+					},
+				],
+				edges: [
+					{ from: "entry", to: "save", kind: "chain" },
+					{ from: "save", to: "get", kind: "chain" },
+					{ from: "get", to: "foreign", kind: "chain" },
+				],
+				packages: { "sfly-stub": "0.1.0" },
+			});
+
+			const runId = await api.triggerOk(id);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 60_000);
+
+			// 控制面的地址：SDK 带着任务凭据下载成功。
+			const get = await api.node(runId, "get");
+			expect(get.outputs?.texts).toEqual({ "report.txt": "报告内容" });
+			// 控制面把输出和日志里长得像令牌的值盖成 ******：节点把它倒过来输出，这里倒回来。
+			const token = [...String(get.outputs?.token_reversed)].reverse().join("");
+			expect(token).toMatch(/^sfly_tsk_[0-9a-f]{48}$/);
+			// 别的主机的地址：下载成功，请求里没有 Authorization。
+			expect((await api.node(runId, "foreign")).outputs?.texts).toEqual({ x: "别处的内容" });
+			expect(seen).toEqual([undefined]);
+
+			// 任务结束了：同一个凭据下载是 401（直接请求，不经过 SDK）。
+			const saveTask = (await api.node(runId, "save")).attempts[0]?.task_id;
+			const afterwards = await cp.fetch(`/tasks/${saveTask}/artifacts/report.txt`, {
+				headers: { authorization: `Bearer ${token}` },
+			});
+			expect(afterwards.status).toBe(401);
+			// 凭据不在日志里。控制面会把长得像令牌的值盖成 ******，读它的日志什么也证明不了：读 Agent 这一侧的原始内容——
+			// Agent 的标准错误，和 Agent 工作目录里的全部文件（每个任务的 task.json、stdout.log、stderr.log、产物……；
+			// 节点的输出里是倒过来写的，原值不在）。
+			expect(agent.stderr()).not.toContain(token);
+			const leaked: string[] = [];
+			for (const entry of await readdir(agent.workDir, { recursive: true, withFileTypes: true })) {
+				// 只读普通文件：任务目录里的 events.fifo 是命名管道，读它会一直等下去。
+				if (!entry.isFile()) continue;
+				const path = join(entry.parentPath, entry.name);
+				if ((await readFile(path, "utf8")).includes(token)) leaked.push(path);
+			}
+			expect(leaked).toEqual([]);
+		} finally {
+			await new Promise<void>((resolve) => elsewhere.close(() => resolve()));
+		}
+	}, 120_000);
+
+	// 控制面允许的产物名称（只拒绝反斜杠、控制字符、空段、`.`、`..`）：名称里有 `%`、以 `..` 开头的名称，
+	// 引用按路径段编码之后 SDK 照样带上任务凭据，节点用引用下载拿得到内容（#492）。
+	it("名称里有 % 或以 .. 开头的产物，节点用引用照样下载得到（带任务凭据）", async () => {
+		const api = new ApiClient(cp);
+		const files = {
+			"100%.txt": "百分号",
+			"..env": "点点",
+			"覆盖率 95%.png": "中文",
+			"top%25.csv": "字面上的 25",
+			"https%3A%2F%2Fexample.com%2Fpage.html": "存下来的页面",
+		};
+		const id = await api.orchestrationWith({
+			default_agent: "art-agent",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "save", kind: "package", package: "sfly-stub", node: "artifacts", inputs: { files } },
+				{
+					id: "get",
+					kind: "package",
+					package: "sfly-stub",
+					node: "artifact_download",
+					inputs: { refs: "${{ nodes.save.outputs.refs }}" },
+				},
+			],
+			edges: [
+				{ from: "entry", to: "save", kind: "chain" },
+				{ from: "save", to: "get", kind: "chain" },
+			],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+		const runId = await api.triggerOk(id);
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 60_000);
+		expect((await api.node(runId, "get")).outputs?.texts).toEqual(files);
+	}, 120_000);
 
 	it("节点返回超过 1 MB 的输出时任务以 node_error 失败", async () => {
 		const api = new ApiClient(cp);

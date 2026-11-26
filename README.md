@@ -116,6 +116,8 @@ docker compose up -d
   }
   ```
 
+- 日志下载（`GET /runs/:id/logs/download`、`GET /tasks/:id/logs/download`）靠 `proxy_http_version 1.1` 才分得出「没下完」：控制面在下载的过程中发现日志文件被删除、被截短，会断开连接。代理用 HTTP/1.0 连控制面时（nginx 1.29.7 之前 `proxy_http_version` 的默认值就是 1.0）响应靠关闭连接来结束，断开和正常结束分不出来，客户端拿到的文件只有断开之前的行，也不报错；用上面的示例（`proxy_http_version 1.1`）就看得出来（curl 退出码非 0，命令行 `sfly run logs --all` 报 `download_incomplete`）。
+
 - **登录与反向代理**（ADR 0029）：
   - **浏览器要用 `SFLY_PUBLIC_URL` 打开控制台。** 登录 Cookie 只认同源的请求；内网用 http 访问时浏览器不发 `Sec-Fetch-Site`，控制面看请求的 `Origin`：配了 `SFLY_PUBLIC_URL` 就和它比，没配就和请求的 `Host` 比。对不上（主机名对 IP、端口不同、反向代理改写了 `Host` 又没配公开地址）时，页面看起来登录着，写请求却被当作没有登录，登出也不生效。登录页和控制台顶部会提示「请用 <公开地址> 打开」。所以反向代理后面要配 `SFLY_PUBLIC_URL`（浏览器看到的地址），或者让代理原样传 `Host`（nginx 的 `proxy_set_header Host $host`）。
   - **来源地址（登录限速用）和 `SFLY_TRUST_PROXY`**：来源地址默认取 TCP 对端的地址。反向代理把它看到的客户端地址追加在 `X-Forwarded-For` 的最后，客户端自己写的在前面，所以要取「可信代理之前的那一个」，最左边的一段不作数（每次换一个就能绕过限速）。每个取值的意思：
@@ -135,6 +137,7 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 
 - Agent 的文件都在 `SFLY_HOME`（默认 `~/.sfly`）下：共享 venv 默认 `$SFLY_HOME/venv`，任务工作目录默认 `$SFLY_HOME/work`，`sfly dev` 用的本地 socket 默认 `$SFLY_HOME/work/agent.sock`，从哪个目录启动都一样。
 - 启动时读取 `$SFLY_HOME/agent.env`：每行一个 `KEY=VALUE`，键是参数对应的环境变量名（如 `SFLY_SERVER`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`），`#` 开头的行是注释；命令行参数和环境变量优先于它。`sfly publish` 在没有 `--server` 和 `SFLY_SERVER` 时使用其中的 `SFLY_CONTROL_PLANE_URL`（控制面 HTTP 地址）。
+- `--token`（`SFLY_TOKEN`，写在 `agent.env` 里）是 **Agent 凭据**（`sfly_agt_` 开头，管理员为这台 Agent 签发；过渡期里控制面还接受共享注册令牌）：放进 Hello，下载节点包归档和上传产物时带 `Authorization: Bearer`（只对控制面下发的地址带，重定向到别的主机时不带）。控制面派发任务时下发的**任务凭据**只放进执行器的环境变量 `SFLY_TASK_TOKEN`（不写日志和任务目录）。被控制面拒绝（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）时 Agent 不退出，按 30 秒起翻倍、5 分钟封顶的等待重试（每次取算出来的时长的一半到全部，不按同一个节奏一起重试），原因只在第一次和变了的时候打一行到标准错误，管理员改好之后自己连上，不需要重启；被拒绝期间手上的任务照常跑完，所以吊销、停用一台 Agent 不会停下它手上正在跑的任务，要停下那台机器上的工作得停掉 Agent 服务。凭据经环境变量 `SFLY_TOKEN` 交给 Agent 时，Agent 起的所有子进程（执行器、`exec.run` 的命令和它留下的后台进程、装依赖的进程、准备环境的进程……）的环境里都没有它：起进程只有一个出口（`agent/src/subprocess.rs`），有测试守着；例外只有启动 Agent 自己的新版本（多一层防护，不是隔离：节点和 Agent 同一个系统用户，读得到 `agent.env`）。
 - 连上控制面、收到 Welcome（带控制面配置的镜像）之后准备运行环境：
   - uv：没有 `--uv` 时使用 `$SFLY_HOME/bin/uv`，不存在时用 GitHub Release 镜像上 `astral-sh/uv/LatestRelease/uv-installer.sh` 安装到 `$SFLY_HOME/bin`（不修改 PATH；安装脚本需要 curl 或 wget，下载时带 `--user-agent` 的 User-Agent）。指定了 `--uv` 时 Agent 不管理 uv。
   - 共享 venv 不存在时用 `uv venv --python 3.13` 创建，Python 从 GitHub Release 镜像的 `astral-sh/python-build-standalone/` 下载；之后不主动升级 Python。`--python` 可以指定别的版本或解释器。

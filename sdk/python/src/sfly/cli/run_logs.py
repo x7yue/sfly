@@ -14,10 +14,11 @@ import argparse
 import json
 import shlex
 import urllib.parse
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from http.client import HTTPException, IncompleteRead
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from sfly.cli.client import Client, segment
 from sfly.cli.errors import CliError
@@ -241,6 +242,10 @@ class LogRead:
     reached_end: bool
     expired: bool
     truncated_tasks: list[dict[str, Any]]
+    # 日志文件不在了、变短了的任务（#721）：控制面在页里说的，同一个任务只算一次；
+    # 控制面每次最多列出一部分，总数是 `file_problems_total`。
+    file_problems: list[dict[str, Any]] = field(default_factory=list)
+    file_problems_total: int = 0
 
 
 def read_logs(
@@ -263,6 +268,7 @@ def read_logs(
     result = LogRead([], "", "", False, False, False, [])
     first = True
     truncated: dict[str, dict[str, Any]] = {}
+    problems: dict[str, dict[str, Any]] = {}
     for _ in range(_MAX_PAGES):
         query: dict[str, Any] = {
             "limit": min(tail - have, _MAX_PAGE_LINES),
@@ -281,6 +287,14 @@ def read_logs(
             result.before, result.reached_start = page["before"], page["reached_start"]
         for task in page["truncated_tasks"]:
             truncated.setdefault(task["task_id"], task)
+        # 旧控制面的页里没有这个字段；`--failed`、`--node` 只列选中的尝试
+        # （控制面按节点范围筛，不认第几次尝试）。
+        for problem in page.get("file_problems", []):
+            if selection.keep(problem):
+                problems.setdefault(problem["task_id"], problem)
+        result.file_problems_total = max(
+            result.file_problems_total, page.get("file_problems_total", 0)
+        )
         if page["expired"]:
             result.expired = True
             break
@@ -295,6 +309,14 @@ def read_logs(
     ordered = chunks if forward else list(reversed(chunks))
     result.lines = [line for chunk in ordered for line in chunk]
     result.truncated_tasks = list(truncated.values())
+    result.file_problems = list(problems.values())
+    # 控制面给的总数是范围内的、不分第几次尝试；筛掉没选上的之后，总数不再可信，
+    # 以选中的个数为准（控制面最多列 20 个，超出的看不到是哪些，只能按列出的算）。
+    result.file_problems_total = (
+        len(problems)
+        if selection.task_ids is not None
+        else max(result.file_problems_total, len(problems))
+    )
     return result
 
 
@@ -334,6 +356,52 @@ def _truncated_note(index: RunIndex, tasks: Sequence[Mapping[str, Any]]) -> str 
         return None
     labels = [index.ref_of(task).format(retried=True) for task in tasks]
     return f"这些任务的日志超过大小上限，被截断了：{', '.join(labels)}"
+
+
+_FILE_PROBLEM_TEXT = {"missing": "文件不在了", "short": "文件比记录的短"}
+
+
+def _file_problems_note(index: RunIndex, problems: Sequence[Mapping[str, Any]], total: int) -> str:
+    """日志文件不在了、变短了的任务（#721）：哪几个、各是什么情况，和可能的来路。"""
+    labels = [
+        index.ref_of(p).format(retried=True)
+        + f"（{_FILE_PROBLEM_TEXT.get(p['problem'], p['problem'])}）"
+        for p in problems
+    ]
+    more = f"，等共 {total} 个" if total > len(problems) else ""
+    return (
+        f"注意：{total} 个任务的日志文件有问题：{'、'.join(labels)}{more}。"
+        "可能被删除、截短、主机掉电（追加的文件不落盘、数据库落盘），或数据库和数据目录分开恢复；"
+        "这些任务只有剩下的日志，下面不是它们完整的输出。"
+    )
+
+
+def _report_file_problems(out: Output, index: RunIndex, read: LogRead, run: str) -> None:
+    """说明写到标准错误，退出码不变。
+
+    不写到标准输出：不带 `--json` 时标准输出里本来还有继续读的提示和截断提示，
+    `--json` 时只有日志行。
+    `--json` 时标准错误里是一行 `{"warning": {code, message, next, details}}`。"""
+    if not read.file_problems:
+        return
+    note = _file_problems_note(index, read.file_problems, read.file_problems_total)
+    if out.json_mode:
+        # 和命令行的错误同一种形状（`{"error": {code, message, next, details}}`），键是 `warning`：
+        # 脚本分得出哪一行是什么。不加让退出码非 0 的开关——读到的是真的、剩下的内容，
+        # 要确认日志完整用 `--all`（下载在文件有问题时报错、退出码非 0）。
+        warning = {
+            "code": "log_file_problems",
+            "message": note,
+            "next": f"sfly run logs {shlex.quote(run)} --all <文件>"
+            "（下载在文件有问题时报错、退出码非 0，用它确认日志完整）",
+            "details": {
+                "file_problems": read.file_problems,
+                "file_problems_total": read.file_problems_total,
+            },
+        }
+        print(dump_json({"warning": warning}), file=out.stderr)
+        return
+    print(printable(note), file=out.stderr)
 
 
 def _logs(session: Session, args: argparse.Namespace) -> None:
@@ -383,9 +451,13 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
         for line in read.lines:
             print(dump_json(line), file=out.stdout)
         print_notes(out, notes)
+        _report_file_problems(out, index, read, args.run)
         return
     rendered = [format_line(index, line) for line in read.lines]
+    _report_file_problems(out, index, read, args.run)
     if not rendered and not notes:
+        if read.file_problems:
+            return  # 不是没有日志：日志文件有问题，上面已经说了
         rendered = ["没有日志" if not args.level else "没有符合条件的日志"]
     # 日志是节点写的、没有人看过的文字：转义序列和不该到终端的字符过一遍（#670）。
     print(printable("\n".join([*rendered, *notes])), file=out.stdout)
@@ -408,8 +480,40 @@ def _download_all(session: Session, args: argparse.Namespace, selection: Selecti
     else:
         path = f"/runs/{segment(args.run)}/logs/download"
         with session.client.open("GET", path, query={"nodes": selection.scope}) as response:
-            lines = _write_download(response, target, selection)
+            lines = _write_download(_complete_lines(response, args), target, selection)
     session.out.emit({"path": str(target), "lines": lines}, f"已下载 {lines} 行日志到 {target}")
+
+
+# 一次读多少字节。
+_READ_BLOCK = 64 * 1024
+
+
+def _complete_lines(response: BinaryIO, args: argparse.Namespace) -> Iterator[bytes]:
+    """下载的响应一行一行读出来；**没下完就报错**（#669）：控制面发现日志文件在下载时被删除、截短了，
+    响应已经开始，会断开连接。分块的响应在两块之间断开时，直接按行迭代响应不报错、悄悄当作读完了
+    （只有断在一块当中才报 `IncompleteRead`），所以这里按块读（`read`）：断开了就抛 `CliError`，
+    调用方的临时文件随之删掉，不留半个文件。"""
+    pending = b""
+    try:
+        while block := response.read(_READ_BLOCK):
+            *rows, pending = (pending + block).split(b"\n")
+            for row in rows:
+                yield row + b"\n"
+        # 有声明长度的响应读到的比声明的少（连接断了）：`read` 不报错、返回空，要自己看还差多少。
+        if getattr(response, "length", None):
+            raise IncompleteRead(b"")
+    except (HTTPException, OSError) as error:
+        flags = _flags(args, with_level=False)
+        raise CliError(
+            "download_incomplete",
+            "日志没有下载完：连接在下载中途断开了（控制面发现日志文件在下载时被删除或截短了，或者网络断了）。"
+            f"没有写出文件（{error.__class__.__name__}）",
+            # 带着原来的范围选项和路径：只带 --all 重下，下到的是整个运行，还写进同一个文件。
+            next="重新下载：sfly run logs "
+            f"{shlex.quote(args.run)}{' ' + flags if flags else ''} --all {shlex.quote(args.all)}",
+        ) from None
+    if pending:
+        yield pending
 
 
 def _write_download(rows: Iterable[bytes], target: Path, selection: Selection) -> int:

@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import {
 	ContextMenuItem,
 	ContextMenuSeparator,
@@ -12,7 +14,7 @@ import {
 } from "@/components/ui/context-menu";
 
 const copy = (text: string, done: string) =>
-	writeClipboard(text, () => notify.success(done, { description: text }));
+	writeClipboard(text, () => notify.success(done, { description: untrustedPlain(text) }));
 
 /** 修改场景的操作；运行状态模式下不给（菜单只剩只读项）。 */
 export interface NodeMenuEdit {
@@ -82,7 +84,7 @@ export function NodeMenu({
 								copy(referenceText(`nodes.${node.id}.outputs.${key}`), "已复制输出引用")
 							}
 						>
-							{key}
+							<UntrustedText text={key} />
 						</ContextMenuItem>
 					))}
 				</ContextMenuSubContent>

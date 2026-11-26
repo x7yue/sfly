@@ -9,8 +9,10 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
+import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery, callApi } from "#/lib/api";
 import { FEISHU_BOT_SETUP, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
@@ -261,15 +263,19 @@ export function ReplaceWebhookDialog({
 	);
 }
 
-/** 一处引用的说明（场景里的哪个地方）。 */
-const referenceText = (reference: FeishuBotReference): string => {
+/** 一处引用的说明（场景里的哪个地方）。输入键是节点包声明的、不限字符，所以单独过 `UntrustedText`；节点 ID 是场景里自己写的。 */
+function ReferenceText({ reference }: { reference: FeishuBotReference }) {
 	switch (reference.kind) {
 		case "feishu_bot_input":
-			return `节点 ${reference.node_id} 的输入 ${reference.input}`;
+			return (
+				<>
+					节点 {reference.node_id} 的输入 <UntrustedText text={reference.input} />
+				</>
+			);
 		case "run_notification":
 			return `${TERM.runNotification}（${INSPECTOR_PAGE.sceneSettings}）`;
 	}
-};
+}
 
 /** 引用这个机器人的场景：删除之前列出，让人知道删除会影响哪些场景。 */
 function BotReferences({ bot, enabled }: { bot: FeishuBotView; enabled: boolean }) {
@@ -282,7 +288,8 @@ function BotReferences({ bot, enabled }: { bot: FeishuBotView; enabled: boolean 
 	if (references.isError) {
 		return (
 			<p role="alert" className="m-0 text-xs text-danger-fg">
-				无法查找引用这个机器人的场景：{errorText(references.error)}
+				无法查找引用这个机器人的场景：
+				<ErrorMessage error={references.error} />
 			</p>
 		);
 	}
@@ -310,7 +317,16 @@ function BotReferences({ bot, enabled }: { bot: FeishuBotView; enabled: boolean 
 						>
 							{s.name}
 						</Link>
-						<span className="text-fg-3">{s.references.map(referenceText).join("、")}</span>
+						<span className="text-fg-3">
+							{s.references.map((reference, index) => (
+								// 引用没有自己的编号，列表只由服务端按顺序给出、不在页面上重排：按位置做 key。
+								// biome-ignore lint/suspicious/noArrayIndexKey: 同上
+								<Fragment key={index}>
+									{index > 0 && "、"}
+									<ReferenceText reference={reference} />
+								</Fragment>
+							))}
+						</span>
 					</li>
 				))}
 			</ul>

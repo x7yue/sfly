@@ -41,17 +41,14 @@ describe("运行视图和运行摘要里的 secrets_oversize", () => {
 		api.getJson<{ secrets_oversize?: boolean; failed_tasks: unknown[] }>(`/runs/${runId}/summary`);
 
 	it("保密值的所有写法合计超过上限：两个接口都是 true；不太大的、没有保密参数的运行是 false；整段盖住的内容不含值", async () => {
+		const bigValues = Array.from({ length: 50 }, (_, i) => `fake-oversize-${i}-${"p".repeat(100)}`);
+		const bigId = await api.orchestrationWith(scenario(true));
+		const plainId = await api.orchestrationWith(scenario(false));
+		// 触发时值集合已经太大会被拒绝（#632），所以先触发，再把上限调小：和值集合在运行中才变大（子流程创建之后）是同一个状态
+		const bigRun = await api.triggerOk(bigId, { cfg: bigValues });
+		const smallRun = await api.triggerOk(bigId, { cfg: ["fake-small-secret-1"] });
+		const plainRun = await api.triggerOk(plainId, { cfg: bigValues });
 		await withSecretLimits({ automatonChars: 3000 }, async () => {
-			const bigValues = Array.from(
-				{ length: 50 },
-				(_, i) => `fake-oversize-${i}-${"p".repeat(100)}`,
-			);
-			const bigId = await api.orchestrationWith(scenario(true));
-			const bigRun = await api.triggerOk(bigId, { cfg: bigValues });
-			const smallRun = await api.triggerOk(bigId, { cfg: ["fake-small-secret-1"] });
-			const plainId = await api.orchestrationWith(scenario(false));
-			const plainRun = await api.triggerOk(plainId, { cfg: bigValues });
-
 			expect((await api.run(bigRun)).secrets_oversize).toBe(true);
 			expect((await api.run(smallRun)).secrets_oversize).toBe(false);
 			expect((await api.run(plainRun)).secrets_oversize).toBe(false);

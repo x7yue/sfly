@@ -108,7 +108,8 @@ impl AgentExec for Exec {
             }
             Err(error) => return Err(io_status(&error, &format!("工作目录 {cwd}"))),
         }
-        let mut command = tokio::process::Command::new(program);
+        // 命令（和它留下的后台进程）的环境里没有 Agent 凭据：经 `subprocess::command` 起；调用方给的 `env` 是他们自己的值。
+        let mut command = crate::subprocess::command(program);
         command
             .args(&argv[1..])
             .current_dir(&dir)
