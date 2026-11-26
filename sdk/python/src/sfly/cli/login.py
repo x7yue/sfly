@@ -190,8 +190,9 @@ def _login(args: argparse.Namespace, out: Output) -> int:
             saved_at=credentials.now_iso(),
         ),
     )
+    shown = without_userinfo(url)
     summary = {
-        "server": url,
+        "server": shown,
         "login_name": login_name,
         "token_name": issued["name"],
         "token_id": issued["id"],
@@ -210,7 +211,6 @@ def _login(args: argparse.Namespace, out: Output) -> int:
         except (CliError, OSError):
             pass
     expires = issued["expires_at"] or "不过期"
-    shown = without_userinfo(url)
     out.emit(
         summary,
         f"已登录 {shown}（{login_name}）：令牌 {issued['name']}（{issued['prefix']}…），"
@@ -253,7 +253,7 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
         message = f"本机没有登录过 {without_userinfo(url)}（凭据文件里没有这台控制面的令牌）"
         if from_env:
             message += f"；环境变量 {credentials.TOKEN_ENV} 里的令牌不归 sfly logout 管"
-        out.emit({"server": url, "logged_out": False}, message)
+        out.emit({"server": without_userinfo(url), "logged_out": False}, message)
         return 0
     revoked = False
     rejected = False
@@ -298,5 +298,13 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
             "\n注意：控制面拒绝了这次吊销（401）：令牌已经失效，或者已经被吊销了，这次登出没有吊销它。"
             "不放心的话，到控制台的「令牌」页（账号菜单里）核对，或者请管理员处理"
         )
-    out.emit({"server": url, "logged_out": True, "revoked": revoked, "rejected": rejected}, text)
+    out.emit(
+        {
+            "server": without_userinfo(url),
+            "logged_out": True,
+            "revoked": revoked,
+            "rejected": rejected,
+        },
+        text,
+    )
     return 0

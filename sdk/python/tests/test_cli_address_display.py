@@ -6,13 +6,17 @@
 
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from sfly.cli import main
+from sfly.cli import credentials, main
 from sfly.cli.client import Client, without_userinfo
+from sfly.cli.init import InitError, fetch_settings
+from sfly.cli.run_summary import run_url
 
 PASSWORD = "hunter2-p4ss"
 
@@ -104,3 +108,116 @@ def test_the_install_command_printed_by_credentials_issue_does_not_show_the_pass
     assert code == 0, captured.err
     assert PASSWORD not in captured.out + captured.err
     assert "curl -fsSL https://plane.example/install.sh | sh -s -- --name worker-1" in captured.out
+
+
+def test_the_run_link_does_not_show_the_password() -> None:
+    client = Client(f"https://user:{PASSWORD}@plane.example", "tester")
+    assert run_url(client, "run-1") == "https://plane.example/runs/run-1"
+
+
+def test_init_connect_error_does_not_show_the_password(home: Path) -> None:
+    with pytest.raises(InitError) as caught:
+        fetch_settings(f"http://user:{PASSWORD}@127.0.0.1:1")
+    assert PASSWORD not in str(caught.value)
+    assert "无法连接控制面 http://127.0.0.1:1：" in str(caught.value)
+
+
+def test_init_http_and_json_errors_do_not_show_the_password(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.error
+    import urllib.request
+
+    server = f"http://user:{PASSWORD}@plane.example"
+
+    def http_error(url: str, timeout: float) -> Any:
+        raise urllib.error.HTTPError(url, 500, "boom", None, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(urllib.request, "urlopen", http_error)
+    with pytest.raises(InitError) as caught:
+        fetch_settings(server)
+    assert PASSWORD not in str(caught.value) and "http://plane.example/sdk" in str(caught.value)
+
+    class NotJson:
+        def __enter__(self) -> NotJson:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"<html>"
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: NotJson())
+    with pytest.raises(InitError) as caught:
+        fetch_settings(server)
+    assert PASSWORD not in str(caught.value) and "http://plane.example/sdk" in str(caught.value)
+
+
+class TestLoginAndLogout:
+    SERVER = f"https://user:{PASSWORD}@plane.example"
+    SHOWN = "https://plane.example"
+
+    def test_logout_when_not_logged_in(
+        self, home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["logout", "--server", self.SERVER, "--json"])
+        captured = capsys.readouterr()
+        assert code == 0
+        assert PASSWORD not in captured.out + captured.err
+        assert json.loads(captured.out)["server"] == self.SHOWN
+        code = main(["logout", "--server", self.SERVER])
+        captured = capsys.readouterr()
+        assert f"本机没有登录过 {self.SHOWN}（" in captured.out
+        assert PASSWORD not in captured.out + captured.err
+
+    def test_local_logout_of_a_stored_login(
+        self, home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        stored = credentials.StoredCredential(
+            token="sfly_pat_" + "00" * 16,
+            token_id="id-1",
+            login_name="alice",
+            name="laptop",
+            saved_at=credentials.now_iso(),
+        )
+        credentials.save(self.SERVER, stored)
+        code = main(["logout", "--server", self.SERVER, "--local", "--json"])
+        captured = capsys.readouterr()
+        assert code == 0, captured.err
+        assert PASSWORD not in captured.out + captured.err
+        assert json.loads(captured.out)["server"] == self.SHOWN
+        credentials.save(self.SERVER, stored)
+        code = main(["logout", "--server", self.SERVER, "--local"])
+        captured = capsys.readouterr()
+        assert f"已登出 {self.SHOWN}：" in captured.out
+        assert PASSWORD not in captured.out + captured.err
+
+    def test_login_summary_and_message(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        issued = {
+            "token": "sfly_pat_" + "00" * 16,
+            "id": "id-1",
+            "name": "laptop",
+            "prefix": "sfly_pat_0000",
+            "scopes": ["read"],
+            "expires_at": None,
+        }
+        monkeypatch.setattr("sfly.cli.login._issue", lambda client, body, retry_suffix: issued)
+        monkeypatch.setattr("sys.stdin", io.StringIO(PASSWORD + "\n"))
+        base = ["login", "--server", self.SERVER, "--login-name", "alice", "--password-stdin"]
+        code = main([*base, "--json"])
+        captured = capsys.readouterr()
+        assert code == 0, captured.err
+        assert PASSWORD not in captured.out + captured.err
+        assert json.loads(captured.out)["server"] == self.SHOWN
+        monkeypatch.setattr("sys.stdin", io.StringIO(PASSWORD + "\n"))
+        code = main(base)
+        captured = capsys.readouterr()
+        assert code == 0, captured.err
+        assert f"已登录 {self.SHOWN}（alice）" in captured.out
+        assert PASSWORD not in captured.out + captured.err
