@@ -2197,7 +2197,7 @@ test("会话页：会话已结束", async ({ page }) => {
 	await expect(page).toHaveScreenshot("session-ended.png");
 });
 
-test("会话页：右侧的成果（提交、场景版本、运行；运行的状态是实时的）和时间线上平台留下的两行", async ({
+test("会话页：右侧的成果（提交、场景版本、运行；运行的状态跟着运行变）和时间线上平台留下的两行", async ({
 	page,
 	controlPlane,
 	connectAgent,
