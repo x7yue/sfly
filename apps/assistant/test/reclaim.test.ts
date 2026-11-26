@@ -119,17 +119,18 @@ describe("闲置回收（时间可控）", () => {
 		expect(clock.pending).toBe(0);
 	});
 
-	it("有一轮在做时不回收，就算这一轮的 prompt 是 16 分钟前收到的；这一轮结束后从结束的那一刻起重新算 15 分钟", async () => {
+	it("有一轮在做时不回收，就算上一轮结束的计时到点时这一轮的 prompt 已经是 15 分钟前收到的；这一轮结束后从结束的那一刻起重新算 15 分钟", async () => {
 		const { h, clock } = await start();
-		const id = crypto.randomUUID();
-		expect((await h.prompt(id, { text: "hang" })).status).toBe(202);
-		await eventually(() => expect(count(h, id, "turn_start")).toBe(1));
+		const id = await oneTurn(h);
 		const pid = h.sessions.pid(id) as number;
+		// 紧接着说第 2 轮（同一时刻，上一轮留下的 15 分钟计时在 15 分钟后到点）：长时间在做，用时没到 20 分钟的上限。
+		expect((await h.prompt(id, { turn: 2, text: "hang" })).status).toBe(202);
+		await eventually(() => expect(count(h, id, "turn_start")).toBe(1));
 		clock.advance(16 * MINUTE);
 		expect(h.sessions.pid(id)).toBe(pid);
 		expect(count(h, id, "fake_stdin_closed")).toBe(0);
-		await h.abort(id, 1);
-		expect(await h.turnEnd(id, 1)).toMatchObject({ outcome: "stopped" });
+		await h.abort(id, 2);
+		expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "stopped" });
 		clock.advance(IDLE_RECLAIM_MS - 1);
 		expect(h.sessions.pid(id)).toBe(pid);
 		clock.advance(1);
