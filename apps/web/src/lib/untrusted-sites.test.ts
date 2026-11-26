@@ -40,7 +40,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			"routes/_shell/orchestrations/index.tsx": { wrapped: ["a.name"] },
 			"scenarios/ScenarioList.tsx": { wrapped: ["a.name", "a.name"] },
 			"run-drawer/TriggerForm.tsx": { wrapped: ["row.title", "row.detail", "p.message"] },
-			"components/via-tag.tsx": { wrapped: ["viaLabel(via)"] },
+			"components/via-tag.tsx": { wrapped: ["viaLabel(via)"], truncate: 1 },
 			"monitor/QueueWaitNote.tsx": {
 				wrapped: ["wait.agent", "holder.orchestration_name", "holderNodeLabel(holder)"],
 			},
@@ -305,7 +305,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 		},
 	},
 	{
-		area: "助手会话（模型和工具写的话、会话标题、就绪状态）",
+		area: "助手会话（模型和工具写的话、会话标题、就绪状态、成果里的文件路径、差异和场景名、「经 会话」的标题）",
 		files: {
 			"sessions/SessionTimeline.tsx": {
 				wrapped: [
@@ -323,6 +323,9 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			},
 			// 提交的记录（#546）：文件的路径经截断层（`Truncate untrusted`），差异是多行的正文。
 			"sessions/CommitRow.tsx": { wrapped: ["item.diff"], truncate: 1 },
+			// 成果：提交里的文件路径和差异是模型写的东西；场景名会话令牌能写（新建、改名、保存版本），也不当作登录的人写的名字（版本号、运行 ID 不是）。
+			"sessions/RecordRow.tsx": { truncate: 1 },
+			"sessions/ResultsPanel.tsx": { wrapped: ["commit.diff"], truncate: 3 },
 			"sessions/ReadinessLine.tsx": { wrapped: ["SESSION.ready(readiness.workbench)", "problem"] },
 			"sessions/SessionList.tsx": { wrapped: ["session.created_by"], truncate: 1 },
 			"sessions/SessionPage.tsx": {

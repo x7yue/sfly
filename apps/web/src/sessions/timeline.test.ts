@@ -476,7 +476,7 @@ describe("平台提交工作区的记录（platform 的 commit，#546）", () =>
 		expect(older.lastSeq).toBe(11);
 	});
 
-	it("scenario_version、run 这一版不渲染（成果栏里用，#547）：不添行", () => {
+	it("scenario_version、run 各添一行（#547），序号照常推进；一轮里它们后面的提交不是会话开始之前的补提交", () => {
 		const base = run([user(1), started(2)]);
 		const version = applyEvent(base, {
 			type: "platform",
@@ -488,7 +488,22 @@ describe("平台提交工作区的记录（platform 的 commit，#546）", () =>
 			name: "接口巡检",
 			version: 2,
 		} as SessionEvent);
-		expect(version.items).toEqual(base.items);
+		expect(version.items.map((i) => i.kind)).toEqual([...base.items.map((i) => i.kind), "version"]);
+		expect(version.lastSeq).toBe(3);
+		// 模型调工具做了事（这里是触发运行）之后的提交，是这一轮自己的：补提交在把 `prompt` 交给模型之前。
+		const after = applyEvent(version, {
+			type: "platform",
+			kind: "commit",
+			seq: 4,
+			at: at(),
+			turn: 1,
+			hash: "3f1c2ab9d0e4a5b6c7d8",
+			files: [],
+			diff: "",
+			truncated: false,
+		} as SessionEvent);
+		const commit = after.items.at(-1);
+		expect(commit).toMatchObject({ kind: "commit", beforeSession: false, leftover: false });
 	});
 });
 

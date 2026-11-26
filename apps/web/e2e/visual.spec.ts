@@ -1,10 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { Locator, Page } from "@playwright/test";
+import type { SessionEventBody } from "@sfly/schema";
 import {
 	AgentUpdateState,
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
+import { seedSession } from "../../server/test/support/sessions.js";
 import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
@@ -2192,6 +2195,84 @@ test("会话页：会话已结束", async ({ page }) => {
 	await pushEvent(page, sessionEnded(5, "bob"));
 	await expect(page.getByTestId("session-ended")).toHaveText("会话已结束（bob）");
 	await expect(page).toHaveScreenshot("session-ended.png");
+});
+
+test("会话页：右侧的成果（提交、场景版本、运行；运行的状态跟着运行变）和时间线上平台留下的两行", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "接口巡检", scenarioUsing("agent"));
+	const done = await triggerRun(controlPlane, scenario);
+	await agent.succeed(await agent.nextAssign());
+	const running = await triggerRun(controlPlane, scenario);
+	await agent.nextAssign();
+	const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+	const events: SessionEventBody[] = [
+		{
+			type: "user_message",
+			message_id: randomUUID(),
+			text: "给 http_check 加一个超时参数，然后跑一遍巡检",
+			steer: false,
+			author: "alice",
+			author_user_id: null,
+		},
+		{ type: "turn_started", turn: 1 },
+		{
+			type: "assistant_message",
+			text: "改好了，场景也保存了，下面是两次运行。",
+			usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+		},
+		{
+			type: "platform",
+			kind: "scenario_version",
+			turn: 1,
+			scenario_id: scenario,
+			name: "接口巡检",
+			version: 2,
+		},
+		{ type: "platform", kind: "run", turn: 1, run_id: done, scenario_name: "接口巡检" },
+		{ type: "platform", kind: "run", turn: 1, run_id: running, scenario_name: "接口巡检" },
+		{
+			type: "platform",
+			kind: "commit",
+			turn: 1,
+			hash: "3f1c2ab9d0e4a5b6c7d8e9f0a1b2c3d4e5f60718",
+			files: [
+				{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+				{ path: "assets/logo.png", additions: null, deletions: null },
+			],
+			diff: "--- a/nodes/http_check.py\n+++ b/nodes/http_check.py\n@@ -1 +1 @@\n-timeout = None\n+timeout = 30\n",
+			truncated: false,
+		},
+		{
+			type: "turn_end",
+			turn: 1,
+			outcome: "completed",
+			reason: "助手已完成",
+			steps: 4,
+			model_calls: 5,
+			duration_ms: 84_000,
+		},
+	];
+	const id = await seedSession(controlPlane.database.url, {
+		title: "给 http_check 加一个超时参数",
+		status: "idle",
+		createdAt: new Date(at(0)),
+		at: new Date(at(0)),
+		events,
+	});
+	await page.goto(`/sessions/${id}`);
+	const runs = page.getByTestId("results-runs").getByTestId("result-run");
+	await expect(runs).toHaveCount(2);
+	await expect(runs.nth(0).getByTestId("result-run-status")).toHaveText("成功");
+	await expect(runs.nth(1).getByTestId("result-run-status")).toHaveText("运行中");
+	await page.getByTestId("results-commits").getByRole("button", { name: "展开看差异" }).click();
+	await expect(page).toHaveScreenshot("session-results.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
 });
 
 test("助手页：会话列表里排队中的写排在第几位", async ({ page }) => {

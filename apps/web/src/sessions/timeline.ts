@@ -35,7 +35,9 @@ import type {
  * - `platform`（`commit`）是平台在一轮结束时提交工作区的记录（#546）：一行「这一轮改了 N 个文件 +a −b」，展开是文件列表和差异（{@link CommitItem}）；
  *   被打断那一轮留下的改动在下一轮开始前补提交，事件的 `turn` 比它所在的这一轮小（`leftover`）；第 1 轮开始之前工作区里就有的改动也在这一轮
  *   开始前补提交（`beforeSession`），事件的 `turn` 就是这一轮，靠位置认：它出现在这一轮的模型说话、调工具之前；
- * - 这一版不渲染的类型（`tool_output`、`platform` 的 `scenario_version`、`run`、`snapshot`）和不认识的类型原样放过，不抛错。
+ * - `platform`（平台在会话里留下的记录，只有控制面写，助手说的话不进来）：`run`（助手触发了一次运行）和 `scenario_version`（保存了场景的一个版本）
+ *   各一行（{@link RecordItem}，#547）；右侧的「成果」也从这些事件生成（`results.ts`）；
+ * - 这一版不渲染的类型（`tool_output`、`snapshot`）和不认识的类型原样放过，不抛错。
  */
 
 export interface ToolResultInfo {
@@ -111,6 +113,7 @@ export type TimelineItem =
 			limitKind: TurnLimit | undefined;
 			errorClass: ErrorClass | undefined;
 	  }
+	| RecordItem
 	| CommitItem
 	| {
 			kind: "session_ended";
@@ -143,6 +146,34 @@ export interface CommitItem {
 	/** 差异太长，只存了开头。 */
 	truncated: boolean;
 }
+
+/**
+ * 平台在会话里留下的记录（`platform` 事件的 `run`、`scenario_version`，#547）：助手用会话令牌触发了运行、保存了场景的版本，控制面在记下
+ * 那条记录的同一个事务里写这条事件。依据是请求带着这个会话的令牌，不是模型在对话里怎么说；样式和助手的话明显不同（统一的样式在 #550）。
+ */
+export type RecordItem =
+	| {
+			kind: "run";
+			key: string;
+			seq: number;
+			at: string;
+			/** 是第几轮触发的。 */
+			turn: number;
+			runId: string;
+			/** 触发那一刻的场景名。 */
+			scenarioName: string;
+	  }
+	| {
+			kind: "version";
+			key: string;
+			seq: number;
+			at: string;
+			turn: number;
+			scenarioId: string;
+			/** 保存那一刻的场景名。 */
+			name: string;
+			version: number;
+	  };
 
 /**
  * 用户的一句话是什么：`turn` 开一轮的话；`steer` 插话（在做时说的）；`behind` 排在这一轮后面的话（停止途中说的，这一轮的结局写下之后
@@ -199,7 +230,9 @@ function beforeSession(state: TimelineState, turn: number): boolean {
 	if (state.currentTurn !== 1 || turn !== 1) return false;
 	for (let i = state.items.length - 1; i >= 0; i -= 1) {
 		const item = state.items[i] as TimelineItem;
+		// 运行和场景版本那一行（#547）是模型做的事留下的，和说话、调工具一样：在它们后面的提交不是补提交。
 		if (item.kind === "assistant" || item.kind === "tool") return false;
+		if (item.kind === "run" || item.kind === "version") return false;
 		if (item.kind === "commit" && item.beforeSession) return false;
 		if (item.kind === "turn_end" || (item.kind === "user" && item.role === "turn")) return true;
 	}
@@ -658,29 +691,66 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				],
 			};
 		case "platform":
-			// 只有 `commit` 渲染；`scenario_version`、`run` 在 #547（成果栏）里用。
-			if (event.kind !== "commit") return state;
-			return {
-				...state,
-				items: [
-					...state.items,
-					{
-						kind: "commit",
-						key: `e${event.seq}`,
-						seq: event.seq,
-						at: event.at,
-						turn: event.turn,
-						leftover:
-							state.currentTurn > 0 &&
-							(event.turn < state.currentTurn || beforeSession(state, event.turn)),
-						beforeSession: beforeSession(state, event.turn),
-						hash: event.hash,
-						files: event.files,
-						diff: event.diff,
-						truncated: event.truncated,
-					},
-				],
-			};
+			// 提交（#546）、运行和场景版本（#547）各一行；别的 `platform` 类型这一版不渲染。
+			if (event.kind === "commit") {
+				return {
+					...state,
+					items: [
+						...state.items,
+						{
+							kind: "commit",
+							key: `e${event.seq}`,
+							seq: event.seq,
+							at: event.at,
+							turn: event.turn,
+							leftover:
+								state.currentTurn > 0 &&
+								(event.turn < state.currentTurn || beforeSession(state, event.turn)),
+							beforeSession: beforeSession(state, event.turn),
+							hash: event.hash,
+							files: event.files,
+							diff: event.diff,
+							truncated: event.truncated,
+						},
+					],
+				};
+			}
+			if (event.kind === "run") {
+				return {
+					...state,
+					items: [
+						...state.items,
+						{
+							kind: "run",
+							key: `e${event.seq}`,
+							seq: event.seq,
+							at: event.at,
+							turn: event.turn,
+							runId: event.run_id,
+							scenarioName: event.scenario_name,
+						},
+					],
+				};
+			}
+			if (event.kind === "scenario_version") {
+				return {
+					...state,
+					items: [
+						...state.items,
+						{
+							kind: "version",
+							key: `e${event.seq}`,
+							seq: event.seq,
+							at: event.at,
+							turn: event.turn,
+							scenarioId: event.scenario_id,
+							name: event.name,
+							version: event.version,
+						},
+					],
+				};
+			}
+			return state;
 		default:
 			// tool_output、snapshot，以及以后才有的类型：这一版不渲染。
 			return state;

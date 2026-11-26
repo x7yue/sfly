@@ -70,6 +70,29 @@ export function useLiveRun(
 	return run;
 }
 
+/**
+ * 只要运行状态的地方读运行视图：会话页的「成果」栏（一个会话可以触发很多运行）。**不开运行事件流**，在跑的运行定时重新读
+ * （`STATUS_POLL_MS`）。浏览器对同源的连接数有限（HTTP/1.1 是 6 条），只有运行监控页、运行抽屉和画布开运行事件流（`lib/polling.ts`）：
+ * 页面上列几个运行就开几条的话，五个在跑的运行就把连接占满，页面自己的请求（发送、停止、结束会话）排不上队。
+ *
+ * 和 {@link useLiveRun} 是同一份缓存（同一个 query key，响应同样按 {@link latestRunView} 合并）：运行监控开着事件流时，这里读到的就是它推送的。
+ * 结束了的运行不会再变：不再轮询，`staleTime` 无限，不随挂载和窗口焦点重新读。还没读到（没有数据）当作在跑，按间隔重新读，直到读到。
+ */
+export function runStatusQuery(runId: string) {
+	const finished = (run: RunView | undefined) => run !== undefined && run.status !== "running";
+	return {
+		...runViewQuery(runId),
+		refetchInterval: (query: { state: { data: RunView | undefined } }) =>
+			finished(query.state.data) ? false : STATUS_POLL_MS,
+		staleTime: (query: { state: { data: RunView | undefined } }) =>
+			finished(query.state.data) ? Number.POSITIVE_INFINITY : 0,
+	};
+}
+
+export function useRunStatus(runId: string) {
+	return useQuery(runStatusQuery(runId));
+}
+
 interface Connection {
 	users: number;
 	close: () => void;

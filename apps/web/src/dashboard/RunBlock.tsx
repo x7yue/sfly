@@ -97,7 +97,12 @@ export function RunBlock({
 						</span>
 					</div>
 					<div className="mt-0.5 text-xs text-fg-3">
-						<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
+						<TriggeredAt
+							by={run.triggered_by}
+							via={run.triggered_via}
+							session={run.session}
+							at={run.started_at}
+						/>
 					</div>
 				</div>
 				<div className="flex-none text-right">
