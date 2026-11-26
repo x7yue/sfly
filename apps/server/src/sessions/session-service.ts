@@ -141,6 +141,14 @@ export const ASSISTANT_RESTARTED_REASON =
 /** 控制面和助手服务断开太久、错过的事件已经补不回来时，在做的会话里写的 `events_lost` 提示。 */
 export const EVENTS_LOST_MESSAGE = "控制面和助手服务断开太久，这一段过程没有记下";
 
+/**
+ * 控制面和助手服务的事件流还没连上（刚启动、或断了正在退避重连，间隔 1 到 30 秒）时，就绪状态和新的一轮写的说明（#545）：这时开始一轮的话，
+ * 助手服务发出的事件到不了控制面（持久的事件之后靠续传补回，但增量、工具输出这些不持久的就丢了），时间线上这一轮会缺东西
+ * （#760 审查在离线整套里碰到过：这一轮没有工具调用）。所以事件流连上之前不开始新的一轮，就绪状态写助手服务连不上。
+ */
+export const EVENTS_NOT_CONNECTED_MESSAGE =
+	"助手服务的事件流还没有连上（控制面刚启动或正在重新连接），过几秒再试";
+
 /** 关闭时最多等后台的事收尾多久（毫秒）：它们在放弃等待，只有正在发出去的命令要等它回来或超时。 */
 export const CLOSE_DRAIN_MS = 500;
 
@@ -165,7 +173,8 @@ export interface SessionServiceDeps {
 	/**
 	 * 控制面和助手服务的事件连接此刻连着没有（`AssistantConnection.connected`，没有配置助手服务时不传）。连不上期间助手服务那边
 	 * 这一轮可能还在做，安静不是出事了：兜底（{@link SessionService.expireStale}）这时不把在做的会话判成中断，等连上之后由 `hello` 说了算
-	 * （{@link SessionService.assistantRestarted}、{@link SessionService.assistantEventsLost}）。
+	 * （{@link SessionService.assistantRestarted}、{@link SessionService.assistantEventsLost}）。**没连上时也不开始新的一轮**：就绪状态写助手服务
+	 * 连不上、建会话和说话 503 `assistant_unavailable`（{@link EVENTS_NOT_CONNECTED_MESSAGE}）：这时助手服务发出的增量、工具输出到不了控制面。
 	 */
 	assistantConnected?: () => boolean;
 	/**
@@ -293,6 +302,11 @@ export class SessionService {
 
 	// ---- 就绪状态 ----
 
+	/** 事件流此刻连着没有；没有登记「事件连接状态」的（没有配置助手服务、或测试里没给）当作连着。 */
+	#eventsConnected(): boolean {
+		return this.deps.assistantConnected?.() ?? true;
+	}
+
 	/**
 	 * 助手服务的 `/health`（缓存 {@link HEALTH_TTL_MS}，最多等 {@link HEALTH_TIMEOUT_MS}，同时来的请求共用一次）；
 	 * 连不上时是原因。
@@ -379,6 +393,9 @@ export class SessionService {
 			const health = await this.#assistantHealth();
 			if ("error" in health) {
 				problems.push({ kind: "assistant_unreachable", message: health.error });
+			} else if (!this.#eventsConnected()) {
+				// `/health` 通、事件流没连上：控制面正在（重新）连接，这时开始的一轮会丢事件，见 {@link EVENTS_NOT_CONNECTED_MESSAGE}。
+				problems.push({ kind: "assistant_unreachable", message: EVENTS_NOT_CONNECTED_MESSAGE });
 			} else {
 				const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
 				if (model) problems.push(model);
@@ -409,6 +426,16 @@ export class SessionService {
 				503,
 				"assistant_not_configured",
 				`助手没有开启：${setup.configured ? "" : setup.reason}`,
+			);
+		}
+		// 事件流没连上：不开始新的一轮（建会话、对空闲的会话说话、排队的轮到它都先过这里），不建会话、不写 `user_message`。
+		// 说明和就绪状态一致：助手服务的 `/health` 不通时写它不通的原因（密钥不一致、连不上……），通的话才写事件流还没连上。
+		if (!this.#eventsConnected()) {
+			const health = await this.#assistantHealth();
+			return rejected(
+				503,
+				"assistant_unavailable",
+				"error" in health ? health.error : EVENTS_NOT_CONNECTED_MESSAGE,
 			);
 		}
 		const workbench = await this.#workbench(project);

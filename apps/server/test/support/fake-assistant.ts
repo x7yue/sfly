@@ -135,6 +135,11 @@ export class FakeAssistant {
 	replayEverything = false;
 	/** `replayEverything` 时只重放这些会话的事件（别的会话的事件库里没有对应的会话，重放它们会被当成「不认识这个会话」丢弃）。不给就是全部。 */
 	replayOnly: string[] | undefined;
+	/**
+	 * 设了就让 `GET /events` 回这个状态码（命令和 `/health` 照常）：造「助手服务是好的、控制面和它的事件流没连上」
+	 * （控制面刚启动或正在退避重连时就是这样，#545）。已经连着的事件流不受影响（要断开用 {@link dropStreams}）。
+	 */
+	eventsStatus: number | undefined;
 	/** 最近一次 `GET /events` 带的 `after` 原文（没带是 undefined）；每次连接记一条。 */
 	readonly eventAfters: Array<string | undefined> = [];
 	/** 事件流里写心跳的间隔（毫秒），默认和协议一样 15 秒；0 是不写（模拟一个不发心跳的助手服务）。 */
@@ -473,6 +478,9 @@ export class FakeAssistant {
 			return this.#send(res, 200, health);
 		}
 		if (route === "GET /events") {
+			if (this.eventsStatus !== undefined) {
+				return this.#error(res, { status: this.eventsStatus, code: "start_failed" });
+			}
 			res.writeHead(200, { "content-type": "application/x-ndjson" });
 			const after = url.searchParams.get("after") ?? undefined;
 			this.eventAfters.push(after);

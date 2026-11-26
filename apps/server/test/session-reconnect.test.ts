@@ -13,6 +13,7 @@ import type {
 } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProjectId } from "../src/projects/project-id.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -118,6 +119,7 @@ describe("控制面和助手服务的断线重连、补发、纪元变化", () =
 		assistant.abortRequests.length = 0;
 		assistant.replayEverything = false;
 		assistant.replayOnly = undefined;
+		assistant.eventsStatus = undefined;
 		assistant.replayLimit = 10_000;
 		assistant.promptReply = () => undefined;
 		assistant.abortReply = () => undefined;
@@ -494,6 +496,79 @@ describe("控制面和助手服务的断线重连、补发、纪元变化", () =
 			await eventually(() => expect(cp.current.assistantConnected()).toBe(true));
 		}, 30_000);
 
+		it("事件流没连上（助手服务本身是好的，控制面刚启动或正在退避重连时就是这样）：就绪状态写助手服务连不上，建会话和说话 503 assistant_unavailable、不写任何东西；连上之后才放行", async () => {
+			const a = await createOk("甲");
+			assistant.emit(a.id, 1, turnEnd(1));
+			await eventually(async () => expect(await statusOf(cp, a.id)).toBe("idle"));
+			const sessionsBefore = await query<{ n: string }>(cp, "select count(*) as n from sessions");
+			const eventsBefore = (await rowsOf(cp, a.id)).length;
+			const promptsBefore = assistant.prompts.length;
+			// 助手服务的 `/health` 结果缓存 5 秒（控制面的时钟是手动的）：前面的用例留下的「连不上」不能算在这个用例头上。
+			(cp.clock as ManualClock).advance(10_000);
+			// 助手服务的 /health 和命令都通，只有事件流连不上。
+			assistant.eventsStatus = 503;
+			assistant.dropStreams();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
+			const list = await json<{
+				readiness: { ready: boolean; problems: Array<{ kind: string; message: string }> };
+			}>(await api.get("/projects/default/sessions"));
+			expect(list.readiness.ready).toBe(false);
+			expect(list.readiness.problems).toEqual([
+				expect.objectContaining({
+					kind: "assistant_unreachable",
+					message: expect.stringContaining("事件流还没有连上"),
+				}),
+			]);
+			// 建会话：503，没有建出会话、没有交给助手服务。
+			const created = await create("乙");
+			expect(created.status).toBe(503);
+			const body = await json<{ error: { code: string; message: string } }>(created);
+			expect(body.error.code).toBe("assistant_unavailable");
+			expect(body.error.message).toContain("事件流还没有连上");
+			expect((await query<{ n: string }>(cp, "select count(*) as n from sessions"))[0]).toEqual(
+				sessionsBefore[0],
+			);
+			// 对空闲的会话说话：503，没有写 user_message、没有开始新的一轮。
+			const said = await say(a.id, "接着做");
+			expect(said.status).toBe(503);
+			expect((await json<{ error: { code: string } }>(said)).error.code).toBe(
+				"assistant_unavailable",
+			);
+			expect((await rowsOf(cp, a.id)).length).toBe(eventsBefore);
+			expect(await statusOf(cp, a.id)).toBe("idle");
+			expect(assistant.prompts.length).toBe(promptsBefore);
+			// 连上之后才放行。
+			assistant.eventsStatus = undefined;
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 10_000);
+			expect((await say(a.id, "接着做")).status).toBe(200);
+			await eventually(() => expect(assistant.prompts.length).toBe(promptsBefore + 1));
+			expect((await create("丙")).status).toBe(201);
+		}, 30_000);
+
+		it("事件流没连上期间项目的位置空出来：排队的会话不开始（开始了的话它的事件会丢），连上之后兜底的扫描才开始它", async () => {
+			const first = await createOk("在做的");
+			const second = await createOk("排队的");
+			expect(await statusOf(cp, second.id)).toBe("queued");
+			assistant.eventsStatus = 503;
+			assistant.dropStreams();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
+			// 停止在做的那个：助手服务的结局带不回来（事件流断着），等宽限（测试里 300 毫秒）之后控制面自己补，项目的位置空出来。
+			expect((await api.postEmpty(`/sessions/${first.id}/stop`, "alice")).status).toBe(200);
+			await cp.current.sessionService.idle();
+			expect(await statusOf(cp, first.id)).toBe("idle");
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(await statusOf(cp, second.id)).toBe("queued");
+			expect(assistant.prompts.map((p) => p.sessionId)).toEqual([first.id]);
+			// 连上之后：兜底的扫描（生产里每分钟，测试里手动调）开始排队的。
+			assistant.eventsStatus = undefined;
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 10_000);
+			await cp.current.sessionService.startWaiting();
+			await cp.current.sessionService.idle();
+			await eventually(() =>
+				expect(assistant.prompts.map((p) => p.sessionId)).toEqual([first.id, second.id]),
+			);
+		}, 30_000);
+
 		it("连着的时候兜底照旧：超过 30 分钟没有动静的在做的会话按中断处理", async () => {
 			const a = await createOk("甲");
 			(cp.clock as ManualClock).advance(31 * 60_000);
@@ -506,8 +581,8 @@ describe("控制面和助手服务的断线重连、补发、纪元变化", () =
 	});
 });
 
-describe("助手服务回来、事件连接还没重连上的这段时间开始的一轮不算被打断", () => {
-	it("连接断开之后才开始的一轮（用户在助手服务回来之后马上说了话）：重连后 hello 的纪元变了，它不被当成「助手服务重启时在做的」", async () => {
+describe("助手服务回来、事件连接还没重连上的这段时间", () => {
+	it("事件流没连上时不开始新的一轮（503）；万一有一轮在这段时间开始了（绕过检查直接写），重连后 hello 的纪元变了，它不被当成「助手服务重启时在做的」", async () => {
 		const assistant = await FakeAssistant.start();
 		// 重连等得久：给「助手服务已经回来、事件连接还没重连」留出窗口。
 		const cp = await startTestControlPlane({
@@ -545,19 +620,33 @@ describe("助手服务回来、事件连接还没重连上的这段时间开始�
 			expect(await statusOf(cp, created.id)).toBe("idle");
 			assistant.restartService();
 			await assistant.resume();
-			// 事件连接还没重连：用户马上接着说（助手服务回来了，`/health` 通），新的一轮（第 2 轮）在新的助手服务上开始。
+			// 事件连接还没重连：用户马上接着说（助手服务回来了，`/health` 通），503，不开始新的一轮（开始了的话助手服务发出的事件到不了控制面）。
 			expect(cp.current.assistantConnected()).toBe(false);
-			expect(
-				(await api.post(`/sessions/${created.id}/messages`, { text: "接着做" }, "alice")).status,
-			).toBe(200);
-			await eventually(() =>
-				expect(assistant.prompts.map((p) => [p.sessionId, p.body.turn])).toContainEqual([
-					created.id,
-					2,
-				]),
+			advance();
+			(cp.clock as ManualClock).advance(10_000); // `/health` 的缓存过期，看到的是助手服务回来了
+			const refused = await api.post(
+				`/sessions/${created.id}/messages`,
+				{ text: "接着做" },
+				"alice",
 			);
+			expect(refused.status).toBe(503);
+			expect((await json<{ error: { code: string } }>(refused)).error.code).toBe(
+				"assistant_unavailable",
+			);
+			expect(await statusOf(cp, created.id)).toBe("idle");
+			expect(assistant.prompts.map((p) => p.body.turn)).toEqual([1]);
+			// 检查和开始之间事件流恰好断了的那一瞬（绕过检查直接写）：这一轮是在新的助手服务上开始的。
+			const begun = await cp.current.sessions.beginTurn(created.id, "default" as ProjectId, {
+				type: "user_message",
+				message_id: randomUUID(),
+				text: "接着做",
+				steer: false,
+				author: "alice",
+				author_user_id: null,
+			});
+			expect(begun.outcome).toBe("started");
 			expect(await statusOf(cp, created.id)).toBe("running");
-			// 事件连接重连上，hello 的纪元变了：甲的第 2 轮是新开始的，没有被打断。
+			// 事件连接重连上，hello 的纪元变了：连接断开那一刻在做的是甲的第 1 轮，这一轮（第 2 轮）没有被打断。
 			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 15_000);
 			expect(await statusOf(cp, created.id)).toBe("running");
 			const events = (await json<SessionDetailResponse>(await api.get(`/sessions/${created.id}`)))

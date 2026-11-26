@@ -749,6 +749,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			assistantSecret: FAKE_SECRET,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			// 事件流永远连不上（401）：不等它连上。
+			waitForAssistant: false,
 		});
 		const agent = await FakeAgent.connect(
 			other.grpcUrl,
@@ -875,11 +877,14 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 	});
 
 	describe("助手服务没接住后面的一轮：用户的话还在历史里，补一条失败的结局，会话回到空闲", () => {
-		it("连不上助手服务", async () => {
+		it("连不上助手服务：事件流也断了，这时不开始新的一轮（#545）：503，用户的话不写进历史，会话仍是空闲；开始之后才发现 `prompt` 没接住的情形见下面各例（`promptReply`）", async () => {
 			const view = await json<SessionView>(await create());
 			assistant.emit(view.id, 1, turnEnd(1));
 			await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
+			const before = (await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`)))
+				.events.length;
 			await assistant.stop();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
 			try {
 				const res = await api.post(`/sessions/${view.id}/messages`, { text: "再来一次" });
 				expect(res.status).toBe(503);
@@ -889,21 +894,17 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			} finally {
 				await assistant.resume();
 				await assistant.connected();
+				await eventually(() => expect(cp.current.assistantConnected()).toBe(true));
 			}
 			const detail = await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`));
 			expect(detail.status).toBe("idle");
-			// 写进历史的 turn_end 的原因所有能读这个会话的人都看得到：同样不带地址和端口。
-			expect(JSON.stringify(detail.events.at(-1))).not.toContain(new URL(assistant.url).port);
-			const types = detail.events.map((e) => e.type);
-			expect(types.slice(-3)).toEqual(["user_message", "turn_started", "turn_end"]);
+			// 什么也没写：没有这句话、没有新的一轮。
+			expect(detail.events).toHaveLength(before);
 			expect(detail.events.at(-1)).toMatchObject({
 				type: "turn_end",
-				turn: 2,
-				outcome: "failed",
-				steps: 0,
-				model_calls: 0,
+				turn: 1,
+				outcome: "completed",
 			});
-			expect(detail.last_turn_outcome).toBe("failed");
 		});
 
 		it("模型不可用", async () => {
@@ -933,6 +934,9 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 
 	it("助手服务连不上时建会话：503 assistant_unavailable，库里没有这个会话", async () => {
 		await assistant.stop();
+		await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
+		// `/health` 的缓存（5 秒）过期之后问到的是连不上的原因；缓存里还是「通」时说明写事件流没连上（见 session-reconnect.test.ts）。
+		(cp.clock as ManualClock).advance(6_000);
 		try {
 			const res = await create();
 			expect(res.status).toBe(503);
@@ -945,6 +949,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		} finally {
 			await assistant.resume();
 			await assistant.connected();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true));
+			(cp.clock as ManualClock).advance(6_000);
 		}
 		// 恢复之后同一个项目照常能建（之前失败的那次没有占着「在做」）。
 		expect((await create()).status).toBe(201);
@@ -1017,8 +1023,17 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(await readiness()).toEqual({ ready: true, problems: [], workbench: WORKBENCH });
 			// 5 秒内助手服务连不上也不重新问（读缓存）；之后问一遍，写明原因。
 			await assistant.stop();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
 			try {
-				expect((await readiness()).ready).toBe(true);
+				// 5 秒内不重新问 `/health`（缓存里是「通」），但事件流断了：就绪状态写事件流没连上（#545）。
+				const cached = await readiness();
+				expect(cached.ready).toBe(false);
+				expect(cached.problems).toEqual([
+					expect.objectContaining({
+						kind: "assistant_unreachable",
+						message: expect.stringContaining("事件流还没有连上"),
+					}),
+				]);
 				(cp.clock as ManualClock).advance(6_000);
 				const now = await readiness();
 				expect(now.ready).toBe(false);
@@ -1029,6 +1044,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			} finally {
 				await assistant.resume();
 				await assistant.connected();
+				await eventually(() => expect(cp.current.assistantConnected()).toBe(true));
 				(cp.clock as ManualClock).advance(6_000);
 			}
 			expect((await readiness()).ready).toBe(true);
