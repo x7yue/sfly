@@ -1,7 +1,7 @@
 import { errorHeadline, runViewFailures } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
-import { useContext } from "react";
+import { useContext, useLayoutEffect } from "react";
 import { Elapsed } from "#/components/elapsed";
 import { runNodeName } from "#/components/node-name";
 import { StatusPill } from "#/components/status";
@@ -11,6 +11,7 @@ import { untrustedPlain } from "#/lib/untrusted-text";
 import { useRunView } from "#/monitor/live-run";
 import { runStatus } from "#/monitor/run-model";
 import { Truncate } from "@/components/ui/truncate";
+import { FollowContext } from "./timeline-follow";
 import { LiveRunsContext } from "./use-live-runs";
 
 /**
@@ -42,6 +43,11 @@ export function SessionRunCard({
 		run?.status === "failed" && first
 			? SESSION.runCard.failed(runNodeName(first.node), errorHeadline(first.node.error?.message))
 			: null;
+	// 时间线上的卡片在事件之外变高（状态读到了、失败时多出一行原因）：在底部跟随的人要跟到最新，往上翻看的人不动（和逐字出现的话一样）。
+	const follow = useContext(FollowContext);
+	const grown = `${run === undefined}:${failure ?? ""}`;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在这张卡片的高度可能变了（读到状态、多出失败原因）时通知
+	useLayoutEffect(() => follow(), [grown]);
 	const label = `${shortId(runId)} · ${untrustedPlain(scenarioName)}${
 		failure === null ? "" : ` · ${untrustedPlain(failure)}`
 	}`;
@@ -63,16 +69,8 @@ export function SessionRunCard({
 				/>
 			}
 		>
-			<span className="flex min-w-0 items-baseline gap-2">
-				<Truncate untrusted className="flex-1 font-medium text-fg-1">
-					{scenarioName}
-				</Truncate>
-				<span data-slot="run-id" className="flex-none font-mono text-fg-2">
-					{shortId(runId)}
-				</span>
-			</span>
-			<span className="flex items-center gap-2">
-				<span data-testid="run-card-status">
+			<span className="flex min-w-0 items-center gap-2">
+				<span data-testid="run-card-status" className="flex-none">
 					{status ? (
 						<StatusPill kind={status.kind} pulse={status.kind === "running"}>
 							{status.label}
@@ -83,11 +81,17 @@ export function SessionRunCard({
 						<span className="text-fg-3">{MESSAGE.loading}</span>
 					)}
 				</span>
+				<Truncate untrusted className="flex-1 font-medium text-fg-1">
+					{scenarioName}
+				</Truncate>
+				<span data-slot="run-id" className="flex-none font-mono text-fg-2">
+					{shortId(runId)}
+				</span>
 				{run && (
 					<span
 						data-testid="run-card-elapsed"
 						title={SESSION.runCard.elapsed}
-						className="ml-auto flex-none font-mono text-fg-3"
+						className="flex-none font-mono text-fg-3"
 					>
 						{run.ended_at === null ? (
 							<Elapsed since={Date.parse(run.started_at)} />

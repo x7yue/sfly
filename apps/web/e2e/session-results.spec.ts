@@ -262,6 +262,72 @@ test("运行卡片：同一次运行从运行中到失败，时间线上的、�
 	expect(session.streams).toEqual([runId]);
 });
 
+test("运行卡片：时间线停在底部时，卡片在事件之外变高（读到状态、失败时多出一行原因）也跟到最新；往上翻看的人不被拉回去", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
+	const first = await triggerRun(controlPlane, scenario);
+	const firstAssign = await agent.nextAssign();
+	const second = await triggerRun(controlPlane, scenario);
+	const secondAssign = await agent.nextAssign();
+	// 够长的时间线（要滚动），最后是两条运行记录：它们的卡片在时间线的最底下。
+	const talk = Array.from({ length: 40 }, (_, n) => ({
+		type: "assistant_message" as const,
+		text: `第 ${n + 1} 句话，说点什么占个位置。`,
+		usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+	}));
+	const id = await seedSession(controlPlane.database.url, {
+		title: TITLE,
+		status: "idle",
+		events: [
+			...scenarioEvents(
+				...talk,
+				{ type: "platform", kind: "run", turn: 1, run_id: first, scenario_name: "巡检" },
+				{ type: "platform", kind: "run", turn: 1, run_id: second, scenario_name: "巡检" },
+			),
+			{
+				type: "turn_end",
+				turn: 1,
+				outcome: "completed",
+				reason: "助手已完成",
+				steps: 1,
+				model_calls: 1,
+				duration_ms: 1000,
+			},
+		],
+	});
+	await page.goto(`/sessions/${id}`);
+	const scroller = page.getByTestId("session-scroll");
+	await expect(cardStatus(timelineCard(page, second))).toHaveText("运行中");
+	/** 离底部还差多少像素。 */
+	const fromBottom = () =>
+		scroller.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+	await expect.poll(fromBottom).toBeLessThan(2);
+
+	// 在底部时，第一个运行失败：卡片多出一行失败原因，时间线跟着滚，这一行和卡片的最后一行都看得见。
+	await agent.fail(firstAssign, "AssertionFailed: 成功率 97.2% 低于阈值 99%");
+	const failure = timelineCard(page, first).getByTestId("run-card-failure");
+	await expect(failure).toBeVisible({ timeout: 3_000 });
+	await expect.poll(fromBottom).toBeLessThan(2);
+	const view = await box(scroller);
+	const line = await box(failure);
+	expect(line.y + line.height).toBeLessThanOrEqual(view.y + view.height + 1);
+
+	// 往上翻看之后：第二个运行失败，不把人拉回底部。
+	await scroller.evaluate((el) => {
+		el.scrollTop = 0;
+	});
+	await expect.poll(fromBottom).toBeGreaterThan(200);
+	await agent.fail(secondAssign, "AssertionFailed: 磁盘写满");
+	await expect(cardStatus(timelineCard(page, second))).toHaveText("失败", { timeout: 3_000 });
+	await expect(timelineCard(page, second).getByTestId("run-card-failure")).toBeAttached();
+	expect(await scroller.evaluate((el) => el.scrollTop)).toBeLessThan(5);
+});
+
 test("运行卡片：在跑的运行多于事件流名额（3 个）：最近的三个开事件流，其余的靠定时重新读；名额让出来之后更早的接上", async ({
 	page,
 	controlPlane,
