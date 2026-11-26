@@ -224,6 +224,32 @@ describe("install.sh", () => {
 		expect(run.stdout + run.stderr).not.toContain("sfly_agt_envcredential");
 	});
 
+	it("下载 Agent 的 curl 的环境里没有 SFLY_TOKEN、SFLY_API_TOKEN（脚本自己的 curl 调用，不是取脚本的那一个）", async () => {
+		const realCurl = (await promisify(execFile)("sh", ["-c", "command -v curl"])).stdout.trim();
+		const calls = join(dir, "curl-calls.log");
+		await stub(
+			"curl",
+			`{ echo "ARGS: $*"; env; echo "END"; } >> '${calls}'; exec '${realCurl}' "$@"`,
+		);
+		const run = await install(["--name", "lab-07", "--no-service"], {
+			SFLY_TOKEN: "sfly_agt_envcredential",
+			SFLY_API_TOKEN: "sfly_pat_personalenv",
+		});
+		expect(run.code, run.stderr).toBe(0);
+		const records = (await readFile(calls, "utf8"))
+			.split("END\n")
+			.filter((r) => r.includes("ARGS:"));
+		// 取脚本的那一个（在我们的环境里，带着测试给的变量）之外，至少有一个下载 Agent 的调用（-o 写到文件）。
+		const downloads = records.filter((r) => /^ARGS: .* -o /m.test(r));
+		expect(downloads.length).toBeGreaterThan(0);
+		for (const record of downloads) {
+			expect(record).toContain("HOME=");
+			expect(record).not.toMatch(/^SFLY_(API_)?TOKEN=/m);
+			expect(record).not.toContain("sfly_agt_envcredential");
+			expect(record).not.toContain("sfly_pat_personalenv");
+		}
+	});
+
 	it("下载被截断的脚本什么也不执行", async () => {
 		const script = await (await cp.fetch("/install.sh")).text();
 		const lines = script.split("\n");
@@ -362,8 +388,12 @@ case "$1 $2" in
 		echo "错误：没有登录凭据" >&2
 		exit 5
 	fi
+	if [ -n "\${STUB_REGISTER_EXIT:-}" ]; then
+		echo "错误：已经有一台叫 dev-alice-lab 的 Agent：换一个主机名" >&2
+		exit "$STUB_REGISTER_EXIT"
+	fi
 	echo "SFLY_AGENT_NAME=dev-alice-lab"
-	echo "SFLY_TOKEN=${TOKEN}"
+	echo "SFLY_TOKEN=${TOKEN}\${STUB_TOKEN_SUFFIX:-}"
 	echo "已注册开发 Agent dev-alice-lab" >&2
 	;;
 "login --server")
@@ -515,6 +545,9 @@ esac
 			run = await install(["--dev", "--no-service"], { SFLY_HOME: sflyHome });
 			expect(run.code, run.stderr).toBe(0);
 			expect(run.stdout).toContain("沿用");
+			// 沿用的凭据不打印；「要换成新的」的指引有 revoke-dev 这一步（不先吊销，重新注册会撞名字）。
+			expect(run.stdout + run.stderr).not.toContain(TOKEN);
+			expect(run.stdout).toContain("sfly agent revoke-dev dev-alice-lab");
 			expect(await sflyCalls()).toEqual([]);
 			const env = await agentEnv();
 			expect(env).toContain("SFLY_AGENT_NAME=dev-alice-lab\n");
@@ -545,6 +578,105 @@ esac
 			expect(run.code, run.stderr).toBe(0);
 			expect(await agentEnv()).toContain("SFLY_AGENT_NAME=dev-alice-lab\n");
 			expect(await agentEnv()).not.toContain("dev-bob-oldhost");
+		});
+
+		it("旧版本装的开发机（agent.env 里是 dev- 名字加共享令牌）：不沿用，注册新的，agent.env 换成新名字和新凭据", async () => {
+			await mkdir(sflyHome, { recursive: true });
+			await writeFile(
+				join(sflyHome, "agent.env"),
+				"SFLY_AGENT_NAME=dev-alice-lab\nSFLY_TOKEN=shared-registration-secret\nSFLY_SLOTS=2\n",
+			);
+			const run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(run.stdout).not.toContain("沿用");
+			expect(await sflyCalls()).toEqual([`agent register-dev --server ${cp.httpUrl} --env`]);
+			const env = await agentEnv();
+			expect(env).toContain(`SFLY_TOKEN=${TOKEN}\n`);
+			expect(env).not.toContain("shared-registration-secret");
+			// 别的键保留。
+			expect(env).toContain("SFLY_SLOTS=2\n");
+		});
+
+		it("名字被占用（控制面 409，register-dev 退出码 6）：失败并写明几条路，不让人登录，没有写 agent.env", async () => {
+			const run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+				STUB_REGISTER_EXIT: "6",
+			});
+			expect(run.code).toBe(1);
+			// 控制面的说明照样给出，后面是办法：换名字、自己的先 revoke-dev、旧名字请管理员签发凭据。
+			expect(run.stderr).toContain("已经有一台叫 dev-alice-lab 的 Agent");
+			expect(run.stderr).toContain("--dev-host <另一个主机名>");
+			expect(run.stderr).toContain("sfly agent revoke-dev");
+			expect(run.stderr).toContain("sfly agent credentials issue");
+			expect(run.stderr).toContain("--dev --name <名字>");
+			expect(run.stderr).toContain("SFLY_TOKEN");
+			expect(await sflyCalls()).toEqual([`agent register-dev --server ${cp.httpUrl} --env`]);
+			expect(await agentEnv().catch(() => "没有这个文件")).toBe("没有这个文件");
+		});
+
+		it("沿用之后要换成新的：按提示先 revoke-dev、再删两行、重新运行，换成新的凭据", async () => {
+			let run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			run = await install(["--dev", "--no-service"], { SFLY_HOME: sflyHome });
+			// 提示里的命令（照做）：`sfly agent revoke-dev <名字>`。
+			const hint = /先 (sfly agent revoke-dev \S+)，再删掉其中的 (\S+) 和 (\S+) 两行/.exec(
+				run.stdout,
+			);
+			expect(hint, run.stdout).not.toBeNull();
+			const [, revoke, first, second] = hint as RegExpExecArray;
+			expect(revoke).toBe("sfly agent revoke-dev dev-alice-lab");
+			expect([first, second]).toEqual(["SFLY_AGENT_NAME", "SFLY_TOKEN"]);
+			await writeFile(
+				join(sflyHome, "agent.env"),
+				(await agentEnv())
+					.split("\n")
+					.filter((l) => !l.startsWith(`${first}=`) && !l.startsWith(`${second}=`))
+					.join("\n"),
+			);
+			run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+				STUB_TOKEN_SUFFIX: "-new",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(await agentEnv()).toContain(`SFLY_TOKEN=${TOKEN}-new\n`);
+			expect(await agentEnv()).not.toContain(`SFLY_TOKEN=${TOKEN}\n`);
+		});
+
+		it("agent.env 事先有 644 的临时文件：装完的 agent.env 是 600，临时文件不留", async () => {
+			await mkdir(sflyHome, { recursive: true });
+			await writeFile(join(sflyHome, "agent.env.tmp"), "别人留下的\n", { mode: 0o644 });
+			await chmod(join(sflyHome, "agent.env.tmp"), 0o644);
+			const run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect((await stat(join(sflyHome, "agent.env"))).mode & 0o777).toBe(0o600);
+			expect(await agentEnv()).not.toContain("别人留下的");
+			expect(await stat(join(sflyHome, "agent.env.tmp")).catch(() => null)).toBeNull();
+		});
+
+		it("agent.env 从创建的那一刻就是 600（先写后改权限的话，写好的内容有一段时间别人读得到）", async () => {
+			// mv 的桩：搬 agent.env.tmp 的时候记下它当时的权限，再用真的 mv。
+			await stub(
+				"mv",
+				`for a in "$@"; do case $a in *agent.env.tmp) ls -ln "$a" | cut -c1-10 >> '${join(dir, "mv-modes.log")}' ;; esac; done; exec /bin/mv "$@"`,
+			);
+			const run = await install(["--dev", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personal",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			const modes = (await readFile(join(dir, "mv-modes.log"), "utf8")).trim().split("\n");
+			expect(modes).toEqual(["-rw-------"]);
 		});
 
 		it("--dev 不给 --name 时不能给 --token（名字和凭据都由控制面生成）；SFLY_TOKEN 环境变量也一样", async () => {

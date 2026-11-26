@@ -138,6 +138,19 @@ describeWithAgent("全栈：install.sh --dev", () => {
 		return stdout;
 	}
 
+	/** 和 `installDev` 一样，但失败时不抛：返回退出码和输出。 */
+	async function installDevResult(
+		plane: TestControlPlane,
+		options: { home: string; env?: Record<string, string>; args?: string[] },
+	) {
+		try {
+			return { code: 0, stdout: await installDev(plane, options), stderr: "" };
+		} catch (error) {
+			const e = error as { code: number; stdout: string; stderr: string };
+			return { code: e.code, stdout: e.stdout, stderr: e.stderr };
+		}
+	}
+
 	const sflyVersion = async (h = home()) =>
 		(await run(join(h, ".local/bin/sfly"), ["--version"])).stdout.trim();
 
@@ -268,4 +281,54 @@ describeWithAgent("全栈：install.sh --dev", () => {
 			await accounts.close();
 		}
 	}, 300_000);
+	// 同一个人、同一个主机名，丢了 agent.env（换了机器、重装）再注册：控制面回 409，安装脚本写明办法，照着做能成。
+	it("名字被占用：安装失败并写明办法；先 revoke-dev 再重新运行成功，或者 --dev-host 换一个名字成功", async () => {
+		const [plane] = planes as [TestControlPlane];
+		const accounts = new TestAccounts(plane.database.url);
+		try {
+			const userId = await accounts.user("dupowner", { displayName: "重名的人" });
+			await accounts.member("default", userId, "editor");
+			const token = await accounts.personalToken(userId, { name: "装开发机" });
+			const name = `dev-dupowner-${hostSegment()}`;
+			const args = ["--no-service", "--dev"];
+			const env = { SFLY_API_TOKEN: token };
+
+			// 第一台：注册成功。
+			const first = join(dir, "home-dup-1");
+			await installDev(plane, { home: first, args, env });
+			expect(await readFile(join(first, ".sfly/agent.env"), "utf8")).toContain(
+				`SFLY_AGENT_NAME=${name}\n`,
+			);
+
+			// 第二台（同一个主机名、没有 agent.env）：撞名。
+			const second = join(dir, "home-dup-2");
+			const refused = await installDevResult(plane, { home: second, args, env });
+			expect(refused.code).toBe(1);
+			expect(refused.stderr).toContain(name);
+			expect(refused.stderr).toContain("--dev-host <另一个主机名>");
+			expect(refused.stderr).toContain("sfly agent revoke-dev");
+			expect(refused.stderr).toContain("sfly agent credentials issue");
+			expect(await readFile(join(second, ".sfly/agent.env"), "utf8").catch(() => null)).toBeNull();
+
+			// 办法一：换一个名字。
+			const third = join(dir, "home-dup-3");
+			await installDev(plane, { home: third, args: [...args, "--dev-host", "other-host"], env });
+			expect(await readFile(join(third, ".sfly/agent.env"), "utf8")).toContain(
+				"SFLY_AGENT_NAME=dev-dupowner-other-host\n",
+			);
+
+			// 办法二：先 `sfly agent revoke-dev <名字>`（脚本已经把 sfly CLI 装好），再重新运行。
+			await run(
+				join(second, ".local/bin/sfly"),
+				["agent", "revoke-dev", name, "--server", plane.httpUrl],
+				{ env: { PATH: tools, HOME: second, SFLY_API_TOKEN: token } },
+			);
+			await installDev(plane, { home: second, args, env });
+			const text = await readFile(join(second, ".sfly/agent.env"), "utf8");
+			expect(text).toContain(`SFLY_AGENT_NAME=${name}\n`);
+			expect(text).toMatch(/^SFLY_TOKEN=sfly_agt_[0-9a-f]{48}$/m);
+		} finally {
+			await accounts.close();
+		}
+	}, 600_000);
 });
