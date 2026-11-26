@@ -9,13 +9,17 @@
 #   SFLY_WORKBENCH_PUBLIC_ADDRESS  控制面和助手服务连这台 Agent 的能力端口用的地址（compose 里是服务名 sfly-workbench）
 #   SFLY_WORKBENCH_TOKEN           这台 Agent 的 Agent 凭据（sfly_agt_ 开头，只对上面的名字有效，管理员按名字签发）
 #   SFLY_WORKBENCH_WORK            工作区目录，默认 /work（只检查它写得了，不在这里建 git 仓库：那是助手服务的事）
-#   SFLY_WORKBENCH_BASE_PATH       测试用：入口脚本自己运行命令时的 PATH，默认是下面的系统目录
+#   SFLY_WORKBENCH_BASE_PATH       只给测试用，部署不要设：入口脚本自己运行命令时的 PATH，默认是下面的系统目录；
+#                                  设了它就等于把「只在系统目录里找」换成别的目录
 # 家目录 $HOME 是卷，里面的 $SFLY_HOME（默认 ~/.sfly）放 Agent、共享 venv、任务目录；--dev 装的 uv 和 sfly 在 ~/.local。
 #
 # **入口脚本自己用的命令（cat、curl、sed、sh……）只在系统目录里找**（开头把 PATH 设成系统目录，不看容器环境里的 PATH）：
 # 家目录是卷、工作台上的模型写得了它，~/.local/bin 在容器环境的 PATH 最前面也不行，否则模型放一个假的 cat、curl，入口脚本下次启动
 # 就执行它，而这时手上有刚交进来的凭据。exec Agent 之前才把 ~/.local/bin 加在 PATH 最后（sfly、uv 在那里；系统目录里有的命令不会被它盖掉）。
 # curl 加 -q：不读家目录里的 .curlrc（模型能写）。
+# **这一条只管入口脚本自己，不是说卷里的东西都碰不到凭据**：install.sh 重装时在系统 PATH 里找不到 uv，会用 $HOME/.local/bin/uv
+# （卷里，模型写得了；模型改标记就能逼出一次重装），这个 uv 在 exec Agent 之前执行，环境里有 SFLY_TOKEN；卷里的 Agent 二进制也是。
+# 它们是同一个已知边界：家目录卷里模型写得了的程序会拿到凭据。凭据可能泄露时删卷（见下面）。
 #
 # 凭据（SFLY_WORKBENCH_TOKEN）怎么走：
 # - 只从环境变量读进 shell 变量，马上从环境里去掉：之后起的子进程（Agent 的命令、模型的命令）环境里没有这个名字的变量。
@@ -41,7 +45,10 @@
 # 装好之后每次启动再对一下控制面的 install.sh（短超时，几秒，不重试）：
 #   - 取到了、sha256 和标记里的不一样：重装（控制面升级了、改了 SFLY_PUBLIC_URL 或镜像……：install.sh 的内容只取决于控制面的
 #     配置和版本，不随请求变，没有时间戳和随机数，所以相同的控制面每次取到的一样）。重装把 Agent 二进制、agent.env 和 sfly
-#     命令行换成控制面这一版的（Agent 自己会自更新，sfly 命令行不会：它钉在装时的版本，所以靠这一步跟着控制面走）；
+#     命令行换成控制面这一版的（Agent 自己会自更新，sfly 命令行不会：它钉在装时的版本，所以靠这一步跟着控制面走）。
+#     **重装失败不挡着已经装好的 Agent**（升级时镜像暂时不通、离线缓存缺新版命令行的依赖、切到要认证的镜像还没挂 .netrc）：
+#     这条分支不先删标记；失败时打印原因，只要 sfly-agent 和 agent.env 还在就照常启动已有的 Agent，不写新标记（sfly 命令行还是旧的，
+#     下次启动再试）。Agent 本身好好的，过期的只是命令行，不能因此让助手整个不可用、容器一直重启；
 #   - 取到了、一样：直接启动；
 #   - 取不到（控制面连不上、超时）：直接启动，不挡着已经装好的 Agent 起来。
 set -eu
@@ -53,8 +60,12 @@ say() {
 	printf '工作台：%s\n' "$*"
 }
 
-fail() {
+warn() {
 	printf '工作台：%s\n' "$*" >&2
+}
+
+fail() {
+	warn "$*"
 	exit 1
 }
 
@@ -114,24 +125,51 @@ fetch_script() {
 	}
 }
 
-# 运行已经下载好的 $script，成功之后写标记（记下这份 install.sh 的 sha256）。
-install_agent() {
-	rm -f "$marker"
-	# install.sh 被杀掉时留下的临时文件（它正常退出时自己会清）。
-	rm -rf "$SFLY_HOME"/bin/.sfly-agent.download.* "$SFLY_HOME"/bin/.uv-installer.*.sh \
-		"$SFLY_HOME"/bin/.user-agent.* "$SFLY_HOME/agent.env.tmp"
+# 运行已经下载好的 $script，成功之后写标记（记下这份 install.sh 的 sha256）。成功返回 0；失败打印原因、返回 1（不退出：
+# 由调用的一方决定是挡住启动，还是照常启动已有的 Agent）。
+run_install() {
 	sum=$(sha256_of "$script")
 	say "安装 Agent「$name」（--dev：Agent、uv、sfly 命令行，版本和控制面一致）"
 	# 凭据经环境变量交给安装脚本，不在命令行参数里。脚本来自控制面，信任控制面（ADR 0011）。
 	if ! SFLY_TOKEN=$token sh "$script" --dev --name "$name" --public-address "$public_address" --no-service; then
 		rm -f "$script"
-		fail "安装脚本失败（上面是原因）。解决之后重启容器即可：下载的东西不会重复，已经装好的部分重新运行是幂等的"
+		script=
+		warn "安装脚本失败（上面是原因）"
+		return 1
 	fi
 	rm -f "$script"
 	script=
-	[ -x "$agent" ] && [ -f "$SFLY_HOME/agent.env" ] && [ -x "$home/.local/bin/sfly" ] ||
-		fail "安装脚本正常结束，但 $agent、$SFLY_HOME/agent.env 或 ~/.local/bin/sfly 不在：没有装好"
+	if ! { [ -x "$agent" ] && [ -f "$SFLY_HOME/agent.env" ] && [ -x "$home/.local/bin/sfly" ]; }; then
+		warn "安装脚本正常结束，但 $agent、$SFLY_HOME/agent.env 或 ~/.local/bin/sfly 不在：没有装好"
+		return 1
+	fi
 	printf 'name=%s\ninstall_sh_sha256=%s\n' "$name" "$sum" >"$marker"
+}
+
+# install.sh 被杀掉时留下的临时文件（它正常退出时自己会清）。
+clean_leftovers() {
+	rm -rf "$SFLY_HOME"/bin/.sfly-agent.download.* "$SFLY_HOME"/bin/.uv-installer.*.sh \
+		"$SFLY_HOME"/bin/.user-agent.* "$SFLY_HOME/agent.env.tmp"
+}
+
+# 第一次安装，或上次装到一半被打断：没有装好的 Agent 可以起，失败就退出（容器按 restart 策略重启、重试）。
+install_agent() {
+	rm -f "$marker"
+	clean_leftovers
+	run_install || fail "解决之后重启容器即可：下载的东西不会重复，已经装好的部分重新运行是幂等的"
+}
+
+# 装好了、控制面的 install.sh 变了：重装。不先删标记；失败时已有的 Agent 还在就照常启动（下次启动再试）。
+reinstall_agent() {
+	clean_leftovers
+	if run_install; then
+		return 0
+	fi
+	if [ -x "$agent" ] && [ -f "$SFLY_HOME/agent.env" ]; then
+		warn "重新安装没有成功：已经装好的 Agent 照常启动，标记不动（sfly 命令行还是旧版本），下次启动再试。解决之后重启容器即可"
+	else
+		fail "重新安装没有成功，而且 $agent 或 $SFLY_HOME/agent.env 不在了：没有可以启动的 Agent"
+	fi
 }
 
 if installed; then
@@ -141,7 +179,7 @@ if installed; then
 			say "Agent「$name」已经装好，直接启动（控制面的 install.sh 没变）"
 		else
 			say "控制面的 install.sh 变了（升级了控制面，或改了 SFLY_PUBLIC_URL、镜像），重新安装"
-			install_agent
+			reinstall_agent
 		fi
 	else
 		say "Agent「$name」已经装好，直接启动（取不到 $control_plane/install.sh，没有对版本）"

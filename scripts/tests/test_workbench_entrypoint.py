@@ -52,6 +52,8 @@ echo "$*" > "$FAKE_LOG/install.args"
 env > "$FAKE_LOG/install.env"
 echo run >> "$FAKE_LOG/install.runs"
 if [ -n "${FAKE_INSTALL_FAIL:-}" ]; then
+	# wipe：失败之前已经把装好的 Agent 二进制换没了（装到一半）。
+	[ "$FAKE_INSTALL_FAIL" != wipe ] || rm -f "$SFLY_HOME/bin/sfly-agent"
 	echo "install.sh: 下载失败" >&2
 	exit 1
 fi
@@ -221,10 +223,60 @@ def test_a_changed_install_script_installs_again_and_then_stays_quiet(harness: H
         == hashlib.sha256((harness.root / "install.sh").read_bytes()).hexdigest()
     )
     assert harness.lines("agent.runs") == ["agent", "agent"]
-    # 重装用的就是刚取到的那份（没有再下载第二次），之后没变就不再重装。
+    # 重装用的就是刚取到的那份：curl 一共两次（第一次启动一次、这次一次），没有为重装再下载。
+    assert len(harness.lines("curl.args")) == 2
+    # 之后没变就不再重装，每次启动只问一次。
     assert harness.run().returncode == 0
     assert harness.lines("install.runs") == ["run", "run"]
     assert harness.lines("agent.runs") == ["agent", "agent", "agent"]
+    assert len(harness.lines("curl.args")) == 3
+
+
+def test_a_failed_reinstall_does_not_stop_the_installed_agent_and_is_tried_again(
+    harness: Harness,
+) -> None:
+    # 升级时镜像暂时不通、离线缓存缺新版命令行的依赖、切到要认证的镜像还没挂 .netrc：重装失败。
+    # Agent 本身好好的，过期的只是 sfly 命令行：不能让容器起不来、一直重启。
+    assert harness.run().returncode == 0
+    old_marker = harness.marker()
+    harness.change_install_script("控制面升级了")
+
+    result = harness.run(FAKE_INSTALL_FAIL="1")
+
+    assert result.returncode == 0, result.stderr
+    assert "install.sh 变了" in result.stdout
+    assert "安装脚本失败" in result.stderr
+    assert "重新安装没有成功" in result.stderr
+    assert TOKEN not in result.stdout + result.stderr
+    assert harness.lines("install.runs") == ["run", "run"]
+    # 已经装好的 Agent 照常启动，标记不动（还是旧的 sha256：下次启动再试）。
+    assert harness.lines("agent.runs") == ["agent", "agent"]
+    assert harness.marker() == old_marker
+    assert harness.agent_environment()["SFLY_TOKEN"] == TOKEN
+
+    # 之后装得上了：重装、记新的 sha256。
+    result = harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert harness.lines("install.runs") == ["run", "run", "run"]
+    assert harness.marker()["install_sh_sha256"] != old_marker["install_sh_sha256"]
+    assert (
+        harness.marker()["install_sh_sha256"]
+        == hashlib.sha256((harness.root / "install.sh").read_bytes()).hexdigest()
+    )
+    assert harness.lines("agent.runs") == ["agent", "agent", "agent"]
+
+
+def test_a_failed_reinstall_that_took_the_agent_away_stops_the_container(harness: Harness) -> None:
+    # 重装失败，而且已有的 Agent 二进制已经被换没了：没有可以启动的，才退出，并说明原因。
+    assert harness.run().returncode == 0
+    harness.change_install_script("控制面升级了")
+
+    result = harness.run(FAKE_INSTALL_FAIL="wipe")
+
+    assert result.returncode != 0
+    assert "没有可以启动的 Agent" in result.stderr
+    assert harness.lines("agent.runs") == ["agent"]
 
 
 def test_a_marker_without_the_install_script_hash_installs_again_once(harness: Harness) -> None:

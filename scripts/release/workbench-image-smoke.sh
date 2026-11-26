@@ -233,4 +233,25 @@ path_of_agent=$(docker exec "$wb" sh -c 'tr "\0" "\n" < /proc/$(pgrep -x sfly-ag
 [[ $(docker exec "$wb" cat /work/probe.txt) == kept ]] || fail "控制面的 install.sh 变了重装之后，工作区里的文件不见了"
 docker exec "$wb" rm -f /home/workbench/.local/bin/sha256sum /home/workbench/.local/bin/sed
 
+# 控制面的 install.sh 变了、重装又失败（升级时镜像暂时不通、缺依赖、没挂 .netrc……）：已经装好的 Agent 不能因此起不来。
+# 这里把标记的 sha256 改掉，再让重装一定失败（~/.sfly/bin 设成只读，安装脚本写不了 Agent 的下载文件）：
+# 入口脚本打印原因、照常启动已有的 Agent、标记不动；恢复之后重启，重装成功、记下新的 sha256。
+docker rm -f "$wb" >/dev/null
+docker run --rm -v "$home_volume:/home/workbench" --entrypoint sh "$workbench_image" -c \
+	"printf 'name=%s\ninstall_sh_sha256=%s\n' '$agent' 1111 > ~/.sfly/.workbench-installed && chmod 555 ~/.sfly/bin"
+start_workbench
+wait_online
+logs=$(docker logs "$wb" 2>&1)
+contains "$logs" '重新安装没有成功' || fail "重装失败时入口脚本没有说明原因"
+contains "$(docker exec "$wb" cat /home/workbench/.sfly/.workbench-installed)" '^install_sh_sha256=1111$' ||
+	fail "重装失败时标记被改了：应当不动，下次启动再试"
+[[ $(docker exec "$wb" cat /work/probe.txt) == kept ]] || fail "重装失败之后工作区里的文件不见了"
+docker rm -f "$wb" >/dev/null
+docker run --rm -v "$home_volume:/home/workbench" --entrypoint sh "$workbench_image" -c 'chmod 755 ~/.sfly/bin'
+start_workbench
+wait_online
+contains "$(docker logs "$wb" 2>&1)" 'install.sh 变了' || fail "恢复之后入口脚本没有再试重装"
+contains "$(docker exec "$wb" cat /home/workbench/.sfly/.workbench-installed)" '^install_sh_sha256=[0-9a-f]\{64\}$' ||
+	fail "恢复之后重装成功，标记里没有记下 install.sh 的 sha256"
+
 echo "工作台镜像冒烟通过：$workbench_image（控制面 $server_image，sfly $version）"
