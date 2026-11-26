@@ -794,11 +794,18 @@ describe("提交的时间：停止、退出、工作台冻住", () => {
 			),
 		);
 		harness.workbench.silent = true; // 之后提交前的那一声问话得不到回答
+		const opened = harness.connections.opened;
 		await harness.abort(id);
+		// pi 停下之后提交开始（连上工作台、问一声）：等到它真的在问了再让时间走。
+		await eventually(() => expect(harness.connections.opened).toBe(opened + 1));
+		expect(ended(harness, id, 1)).toBe(false);
 		clock.advance(ASSISTANT_STOP_WAIT_MS);
 		await eventually(() => expect(ended(harness, id, 1)).toBe(true), 4000);
 		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
 		expect(commitsOf(harness, id)).toEqual([]);
+		expect(harness.logs.some((line) => line.includes("提交工作区") && line.includes("放弃"))).toBe(
+			true,
+		);
 	}, 60_000);
 });
 
