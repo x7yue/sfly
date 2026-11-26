@@ -335,3 +335,60 @@ describe("合并规则", () => {
 		expect(reader.get().hasNewer).toBe(false);
 	});
 });
+
+describe("日志文件的问题（#721）", () => {
+	it("页里说文件不见了：状态里有，行是空的；没有问题时是 null", async () => {
+		const missing = new FakeTaskLog(0, { pageSize: 5 });
+		missing.fileProblem = "missing";
+		const healthy = new FakeTaskLog(3, { pageSize: 5 });
+
+		expect((await open(missing)).get()).toMatchObject({
+			loaded: true,
+			fileProblem: "missing",
+			lines: [],
+		});
+		expect((await open(healthy)).get().fileProblem).toBeNull();
+		expect(emptyTaskLogs.fileProblem).toBeNull();
+	});
+
+	it("页里说文件变短了：剩下的行照常显示", async () => {
+		const log = new FakeTaskLog(3, { pageSize: 5 });
+		log.fileProblem = "short";
+
+		const reader = await open(log);
+
+		expect(reader.get().fileProblem).toBe("short");
+		expect(seqs(reader)).toEqual([1, 2, 3]);
+	});
+
+	it("实时流连上时的事件也认（页没有带的时候）", async () => {
+		const log = new FakeTaskLog(3, { pageSize: 5 });
+		const reader = await open(log);
+		expect(reader.get().fileProblem).toBeNull();
+
+		log.emitFileProblem("missing");
+
+		expect(reader.get().fileProblem).toBe("missing");
+	});
+
+	it("已经说过的不会因为后来的页没带而消失（往前翻页、实时推来的行）", async () => {
+		const log = new FakeTaskLog(10, { pageSize: 5 });
+		log.fileProblem = "short";
+		const reader = await open(log);
+
+		log.fileProblem = null;
+		await older(reader);
+		log.append(1);
+
+		expect(reader.get().fileProblem).toBe("short");
+	});
+
+	it("定位读到的页同样带这个字段", async () => {
+		const log = new FakeTaskLog(100, { pageSize: 20 });
+		log.fileProblem = "short";
+
+		const reader = await open(log, { at: secondsIn(51) });
+
+		expect(reader.get().fileProblem).toBe("short");
+	});
+});

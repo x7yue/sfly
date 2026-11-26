@@ -141,3 +141,14 @@ export async function seedSession(databaseUrl: string, seed: SeededSession = {})
 	}
 	return id;
 }
+
+/** 把一个会话连同它的事件从库里删掉（模拟新建会话没接住、等结局期间被删掉的会话）。 */
+export async function deleteSession(databaseUrl: string, id: string): Promise<void> {
+	const client = new pg.Client({ connectionString: databaseUrl });
+	await client.connect();
+	try {
+		await client.query("delete from sessions where id = $1", [id]);
+	} finally {
+		await client.end();
+	}
+}

@@ -310,9 +310,11 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			"sessions/SessionTimeline.tsx": {
 				wrapped: [
 					"item.text",
-					"item.text",
+					"item.by",
 					"item.message",
 					"turnEndText(item)",
+					"item.author",
+					"item.text",
 					"line",
 					"result.text",
 					'line, "text"',
@@ -320,8 +322,10 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				truncate: 1,
 			},
 			"sessions/ReadinessLine.tsx": { wrapped: ["SESSION.ready(readiness.workbench)", "problem"] },
-			"sessions/SessionList.tsx": { truncate: 1 },
-			"sessions/SessionPage.tsx": { wrapped: ["turnEndText(lastEnd)"] },
+			"sessions/SessionList.tsx": { wrapped: ["session.created_by"], truncate: 1 },
+			"sessions/SessionPage.tsx": {
+				wrapped: ["waitingFor.title", "waitingFor.created_by", "next"],
+			},
 			"components/page.tsx": { wrapped: ["title"] },
 		},
 	},

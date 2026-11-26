@@ -70,6 +70,8 @@ export interface E2eFixtures {
 		assistantSecret?: string;
 		workbenchAgent?: string;
 		assistantReconnectMs?: { min: number; max: number };
+		/** 停止一轮时控制面等助手服务带回结局最多多久（毫秒，默认 300）：测试里让假助手服务的停止慢一点（`stopSettleMs`）时放长。 */
+		sessionStopGraceMs?: number;
 		initialAdmin?: { loginName: string; password: string; displayName?: string };
 		/** 打开着的事件流多久重新检查一次凭据（毫秒，默认 30 秒）：登录失效之后流多久被关掉。 */
 		streamRecheckMs?: number;
