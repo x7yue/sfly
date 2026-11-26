@@ -330,7 +330,12 @@ class TestLoginAndLogout:
 
         prompts: list[str] = []
         monkeypatch.setattr(login_module, "_interactive", lambda: True)
-        monkeypatch.setattr(login_module, "_ask", lambda prompt: prompts.append(prompt) or "")
+
+        def ask(prompt: str) -> str:
+            prompts.append(prompt)
+            return ""
+
+        monkeypatch.setattr(login_module, "_ask", ask)
         monkeypatch.setenv("SFLY_SERVER", f"http://user:{PASSWORD}@127.0.0.1")
         code = main(["login", "--login-name", "alice"])
         captured = capsys.readouterr()
