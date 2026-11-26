@@ -10,11 +10,11 @@ import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
 import { SESSION_PROJECT } from "./project";
-import { READINESS_ID } from "./ReadinessLine";
+import { READINESS_ID, ReadinessLine } from "./ReadinessLine";
 
 /**
  * 助手页的输入框：多行输入「要做什么？」和「开始」（`POST /projects/default/sessions`，成功后跳到会话页）。
- * 助手没有就绪时输入框照常可以写，「开始」不可用（原因在页面上方的就绪状态里，不在这里再写一遍）；请求失败时留住写好的话，写明原因。
+ * 助手没有就绪时输入框照常可以写，「开始」不可用（缺什么、该找谁写在输入框下面，`ReadinessLine`）；就绪时「开始」旁边一行小字写工作台在线；请求失败时留住写好的话，写明原因。
  * 同一个项目里别的会话在做时，新会话排队（#544）：照常跳到会话页，那里写排在第几位。
  */
 export function NewSession({ readiness }: { readiness: Readiness }) {
@@ -31,7 +31,7 @@ export function NewSession({ readiness }: { readiness: Readiness }) {
 		// 失败也刷新：就绪状态、谁在做可能已经变了。
 		onError: () => client.invalidateQueries({ queryKey: domainKey(sessionsApi.list) }),
 	});
-	// 不能用的原因只在页面上方的就绪状态里写一处（ReadinessLine，逐条写缺什么）；这里不再写一遍，读屏用 aria-describedby 指过去。
+	// 不能用的原因只在输入框旁的就绪状态里写一处（ReadinessLine，逐条写缺什么、该找谁）；读屏用 aria-describedby 指过去。
 	const notReady = !readiness.ready;
 	const empty = text.trim() === "";
 	const field = useRef<HTMLTextAreaElement>(null);
@@ -72,6 +72,8 @@ export function NewSession({ readiness }: { readiness: Readiness }) {
 					}
 				}}
 			/>
+			{/* 不能用时缺什么、该找谁写在输入框和「开始」之间；可以用时一行小字在「开始」旁边。 */}
+			{notReady && <ReadinessLine readiness={readiness} />}
 			<div className="flex items-center gap-3">
 				<Button
 					type="submit"
@@ -82,6 +84,7 @@ export function NewSession({ readiness }: { readiness: Readiness }) {
 				>
 					{create.isPending ? SESSION.input.starting : SESSION.input.start}
 				</Button>
+				{!notReady && <ReadinessLine readiness={readiness} />}
 			</div>
 			{create.isError && (
 				<FormAlert>{`${SESSION.createFailed}：${errorText(create.error)}`}</FormAlert>

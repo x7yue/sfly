@@ -8,6 +8,7 @@ import {
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
 import { seedSession } from "../../server/test/support/sessions.js";
+import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
@@ -2226,16 +2227,22 @@ test("会话页：会话已结束", async ({ page }) => {
 	await expect(page).toHaveScreenshot("session-ended.png", { mask: [page.locator("time")] });
 });
 
-test("会话页：右侧的成果（提交、场景版本、运行；运行的状态跟着运行变）和时间线上平台留下的两行", async ({
-	page,
-	controlPlane,
-	connectAgent,
-}) => {
+/**
+ * 三类成果都有的会话（场景：保存了两个版本、另一个场景一个版本；运行：成功、失败、运行中各一个；工作区的提交一个）：
+ * 运行是真的（假 Agent 跑一个场景），状态取自运行；会话和事件是直接写库的固定内容。
+ */
+async function seedResultsSession(
+	controlPlane: TestControlPlane,
+	connectAgent: E2eFixtures["connectAgent"],
+): Promise<string> {
 	const agent = await connectAgent({ name: "agent", slots: 4 });
 	await publishPackage(controlPlane);
 	const scenario = await createScenario(controlPlane, "接口巡检", scenarioUsing("agent"));
+	const disk = await createScenario(controlPlane, "磁盘巡检", scenarioUsing("agent"));
 	const done = await triggerRun(controlPlane, scenario);
 	await agent.succeed(await agent.nextAssign());
+	const failed = await triggerRun(controlPlane, scenario);
+	await agent.fail(await agent.nextAssign(), "AssertionFailed: 成功率 97.2% 低于阈值 99%");
 	const running = await triggerRun(controlPlane, scenario);
 	await agent.nextAssign();
 	const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
@@ -2251,7 +2258,7 @@ test("会话页：右侧的成果（提交、场景版本、运行；运行的�
 		{ type: "turn_started", turn: 1 },
 		{
 			type: "assistant_message",
-			text: "改好了，场景也保存了，下面是两次运行。",
+			text: "改好了，场景也保存了，下面是三次运行。",
 			usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
 		},
 		{
@@ -2262,7 +2269,24 @@ test("会话页：右侧的成果（提交、场景版本、运行；运行的�
 			name: "接口巡检",
 			version: 2,
 		},
+		{
+			type: "platform",
+			kind: "scenario_version",
+			turn: 1,
+			scenario_id: disk,
+			name: "磁盘巡检",
+			version: 1,
+		},
+		{
+			type: "platform",
+			kind: "scenario_version",
+			turn: 1,
+			scenario_id: scenario,
+			name: "接口巡检",
+			version: 3,
+		},
 		{ type: "platform", kind: "run", turn: 1, run_id: done, scenario_name: "接口巡检" },
+		{ type: "platform", kind: "run", turn: 1, run_id: failed, scenario_name: "接口巡检" },
 		{ type: "platform", kind: "run", turn: 1, run_id: running, scenario_name: "接口巡检" },
 		{
 			type: "platform",
@@ -2286,25 +2310,50 @@ test("会话页：右侧的成果（提交、场景版本、运行；运行的�
 			duration_ms: 84_000,
 		},
 	];
-	const id = await seedSession(controlPlane.database.url, {
+	return seedSession(controlPlane.database.url, {
 		title: "给 http_check 加一个超时参数",
 		status: "idle",
 		createdAt: new Date(at(0)),
 		at: new Date(at(0)),
 		events,
 	});
+}
+
+/** 运行 ID 前几位和用时每次不同：遮住。 */
+const resultsMasks = (page: Page) => [
+	page.locator('[data-slot="run-id"]'),
+	page.getByTestId("run-card-elapsed"),
+];
+
+test("会话页：右侧的成果（场景、运行卡片、工作区的提交；运行的状态跟着运行变）和时间线上内嵌的运行卡片", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const id = await seedResultsSession(controlPlane, connectAgent);
 	await page.goto(`/sessions/${id}`);
-	const runs = page.getByTestId("results-runs").getByTestId("result-run");
-	await expect(runs).toHaveCount(2);
-	await expect(runs.nth(0).getByTestId("result-run-status")).toHaveText("成功");
-	await expect(runs.nth(1).getByTestId("result-run-status")).toHaveText("运行中");
-	await page.getByTestId("results-commits").getByRole("button", { name: "展开看差异" }).click();
-	await expect(page).toHaveScreenshot("session-results.png", {
-		mask: [page.locator('[data-slot="run-id"]')],
+	const side = page.getByTestId("session-results");
+	await expect(side.getByTestId("result-scenario")).toHaveCount(2);
+	await expect(side.getByTestId("run-card-status")).toHaveText(["运行中", "失败", "成功"]);
+	await expect(side.getByTestId("run-card-failure")).toHaveCount(1);
+	await side.getByTestId("results-commits").getByRole("button", { name: "展开看差异" }).click();
+	await expect(page).toHaveScreenshot("session-results.png", { mask: resultsMasks(page) });
+});
+
+test("会话页：窄窗口里成果收到时间线和输入框下面", async ({ page, controlPlane, connectAgent }) => {
+	await page.setViewportSize({ width: 800, height: 1000 });
+	const id = await seedResultsSession(controlPlane, connectAgent);
+	await page.goto(`/sessions/${id}`);
+	const side = page.getByTestId("session-results");
+	await expect(side.getByTestId("run-card-status")).toHaveText(["运行中", "失败", "成功"]);
+	await expect(page).toHaveScreenshot("session-results-narrow.png", {
+		mask: resultsMasks(page),
 	});
 });
 
-test("助手页：会话列表里排队中的写排在第几位", async ({ page }) => {
+test("助手页：会话列表（在做、排队中第几位、空闲、被打断、已结束；上一轮的结局不是完成时标出来）", async ({
+	page,
+}) => {
 	const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
 	const item = (over: Record<string, unknown>) => {
 		const {
@@ -2316,7 +2365,13 @@ test("助手页：会话列表里排队中的写排在第几位", async ({ page 
 		return listItem;
 	};
 	await stubSessionList(page, READY, [
-		item({ title: "正在做的事", status: "running", created_by: "bob", last_activity_at: at(50) }),
+		item({
+			title: "正在做的事",
+			status: "running",
+			created_by: "bob",
+			last_turn_outcome: "interrupted",
+			last_activity_at: at(50),
+		}),
 		item({
 			title: "排在第一位的事",
 			status: "queued",
@@ -2338,6 +2393,34 @@ test("助手页：会话列表里排队中的写排在第几位", async ({ page 
 			last_turn_outcome: "completed",
 			last_activity_at: at(20),
 		}),
+		item({
+			title: "到了上限的事",
+			status: "idle",
+			created_by: "alice",
+			last_turn_outcome: "limit",
+			last_activity_at: at(19),
+		}),
+		item({
+			title: "模型不可用的事",
+			status: "idle",
+			created_by: "bob",
+			last_turn_outcome: "model_unavailable",
+			last_activity_at: at(18),
+		}),
+		item({
+			title: "出错的事",
+			status: "idle",
+			created_by: "bob",
+			last_turn_outcome: "failed",
+			last_activity_at: at(17),
+		}),
+		item({
+			title: "已经结束的事",
+			status: "ended",
+			created_by: "dave",
+			last_turn_outcome: "stopped",
+			last_activity_at: at(10),
+		}),
 	]);
 	await page.goto("/sessions");
 	await expect(page.getByTestId("list-status")).toHaveText([
@@ -2345,6 +2428,17 @@ test("助手页：会话列表里排队中的写排在第几位", async ({ page 
 		"排队中 · 排在第 1 位",
 		"排队中 · 排在第 2 位",
 		"空闲",
+		"空闲",
+		"空闲",
+		"空闲",
+		"已结束",
 	]);
-	await expect(page).toHaveScreenshot("assistant-list-queue.png");
+	await expect(page.getByTestId("list-last-turn")).toHaveText([
+		"上一轮被打断",
+		"上一轮到了上限",
+		"上一轮模型不可用",
+		"上一轮出错",
+		"上一轮已停止",
+	]);
+	await expect(page).toHaveScreenshot("assistant-session-list.png");
 });

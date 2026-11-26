@@ -71,8 +71,9 @@ export function useLiveRun(
 }
 
 /**
- * 只要运行状态的地方读运行视图：会话页的「成果」栏（一个会话可以触发很多运行）。**不开运行事件流**，在跑的运行定时重新读
- * （`STATUS_POLL_MS`）。浏览器对同源的连接数有限（HTTP/1.1 是 6 条），只有运行监控页、运行抽屉和画布开运行事件流（`lib/polling.ts`）：
+ * 只要运行状态的地方读运行视图：会话页的运行卡片（一个会话可以触发很多运行）。在跑的运行定时重新读（`STATUS_POLL_MS`），不开事件流；
+ * 要实时的用 {@link useRunView} 的 `stream`，会话页最多给三个在跑的运行（`sessions/live-runs.ts`）。
+ * 浏览器对同源的连接数有限（HTTP/1.1 是 6 条），只有运行监控页、运行抽屉、画布和会话页上有限的几个运行开运行事件流（`lib/polling.ts`）：
  * 页面上列几个运行就开几条的话，五个在跑的运行就把连接占满，页面自己的请求（发送、停止、结束会话）排不上队。
  *
  * 和 {@link useLiveRun} 是同一份缓存（同一个 query key，响应同样按 {@link latestRunView} 合并）：运行监控开着事件流时，这里读到的就是它推送的。
@@ -91,6 +92,19 @@ export function runStatusQuery(runId: string) {
 
 export function useRunStatus(runId: string) {
 	return useQuery(runStatusQuery(runId));
+}
+
+/**
+ * 会话页的运行卡片读运行视图（#551）：`stream` 为真时和运行监控一样由运行事件流推送（{@link useLiveRun}，按运行共用连接，时间线上的卡片和
+ * 成果栏里的卡片同一个运行只开一条），为假时定时重新读（{@link useRunStatus}）。两种是同一份缓存、同一个 query key，响应同样按
+ * {@link latestRunView} 合并，所以名额让出来或用完时换着用，状态不会倒退。运行结束之后事件流关掉，也不再轮询。
+ */
+export function useRunView(runId: string, { stream }: { stream: boolean }) {
+	const client = useQueryClient();
+	const run = useQuery(stream ? runViewQuery(runId) : runStatusQuery(runId));
+	const live = stream && (!run.data || run.data.status === "running");
+	useEffect(() => (live ? acquire(client, runId) : undefined), [client, runId, live]);
+	return run;
 }
 
 interface Connection {
