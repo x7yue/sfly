@@ -559,6 +559,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			version,
 			// 公开的地方（不用登录的 /install.sh、/sdk/project-settings）不带用户名和密码；Welcome 用上面的原值（#755）。
 			mirrors: published.mirrors,
+			mirrorsWithheld: published.withheld,
 		},
 		sdkWheels,
 		stdIndex: createStdIndex({

@@ -22,18 +22,33 @@ SFLY_VERSION='{{SFLY_VERSION}}'
 SHA256_X86_64='{{SHA256_X86_64}}'
 SHA256_AARCH64='{{SHA256_AARCH64}}'
 # 控制面配置的镜像（ADR 0012），未配置时为空；只在 --dev 安装 uv 和 sfly CLI 时以环境变量传给这一次的命令。
-# 这里的地址是控制面去掉了用户名和密码的（这个脚本不用登录就能下载）；镜像要认证时，凭据放这台机器的 ~/.netrc（uv、curl、wget 都读它）。
+# 这里的地址是控制面去掉了用户名和密码的（这个脚本不用登录就能下载）；去不干净的（用户名密码的写法认不出来）控制面不公开，这里也是空，
+# 对应的 *_WITHHELD 是 1（--help 写「配了但没公开」）。镜像要认证时，凭据放这台机器的 ~/.netrc：uv 读它；从镜像下载 uv 安装脚本的 curl
+# 也读它（只认 ~/.netrc，不认 NETRC 环境变量；下载 Agent 本身不读）。
 # 本机可以用环境变量 SFLY_INDEX_URL、SFLY_GITHUB_RELEASE_MIRROR、SFLY_PYTHON_INSTALL_MIRROR 覆盖（与 Agent 相同），
 # 覆盖值写进 agent.env，Agent 和 sfly init 也用它们。
 # 下载时 curl、wget 带的 User-Agent 默认 sfly-agent/<版本>（镜像站会封禁它们的部分默认 User-Agent），
 # 环境变量 SFLY_USER_AGENT 覆盖，覆盖值同样写进 agent.env。
 PYPI_MIRROR='{{PYPI_MIRROR}}'
 GITHUB_RELEASE_MIRROR='{{GITHUB_RELEASE_MIRROR}}'
+PYPI_MIRROR_WITHHELD='{{PYPI_MIRROR_WITHHELD}}'
+GITHUB_RELEASE_MIRROR_WITHHELD='{{GITHUB_RELEASE_MIRROR_WITHHELD}}'
 # Agent 凭据原值的前缀（sfly_agt_）：--dev 重新运行时 agent.env 里只有这种凭据才沿用，共享令牌不算。
 AGENT_CREDENTIAL_PREFIX='{{AGENT_CREDENTIAL_PREFIX}}'
 
 # agent.env 里由本脚本管理的键（重新运行时改写），其余的行原样保留。
 MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_LISTEN_PORT SFLY_PUBLIC_ADDRESS SFLY_NO_AUTO_UPDATE SFLY_INDEX_URL SFLY_GITHUB_RELEASE_MIRROR SFLY_PYTHON_INSTALL_MIRROR SFLY_USER_AGENT'
+
+# --help 里一个控制面镜像怎么写：公开了的写地址；配了但去不干净、没有公开的写明；没配的写未配置。
+control_plane_mirror() {
+	if [ -n "$1" ]; then
+		printf '%s' "$1"
+	elif [ -n "$2" ]; then
+		printf '%s' "配了，但地址带用户名和密码，没有公开（见控制面启动时的警告）"
+	else
+		printf '%s' "未配置"
+	fi
+}
 
 usage() {
 	cat <<EOF
@@ -81,8 +96,8 @@ usage() {
   SFLY_PYTHON_INSTALL_MIRROR  Python 下载镜像（UV_PYTHON_INSTALL_MIRROR）
   优先级：这次设置的环境变量 > agent.env 里原有的值 > 控制面配置的镜像；Python 下载镜像没有设置时
   从 GitHub Release 镜像推导（<镜像>/astral-sh/python-build-standalone/）。
-  控制面配置的 PyPI 镜像：${PYPI_MIRROR:-未配置}
-  控制面配置的 GitHub Release 镜像：${GITHUB_RELEASE_MIRROR:-未配置}
+  控制面配置的 PyPI 镜像：$(control_plane_mirror "$PYPI_MIRROR" "$PYPI_MIRROR_WITHHELD")
+  控制面配置的 GitHub Release 镜像：$(control_plane_mirror "$GITHUB_RELEASE_MIRROR" "$GITHUB_RELEASE_MIRROR_WITHHELD")
   （上面两个地址不带用户名和密码：这个脚本不用登录就能下载。镜像要认证时，把凭据写进这台机器的 ~/.netrc，
   权限 600；也可以用上面的环境变量设一个带用户名和密码的地址，只对这台机器有效。）
 

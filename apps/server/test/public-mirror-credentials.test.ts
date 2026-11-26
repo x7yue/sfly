@@ -161,6 +161,100 @@ describe("公开的地方不带镜像地址里的用户名和密码", () => {
 		}
 	}, 120_000);
 
+	it("`\\` 在用户名位置（WHATWG 读不出、curl 读得出，审查 #756 复审的真控制面复现）：四种写法，/install.sh、--help、/sdk/project-settings 里都没有原文，镜像当没配，--help 写「配了但没公开」，启动警告只写变量名", async () => {
+		const samples: Array<{ address: string; fragments: string[] }> = [
+			// AD 风格的 域\用户名
+			{ address: "https://CORP\\jdoe:Sec7@nexus.corp/simple", fragments: ["CORP", "jdoe", "Sec7"] },
+			// 数字加 \ 的密码
+			{
+				address: "https://deploy:1234\\abc@pypi.internal/simple",
+				fragments: ["deploy", "1234", "abc@"],
+			},
+			// 带 \ 的令牌
+			{ address: "https://ghp_tok\\en@gh.internal/github-release", fragments: ["ghp_tok", "en@"] },
+			// \ 在用户名之前
+			{
+				address: "https://mirror.corp\\u:Sec7@evil.example/simple",
+				fragments: ["mirror.corp", "Sec7", "evil.example"],
+			},
+		];
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			for (const { address, fragments } of samples) {
+				// 启动检查放行它（这样的地址是真的可以配出来的）。
+				const settings = readEnvSettings({
+					SFLY_PYPI_MIRROR: address,
+					SFLY_GITHUB_RELEASE_MIRROR: address,
+				});
+				expect(settings.pypiMirror, address).toBe(address);
+				warn.mockClear();
+				const control = await startTestControlPlane({
+					pypiMirror: settings.pypiMirror,
+					githubReleaseMirror: settings.githubReleaseMirror,
+					logger: true,
+				});
+				cp = control;
+				const script = await (await control.fetch("/install.sh")).text();
+				const project = await (await control.fetch("/sdk/project-settings")).text();
+				const { stdout } = await run("sh", [
+					"-c",
+					'curl -fsSL "$0/install.sh" | sh -s -- --help',
+					control.httpUrl,
+				]);
+				for (const [what, text] of [
+					["/install.sh", script],
+					["--help", stdout],
+					["/sdk/project-settings", project],
+				] as const) {
+					expect(text, `${what}：${address}`).not.toContain(address);
+					for (const fragment of fragments) {
+						expect(text, `${what}（${address}）里有 ${fragment}`).not.toContain(fragment);
+					}
+				}
+				// 两个镜像都当没配，--help 写明是配了但没公开（不写「未配置」）。
+				expect(script).toContain("PYPI_MIRROR=''");
+				expect(script).toContain("GITHUB_RELEASE_MIRROR=''");
+				expect(script).toContain("PYPI_MIRROR_WITHHELD='1'");
+				expect(script).toContain("GITHUB_RELEASE_MIRROR_WITHHELD='1'");
+				expect(stdout).toContain("控制面配置的 PyPI 镜像：配了，但地址带用户名和密码，没有公开");
+				expect(stdout).toContain(
+					"控制面配置的 GitHub Release 镜像：配了，但地址带用户名和密码，没有公开",
+				);
+				expect(stdout).not.toContain("未配置");
+				expect(JSON.parse(project)).toMatchObject({
+					pypi_mirror: null,
+					python_install_mirror: null,
+				});
+				// 启动警告：每个镜像一条，只写环境变量名。
+				const lines = warn.mock.calls.map((call) => String(call[0]));
+				expect(lines.filter((line) => line.includes("SFLY_PYPI_MIRROR"))).toHaveLength(1);
+				expect(lines.filter((line) => line.includes("SFLY_GITHUB_RELEASE_MIRROR"))).toHaveLength(1);
+				for (const line of lines) {
+					for (const fragment of fragments) expect(line).not.toContain(fragment);
+				}
+				// Agent 握手拿到的是配置的原值。
+				const agent = await FakeAgent.connect(control.grpcUrl, { name: "agent-backslash" });
+				expect(agent.welcome).toMatchObject({ pypiMirror: address, githubReleaseMirror: address });
+				await agent.disconnect();
+				await control.close();
+				cp = undefined;
+			}
+		} finally {
+			warn.mockRestore();
+		}
+	}, 120_000);
+
+	it("没配的镜像 --help 照旧写「未配置」，公开了的写地址", async () => {
+		const control = await start("", GITHUB_WITH);
+		const { stdout } = await run("sh", [
+			"-c",
+			'curl -fsSL "$0/install.sh" | sh -s -- --help',
+			control.httpUrl,
+		]);
+		expect(stdout).toContain("控制面配置的 PyPI 镜像：未配置");
+		expect(stdout).toContain(`控制面配置的 GitHub Release 镜像：${GITHUB_PUBLIC}`);
+	});
+
 	it("去不干净的镜像地址不公开（当没配），启动时打一条警告，只写是哪个环境变量、不写地址；另一个镜像和 Welcome 不受影响", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {

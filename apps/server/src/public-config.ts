@@ -46,4 +46,6 @@ export interface PublicConfig {
 	version: string;
 	/** 公开的镜像地址：已经去掉用户名和密码（{@link publicMirrors}）；不用登录就能读的地方只能用它，不能用配置的原值。 */
 	mirrors: Mirrors;
+	/** 配了、但去不干净所以没有公开的镜像（{@link publicMirrors} 的 `withheld`）：`/install.sh --help` 据此写「配了但没公开」，不写「未配置」。 */
+	mirrorsWithheld: ReadonlyArray<keyof Mirrors>;
 }

@@ -78,6 +78,90 @@ describe("publicAddress：单个地址去掉用户名和密码", () => {
 		}
 	});
 
+	it("`\\` 在用户名位置：WHATWG 读不出用户名密码、curl 读得出（审查 #756 复审的真控制面复现）：不公开，不会原样给出去", () => {
+		for (const address of [
+			// 域\用户名（AD 风格）：WHATWG 主机是 corp，curl 读成用户名 CORP\jdoe、密码 Sec7。
+			"https://CORP\\jdoe:Sec7@nexus.corp/simple",
+			// 数字加 \ 的密码：WHATWG 读成主机 deploy、端口 1234。
+			"https://deploy:1234\\abc@pypi.internal/simple",
+			// 带 \ 的令牌（只有用户名）。
+			"https://tok\\en@gh.internal/github-release",
+			// \ 在用户名之前：curl 的主机是 evil。
+			"https://mirror.corp\\u:Sec7@evil/simple",
+			"HTTPS://CORP\\jdoe:Sec7@nexus.corp/simple",
+			"https://CORP\\jdoe:Sec7@nexus.corp",
+			"https://CORP\\jdoe:Sec7@nexus.corp?a=1",
+			"https://CORP\\jdoe:Sec7@nexus.corp#a",
+		]) {
+			expect(new URL(address, "https://base.example").username, `WHATWG 读不出 ${address}`).toBe(
+				"",
+			);
+			expect(publicAddress(address), address).toBeUndefined();
+		}
+		// 先有一段普通的用户名密码、后面还有 \ 和 @：WHATWG 读出 u:p，去掉之后 curl 的读法里还有 @，照样不公开。
+		expect(publicAddress("https://u:p@host\\x@y/z")).toBeUndefined();
+	});
+
+	it("路径、查询里的 `\\` 和 @ 不碍事：只有主机段里有 @（curl 的读法）才扣下", () => {
+		for (const address of [
+			"https://host/a\\b",
+			"https://host/p\\q@r",
+			"https://host?x=a\\b@c",
+			"https://host/simple\\",
+		]) {
+			expect(publicAddress(address), address).toBe(address);
+		}
+		// 凭据在对的位置、后面的路径里有 \ 和 @：凭据去掉，路径原样。
+		expect(publicAddress("https://u:p@host/a\\b@c")).toBe("https://host/a\\b@c");
+	});
+
+	it("公开出去的地址在 WHATWG 和 curl 两种读法下都没有用户名和密码：每个字符放进用户名位置、密码位置、用户名之前（解析器放行的）", () => {
+		const chars: string[] = [];
+		for (let code = 0x01; code <= 0x7f; code += 1) chars.push(String.fromCharCode(code));
+		chars.push("\u0080", " ", " ", "　", "﻿", "é", "汉", "😀");
+		/** curl、wget 的读法：`://` 之后到第一个 / ? # 为止，里面有没有 @。 */
+		const curlHasUserinfo = (address: string) => {
+			const rest = address.slice(address.indexOf("://") + 3);
+			const end = rest.search(/[/?#]/);
+			return (end === -1 ? rest : rest.slice(0, end)).includes("@");
+		};
+		let accepted = 0;
+		let withheld = 0;
+		for (const ch of chars) {
+			for (const address of [
+				`https://UsrX${ch}Yy:PwdZ@pypi.internal/simple`, // 用户名位置
+				`https://UsrX:PwdZ${ch}Yy@pypi.internal/simple`, // 密码位置
+				`https://pypi.internal${ch}Hh:UsrX:PwdZ@evil.example/simple`, // 用户名之前（主机的位置）
+				`https://UsrX${ch}Yy@pypi.internal/simple`, // 只有用户名
+			]) {
+				try {
+					new URL(address);
+				} catch {
+					continue; // 解析器不认的写法：启动时就被拒，配不出来
+				}
+				accepted += 1;
+				const shown = publicAddress(address);
+				if (shown === undefined) {
+					withheld += 1;
+					continue;
+				}
+				const label = JSON.stringify(address);
+				// `/`、`?`、`#` 放在那里就是主机段的结尾：后面的字是路径、查询、片段（不是用户名和密码），照常公开，不检查标记。
+				if (!"/?#".includes(ch)) {
+					expect(shown, label).not.toContain("UsrX");
+					expect(shown, label).not.toContain("PwdZ");
+				}
+				const url = new URL(shown);
+				expect([url.username, url.password], label).toEqual(["", ""]);
+				expect(curlHasUserinfo(shown), label).toBe(false);
+			}
+		}
+		expect(accepted).toBeGreaterThan(400);
+		// 有扣下的（含 \），也有公开的：不是全扣、也不是全放。
+		expect(withheld).toBeGreaterThan(0);
+		expect(accepted - withheld).toBeGreaterThan(300);
+	});
+
 	it("所有单个字符放进密码里（解析器放行的）：公开出去的地址里没有用户名和密码，没有一个例外", () => {
 		const chars: string[] = [];
 		for (let code = 0x01; code <= 0x7f; code += 1) chars.push(String.fromCharCode(code));
