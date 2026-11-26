@@ -529,6 +529,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 				}),
 			})
 		: undefined;
+	// 助手服务的事件连接（下面、网关起来之后才建）：HTTP 在那之前就开始监听了，这几毫秒里进来的请求走就绪状态会问「连着没有」，
+	// 所以先声明；还没建好当作没连上（503，不是引用还没初始化的 ReferenceError → 500）。
+	let assistantConnection: AssistantConnection | undefined;
 	const sessionService = new SessionService({
 		sessions,
 		db: database.db,
@@ -539,9 +542,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
 		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
-		// 事件连接连不上时兜底不判中断（连接在后面才建，这里只在被问到时才看它）。
+		// 事件连接连不上时兜底不判中断、也不开始新的一轮；连接还没建好（只有配置了助手服务时才有这个函数）就是没连上。
 		...(assistantClient && {
-			assistantConnected: (): boolean => assistantConnection?.connected ?? true,
+			assistantConnected: (): boolean => assistantConnection?.connected ?? false,
 		}),
 		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
@@ -681,7 +684,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	).replace(/\/+$/, "");
 
 	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
-	const assistantConnection: AssistantConnection | undefined = assistantClient
+	assistantConnection = assistantClient
 		? new AssistantConnection({
 				client: assistantClient,
 				sessions,
