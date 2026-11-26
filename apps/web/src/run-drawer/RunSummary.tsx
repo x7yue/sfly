@@ -103,7 +103,7 @@ export function RunSummary({ runId }: { runId: string }) {
 				<span className="font-mono text-fg-3">{formatSpan(elapsed, !run.ended_at)}</span>
 				<span className="ml-auto text-xs text-fg-3">
 					{run.triggered_by}
-					<ViaTag via={run.triggered_via} /> 触发 ·{" "}
+					<ViaTag via={run.triggered_via} session={run.session} /> 触发 ·{" "}
 					<span className="font-mono">{formatDateTime(run.started_at)}</span>
 				</span>
 			</div>

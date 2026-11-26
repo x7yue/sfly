@@ -177,7 +177,7 @@ export function VersionHistory({
 							{pane.query.data && (
 								<span className="truncate">
 									{pane.query.data.author}
-									<ViaTag via={pane.query.data.author_via} /> ·{" "}
+									<ViaTag via={pane.query.data.author_via} session={pane.query.data.session} /> ·{" "}
 									{formatDateTime(pane.query.data.created_at)}
 								</span>
 							)}
@@ -281,7 +281,8 @@ function VersionRow({
 				</span>
 				<span className="text-xs break-words text-fg-3">
 					{version.author}
-					<ViaTag via={version.author_via} /> · {formatDateTime(version.created_at)}
+					<ViaTag via={version.author_via} session={version.session} /> ·{" "}
+					{formatDateTime(version.created_at)}
 				</span>
 			</div>
 			{!latest && (

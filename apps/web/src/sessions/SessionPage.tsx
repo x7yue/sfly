@@ -23,6 +23,7 @@ import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EndSession, endMutationKey } from "./EndSession";
+import { ResultsPanel } from "./ResultsPanel";
 import { SessionTimeline } from "./SessionTimeline";
 import {
 	announcement,
@@ -37,7 +38,7 @@ import { useStickToBottom } from "./use-stick-to-bottom";
 
 /**
  * 会话页（#542、#544）：顶栏是标题、状态（排队中写排第几）和「停止」（在做、排队中时；排队中点它是移出队列）、「结束会话」，
- * 下面是时间线，底部是输入框（空闲时接着说，在做时发出去的是插话，排队中不能说）。
+ * 下面左边是时间线，底部是输入框（空闲时接着说，在做时发出去的是插话，排队中不能说），右边是「成果」（#547，`ResultsPanel`）。
  * 每次打开都重新读历史（不用缓存里的旧数据）：事件流只补打开之后的。
  */
 export function SessionPage({ id }: { id: string }) {
@@ -70,7 +71,7 @@ export function SessionPage({ id }: { id: string }) {
 }
 
 function LiveSession({ detail }: { detail: SessionDetailResponse }) {
-	const { state, loadOlder, loadingOlder, olderError, gone, syncQueue } =
+	const { state, results, loadOlder, loadingOlder, olderError, gone, syncQueue } =
 		useSessionTimeline(detail);
 	const navigate = useNavigate();
 	/** 会话已经没有了（新建会话等第一轮结局期间点了停止，没有被碰过的会话被删掉）：回到列表。是这个错误就返回 true。 */
@@ -97,7 +98,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	const said = useAnnouncement(state);
 	const mode = composerMode(state);
 	return (
-		<div className="mx-auto flex w-full max-w-208 flex-col">
+		<div className="mx-auto flex w-full max-w-300 flex-col">
 			<PageHeader
 				// 会话的标题是第一句话：别人写的文字（公共的不可信文字组件处理）。
 				title={detail.title}
@@ -125,20 +126,28 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 			<output aria-live="polite" className="sr-only">
 				{said}
 			</output>
-			<SessionTimeline
-				state={state}
-				onLoadOlder={() => void loadOlder()}
-				loadingOlder={loadingOlder}
-				olderError={olderError}
-			/>
-			<Composer
-				id={detail.id}
-				mode={mode}
-				items={state.items}
-				lastSeq={state.lastSeq}
-				onSent={syncQueue}
-				onGone={onGone}
-			/>
+			{/* 左边是时间线和输入框，右边是「成果」（#547）：这个会话留下的提交、场景版本和运行，滚动时跟着。 */}
+			<div className="grid grid-cols-[minmax(0,1fr)_18rem] items-start gap-6">
+				<div className="flex min-w-0 flex-col">
+					<SessionTimeline
+						state={state}
+						onLoadOlder={() => void loadOlder()}
+						loadingOlder={loadingOlder}
+						olderError={olderError}
+					/>
+					<Composer
+						id={detail.id}
+						mode={mode}
+						items={state.items}
+						lastSeq={state.lastSeq}
+						onSent={syncQueue}
+						onGone={onGone}
+					/>
+				</div>
+				<div className="sticky top-4 max-h-[calc(100vh-8rem)] overflow-y-auto">
+					<ResultsPanel results={results} partial={state.hasMore} />
+				</div>
+			</div>
 		</div>
 	);
 }

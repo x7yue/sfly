@@ -394,6 +394,53 @@ export const SESSION = {
 		expand: "展开",
 		collapse: "收起",
 	},
+	/**
+	 * 「经 会话「<标题>」」：运行的触发人、场景版本的作者后面，操作是哪个会话的令牌做的（ADR 0029「经 …」，#547）。标题是别人写的文字
+	 * （会话的第一句话），夹在两段控制台的文案中间，只有它自己进隔离。
+	 */
+	via: { prefix: "经 会话「", suffix: "」", open: "打开这个会话" },
+	/**
+	 * 时间线上平台留下的记录（`platform` 的 `run`、`scenario_version`，#547）：助手用会话令牌触发了运行、保存了场景的版本。
+	 * 只有控制面写，助手在对话里说的不进来。统一的样式在 #550。
+	 */
+	record: {
+		run: "触发了运行",
+		/** 「场景「<名称>」」：名称是登录的人写的，不是不可信文字，但夹在文案中间，和 `via` 一样拆开写。 */
+		scenario: { prefix: "场景「", suffix: "」" },
+		version: { prefix: "保存了场景「", suffix: "」的" },
+		versionLabel: (number: number) => `版本 ${number}`,
+		turn: (turn: number) => `第 ${turn} 轮`,
+		openRun: "打开运行监控",
+		openVersion: "打开版本历史",
+	},
+	/**
+	 * 会话页右侧的「成果」（#547）：这个会话留下了什么，三块，全部来自这个会话的 `platform` 事件；运行的状态是实时的（和运行监控共用同一份数据）。
+	 */
+	results: {
+		title: "成果",
+		commits: "工作区的提交",
+		versions: "场景版本",
+		runs: "运行",
+		emptyCommits: "还没有提交",
+		emptyVersions: "还没有保存场景的版本",
+		emptyRuns: "还没有触发运行",
+		/** 事件只读到了最近一页：更早的成果在「加载更早的」之后才会列出来。 */
+		partial: "更早的成果在加载更早的内容后列出",
+		commitTurn: (turn: number) => `第 ${turn} 轮`,
+		commitStat: (files: number, additions: number, deletions: number) =>
+			`${files} 个文件 +${additions} −${deletions}`,
+		hash: "提交号",
+		showDiff: "展开看差异",
+		hideDiff: "收起差异",
+		files: "改动的文件",
+		binary: "二进制文件",
+		additions: (n: number) => `+${n}`,
+		deletions: (n: number) => `−${n}`,
+		noDiff: "（没有差异）",
+		truncated: "差异太长，只显示了开头",
+		/** 运行的状态读不到（运行已经被清理、没有权限）。 */
+		runUnknown: "状态未知",
+	},
 	turnEnd: {
 		completed: "这一轮完成",
 		steps: (n: number) => `${n} 步`,

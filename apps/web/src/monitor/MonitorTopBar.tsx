@@ -143,7 +143,12 @@ export function MonitorTopBar({
 				</h1>
 				<span className="flex min-w-0 text-xs text-fg-3">
 					<span className="min-w-0 truncate">
-						<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
+						<TriggeredAt
+							by={run.triggered_by}
+							via={run.triggered_via}
+							session={run.session}
+							at={run.started_at}
+						/>
 					</span>
 					<span className="flex-none whitespace-pre">
 						{" · "}

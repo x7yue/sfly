@@ -31,7 +31,9 @@ import type {
  *   所以 `steer_queue` 只在一轮在做时才算，`turn_queued` 只在排队时才算，别的时候是晚到的、按「这一轮已经过去」丢掉；「已送到」只由
  *   「之前出现过、现在不在了」推出来，不因为一句话不在列表里就算送到；
  * - `turn_queued`（排第几、在等谁）记在 {@link TimelineState.queue}；`session_ended` 一行写会话已结束；
- * - 这一版不渲染的类型（`tool_output`、`platform`、`snapshot`）和不认识的类型原样放过，不抛错。
+ * - `platform`（平台在会话里留下的记录，只有控制面写，助手说的话不进来）：`run`（助手触发了一次运行）和 `scenario_version`（保存了场景的一个版本）
+ *   各一行（{@link RecordItem}，#547）；右侧的「成果」也从这些事件生成（`results.ts`）；
+ * - 这一版不渲染的类型（`tool_output`、`platform` 的 `commit`、`snapshot`）和不认识的类型原样放过，不抛错。
  */
 
 export interface ToolResultInfo {
@@ -107,6 +109,7 @@ export type TimelineItem =
 			limitKind: TurnLimit | undefined;
 			errorClass: ErrorClass | undefined;
 	  }
+	| RecordItem
 	| {
 			kind: "session_ended";
 			key: string;
@@ -114,6 +117,34 @@ export type TimelineItem =
 			at: string;
 			/** 结束它的人的昵称。 */
 			by: string;
+	  };
+
+/**
+ * 平台在会话里留下的记录（`platform` 事件的 `run`、`scenario_version`，#547）：助手用会话令牌触发了运行、保存了场景的版本，控制面在记下
+ * 那条记录的同一个事务里写这条事件。依据是请求带着这个会话的令牌，不是模型在对话里怎么说；样式和助手的话明显不同（统一的样式在 #550）。
+ */
+export type RecordItem =
+	| {
+			kind: "run";
+			key: string;
+			seq: number;
+			at: string;
+			/** 是第几轮触发的。 */
+			turn: number;
+			runId: string;
+			/** 触发那一刻的场景名。 */
+			scenarioName: string;
+	  }
+	| {
+			kind: "version";
+			key: string;
+			seq: number;
+			at: string;
+			turn: number;
+			scenarioId: string;
+			/** 保存那一刻的场景名。 */
+			name: string;
+			version: number;
 	  };
 
 /**
@@ -609,8 +640,46 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 					},
 				],
 			};
+		case "platform":
+			// `commit` 不在这里渲染（#546）；运行和场景版本各一行。
+			if (event.kind === "run") {
+				return {
+					...state,
+					items: [
+						...state.items,
+						{
+							kind: "run",
+							key: `e${event.seq}`,
+							seq: event.seq,
+							at: event.at,
+							turn: event.turn,
+							runId: event.run_id,
+							scenarioName: event.scenario_name,
+						},
+					],
+				};
+			}
+			if (event.kind === "scenario_version") {
+				return {
+					...state,
+					items: [
+						...state.items,
+						{
+							kind: "version",
+							key: `e${event.seq}`,
+							seq: event.seq,
+							at: event.at,
+							turn: event.turn,
+							scenarioId: event.scenario_id,
+							name: event.name,
+							version: event.version,
+						},
+					],
+				};
+			}
+			return state;
 		default:
-			// tool_output、platform、snapshot，以及以后才有的类型：这一版不渲染。
+			// tool_output、snapshot，以及以后才有的类型：这一版不渲染。
 			return state;
 	}
 }
