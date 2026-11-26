@@ -34,6 +34,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::watch;
 
 use crate::proto::{AgentUpdate, AgentUpdateState, Welcome};
+use crate::secret::mask_userinfo;
 
 pub mod trial;
 
@@ -245,6 +246,9 @@ impl Updater {
     }
 
     fn fail(&self, reason: String) {
+        // 失败原因里有下载地址（`下载 Agent 二进制 <地址> 失败`）和 reqwest 报错里的地址：用户名和密码换成掩码（#733）。
+        // 地址是控制面按对外地址拼的（对外地址不许带用户名密码），这是多一层防护。
+        let reason = mask_userinfo(&reason).into_owned();
         eprintln!(
             "warning: Agent 自更新失败，继续使用版本 {}：{reason}",
             self.version

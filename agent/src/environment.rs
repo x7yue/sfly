@@ -26,12 +26,17 @@
 //!
 //! 失败时返回 [`EnvironmentError`]：Agent 以退出码 [`EXIT_CODE`] 退出，标准错误打印失败的命令、完整输出、
 //! 用到的镜像地址及其来源，最后一行提示把输出报告给平台管理员。
+//!
+//! 镜像地址可以带用户名和密码（私有的镜像常这样配）：写进报告、日志、`Debug` 输出的地址，用户名和密码一律换成固定的掩码，
+//! 主机和路径留着（[`crate::secret::mask_userinfo`]，#733）：命令、命令的输出、「用到的镜像」那一节都经过它，
+//! [`LocalMirrors`]、[`Mirrors`] 的 `Debug` 也是。
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use crate::proto::Welcome;
+use crate::secret::{Masked, mask_userinfo};
 use crate::venv::SharedVenv;
 
 /// 平台约定的 Python 版本：共享 venv 和 `sfly init` 生成的项目都用它。
@@ -161,7 +166,7 @@ fn append_line(original: Option<String>, line: &str) -> String {
 
 /// 本机对镜像的覆盖（`--index-url`、`--github-release-mirror`、`--python-install-mirror`，
 /// 也可以写在环境变量或 `agent.env` 里）；没有覆盖的为 None。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct LocalMirrors {
     /// PyPI 镜像（简单索引地址）。
     pub pypi: Option<String>,
@@ -169,6 +174,27 @@ pub struct LocalMirrors {
     pub github_release: Option<String>,
     /// Python 下载镜像（`UV_PYTHON_INSTALL_MIRROR`）。
     pub python_install: Option<String>,
+}
+
+/// 可选的地址的 `Debug` 写法：用户名和密码换成掩码。
+fn masked(address: &Option<String>) -> Option<Masked<'_>> {
+    address.as_deref().map(Masked)
+}
+
+/// 地址里可能带用户名和密码：`Debug` 输出里换成掩码（#733）。每个字段都列出来、不用 `..`：加了字段这里编译不过。
+impl fmt::Debug for LocalMirrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let LocalMirrors {
+            pypi,
+            github_release,
+            python_install,
+        } = self;
+        f.debug_struct("LocalMirrors")
+            .field("pypi", &masked(pypi))
+            .field("github_release", &masked(github_release))
+            .field("python_install", &masked(python_install))
+            .finish()
+    }
 }
 
 /// 镜像地址的来源。
@@ -181,13 +207,32 @@ pub enum Source {
 }
 
 /// 准备环境用的镜像（ADR 0012）：控制面在 Welcome 里下发的，加上本机的覆盖（本地优先）。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Mirrors {
     /// 控制面下发的 PyPI 镜像；未配置为 None。
     pub distributed_pypi: Option<String>,
     /// 控制面下发的 GitHub Release 镜像，例如 `https://mirrors.ustc.edu.cn/github-release`。
     pub distributed_github_release: Option<String>,
     pub local: LocalMirrors,
+}
+
+/// 同 [`LocalMirrors`]：`Debug` 输出里地址的用户名和密码换成掩码。
+impl fmt::Debug for Mirrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Mirrors {
+            distributed_pypi,
+            distributed_github_release,
+            local,
+        } = self;
+        f.debug_struct("Mirrors")
+            .field("distributed_pypi", &masked(distributed_pypi))
+            .field(
+                "distributed_github_release",
+                &masked(distributed_github_release),
+            )
+            .field("local", local)
+            .finish()
+    }
 }
 
 fn non_empty(s: &str) -> Option<String> {
@@ -262,7 +307,11 @@ impl Mirrors {
             local: &Option<String>,
             distributed: &Option<String>,
         ) -> fmt::Result {
-            match (local, distributed) {
+            // 地址里可能带用户名和密码：报告里写掩码（`Masked`），主机和路径留着。
+            match (
+                local.as_deref().map(Masked),
+                distributed.as_deref().map(Masked),
+            ) {
                 (Some(local), Some(distributed)) => writeln!(
                     f,
                     "  {label}：{local}（本地覆盖；控制面下发的是 {distributed}）"
@@ -280,11 +329,11 @@ impl Mirrors {
             &self.distributed_github_release,
         )?;
         match (&self.local.python_install, self.github_release()) {
-            (Some(local), _) => writeln!(f, "  Python 下载镜像：{local}（本地覆盖）")?,
+            (Some(local), _) => writeln!(f, "  Python 下载镜像：{}（本地覆盖）", Masked(local))?,
             (None, Some((_, source))) => writeln!(
                 f,
                 "  Python 下载镜像：{}（由{} GitHub Release 镜像推导）",
-                self.python_install_mirror().unwrap_or_default(),
+                Masked(&self.python_install_mirror().unwrap_or_default()),
                 match source {
                     Source::ControlPlane => "控制面下发的",
                     Source::Local => "本地覆盖的",
@@ -347,11 +396,13 @@ pub struct Setup<'a> {
 }
 
 impl Setup<'_> {
+    /// 失败的命令和它的输出里的地址（镜像、安装脚本、`UV_DOWNLOAD_URL`、`UV_PYTHON_INSTALL_MIRROR`）可以带用户名和密码：
+    /// 进报告之前换成掩码（#733）。`EnvironmentError` 只在这里造，所以报告里没有原文。
     fn error(&self, what: impl Into<String>, command: String, output: String) -> EnvironmentError {
         EnvironmentError {
-            what: what.into(),
-            command,
-            output,
+            what: mask_userinfo(&what.into()).into_owned(),
+            command: mask_userinfo(&command).into_owned(),
+            output: mask_userinfo(&output).into_owned(),
             mirrors: Box::new(self.mirrors.clone()),
         }
     }
@@ -548,6 +599,84 @@ fn command_line(command: &std::process::Command) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 镜像地址可以带用户名和密码（#733）：失败报告（命令、命令的输出、「用到的镜像」那一节）、`Debug` 输出里都只有掩码，
+    /// 主机和路径留着。
+    #[test]
+    fn credentials_in_mirror_addresses_never_reach_the_report_or_debug_output() {
+        let mirrors = Mirrors {
+            distributed_pypi: Some("https://dpuser:dppass-1@pypi.example/simple".into()),
+            distributed_github_release: Some(
+                "https://dguser:dgpass-2@gh.example/github-release".into(),
+            ),
+            local: LocalMirrors {
+                pypi: Some("https://lpuser:lppass-3@local.example/simple".into()),
+                github_release: Some("https://lguser:lgpass-4@local.example/gh".into()),
+                python_install: Some("https://lyuser:lypass-5@local.example/py/".into()),
+            },
+        };
+        let setup = Setup {
+            uv: Path::new("uv"),
+            manage_uv: true,
+            mirrors: &mirrors,
+            scratch: Path::new("/tmp"),
+            user_agent: "ua",
+        };
+        let error = setup.error(
+            "安装 uv 失败",
+            "UV_DOWNLOAD_URL=https://lguser:lgpass-4@local.example/gh/astral-sh/uv/LatestRelease sh install.sh"
+                .into(),
+            "curl: (22) The requested URL returned error: 404 https://lguser:lgpass-4@local.example/gh/x"
+                .into(),
+        );
+        let shown = [
+            format!("{error}"),
+            format!("{error:?}"),
+            format!("{error:#?}"),
+            format!("{mirrors:?}"),
+            format!("{:?}", mirrors.local),
+        ];
+        for text in &shown {
+            for secret in [
+                "dpuser", "dppass-1", "dguser", "dgpass-2", "lpuser", "lppass-3", "lguser",
+                "lgpass-4", "lyuser", "lypass-5",
+            ] {
+                assert!(!text.contains(secret), "{secret}：{text}");
+            }
+        }
+        // 报告里主机和路径留着，每个地址一个掩码。
+        let report = &shown[0];
+        for kept in [
+            "UV_DOWNLOAD_URL=https://***@local.example/gh/astral-sh/uv/LatestRelease",
+            "https://***@local.example/gh/x",
+            "GitHub Release 镜像：https://***@local.example/gh（本地覆盖；控制面下发的是 https://***@gh.example/github-release）",
+            "Python 下载镜像：https://***@local.example/py/（本地覆盖）",
+            "PyPI 镜像：https://***@local.example/simple（本地覆盖；控制面下发的是 https://***@pypi.example/simple）",
+        ] {
+            assert!(report.contains(kept), "{kept}：{report}");
+        }
+        // 从 GitHub Release 镜像推导的 Python 下载镜像也一样。
+        let derived = Mirrors {
+            distributed_github_release: Some(
+                "https://dguser:dgpass-2@gh.example/github-release".into(),
+            ),
+            ..Default::default()
+        };
+        let error = Setup {
+            mirrors: &derived,
+            ..setup
+        }
+        .error("创建共享 venv 失败", String::new(), String::new());
+        let report = format!("{error}");
+        assert!(
+            !report.contains("dguser") && !report.contains("dgpass-2"),
+            "{report}"
+        );
+        assert!(
+            report.contains("Python 下载镜像：https://***@gh.example/github-release/astral-sh/python-build-standalone/"),
+            "{report}"
+        );
+    }
 
     #[test]
     fn user_agent_must_be_printable_ascii_without_quotes_or_backslashes() {
