@@ -1,9 +1,10 @@
-import type { SessionEvent } from "@sfly/schema";
+import { SESSION_EVENT_LIMITS, type SessionEvent } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	applyEvent,
 	applyQueuedView,
 	emptyTimeline,
+	hasBehind,
 	initialTimeline,
 	lastBytes,
 	modelActivity,
@@ -334,7 +335,7 @@ describe("会话时间线：由事件序列算出", () => {
 		expect(state.status).toBe("ended");
 	});
 
-	it("这一版不渲染的类型和不认识的类型不抛错，状态原样", () => {
+	it("不认识的类型、没有对上调用的工具输出、什么现场都没有的快照不抛错，状态原样", () => {
 		const base = run([user(1)]);
 		const ignored: unknown[] = [
 			{ type: "tool_output", call_id: "c", text: "partial" },
@@ -345,6 +346,7 @@ describe("会话时间线：由事件序列算出", () => {
 				running_tool: null,
 				steer_queue: [],
 				waiting_for: null,
+				queue_position: null,
 			},
 			{
 				type: "platform",
@@ -362,6 +364,7 @@ describe("会话时间线：由事件序列算出", () => {
 			expect(() => applyEvent(base, event as SessionEvent)).not.toThrow();
 		}
 		expect(applyEvent(base, ignored[0] as SessionEvent)).toBe(base);
+		expect(applyEvent(base, ignored[1] as SessionEvent)).toBe(base);
 		expect(applyEvent(base, ignored[3] as SessionEvent).items).toEqual(base.items);
 	});
 });
@@ -1148,5 +1151,331 @@ describe("定稿（#550）：命令跑着时的输出（tool_output）", () => {
 		const after = applyEvent(state, output("a", "晚到的\n"));
 		expect(row(after, "a")).toMatchObject({ output: "" });
 		expect(applyEvent(state, output("zzz", "没有这个调用\n"))).toEqual(state);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// #545 页面：正在跑的命令的输出、快照
+// ---------------------------------------------------------------------------
+
+const OUTPUT_LIMIT = SESSION_EVENT_LIMITS.runningToolOutputBytes;
+/** 一轮刚结束、空闲的会话（别的标签页说的话排上队之前的样子）。 */
+const idleAfterTurnState = () =>
+	run([user(1), started(2), end(3, "completed")], emptyTimeline("idle"));
+const utf8 = (text: string) => new TextEncoder().encode(text).length;
+const toolOutput = (callId: string, text: string): SessionEvent => ({
+	type: "tool_output",
+	call_id: callId,
+	text,
+});
+type Snapshot = Extract<SessionEvent, { type: "snapshot" }>;
+const snapshot = (over: Partial<Snapshot> = {}): SessionEvent => ({
+	type: "snapshot",
+	status: "running",
+	partial_text: "",
+	running_tool: null,
+	steer_queue: [],
+	waiting_for: null,
+	queue_position: null,
+	...over,
+});
+const toolRow = (state: TimelineState, callId: string) =>
+	state.items.find(
+		(item): item is Extract<TimelineState["items"][number], { kind: "tool" }> =>
+			item.kind === "tool" && item.callId === callId,
+	);
+const assistants = (state: TimelineState) =>
+	state.items.flatMap((item) => (item.kind === "assistant" ? [item] : []));
+
+describe("正在跑的命令输出的最后一段（tool_output，#545）", () => {
+	it("追加到同一个调用那一行的 output（#550 用的字段）；一开始是空字符串", () => {
+		let state = run([user(1), started(2), call(3, "c1", "command", "sleep 600")]);
+		expect(toolRow(state, "c1")?.output).toBe("");
+		state = applyEvent(state, toolOutput("c1", "第一行\n"));
+		state = applyEvent(state, toolOutput("c1", "第二行\n"));
+		expect(toolRow(state, "c1")?.output).toBe("第一行\n第二行\n");
+	});
+
+	it("几个调用各记各的；没有对上的调用（调用在更早的一页里）的输出不认", () => {
+		let state = run([
+			user(1),
+			started(2),
+			call(3, "c1", "command", "a"),
+			call(4, "c2", "command", "b"),
+		]);
+		state = applyEvent(state, toolOutput("c1", "甲"));
+		state = applyEvent(state, toolOutput("c2", "乙"));
+		expect(toolRow(state, "c1")?.output).toBe("甲");
+		expect(toolRow(state, "c2")?.output).toBe("乙");
+		expect(applyEvent(state, toolOutput("没见过", "丙"))).toBe(state);
+	});
+
+	it("结果到了清空：改看 result.text；结果之后迟到的输出不再追加", () => {
+		let state = run([
+			user(1),
+			started(2),
+			call(3, "c1", "command", "ls"),
+			toolOutput("c1", "半截"),
+		]);
+		state = applyEvent(state, result(4, "c1", { text: "完整的输出\n" }));
+		expect(toolRow(state, "c1")).toMatchObject({ output: "", result: { text: "完整的输出\n" } });
+		expect(applyEvent(state, toolOutput("c1", "迟到的"))).toBe(state);
+	});
+
+	it("一轮结束、这个调用被中止之后到的输出不再追加", () => {
+		let state = run([user(1), started(2), call(3, "c1", "command", "sleep 600")]);
+		state = applyEvent(state, end(4, "stopped"));
+		expect(toolRow(state, "c1")?.abandoned).toBe(true);
+		expect(applyEvent(state, toolOutput("c1", "迟到的"))).toBe(state);
+	});
+
+	it("只留最后 runningToolOutputBytes 个 UTF-8 字节，不切开字符", () => {
+		let state = run([user(1), started(2), call(3, "c1", "command", "yes")]);
+		const lines = Array.from({ length: 3000 }, (_, i) => `行 ${String(i).padStart(5, "0")}\n`);
+		for (const line of lines) state = applyEvent(state, toolOutput("c1", line));
+		const output = toolRow(state, "c1")?.output ?? "";
+		expect(utf8(output)).toBeLessThanOrEqual(OUTPUT_LIMIT);
+		expect(utf8(output)).toBeGreaterThan(OUTPUT_LIMIT - 8);
+		expect(lines.join("").endsWith(output)).toBe(true);
+		expect(output).not.toContain("�");
+		// 一次进来很大一段，截断点落在多字节字符中间。
+		const big = applyEvent(
+			run([user(1), started(2), call(3, "c2", "command", "x")]),
+			toolOutput("c2", "你".repeat(OUTPUT_LIMIT)),
+		);
+		const bigOutput = toolRow(big, "c2")?.output ?? "";
+		expect(utf8(bigOutput)).toBeLessThanOrEqual(OUTPUT_LIMIT);
+		expect(bigOutput).not.toContain("�");
+		expect([...bigOutput].every((char) => char === "你")).toBe(true);
+	});
+
+	it("lastBytes：不超过上限原样，超过留最后的字节，每个截断位置都不产生半个字符", () => {
+		expect(lastBytes("abc", 10)).toBe("abc");
+		expect(lastBytes("abcdef", 3)).toBe("def");
+		const text = "a你😀b你😀c".repeat(4);
+		for (let limit = 0; limit <= utf8(text) + 2; limit++) {
+			const cut = lastBytes(text, limit);
+			expect(utf8(cut)).toBeLessThanOrEqual(limit);
+			expect(cut, `limit ${limit}`).not.toContain("�");
+			expect(text.endsWith(cut)).toBe(true);
+		}
+	});
+});
+
+describe("快照（snapshot，#545）：控制面补发读完、切到实时的那一刻发的现场，取代、不追加", () => {
+	it("正在输出的文字：取代逐字出现的那一条；没有逐字出现的（刚打开的页面）就新起一条；之后的增量接着追加，整条消息以它为准", () => {
+		// 断线重连：页面只收到了「我先」。
+		let state = run([user(1), started(2), delta("我先")]);
+		state = applyEvent(state, snapshot({ partial_text: "我先看一下现有的" }));
+		expect(assistants(state)).toHaveLength(1);
+		expect(assistants(state)[0]).toMatchObject({ text: "我先看一下现有的", streaming: true });
+		// 之后的实时增量接在快照的文字后面。
+		state = applyEvent(state, delta("节点"));
+		expect(assistants(state)[0]?.text).toBe("我先看一下现有的节点");
+		state = applyEvent(state, message(3, "我先看一下现有的节点。"));
+		expect(assistants(state)).toEqual([
+			expect.objectContaining({ seq: 3, text: "我先看一下现有的节点。", streaming: false }),
+		]);
+		// 刚打开的页面：读到的历史里没有逐字出现的那条。
+		const fresh = initialTimeline("running", [user(1), started(2)], false);
+		const opened = applyEvent(fresh, snapshot({ partial_text: "已经输出的部分" }));
+		expect(assistants(opened)).toEqual([
+			expect.objectContaining({ text: "已经输出的部分", streaming: true, seq: null }),
+		]);
+	});
+
+	it("相对「上一条持久的助手消息」：补发里的整条消息在前，快照里的文字是它之后的那条，不被它盖掉", () => {
+		// 补发（读历史）带来了第 3 条整条消息；快照的文字是下一条消息已有的部分。
+		const state = applyEvent(
+			initialTimeline("running", [user(1), started(2), message(3, "第一条")], false),
+			snapshot({ partial_text: "第二条已经输出的" }),
+		);
+		expect(assistants(state).map((item) => [item.seq, item.text, item.streaming])).toEqual([
+			[3, "第一条", false],
+			[null, "第二条已经输出的", true],
+		]);
+	});
+
+	it("同一个快照收到几次、和已经收到的增量重叠：结果一样", () => {
+		const snap = snapshot({ partial_text: "我先看一下" });
+		const once = applyEvent(run([user(1), started(2), delta("我先看")]), snap);
+		const twice = applyEvent(once, snap);
+		expect(assistants(twice)).toEqual(assistants(once));
+		expect(assistants(twice)).toHaveLength(1);
+	});
+
+	it("页面已有的文字以快照的文字结尾（控制面重启过，快照里只有重启之后的一段）：不动", () => {
+		const state = run([user(1), started(2), delta("重启之前的，"), delta("重启之后的")]);
+		const next = applyEvent(state, snapshot({ partial_text: "重启之后的" }));
+		expect(assistants(next)[0]?.text).toBe("重启之前的，重启之后的");
+	});
+
+	it("文字是空的（没有正在输出的消息，或者控制面刚重启）：页面上逐字出现的那条不动", () => {
+		const state = run([user(1), started(2), delta("已有的")]);
+		expect(applyEvent(state, snapshot({ partial_text: "" }))).toBe(state);
+	});
+
+	it("正在跑的工具：output 写进同一个调用那一行（和实时的 tool_output 同一个字段）；页面没有这一行就补一行", () => {
+		const running = {
+			call_id: "c1",
+			tool: "command" as const,
+			title: "sfly run start 巡检",
+			output: "已经输出的最后一段\n",
+		};
+		// 重连：页面有这一行，没收到期间的输出。
+		let state = run([
+			user(1),
+			started(2),
+			call(3, "c1", "command", "sfly run start 巡检"),
+			toolOutput("c1", "第一行\n"),
+		]);
+		state = applyEvent(state, snapshot({ running_tool: running }));
+		expect(toolRow(state, "c1")).toMatchObject({
+			output: "已经输出的最后一段\n",
+			result: null,
+			abandoned: false,
+		});
+		// 之后的实时输出接着追加。
+		state = applyEvent(state, toolOutput("c1", "又一行\n"));
+		expect(toolRow(state, "c1")?.output).toBe("已经输出的最后一段\n又一行\n");
+		// 页面没有这一行（调用在更早的一页里）：补一行。
+		const missing = applyEvent(run([user(1), started(2)]), snapshot({ running_tool: running }));
+		expect(toolRow(missing, "c1")).toMatchObject({
+			kind: "tool",
+			tool: "command",
+			title: "sfly run start 巡检",
+			output: "已经输出的最后一段\n",
+			result: null,
+			abandoned: false,
+		});
+		// 同一个快照再来一次不重复。
+		const again = applyEvent(missing, snapshot({ running_tool: running }));
+		expect(again.items.filter((item) => item.kind === "tool")).toHaveLength(1);
+	});
+
+	it("已经有结果或被中止的调用不动；页面已有的输出以快照的结尾时不动；没有在跑的工具（null）什么也不做", () => {
+		const running = { call_id: "c1", tool: "command" as const, title: "ls", output: "尾" };
+		const finished = run([
+			user(1),
+			started(2),
+			call(3, "c1", "command", "ls"),
+			result(4, "c1", { text: "完整\n" }),
+		]);
+		expect(toolRow(applyEvent(finished, snapshot({ running_tool: running })), "c1")).toMatchObject({
+			output: "",
+			result: { text: "完整\n" },
+		});
+		const longer = run([
+			user(1),
+			started(2),
+			call(3, "c1", "command", "ls"),
+			toolOutput("c1", "前面的尾"),
+		]);
+		expect(applyEvent(longer, snapshot({ running_tool: running }))).toBe(longer);
+		expect(applyEvent(longer, snapshot({ running_tool: null }))).toBe(longer);
+	});
+
+	it("快照里的输出是控制面按字节截好的，页面不再改：不超过上限", () => {
+		const output = "x".repeat(OUTPUT_LIMIT);
+		const state = applyEvent(
+			run([user(1), started(2), call(3, "c1", "command", "yes")]),
+			snapshot({ running_tool: { call_id: "c1", tool: "command", title: "yes", output } }),
+		);
+		expect(utf8(toolRow(state, "c1")?.output ?? "")).toBeLessThanOrEqual(OUTPUT_LIMIT);
+	});
+
+	it("还没送到模型的插话：在列表里的变成等待送达；不在列表里的不因此算送到（控制面重启后快照里的队列是空的）", () => {
+		// 刷新后读到的在做的一轮里的插话是「不知道」。
+		const opened = initialTimeline(
+			"running",
+			[user(1), started(2), steerMsg(3, ID_A, "甲"), steerMsg(4, ID_B, "乙")],
+			false,
+		);
+		expect(byId(opened, ID_A)?.delivery).toBe("unknown");
+		const listed = applyEvent(
+			opened,
+			snapshot({ steer_queue: [{ message_id: ID_A, text: "甲" }] }),
+		);
+		expect(byId(listed, ID_A)).toMatchObject({ delivery: "waiting", queuedSeen: true });
+		expect(byId(listed, ID_B)?.delivery).toBe("unknown");
+		// 之前在队列里见过：快照里的队列是空的（控制面重启过），仍是等待送达，不算送到。
+		const afterRestart = applyEvent(listed, snapshot({ steer_queue: [] }));
+		expect(byId(afterRestart, ID_A)?.delivery).toBe("waiting");
+		// 之后实时的 steer_queue 里没有它了，才是已送到。
+		expect(byId(applyEvent(afterRestart, steerQueue()), ID_A)?.delivery).toBe("delivered");
+		// 没有送到的（有 steer_dropped）不被快照改成等待送达。
+		const gone = applyEvent(
+			run([user(1), started(2), steerMsg(3, ID_A, "甲"), dropped(4, ID_A)]),
+			snapshot({ steer_queue: [{ message_id: ID_A, text: "甲" }] }),
+		);
+		expect(byId(gone, ID_A)?.delivery).toBe("dropped");
+	});
+
+	it("快照比这句插话的 user_message 先到：之后到的 user_message 一来就是等待送达", () => {
+		let state = initialTimeline("running", [user(1), started(2)], false);
+		state = applyEvent(state, snapshot({ steer_queue: [{ message_id: ID_A, text: "甲" }] }));
+		state = applyEvent(state, steerMsg(3, ID_A, "甲"));
+		expect(byId(state, ID_A)).toMatchObject({ delivery: "waiting", queuedSeen: true });
+	});
+
+	it("排队中：快照里的位置和在等谁取代页面上的（重连后排位马上对）；空闲的页面也变成排队中（别的标签页说的话排上了队）", () => {
+		const queuedState = initialTimeline("queued", [plainMsg(1, ID_A, "排着的话")], false, {
+			position: 3,
+			waitingFor: WAITING_FOR,
+		});
+		const moved = applyEvent(
+			queuedState,
+			snapshot({ status: "queued", queue_position: 1, waiting_for: WAITING_FOR }),
+		);
+		expect(moved.status).toBe("queued");
+		expect(moved.queue).toEqual({ position: 1, waitingFor: WAITING_FOR });
+		// 项目里没有会话在做：在等谁是 null，位置仍有。
+		const nobody = applyEvent(
+			queuedState,
+			snapshot({ status: "queued", queue_position: 2, waiting_for: null }),
+		);
+		expect(nobody.queue).toEqual({ position: 2, waitingFor: null });
+		// 页面是空闲的（别的标签页说的话排上了队，这一页读到了它的 user_message）。
+		const idle = run([plainMsg(4, ID_A, "第二句")], idleAfterTurnState());
+		const waiting = applyEvent(
+			idle,
+			snapshot({ status: "queued", queue_position: 1, waiting_for: null }),
+		);
+		expect(waiting).toMatchObject({
+			status: "queued",
+			awaitingStart: true,
+			queue: { position: 1, waitingFor: null },
+		});
+	});
+
+	it("停止途中说了话、排在这一轮后面的在做的会话：位置前进了，页面状态仍是在做", () => {
+		const state = run([user(1), started(2), plainMsg(3, ID_A, "停下来之后的话")]);
+		expect(hasBehind(state.items)).toBe(true);
+		const next = applyEvent(
+			state,
+			snapshot({ status: "running", queue_position: 2, waiting_for: WAITING_FOR }),
+		);
+		expect(next.status).toBe("running");
+		expect(next.queue).toEqual({ position: 2, waitingFor: WAITING_FOR });
+	});
+
+	it("快照说没有在做（空闲、已结束），或者页面不在做：不画文字、命令和插话", () => {
+		const idleSnap = snapshot({
+			status: "idle",
+			partial_text: "过时的",
+			running_tool: { call_id: "c1", tool: "command", title: "ls", output: "x" },
+			steer_queue: [{ message_id: ID_A, text: "甲" }],
+		});
+		const running = run([user(1), started(2)]);
+		expect(applyEvent(running, idleSnap)).toBe(running);
+		const idle = run([user(1), started(2), end(3, "completed")]);
+		const withContent = snapshot({ partial_text: "不该画的", running_tool: null });
+		expect(applyEvent(idle, withContent)).toBe(idle);
+	});
+
+	it("turn_queued 的 waiting_for 为 null（项目里没有会话在做）：空闲的会话说的话排上了队，位置有、在等谁没有", () => {
+		let state = run([plainMsg(4, ID_A, "第二句")], idleAfterTurnState());
+		state = applyEvent(state, { type: "turn_queued", position: 2, waiting_for: null });
+		expect(state).toMatchObject({ status: "queued", queue: { position: 2, waitingFor: null } });
 	});
 });

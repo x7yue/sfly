@@ -89,9 +89,9 @@ describe("会话事件", () => {
 		it("字段的类型不对就被拒绝：每个字段换成另一种 JSON 类型", () => {
 			const event = asReaderEvent(sample.body);
 			for (const [key, value] of Object.entries(event).filter(([key]) => key !== "type")) {
-				// 字符串换成数字，数字、布尔、数组、对象、null 换成字符串 "x"（字符串字段本来就收字符串，所以单独处理）；
-				// 可以为 null 的字符串字段（author_user_id）换成数字。
-				const wrong = typeof value === "string" || value === null ? 123 : "x";
+				// 字符串换成数字，数字、布尔、数组、对象换成字符串 "x"（字符串字段本来就收字符串，所以单独处理）；
+				// 值是 null 的（可以为 null 的字符串、整数、对象字段）换成一个对象：它们都不收。
+				const wrong = value === null ? { wrong: true } : typeof value === "string" ? 123 : "x";
 				expect(
 					SessionEvent.safeParse({ ...event, [key]: wrong }).success,
 					`${sample.name} 的 ${key} 换成 ${JSON.stringify(wrong)}`,
@@ -290,6 +290,16 @@ describe("会话事件", () => {
 		expect(
 			SessionEventBody.safeParse({ type: "turn_queued", position: 0, waiting_for: {} }).success,
 		).toBe(false);
+		// 排位从 1 起；项目里没有会话在做时在等谁是 null（#545），位置仍然必填。
+		expect(
+			SessionEventBody.safeParse({ type: "turn_queued", position: 0, waiting_for: null }).success,
+		).toBe(false);
+		expect(SessionEventBody.safeParse({ type: "turn_queued", waiting_for: null }).success).toBe(
+			false,
+		);
+		const snapshot = eventSamples.find((s) => s.name === "snapshot（没有在跑的工具）")?.body;
+		expect(SessionEventBody.safeParse({ ...snapshot, queue_position: 0 }).success).toBe(false);
+		expect(SessionEventBody.safeParse({ ...snapshot, queue_position: 1 }).success).toBe(true);
 		expect(
 			SessionEvent.safeParse({ ...persistedStamp, seq: 0, type: "turn_started", turn: 1 }).success,
 		).toBe(false);

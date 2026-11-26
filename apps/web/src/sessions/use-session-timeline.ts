@@ -82,6 +82,7 @@ const RENDERED: ReadonlySet<string> = new Set([
 	"turn_queued",
 	"steer_queue",
 	"platform",
+	"snapshot",
 ]);
 
 /**

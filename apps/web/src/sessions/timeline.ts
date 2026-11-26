@@ -38,7 +38,13 @@ import {
  *   开始前补提交（`beforeSession`），事件的 `turn` 就是这一轮，靠位置认：它出现在这一轮的模型说话、调工具之前；
  * - `platform`（平台在会话里留下的记录，只有控制面写，助手说的话不进来）：`run`（助手触发了一次运行）和 `scenario_version`（保存了场景的一个版本）
  *   各一行（{@link RecordItem}，#547）；右侧的「成果」也从这些事件生成（`results.ts`）；
- * - 这一版不渲染的类型（`tool_output`、`snapshot`）和不认识的类型原样放过，不抛错。
+ * - **正在跑的命令的输出**（#545）：`tool_output` 追加到同一个调用那一行的 {@link ToolItem.output}（只留最后
+ *   `SESSION_EVENT_LIMITS.runningToolOutputBytes` 个 UTF-8 字节，不切开字符），结果到了之后清空、以 `result.text` 为准；
+ * - **快照**（`snapshot`，#545）：控制面在补发读完、切到实时的那一刻发一条（重连的、刚打开的页面都收到）。它是控制面内存里的状态，页面按
+ *   「取代」处理，不追加：`partial_text` 取代逐字出现的那条助手的话（页面已有的文字至少和它一样长、以它结尾时不动：控制面重启过时它只有
+ *   重启之后的一段），`running_tool` 的输出写进同一个 {@link ToolItem.output}（页面没有这个调用的行时补一行），`steer_queue` 里的插话变成
+ *   等待送达（**不由「不在列表里」推出已送到**：控制面重启后它是空的），排队中的位置和在等谁取自它；
+ * - 这一版不认识的类型原样放过，不抛错。
  */
 
 export interface ToolResultInfo {
@@ -98,8 +104,9 @@ export type TimelineItem =
 			 */
 			parallel: boolean;
 			/**
-			 * 命令还在跑时已经输出的最后一段（`tool_output` 的增量累积；至多 `SESSION_EVENT_LIMITS.runningToolOutputBytes` 字节，超过的从前面丢）：
-			 * 展开这一行时输出实时出现。结果到了就清空（改显示结果）。没有输出时是空字符串。
+			 * 正在跑的命令已经输出的**最后一段**（#545）：实时的 `tool_output` 追加、快照取代，同一个字段；至多
+			 * `SESSION_EVENT_LIMITS.runningToolOutputBytes` 个 UTF-8 字节，不切开字符，不带截断的标记（前面的没有了）。
+			 * 只在命令运行期间有值：结果（`result`）到了、调用被中止之后不再更新，结果到了就清空，改看 `result.text`。没有输出时是空字符串。
 			 */
 			output: string;
 	  }
@@ -282,18 +289,6 @@ const seqOf = (event: SessionEvent): number | undefined =>
 	"seq" in event && typeof event.seq === "number" ? event.seq : undefined;
 
 const toolKey = (callId: string) => `tool:${callId}`;
-
-/** 文字的最后 `limit` 个字节（UTF-8）：从前面丢，不把多字节的字符从中间切开。 */
-export function lastBytes(text: string, limit: number): string {
-	// 每个字符至多三个字节（再多的是代理对，两个码元四个字节）：短的文字不用编码就知道没超。
-	if (text.length * 3 <= limit) return text;
-	const bytes = new TextEncoder().encode(text);
-	if (bytes.length <= limit) return text;
-	let start = bytes.length - limit;
-	// 落在一个字符中间（延续字节 10xxxxxx）就往后挪到下一个字符的开头。
-	while (start < bytes.length && ((bytes[start] as number) & 0xc0) === 0x80) start += 1;
-	return new TextDecoder().decode(bytes.subarray(start));
-}
 
 /** 替换某一条（按 key），其余不动。 */
 const replaceItem = (
@@ -602,26 +597,6 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				],
 			};
 		}
-		case "tool_output": {
-			// 命令跑着时的输出：累积到这一行（只留最后一段）。没有对上的调用（它在更早的一页里）、或者结果已经到了的，不处理。
-			const key = toolKey(event.call_id);
-			const row = state.items.find((item) => item.key === key);
-			if (row?.kind !== "tool" || row.result !== null || row.abandoned) return state;
-			return {
-				...state,
-				items: replaceItem(state.items, key, (item) =>
-					item.kind === "tool"
-						? {
-								...item,
-								output: lastBytes(
-									item.output + event.text,
-									SESSION_EVENT_LIMITS.runningToolOutputBytes,
-								),
-							}
-						: item,
-				),
-			};
-		}
 		case "notice": {
 			const messageId = event.message_id ?? null;
 			// 按 `message_id` 对上那句话：`steer_dropped` 是插话没有送到，`queue_cancelled` 是排着的话被撤掉了。
@@ -838,10 +813,159 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				};
 			}
 			return state;
+		case "tool_output": {
+			// 追加到同一个调用那一行的 `output`（只留最后一段）。没有这一行（调用在更早的一页里、控制面重启后才连上）、
+			// 已经有结果或被中止的：不认，快照会带上现场。
+			const key = toolKey(event.call_id);
+			const target = state.items.find((item) => item.key === key);
+			if (target?.kind !== "tool" || target.result !== null || target.abandoned) return state;
+			return {
+				...state,
+				items: replaceItem(state.items, key, (item) =>
+					item.kind === "tool"
+						? { ...item, output: lastBytes(item.output + event.text, OUTPUT_TAIL_BYTES) }
+						: item,
+				),
+			};
+		}
+		case "snapshot":
+			return applySnapshot(state, event);
 		default:
-			// snapshot（#545 的快照，由它接）和以后才有的类型：这一版不渲染。
+			// 以后才有的类型：这一版不渲染。
 			return state;
 	}
+}
+
+/** 正在跑的命令的输出留多少字节（`ToolItem.output`）。 */
+const OUTPUT_TAIL_BYTES = SESSION_EVENT_LIMITS.runningToolOutputBytes;
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/** 文字最后的至多 `max` 个 UTF-8 字节，不切开字符（开头落在一个字符中间时，这个字符整个不要）。 */
+export function lastBytes(text: string, max: number): string {
+	// 一个 UTF-16 单元最多 3 个字节：短的不用编码。
+	if (text.length * 3 <= max) return text;
+	const bytes = encoder.encode(text);
+	if (bytes.length <= max) return text;
+	let start = bytes.length - max;
+	// UTF-8 的后续字节是 10xxxxxx：落在字符中间就往后挪到下一个字符的开头。
+	while (start < bytes.length && ((bytes[start] as number) & 0xc0) === 0x80) start += 1;
+	return decoder.decode(bytes.subarray(start));
+}
+
+type SnapshotEvent = Extract<SessionEvent, { type: "snapshot" }>;
+
+/**
+ * 快照（控制面内存里此刻的现场）并进时间线，取代、不追加（见文件开头）：
+ * - 排位和在等谁：`queue_position` 有值、会话在排队（空闲的会话排上了队，别的标签页的话），或有话排在这一轮后面；
+ * - 现场只在一轮之内有意义：快照说在做、页面也在做时才处理。
+ */
+function applySnapshot(state: TimelineState, event: SnapshotEvent): TimelineState {
+	let next = state;
+	if (event.queue_position !== null) {
+		const queue = { position: event.queue_position, waitingFor: event.waiting_for };
+		if (event.status === "queued" && (state.status === "idle" || state.status === "queued")) {
+			next = { ...next, status: "queued", awaitingStart: true, queue };
+		} else if (event.status === "running" && state.status === "running" && hasBehind(state.items)) {
+			next = { ...next, queue };
+		}
+	}
+	if (event.status !== "running" || next.status !== "running") return next;
+	next = snapshotText(next, event.partial_text);
+	next = snapshotTool(next, event.running_tool);
+	return snapshotSteers(next, event.steer_queue);
+}
+
+/** 快照里正在输出的那条助手消息已有的文字：取代逐字出现的那一条（没有就新起一条）；页面已有的不比它短时不动。 */
+function snapshotText(state: TimelineState, text: string): TimelineState {
+	if (text === "") return state;
+	const key = state.streamingKey;
+	const current = key === null ? undefined : state.items.find((item) => item.key === key);
+	if (key !== null && current?.kind === "assistant") {
+		// 页面已有的文字以快照结尾：控制面重启过，快照里只有重启之后的一段，页面的更全。
+		if (current.text.endsWith(text)) return state;
+		return {
+			...state,
+			thinking: false,
+			items: replaceItem(state.items, key, (item) =>
+				item.kind === "assistant" ? { ...item, text } : item,
+			),
+		};
+	}
+	const streams = state.streams + 1;
+	const streamKey = `stream:${streams}`;
+	return {
+		...state,
+		thinking: false,
+		streams,
+		streamingKey: streamKey,
+		items: [
+			...state.items,
+			{ kind: "assistant", key: streamKey, seq: null, text, streaming: true },
+		],
+	};
+}
+
+/** 快照里正在跑的工具调用和它输出的最后一段：写进同一个调用那一行的 `output`；页面没有这一行时补一行。 */
+function snapshotTool(state: TimelineState, tool: SnapshotEvent["running_tool"]): TimelineState {
+	if (tool === null) return state;
+	const key = toolKey(tool.call_id);
+	const existing = state.items.find((item) => item.key === key);
+	if (existing?.kind === "tool") {
+		// 已经有结果或被中止的不动；页面已有的输出以快照的结尾时不动（同上）。
+		if (existing.result !== null || existing.abandoned || existing.output.endsWith(tool.output)) {
+			return state;
+		}
+		return {
+			...state,
+			items: replaceItem(state.items, key, (item) =>
+				item.kind === "tool"
+					? { ...item, output: lastBytes(tool.output, OUTPUT_TAIL_BYTES) }
+					: item,
+			),
+		};
+	}
+	return {
+		...state,
+		items: [
+			...state.items,
+			{
+				kind: "tool",
+				key,
+				callId: tool.call_id,
+				tool: tool.tool,
+				title: tool.title,
+				at: null,
+				result: null,
+				abandoned: false,
+				// 快照里不知道它开始时还有没有别的调用在做：不标并行。
+				parallel: false,
+				output: lastBytes(tool.output, OUTPUT_TAIL_BYTES),
+			},
+		],
+	};
+}
+
+/**
+ * 快照里还没送到模型的插话：在列表里的变成等待送达（同 `steer_queue`）。**不由「不在列表里」推出已送到**：控制面重启后快照里的
+ * 队列是空的，而助手服务那边的队列还在；已送到靠这一轮结束，或之前在某一份列表里见过、之后又不在了（`steer_queue` 事件）。
+ */
+function snapshotSteers(
+	state: TimelineState,
+	entries: SnapshotEvent["steer_queue"],
+): TimelineState {
+	if (entries.length === 0) return state;
+	const listed = new Set(entries.map((entry) => entry.message_id));
+	return {
+		...state,
+		steerQueue: [...listed],
+		items: state.items.map((item): TimelineItem => {
+			if (item.kind !== "user" || item.role !== "steer") return item;
+			if (item.delivery === "delivered" || item.delivery === "dropped") return item;
+			return listed.has(item.messageId) ? { ...item, delivery: "waiting", queuedSeen: true } : item;
+		}),
+	};
 }
 
 /**

@@ -55,6 +55,9 @@ class FakeSource implements FollowSource {
 	/** 第 n 次读库取到结果之后、返回之前做的事：模拟「读完以后、补发收尾之前」又来了实时事件。 */
 	readonly afterSnapshot = new Map<number, () => void>();
 	failRead: Error | undefined;
+	/** 数据源的快照（#545）：设了才提供；`snapshotCalls` 记着被调用时已经读过几次库。 */
+	makeSnapshot: (() => SessionEvent) | undefined;
+	readonly snapshotCalls: number[] = [];
 
 	constructor(seqs: number[] = []) {
 		for (const seq of seqs) this.db.push(persistent(seq));
@@ -74,6 +77,11 @@ class FakeSource implements FollowSource {
 		const snapshot = this.db.filter((event) => event.seq > after).slice(0, limit);
 		this.afterSnapshot.get(n)?.();
 		return snapshot;
+	}
+
+	snapshot(): SessionEvent | undefined {
+		this.snapshotCalls.push(this.reads.length);
+		return this.makeSnapshot?.();
 	}
 
 	publish(event: SessionEvent): void {
@@ -387,5 +395,144 @@ describe("出错和取消", () => {
 		expect(sink.shape).toEqual(["1", "2"]);
 		expect(source.listeners.size).toBe(0);
 		expect(errors).toEqual([]);
+	});
+});
+
+describe("快照（#545）：补发读完、切到实时的那一刻，缓冲的实时事件放完之后，只给这一条连接发一条", () => {
+	const snap = (text: string): SessionEvent => ({
+		type: "snapshot",
+		status: "running",
+		partial_text: text,
+		running_tool: null,
+		steer_queue: [],
+		waiting_for: null,
+		queue_position: null,
+	});
+	const snapshots = (sink: FakeSink) => sink.out.filter((event) => event.type === "snapshot");
+
+	it("补发读完之后、实时之前：先是补发的持久事件，然后是快照，之后实时的事件在快照后面", async () => {
+		const source = new FakeSource([1, 2, 3]);
+		source.makeSnapshot = () => snap("此刻");
+		const sink = new FakeSink();
+		const { errors } = run(source, sink);
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "snapshot"]);
+		source.publish(delta("实时的"));
+		source.append(4);
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "snapshot", "实时的", "4"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("带 after 重连的连接同样收到一条：只补发 after 之后的，快照仍在补发之后", async () => {
+		const source = new FakeSource([1, 2, 3, 4, 5]);
+		source.makeSnapshot = () => snap("重连");
+		const sink = new FakeSink();
+		run(source, sink, { batch: 2 }, 3);
+		await settle();
+		expect(sink.shape).toEqual(["4", "5", "snapshot"]);
+		// 没有更晚的事件（after 就是最大的序号）：只有快照。
+		const empty = new FakeSink();
+		run(source, empty, { batch: 2 }, 5);
+		await settle();
+		expect(empty.shape).toEqual(["snapshot"]);
+	});
+
+	it("补发分好几批：快照在最后一次读库之后调用，一次；不在批与批之间", async () => {
+		const source = new FakeSource([1, 2, 3, 4, 5]);
+		source.makeSnapshot = () => snap("x");
+		const sink = new FakeSink();
+		run(source, sink, { batch: 2 });
+		await settle();
+		// 读库三次：1–2、3–4、5；最后一批不满，补发读完。
+		expect(source.reads).toEqual([0, 2, 4]);
+		expect(source.snapshotCalls).toEqual([3]);
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "5", "snapshot"]);
+	});
+
+	it("补发正好是整数批（最后一批满了）：再读一次空的才算读完，快照在它之后", async () => {
+		const source = new FakeSource([1, 2, 3, 4]);
+		source.makeSnapshot = () => snap("x");
+		const sink = new FakeSink();
+		run(source, sink, { batch: 2 });
+		await settle();
+		expect(source.reads).toEqual([0, 2, 4]);
+		expect(source.snapshotCalls).toEqual([3]);
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "snapshot"]);
+	});
+
+	it("补发期间到的实时事件先放，快照在它们之后（快照里已经包括它们），它们之后的实时事件在快照后面；被取代的增量仍然丢掉", async () => {
+		const source = new FakeSource([1, 2]);
+		source.makeSnapshot = () => snap("含停住期间的增量");
+		const sink = new FakeSink();
+		const second = source.hold(2);
+		const { errors } = run(source, sink);
+		await second.started;
+		source.publish(delta("过时的增量")); // 在完整的消息 3 之前：3 的内容里已经有它
+		source.append(3, message(3));
+		source.publish(delta("停住期间的增量")); // 3 之后：留下
+		second.release();
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "停住期间的增量", "snapshot"]);
+		source.publish(delta("切到实时之后的"));
+		await settle();
+		expect(sink.shape.at(-1)).toBe("切到实时之后的");
+		expect(snapshots(sink)).toHaveLength(1);
+		expect(errors).toEqual([]);
+	});
+
+	it("快照不持久、没有序号：不参与按序号去重，也不推进「已经发到哪」，后面的持久事件不受影响", async () => {
+		const source = new FakeSource([1, 2]);
+		source.makeSnapshot = () => snap("x");
+		const sink = new FakeSink();
+		run(source, sink);
+		await settle();
+		source.append(3);
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "snapshot", "3"]);
+	});
+
+	it("数据源不提供快照时不发；读库出错或流已经停止时也不发", async () => {
+		const plain = new FakeSource([1]);
+		const sink = new FakeSink();
+		run(plain, sink);
+		await settle();
+		expect(sink.shape).toEqual(["1"]);
+
+		const broken = new FakeSource([1]);
+		broken.makeSnapshot = () => snap("x");
+		broken.failRead = new Error("读库失败");
+		const brokenSink = new FakeSink();
+		const { errors } = run(broken, brokenSink);
+		await settle();
+		expect(errors).toHaveLength(1);
+		expect(brokenSink.shape).toEqual([]);
+
+		const stopped = new FakeSource([1, 2, 3]);
+		stopped.makeSnapshot = () => snap("x");
+		const stoppedSink = new FakeSink();
+		const first = stopped.hold(1);
+		const { stop } = run(stopped, stoppedSink);
+		await first.started;
+		stop();
+		first.release();
+		await settle();
+		expect(stoppedSink.shape).toEqual([]);
+		expect(stopped.snapshotCalls).toEqual([]);
+	});
+
+	it("快照生成出错：当作这条流出错，调用 onError，之后不再推送", async () => {
+		const source = new FakeSource([1]);
+		source.makeSnapshot = () => {
+			throw new Error("快照出错");
+		};
+		const sink = new FakeSink();
+		const { errors } = run(source, sink);
+		await settle();
+		expect(errors).toHaveLength(1);
+		expect(sink.shape).toEqual(["1"]);
+		source.publish(delta("之后的"));
+		await settle();
+		expect(sink.shape).toEqual(["1"]);
 	});
 });
