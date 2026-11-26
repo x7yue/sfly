@@ -661,3 +661,63 @@ describe("助手服务回来、事件连接还没重连上的这段时间", () =
 		}
 	}, 60_000);
 });
+
+describe("控制面刚启动、事件流还没连上（#760 审查查到的现象）", () => {
+	it("刚启动时助手服务已经好了、事件流还没连上：就绪状态写连不上、建会话 503，一条事件也不会因此丢；事件流连上之后才放行，这一轮的工具调用在时间线上", async () => {
+		const assistant = await FakeAssistant.start();
+		// 事件流先连不上（命令和 /health 都通）：控制面按 1 到 30 秒的间隔退避重连，这里压到 150 毫秒。
+		assistant.eventsStatus = 503;
+		const cp = await startTestControlPlane({
+			assistantUrl: assistant.url,
+			assistantSecret: assistant.secret,
+			workbenchAgent: "workbench-boot",
+			assistantReconnectMs: { min: 150, max: 150 },
+			waitForAssistant: false,
+		});
+		const agent = await FakeAgent.connect(
+			cp.grpcUrl,
+			{ name: "workbench-boot", peer: { port: 7003, publicAddress: "10.0.0.7" } },
+			{ clock: cp.clock },
+		);
+		try {
+			const api = new ApiClient(asUsers(cp));
+			expect(cp.current.assistantConnected()).toBe(false);
+			const list = await json<{
+				readiness: { ready: boolean; problems: Array<{ kind: string; message: string }> };
+			}>(await api.get("/projects/default/sessions"));
+			expect(list.readiness.ready).toBe(false);
+			expect(list.readiness.problems.map((p) => p.kind)).toEqual(["assistant_unreachable"]);
+			const refused = await api.post("/projects/default/sessions", { text: "甲" }, "alice");
+			expect(refused.status).toBe(503);
+			expect((await json<{ error: { code: string } }>(refused)).error.code).toBe(
+				"assistant_unavailable",
+			);
+			// 没有建出会话，也没有交给助手服务。
+			expect(await query(cp, "select id from sessions")).toEqual([]);
+			expect(assistant.prompts).toHaveLength(0);
+			// 事件流连上之后才放行：这一轮的工具调用到得了控制面。
+			assistant.eventsStatus = undefined;
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true), 10_000);
+			const created = await api.post("/projects/default/sessions", { text: "甲" }, "alice");
+			expect(created.status).toBe(201);
+			const view = await json<SessionView>(created);
+			assistant.emit(view.id, 1, {
+				type: "tool_call",
+				call_id: "c1",
+				tool: "command",
+				title: "ls",
+			});
+			await eventually(async () =>
+				expect(
+					(await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`))).events.map(
+						(e) => e.type,
+					),
+				).toContain("tool_call"),
+			);
+		} finally {
+			await agent.disconnect();
+			await cp.close();
+			await assistant.close();
+		}
+	}, 60_000);
+});
