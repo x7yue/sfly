@@ -6,10 +6,11 @@ import type {
 	AssistantEvent,
 	PersistedSessionEvent,
 	SessionDetailResponse,
+	SessionEventBody,
 	SessionView,
 } from "@sfly/schema";
 import pg from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PREDATES_LOGIN_MESSAGE } from "../src/sessions/session-service.js";
 import { SESSION_TOKEN_TTL_MS } from "../src/sessions/session-tokens.js";
 import { ApiClient } from "./support/api-client.js";
@@ -380,6 +381,42 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			expect(await readWith(second, view.id)).toBe(200);
 		});
 
+		it("控制面补写上一轮已经有结局的 turn_end（第 2 轮在做）：这一条重复的结局不吊销第 2 轮的令牌，会话仍在做（`#insert` 重复分支只在「此刻在做的正是这一轮」时吊销）", async () => {
+			const view = await created();
+			assistant.emit(view.id, 1, turnEnd(1, "completed"));
+			await eventually(async () => expect((await detail(view.id)).status).toBe("idle"));
+			expect((await say(view.id)).status).toBe(200);
+			const second = issued(1);
+			// 走存储层（不经助手服务的事件入口，那里在轮次对不上时就丢掉了，到不了 `#insert`）：第 1 轮已经有 turn_end，这一条是重复的。
+			const stored = await cp.current.sessions.appendTurnEnd(view.id, {
+				type: "turn_end",
+				turn: 1,
+				outcome: "stopped",
+				reason: "迟到的补写",
+				duration_ms: 0,
+			});
+			expect(stored.type).toBe("turn_end");
+			expect((await detail(view.id)).status).toBe("running");
+			expect(await readWith(second, view.id)).toBe(200);
+			expect(await revokedOf(view.id, second)).toBe(false);
+		});
+
+		it("别的轮次的 turn_end（还没有结局记录的）写下来，但不是此刻在做的那一轮：不吊销、不改状态（`#insert` 非重复分支的同一个守卫）", async () => {
+			const view = await created();
+			const first = issued(0);
+			expect(await readWith(first, view.id)).toBe(200);
+			await cp.current.sessions.appendTurnEnd(view.id, {
+				type: "turn_end",
+				turn: 7,
+				outcome: "stopped",
+				reason: "不是这一轮",
+				duration_ms: 0,
+			});
+			expect((await detail(view.id)).status).toBe("running");
+			expect(await readWith(first, view.id)).toBe(200);
+			expect(await revokedOf(view.id, first)).toBe(false);
+		});
+
 		it("会话结束：它的令牌吊销（会话结束的事务里，不靠别的）", async () => {
 			const view = await created();
 			assistant.emit(view.id, 1, turnEnd(1, "completed"));
@@ -675,6 +712,76 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			expect(await events(id)).toEqual(before);
 			expect(assistant.prompts).toEqual([]);
 			expect((await detail(id)).status).toBe("idle");
+		});
+
+		const legacyEvents = (): SessionEventBody[] => [
+			{
+				type: "user_message",
+				message_id: crypto.randomUUID(),
+				text: "旧会话",
+				steer: false,
+				author: "旧人",
+				author_user_id: null,
+			},
+			{ type: "turn_started", turn: 1 },
+			{
+				type: "turn_end",
+				turn: 1,
+				outcome: "completed",
+				reason: "完成",
+				steps: 0,
+				model_calls: 0,
+				duration_ms: 1,
+			},
+		];
+
+		it("并发的停止刚把排队中的旧会话撤回空闲、`say` 读到的还是「排队中」：开始新一轮时仍然判断没有发起人，409 session_predates_login，不是 500，会话不卡在在做", async () => {
+			const id = await seedSession(cp.database.url, {
+				status: "idle",
+				currentTurn: 1,
+				events: legacyEvents(),
+			});
+			const store = cp.current.sessions;
+			const real = store.find.bind(store);
+			let calls = 0;
+			const spy = vi.spyOn(store, "find").mockImplementation(async (sid) => {
+				const row = await real(sid);
+				// 第 1 次是路由查会话在不在，第 2 次是 `say` 看会话此刻的状态：这一次读到的是「排队中」（别的请求撤回空闲之前的样子）。
+				return sid === id && row && ++calls === 2 ? { ...row, status: "queued" as const } : row;
+			});
+			try {
+				const before = await events(id);
+				const res = await say(id);
+				expect(calls).toBeGreaterThanOrEqual(2);
+				expect(res.status, await res.clone().text()).toBe(409);
+				expect(await res.json()).toEqual({
+					error: { code: "session_predates_login", message: PREDATES_LOGIN_MESSAGE },
+				});
+				// 事务里判断：什么也没有写，会话没有变成在做，助手服务没有收到命令。
+				expect(await events(id)).toEqual(before);
+				expect((await detail(id)).status).toBe("idle");
+				expect(assistant.prompts).toEqual([]);
+			} finally {
+				spy.mockRestore();
+			}
+		});
+
+		it("旧会话在做、停止途中又说了话（要排在这一轮后面）：同样不收，409 session_predates_login，什么都没有写", async () => {
+			const id = await seedSession(cp.database.url, {
+				status: "running",
+				currentTurn: 1,
+				events: legacyEvents().slice(0, 2),
+			});
+			// 有排队时间的在做的会话：正在停止、已经有话排在后面。
+			await query(cp, "update sessions set queued_at = now() where id = $1", [id]);
+			const before = await events(id);
+			const res = await say(id);
+			expect(res.status, await res.clone().text()).toBe(409);
+			expect(await res.json()).toEqual({
+				error: { code: "session_predates_login", message: PREDATES_LOGIN_MESSAGE },
+			});
+			expect(await events(id)).toEqual(before);
+			expect(assistant.prompts).toEqual([]);
 		});
 
 		it("排队中的旧会话轮到它时：这一轮以失败结束，写明原因；排在后面的照常开始", async () => {

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/db/database.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../src/projects/project-id.js";
 import { SessionStore } from "../src/sessions/session-store.js";
+import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { messageId } from "./support/sessions.js";
@@ -44,12 +45,20 @@ describe("会话事件的落库和发布顺序", () => {
 	/** 每个用例换一个：afterDetailRow 在构造时给。 */
 	let holdDetail: ((sessionId: string) => Promise<void>) | undefined;
 	let store: SessionStore;
+	/** 会话的发起人（用户）：开始一轮要签发会话令牌，没有发起人的用户的会话不开始新的一轮（#547）。 */
+	let author: string;
 	const clock = new ManualClock(new Date("2026-01-01T00:00:00.000Z"));
 
 	beforeAll(async () => {
 		testDb = await createTestDatabase();
 		database = openDatabase(testDb.url, () => {});
 		await database.migrate();
+		const accounts = new TestAccounts(testDb.url);
+		try {
+			author = await accounts.user("store-author");
+		} finally {
+			await accounts.close();
+		}
 		store = new SessionStore({
 			db: database.db,
 			clock,
@@ -71,7 +80,7 @@ describe("会话事件的落库和发布顺序", () => {
 			title: "顺序",
 			status,
 			createdBy: "alice",
-			createdByUserId: null,
+			createdByUserId: author,
 		});
 
 	/** 一个新项目：每个用例用自己的，「每个项目至多一个在做」的约束互不影响。 */
@@ -468,7 +477,7 @@ describe("会话事件的落库和发布顺序", () => {
 				title: "补推出错",
 				status: kind === "beginTurn" ? "idle" : "running",
 				createdBy: "alice",
-				createdByUserId: null,
+				createdByUserId: author,
 			});
 			const out: SessionEvent[] = [];
 			const stop = local.follow(
@@ -809,7 +818,7 @@ describe("会话事件的落库和发布顺序", () => {
 
 		it("createWithTurn：会话、用户的话、一轮开始在一个事务里；项目里已经有在做的就排队；事件写不进去，不留下行", async () => {
 			const project = await newProject();
-			const input = { project, title: "新", createdBy: "alice", createdByUserId: null };
+			const input = { project, title: "新", createdBy: "alice", createdByUserId: author };
 			const created = await store.createWithTurn(input, userBody(1));
 			expect(created.session).toMatchObject({ status: "running", currentTurn: 1 });
 			expect(created.queued).toBe(false);

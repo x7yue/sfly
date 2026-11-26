@@ -1,14 +1,19 @@
 // 全栈（规格 #547，验收标准：工作台上 `sfly` 带着会话令牌被认成这个会话的令牌；一轮结束之后哪里都搜不到令牌的原值）：
 // 真的控制面、真的助手服务（`SessionManager` 加 HTTP 服务，在测试进程里）、真的 pi 和打包好的远程工具扩展、照剧本回复的假模型、
 // 真的 Rust Agent 作工作台、真的 `sfly` 命令行。假模型照剧本依次：用 `sfly scenario copy` 复制一个场景（命令行读环境变量
-// `SFLY_API_TOKEN`，带 `Authorization: Bearer`）、在命令里打印令牌（`echo`、列环境变量、拆成几段打印）。
+// `SFLY_API_TOKEN`，带 `Authorization: Bearer`）、在命令里打印令牌（`echo`、列环境变量）。**没有「拆成几段打印」那一步**：
+// 令牌被换行、ANSI 转义序列拆开的写法两道打码都不认，是已知的边界（和编码过的一样，`session-tokens.ts` 的 `maskSessionTokens`、
+// docs/ARCHITECTURE.md 写明），由 `session-tokens.test.ts` 的「已知边界」断言它现在的样子，这里不拿它当证据。
 //
 // 看两件事：
 // 1. 控制面认出这枚令牌是这个会话的：复制出来的场景的第 1 版记着这个会话，会话里有一条 `scenario_version` 的平台记录；
 //    这一轮结束之后这枚令牌立即 401，下一轮拿到的是另一枚。
 // 2. 一轮跑完，在 `session_events`、助手的 `events.jsonl`（和助手数据目录里别的文件，含 pi 自己的会话文件）、控制面和助手服务的日志、
 //    工作台的文件系统（命令的工作目录、Agent 的工作目录和主目录、Agent 的标准错误）里搜令牌的原值，都搜不到；命令输出里的令牌在
-//    `session_events` 里是掩码。
+//    `session_events` 里是掩码。**这里命令输出里的掩码是助手服务那一道（按值）打的**：原值在扩展里就换掉了，到不了控制面的第二道
+//    （按格式）；第二道由 `session-token-turns.test.ts` 的「第二道打码」守着。
+//    「控制面的日志」要收全：控制面自己的日志走 `console.error`/`warn`/`log`（`util/output.ts`），vitest 接管了 `console`，不经过
+//    `process.stdout.write`，所以两处都收；收集器收不收得到用 `printError` 自检一次（没有自检，收集器坏了时「搜不到」什么也不证明）。
 //
 // 助手服务和控制面之间隔一个转发：控制面写死工作区在 `/work`（骨架期间的桩，#549 换掉），而这里的 Agent 是普通用户起的进程，建不了
 // `/work`；转发把交给助手服务的 `prompt` 里的工作区换成测试自己的临时目录，别的请求原样转发。
@@ -19,10 +24,12 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
+import { inspect } from "node:util";
 import type { SessionDetailResponse, SessionView } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { Harness, SECRET } from "../../assistant/test/support/harness.js";
+import { printError } from "../src/util/output.js";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer } from "./support/credentials.js";
@@ -118,7 +125,7 @@ describeWithAgent("全栈：会话令牌（真的 pi、假的模型、真的 Age
 	let dir: string;
 	let workdir: string;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
-	/** 控制面写到终端和 Fastify 日志里的全部内容。 */
+	/** 控制面写到终端和 Fastify 日志里的全部内容：`console.*`（控制面自己的日志）、`process.stdout/stderr.write`（Fastify 的）。 */
 	const controlPlaneLog: string[] = [];
 	const spies: Array<{ mockRestore(): void }> = [];
 
@@ -142,6 +149,15 @@ describeWithAgent("全栈：会话令牌（真的 pi、假的模型、真的 Age
 				done();
 			},
 		});
+		// 控制面自己的日志（`printError`、`printWarning`、`printInfo`，`SessionService` 的 `log`、`SessionStore` 的 `onError`……）都走 `console`。
+		for (const method of ["error", "warn", "log", "info", "debug"] as const) {
+			const spy = vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+				controlPlaneLog.push(
+					args.map((arg) => (typeof arg === "string" ? arg : inspect(arg, { depth: 8 }))).join(" "),
+				);
+			});
+			spies.push(spy);
+		}
 		for (const stream of [process.stdout, process.stderr]) {
 			const spy = vi.spyOn(stream, "write");
 			spy.mockImplementation(((chunk: unknown, ...rest: unknown[]) => {
@@ -228,10 +244,6 @@ describeWithAgent("全栈：会话令牌（真的 pi、假的模型、真的 Age
 				tool: "bash",
 				args: { command: 'echo "token=$SFLY_API_TOKEN"; env | grep SFLY_API', timeout: 30 },
 			},
-			{
-				tool: "bash",
-				args: { command: "printf '%s' \"$SFLY_API_TOKEN\" | fold -w 5", timeout: 30 },
-			},
 			{ text: "做完了。" },
 		]);
 		const created = await api.post("/projects/default/sessions", { text: SCRIPT }, "alice");
@@ -277,11 +289,16 @@ describeWithAgent("全栈：会话令牌（真的 pi、假的模型、真的 Age
 
 		// 2. 命令里打印出来的令牌，在 session_events 里是掩码。
 		const results = first.events.flatMap((e) => (e.type === "tool_result" ? [e.text] : []));
-		expect(results, shown).toHaveLength(3);
+		expect(results, shown).toHaveLength(2);
 		expect(results[0]).toContain("exit=0");
 		expect(results[1]).toContain("******");
 
 		// 3. 一轮跑完，令牌的原值哪里都搜不到。
+		// 先自检收集器：控制面自己的输出函数打一行，要收得到（收不到的话下面「控制面的日志里搜不到」什么也不证明，审查 #747 B）。
+		printError("全栈测试的收集器自检", new Error("自检的错误"));
+		expect(controlPlaneLog.join("\n"), "控制面的 console 输出没有被收集器收到").toContain(
+			"全栈测试的收集器自检",
+		);
 		const eventsJsonl = await assistant.rawSettled(view.id);
 		expect(eventsJsonl).toContain("******");
 		const where: Record<string, string> = {

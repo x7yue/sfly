@@ -56,6 +56,13 @@ class Recorder:
         return [c for c in self.calls if c[0][:1] == ("run",) and f"sfly-aeval-9-{role}" in c[0]]
 
 
+@pytest.fixture(autouse=True)
+def data_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """评测的数据目录（初始管理员的登录名和密码的文件在里面）：每个用例用自己的，不写进真的目录。"""
+    monkeypatch.setattr("aeval.env.DATA_HOME", tmp_path)
+    return tmp_path
+
+
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
     fake = Recorder()
@@ -113,6 +120,42 @@ def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
     # 每次建库换一个新的密码。
     stack._start_control_plane()
     assert stack.admin_password != password
+
+
+def test_initial_admin_login_and_password_are_written_to_a_file_only_the_owner_can_read(
+    recorder: Recorder, data_home: Path
+) -> None:
+    """建会话要先登录（#547）：人在浏览器里登录要知道初始管理员的密码，而它只在 aeval 进程的内存里；
+    写进一个 0600 的文件（路径固定，每个槽位一个），每次建库换密码时跟着换。"""
+    stack = Stack(slot=9)
+    stack._start_control_plane()
+    path = stack.admin_file
+    assert path == data_home / "admin-slot9.txt"
+    assert (path.stat().st_mode & 0o777) == 0o600
+    lines = dict(
+        line.split("=", 1) for line in path.read_text().splitlines() if not line.startswith("#")
+    )
+    assert lines == {"login_name": ADMIN_LOGIN, "password": stack.admin_password}
+    first = lines["password"]
+    # 文件已经存在、权限被改宽了：重新写的时候收紧回 0600，内容换成新的密码。
+    path.chmod(0o644)
+    stack._start_control_plane()
+    assert (path.stat().st_mode & 0o777) == 0o600
+    assert f"password={stack.admin_password}" in path.read_text()
+    assert first not in path.read_text()
+    # 别的槽位各有自己的文件。
+    other = Stack(slot=8)
+    other._start_control_plane()
+    assert other.admin_file != path and other.admin_file.exists() and path.exists()
+
+
+def test_down_removes_the_admin_file(recorder: Recorder) -> None:
+    stack = Stack(slot=9)
+    stack._start_control_plane()
+    assert stack.admin_file.exists()
+    stack.down()
+    assert not stack.admin_file.exists()
+    stack.down()  # 没有文件时也不报错
 
 
 class Shell:
@@ -507,8 +550,12 @@ def test_up_with_the_assistant_starts_it_and_never_prints_the_secret(
     monkeypatch.setattr(Stack, "wait_assistant_ready", lambda self: waited.append(self.slot))
     printed: list[str] = []
     stack = Stack(slot=9, assistant=True)
+    stack.admin_password = "p" * 32
     stack.up(log=printed.append)
     assert started == [9]
+    # 初始管理员：打印的是登录名和密码文件的路径，密码本身不在终端里。
+    assert any(str(stack.admin_file) in line for line in printed)
+    assert not any("p" * 32 in line for line in printed)
     # up 完就能用：等到控制面说助手就绪才结束。
     assert waited == [9]
     assert stack.assistant_secret and len(stack.assistant_secret) >= 32

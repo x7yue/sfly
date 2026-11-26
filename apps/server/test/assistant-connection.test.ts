@@ -26,6 +26,7 @@ import {
 import { AssistantConnection } from "../src/sessions/assistant-connection.js";
 import { SessionService } from "../src/sessions/session-service.js";
 import { SessionStore } from "../src/sessions/session-store.js";
+import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { messageId } from "./support/sessions.js";
@@ -358,11 +359,19 @@ describe("事件连接：核对会话和轮次", () => {
 	let testDb: TestDatabase;
 	let database: ReturnType<typeof openDatabase>;
 	let store: SessionStore;
+	/** 会话的发起人（用户）：开始一轮要签发会话令牌，没有发起人的用户的会话不开始新的一轮（#547）。 */
+	let author: string;
 
 	beforeAll(async () => {
 		testDb = await createTestDatabase();
 		database = openDatabase(testDb.url, () => {});
 		await database.migrate();
+		const accounts = new TestAccounts(testDb.url);
+		try {
+			author = await accounts.user("connection-author");
+		} finally {
+			await accounts.close();
+		}
 		store = new SessionStore({
 			db: database.db,
 			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
@@ -396,7 +405,7 @@ describe("事件连接：核对会话和轮次", () => {
 			title: "连接",
 			status: "idle",
 			createdBy: "alice",
-			createdByUserId: null,
+			createdByUserId: author,
 		});
 
 	let seq = 0;

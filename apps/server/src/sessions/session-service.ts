@@ -485,8 +485,8 @@ export class SessionService {
 					current.queuedAt !== null ||
 					this.#stopping.get(current.id) === effectiveTurn(current)
 				) {
-					// 这句话是下一轮的开头，要签发令牌：建于登录之前的会话（没有发起人的用户）不能再开始新的一轮。
-					if (current.createdByUserId === null) return predatesLogin();
+					// 这句话是下一轮的开头，要签发令牌：建于登录之前的会话（没有发起人的用户）不能再开始新的一轮，
+					// 由存储层在事务里判断（`noAuthor`）。
 					const behind = await sessions.queueBehind(
 						current.id,
 						userMessage(randomUUID(), actor, text),
@@ -495,6 +495,7 @@ export class SessionService {
 						await this.#announceQueue(current.projectId);
 						return { ok: true, value: { seq: behind.event.seq } };
 					}
+					if (behind.noAuthor) return predatesLogin();
 					if (behind.already) {
 						return rejected(409, "session_queued", "这个会话在排队，等开始之后再说，或者先停止");
 					}
@@ -504,9 +505,6 @@ export class SessionService {
 				if (steered !== "retry") return steered;
 				continue;
 			}
-			// 空闲的会话说话是新的一轮：建于登录之前的（没有发起人的用户，签发不了令牌）不能再开始，要新建一个会话；
-			// 排队中、已结束的照常走下面的 409。
-			if (current.status === "idle" && current.createdByUserId === null) return predatesLogin();
 			const ready = await this.#ready(session.projectId);
 			if (!ready.ok) return ready;
 			this.#unpause(session.projectId);
@@ -531,6 +529,10 @@ export class SessionService {
 				case "queued":
 					await this.#announceQueue(session.projectId);
 					return { ok: true, value: { seq: begun.events[0]?.seq ?? 0 } };
+				case "no_author":
+					// 建于登录之前的会话（没有发起人的用户，签发不了令牌）不能再开始新的一轮，要新建一个会话；在存储层的事务里判断，
+					// 排队中、已结束的会话照常走下面的 409。
+					return predatesLogin();
 				case "refused":
 					if (begun.status === "running") continue;
 					if (begun.status === "ended") {

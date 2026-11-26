@@ -97,3 +97,38 @@ describe("第二道打码：按令牌的格式（sfly_ses_ 加后面整段令牌
 		expect(maskSessionTokens(`${TOKEN_PREFIXES.session}${"9".repeat(200)}`)).toBe(SECRET_MASK);
 	});
 });
+
+describe("已知边界：这几种写法两道打码都不认（按格式认，不猜各种写法；靠令牌的范围和一轮结束就吊销兜底，docs/ARCHITECTURE.md）", () => {
+	it("被换行拆开的（`fold -w 10`）：令牌字符到换行为止，前半截换成掩码，后半截原样留着；每一段都在前缀后面的不认", () => {
+		const half = TOKEN.slice(0, 20);
+		const rest = TOKEN.slice(20);
+		// 前半截连着前缀：打码，后半截（没有前缀）原样。
+		expect(maskSessionTokens(`${half}\n${rest}`)).toBe(`${SECRET_MASK}\n${rest}`);
+		// `fold -w 5` 这类每段都很短：前缀本身被拆开，一段也认不出，原样。
+		const folded = TOKEN.match(/.{1,5}/g)?.join("\n") ?? "";
+		expect(maskSessionTokens(folded)).toBe(folded);
+		// 空白拆开的同理。
+		expect(maskSessionTokens(`${half} ${rest}`)).toBe(`${SECRET_MASK} ${rest}`);
+	});
+
+	it("被 ANSI 转义序列夹住的：前缀后面紧跟序列的、序列插在前缀中间的都认不出，原样", () => {
+		for (const text of [
+			`${TOKEN_PREFIXES.session}\u001b[0m${"0123456789abcdef".repeat(3)}`,
+			`\u001b[01;31msfly_ses\u001b[m_${"0123456789abcdef".repeat(3)}`,
+		]) {
+			expect(maskSessionTokens(text), JSON.stringify(text)).toBe(text);
+		}
+	});
+
+	it("编码过的、大小写改过的、字符之间插了空格的：原样", () => {
+		const hex = "0123456789abcdef".repeat(3);
+		for (const text of [
+			Buffer.from(TOKEN).toString("base64"),
+			TOKEN.toUpperCase(),
+			[...TOKEN].join(" "),
+			`'sfly_ses_''${hex}'`,
+		]) {
+			expect(maskSessionTokens(text), text).toBe(text);
+		}
+	});
+});

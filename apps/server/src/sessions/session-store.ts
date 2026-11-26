@@ -685,6 +685,8 @@ export class SessionStore {
 		  }
 		| { outcome: "queued"; events: PersistedSessionEvent[] }
 		| { outcome: "refused"; status: SessionStatus }
+		/** 会话没有发起人的用户（建于登录之前）：签发不了这一轮的令牌，什么也没有写。 */
+		| { outcome: "no_author" }
 	> {
 		return this.#serial(sessionId, async () => {
 			const now = this.deps.clock.now();
@@ -694,6 +696,10 @@ export class SessionStore {
 					if (session.status !== "idle") {
 						return { outcome: "refused" as const, status: session.status };
 					}
+					// 没有发起人的用户的会话不开始新的一轮（也不排队：排队的轮到它时同样签发不了令牌）：**在这个事务里、锁住会话那一行之后**
+					// 判断，不靠调用方事先读到的状态——调用方读到的「排队中」可能已经过期（并发的停止刚把它撤回空闲），
+					// 事先的检查会因此跳过，这里照常开始一轮，签发不了令牌（#547 审查）。
+					if (session.createdByUserId === null) return { outcome: "no_author" as const };
 					const touched = sql`greatest(${sessions.lastActivityAt}, ${now.toISOString()}::timestamptz)`;
 					if (forceQueue || (await occupied(tx, project, sessionId))) {
 						const [row] = await tx
@@ -733,7 +739,9 @@ export class SessionStore {
 			}
 			// 事务提交的这一步之后、释放链之前（见 createWithTurn）：会话刚变成在做，调用方在这里设上「插话等 202」的门。
 			if (begun.outcome === "started") started?.(sessionId, begun.turn);
-			if (begun.outcome !== "refused") await this.#publishCommitted(sessionId, begun.events);
+			if (begun.outcome === "started" || begun.outcome === "queued") {
+				await this.#publishCommitted(sessionId, begun.events);
+			}
 			if (begun.outcome !== "started") return begun;
 			const { issued, ...result } = begun;
 			this.#tokensRevoked(issued?.revoked ?? []);
@@ -780,7 +788,7 @@ export class SessionStore {
 		user: SessionEventBody,
 	): Promise<
 		| { queued: true; event: PersistedSessionEvent }
-		| { queued: false; status: SessionStatus; already: boolean }
+		| { queued: false; status: SessionStatus; already: boolean; noAuthor?: true }
 	> {
 		return this.#serial(sessionId, async () => {
 			const now = this.deps.clock.now();
@@ -788,6 +796,15 @@ export class SessionStore {
 				const session = await lockSession(tx, sessionId);
 				if (session.status !== "running") {
 					return { queued: false as const, status: session.status, already: false };
+				}
+				// 这句话是下一轮的开头，轮到它时要签发令牌：没有发起人的用户的会话不能再开始新的一轮（同 {@link beginTurn}，在事务里判断）。
+				if (session.createdByUserId === null) {
+					return {
+						queued: false as const,
+						status: session.status,
+						already: false,
+						noAuthor: true as const,
+					};
 				}
 				if (session.queuedAt !== null) {
 					return { queued: false as const, status: session.status, already: true };
