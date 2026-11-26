@@ -223,6 +223,58 @@ describeWithAgent("全栈：install.sh --dev", () => {
 		}
 	}, 300_000);
 
+	// 控制面配了带用户名和密码的镜像（私有的 PyPI 索引、GitHub Release 镜像）：不用登录就能下载的 /install.sh 里的地址不带它们（#755），
+	// 开发机上装 uv 和 sfly CLI 要认证，靠这台机器的 ~/.netrc（install.sh 的 curl、uv 都读它）。
+	it("控制面的镜像带用户名和密码：脚本里的地址不带凭据，没有 ~/.netrc 时 401 装不上，有 ~/.netrc 时装好", async () => {
+		const auth = { user: "idxuser", password: "idxpass-7a2d" };
+		const withCredentials = (url: string) =>
+			url.replace("://", `://${auth.user}:${auth.password}@`);
+		const privateMirror = await startReleaseMirror({ auth });
+		const privatePypi = await startPypiStub([dependencyWheel("jsonschema", "4.23.0")], { auth });
+		const plane = await startTestControlPlane({
+			version,
+			agentBinaries: { [arch() === "arm64" ? "aarch64" : "x86_64"]: agentBinary() },
+			sdkWheelDir: join(dir, "sdk"),
+			githubReleaseMirror: withCredentials(privateMirror.url),
+			pypiMirror: withCredentials(privatePypi.indexUrl),
+		});
+		planes.push(plane);
+		try {
+			const script = await (await plane.fetch("/install.sh")).text();
+			expect(script).not.toContain(auth.user);
+			expect(script).not.toContain(auth.password);
+			expect(script).toContain(`GITHUB_RELEASE_MIRROR='${privateMirror.url}'`);
+
+			// 没有 ~/.netrc：下载 uv 的安装脚本就被拒，安装失败，输出里也没有凭据。
+			const bare = join(dir, "home-private-bare");
+			const failed = await installDevResult(plane, { home: bare });
+			expect(failed.code).not.toBe(0);
+			expect(failed.stderr).toContain("下载 uv 安装脚本失败");
+			expect(failed.stdout + failed.stderr).not.toContain(auth.password);
+			expect(privateMirror.rejected()).toBeGreaterThan(0);
+			expect(privateMirror.uvInstalls()).toBe(0);
+
+			// 有 ~/.netrc（镜像都在 127.0.0.1 上）：uv、sfly CLI 的依赖都装上。
+			const netrcHome = join(dir, "home-private-netrc");
+			await mkdir(netrcHome, { recursive: true });
+			await writeFile(
+				join(netrcHome, ".netrc"),
+				`machine 127.0.0.1\nlogin ${auth.user}\npassword ${auth.password}\n`,
+				{ mode: 0o600 },
+			);
+			const stdout = await installDev(plane, { home: netrcHome });
+			expect(stdout + (await readFile(join(netrcHome, ".sfly/agent.env"), "utf8"))).not.toContain(
+				auth.password,
+			);
+			expect(await sflyVersion(netrcHome)).toBe(`sfly ${version}`);
+			expect(privateMirror.uvInstalls()).toBe(1);
+			expect(privatePypi.requests).toContain("/simple/jsonschema/");
+		} finally {
+			await privateMirror.close();
+			await privatePypi.close();
+		}
+	}, 300_000);
+
 	/** 本机的主机名规整成开发 Agent 名字里「主机」那一段（和 `sfly agent register-dev` 的默认一样）。 */
 	const hostSegment = () =>
 		hostname()
