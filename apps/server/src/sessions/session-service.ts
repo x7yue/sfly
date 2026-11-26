@@ -338,8 +338,8 @@ export class SessionService {
 	}
 
 	/**
-	 * 助手此刻能不能用（每次列出会话时算一次）：没配地址或密钥、助手服务连不上（`/health` 不通）、没设置工作台、
-	 * 工作台不在线，原因都列出来；`workbench` 是设置的工作台的名字。模型的两项是 #548。
+	 * 助手此刻能不能用（每次列出会话时算一次）：没配地址或密钥、助手服务连不上（`/health` 不通）、模型没有配置或连不上
+	 * （助手服务的 `/health` 里的 `model`，#548）、没设置工作台、工作台不在线，原因都列出来；`workbench` 是设置的工作台的名字。
 	 */
 	async readiness(project: ProjectId): Promise<Readiness> {
 		const { setup } = this.deps;
@@ -350,6 +350,9 @@ export class SessionService {
 			const health = await this.#assistantHealth();
 			if ("error" in health) {
 				problems.push({ kind: "assistant_unreachable", message: health.error });
+			} else {
+				const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
+				if (model) problems.push(model);
 			}
 		}
 		const workbench = await this.#workbench(project);
@@ -363,7 +366,11 @@ export class SessionService {
 
 	// ---- 写 ----
 
-	/** 写接口的前提：助手配置好了（没配是 503 `assistant_not_configured`）、有可用的工作台（没有是 503 `assistant_unavailable`）。 */
+	/**
+	 * 写接口的前提：助手配置好了（没配是 503 `assistant_not_configured`）、有可用的工作台（没有是 503 `assistant_unavailable`）、
+	 * 模型没有问题（助手服务的 `/health` 说没有配置或连不上，是 503 `model_unavailable`，写明原因，#548）：这三种都在写任何东西之前挡掉，
+	 * 不建会话、不写 `user_message`。助手服务的 `/health` 问不通时不拦：交给后面的 `prompt` 去失败，照旧报 `assistant_unavailable`。
+	 */
 	async #ready(
 		project: ProjectId,
 	): Promise<Outcome<{ client: AssistantClient; target: WorkbenchTarget }>> {
@@ -378,6 +385,11 @@ export class SessionService {
 		const workbench = await this.#workbench(project);
 		if ("problem" in workbench) {
 			return rejected(503, "assistant_unavailable", workbench.problem.message);
+		}
+		const health = await this.#assistantHealth();
+		if (!("error" in health)) {
+			const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
+			if (model) return rejected(503, "model_unavailable", model.message);
 		}
 		return { ok: true, value: { client, target: workbench.target } };
 	}
@@ -588,6 +600,13 @@ export class SessionService {
 			this.deps.log?.(
 				`项目 ${project} 里排队的会话先不开始：助手服务的 /health 没有回应（${health.error}）`,
 			);
+			return;
+		}
+		// 模型没有配置或连不上（#548）：队首不白失败一次，留在队里等模型好了（兜底的扫描每分钟再来）。`#ready` 看的是缓存的 `/health`，
+		// 缓存里的「能用」可能已经过期，这里用刚问的这一份再看一次。
+		const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
+		if (model) {
+			this.deps.log?.(`项目 ${project} 里排队的会话先不开始：${model.message}`);
 			return;
 		}
 		// 不开始的：控制面在关闭（这一次是关闭之前开始的、还在路上）、这个项目暂停着（队首刚没开始成：结局触发的开始和兜底扫描触发的开始
@@ -1097,6 +1116,39 @@ function assistantCannotStart(error: unknown): boolean {
 	if (error instanceof AssistantError) return error.status === 503;
 	if (error instanceof AssistantUnreachableError) return !error.outcomeUnknown;
 	return false;
+}
+
+/** 助手服务给的原因进就绪状态和错误说明之前截到这么长（它是助手服务自己写的一句话：文件路径、变量名、主机和端口）。 */
+const MODEL_REASON_MAX_CHARS = 300;
+
+/**
+ * 助手服务的 `/health` 里模型的状态 → 就绪状态里的一项问题（#548）：没有配置写「没有配置模型：<缺什么>」（原因是助手服务写的，
+ * 只有变量名和文件路径，没有值），连不上写「<原因>（上次检查：N 分钟前）」；没问题（含还没检查过、不知道端点）时没有。
+ */
+export function modelProblem(
+	model: AssistantHealth["model"],
+	now: number,
+): ReadinessProblem | undefined {
+	const reason = (model.reason ?? "").slice(0, MODEL_REASON_MAX_CHARS);
+	if (!model.configured) {
+		return {
+			kind: "model_not_configured",
+			message: `没有配置模型：${reason === "" ? "原因不明" : reason}`,
+		};
+	}
+	if (model.reachable !== false) return undefined;
+	const what = reason === "" ? "连不上模型端点" : reason;
+	const ago =
+		model.checked_at === null ? "" : `（上次检查：${agoText(now - Date.parse(model.checked_at))}）`;
+	return { kind: "model_unreachable", message: `${what}${ago}` };
+}
+
+/** 「N 分钟前」：不到 1 分钟写「刚才」，不到 1 小时按分钟，再久按小时。 */
+function agoText(elapsedMs: number): string {
+	const minutes = Math.floor(Math.max(0, elapsedMs) / 60_000);
+	if (minutes < 1) return "刚才";
+	if (minutes < 60) return `${minutes} 分钟前`;
+	return `${Math.floor(minutes / 60)} 小时前`;
 }
 
 /** 助手服务没接住这一轮：翻译成接口的错误码和这一轮的结局。 */

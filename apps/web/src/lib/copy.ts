@@ -450,7 +450,20 @@ export const SESSION = {
 		modelCalls: (n: number | undefined) => (n === undefined ? "模型调用次数" : `${n} 次模型调用`),
 		limitDuration: (text: string) => `用时 ${text}`,
 		interrupted: (reason: string) => `中断：${reason}`,
-		modelUnavailable: (reason: string) => `模型不可用：${reason}`,
+		/**
+		 * 模型不可用（#548）：原因（助手服务写的类别和状态码，如「额度不足（402）」）、这一轮做了几步、做的东西还在、怎么接着做。
+		 * 一步也没做时不说「都在上面」「已经提交」（没有东西可看、没有改动）。
+		 */
+		modelUnavailable: (reason: string, steps: number | undefined) =>
+			`模型不可用：${reason}。${
+				steps === undefined
+					? "稍后说一句话可以接着做。"
+					: steps === 0
+						? "这一轮没有做任何一步。稍后说一句话可以再试。"
+						: `这一轮做了 ${steps} 步，都在上面；工作区的改动已经提交，已触发的运行不受影响。稍后说一句话可以接着做。`
+			}`,
+		/** 上下文超出了模型的上限（`error_class` 为 `context_overflow`，压缩之后仍然放不下才会到这一步）。 */
+		contextOverflow: "这次对话太长，模型装不下了。开一个新会话，工作区还在。",
 		failed: (reason: string) => `出错：${reason}`,
 	},
 } as const;

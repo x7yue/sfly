@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	announcement,
 	composerMode,
+	hasModelProblem,
 	readinessProblems,
 	SESSION_STATUS,
 	sessionStatusText,
@@ -72,11 +73,58 @@ describe("会话页的文字", () => {
 			"中断：助手服务重启了",
 		);
 		expect(turnEndText(turnEnd({ outcome: "model_unavailable", reason: "模型连不上" }))).toBe(
-			"模型不可用：模型连不上",
+			"模型不可用：模型连不上。稍后说一句话可以接着做。",
 		);
 		expect(turnEndText(turnEnd({ outcome: "failed", reason: "出了点问题" }))).toBe(
 			"出错：出了点问题",
 		);
+	});
+
+	it("模型不可用：写明原因（类别和状态码）、这一轮做了几步、已经做的东西还在、怎么接着做（#548）", () => {
+		expect(
+			turnEndText(
+				turnEnd({
+					outcome: "model_unavailable",
+					reason: "额度不足（402）",
+					errorClass: "quota",
+					steps: 7,
+				}),
+			),
+		).toBe(
+			"模型不可用：额度不足（402）。这一轮做了 7 步，都在上面；工作区的改动已经提交，已触发的运行不受影响。稍后说一句话可以接着做。",
+		);
+		// 一步也没做：不写「都在上面」，也不说有改动已经提交。
+		expect(
+			turnEndText(
+				turnEnd({
+					outcome: "model_unavailable",
+					reason: "连不上模型端点",
+					errorClass: "unreachable",
+					steps: 0,
+				}),
+			),
+		).toBe("模型不可用：连不上模型端点。这一轮没有做任何一步。稍后说一句话可以再试。");
+	});
+
+	it("上下文放不下（context_overflow）：整句换成「对话太长」，不论原因和步数", () => {
+		const overflow = {
+			outcome: "model_unavailable",
+			reason: "对话太长，模型装不下（400）",
+			errorClass: "context_overflow",
+			steps: 12,
+		} as const;
+		expect(turnEndText(turnEnd(overflow))).toBe(
+			"这次对话太长，模型装不下了。开一个新会话，工作区还在。",
+		);
+		expect(turnEndText(turnEnd({ ...overflow, steps: 0 }))).toBe(
+			"这次对话太长，模型装不下了。开一个新会话，工作区还在。",
+		);
+		// 别的结局带着 context_overflow 也不换（只有「模型不可用」这一种结局才有类别的说法）。
+		expect(
+			turnEndText(
+				turnEnd({ outcome: "failed", reason: "出了点问题", errorClass: "context_overflow" }),
+			),
+		).toBe("出错：出了点问题");
 	});
 
 	it("到了上限：按 limit_kind 写是哪一种，次数取事件里的，不写死也不看 reason 的文字", () => {
@@ -361,5 +409,25 @@ describe("读屏的播报", () => {
 	it("打开页面时（前后是同一份状态）什么也不播", () => {
 		const state = initialTimeline("running", [started(1), steer(2)], false);
 		expect(announcement(state, state)).toBeNull();
+	});
+});
+
+describe("就绪状态里有没有模型的问题（会话页据此不让空闲的会话说话）", () => {
+	const readiness = (...kinds: Readiness["problems"][number]["kind"][]): Readiness => ({
+		ready: kinds.length === 0,
+		problems: kinds.map((kind) => ({ kind, message: "原因" })),
+		workbench: "bench-1",
+	});
+
+	it("没有配置、连不上是模型的问题；助手、工作台的问题不算（助手页的就绪状态里写）", () => {
+		expect(hasModelProblem(readiness())).toBe(false);
+		expect(hasModelProblem(readiness("model_not_configured"))).toBe(true);
+		expect(hasModelProblem(readiness("model_unreachable"))).toBe(true);
+		expect(hasModelProblem(readiness("workbench_offline", "model_unreachable"))).toBe(true);
+		expect(
+			hasModelProblem(
+				readiness("assistant_not_configured", "assistant_unreachable", "workbench_not_set"),
+			),
+		).toBe(false);
 	});
 });

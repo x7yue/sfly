@@ -1,0 +1,200 @@
+{
+	"说明": "模型错误样本的共用夹具（#548）：每条是 pi 报告的一句错误（`errorMessage`、`finalError`）和评测集的失败分类（evals/assistant/aeval/classify.py）对它的结论。评测集的测试（tests/test_error_samples.py）断言 classify 对每条给出这里写的类别；产品的测试（apps/assistant/test/error-samples.test.ts）断言产品的错误类别（apps/assistant/src/upstream-error.ts）对应到同一个类别，例外逐条列在那个测试里、每条写明理由。两边的规则改了，对不上的样本让对应的测试失败。加样本时 `eval` 取 classify 的实际结果。",
+	"samples": [
+		{
+			"name": "连接被拒（评测集：端点故障不是模型的事）",
+			"message": "Connection error.: connect ECONNREFUSED 192.168.65.254:18900",
+			"eval": "环境故障"
+		},
+		{
+			"name": "转发口回 502",
+			"message": "502 {\"error\":{\"message\":\"转发到 example 失败\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "429 限流",
+			"message": "429 Too Many Requests",
+			"eval": "环境故障"
+		},
+		{
+			"name": "流读到一半断开，没有错误码",
+			"message": "terminated: other side closed",
+			"eval": "环境故障"
+		},
+		{
+			"name": "503 过载",
+			"message": "503 upstream overloaded",
+			"eval": "环境故障"
+		},
+		{
+			"name": "401 鉴权",
+			"message": "aeval API error (401): unauthorized",
+			"eval": "环境故障"
+		},
+		{
+			"name": "402 额度",
+			"message": "aeval API error (402): insufficient_user_quota",
+			"eval": "环境故障"
+		},
+		{
+			"name": "403 禁止",
+			"message": "aeval API error (403): forbidden",
+			"eval": "环境故障"
+		},
+		{
+			"name": "请求超时",
+			"message": "Request timed out.",
+			"eval": "环境故障"
+		},
+		{
+			"name": "503 不可用（重试成功的那条）",
+			"message": "aeval API error (503): unavailable",
+			"eval": "环境故障"
+		},
+		{
+			"name": "只有 Connection error.（重试用尽的 finalError）",
+			"message": "Connection error.",
+			"eval": "环境故障"
+		},
+		{
+			"name": "400 请求不对",
+			"message": "aeval API error (400): bad request",
+			"eval": "认不出的错误"
+		},
+		{
+			"name": "400 上下文超长",
+			"message": "aeval API error (400): prompt is too long for the context window",
+			"eval": "上下文耗尽"
+		},
+		{
+			"name": "`NNN: 错误体` 的 401",
+			"message": "401: {\"error\":{\"message\":\"bad key\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "`NNN: 错误体` 的 502",
+			"message": "502: {\"error\":{\"message\":\"boom\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "SDK 的 403 status code (no body)",
+			"message": "403 status code (no body)",
+			"eval": "环境故障"
+		},
+		{
+			"name": "SDK 的 408",
+			"message": "408 Request Timeout",
+			"eval": "环境故障"
+		},
+		{
+			"name": "504 网关超时",
+			"message": "504 Gateway Timeout",
+			"eval": "环境故障"
+		},
+		{
+			"name": "429 正文说额度",
+			"message": "429 You exceeded your current quota, please check your plan and billing details",
+			"eval": "环境故障"
+		},
+		{
+			"name": "403 正文说额度",
+			"message": "403: {\"error\":{\"code\":\"insufficient_quota\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "域名解析不了",
+			"message": "Connection error.: getaddrinfo ENOTFOUND llm.corp.example",
+			"eval": "环境故障"
+		},
+		{
+			"name": "连接被重置",
+			"message": "Connection error.: read ECONNRESET",
+			"eval": "环境故障"
+		},
+		{
+			"name": "连接超时（ETIMEDOUT）",
+			"message": "Connection error.: connect ETIMEDOUT 10.0.0.5:443",
+			"eval": "环境故障"
+		},
+		{
+			"name": "证书验不过",
+			"message": "Connection error.: unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)",
+			"eval": "环境故障"
+		},
+		{
+			"name": "流读到一半断开，带错误码",
+			"message": "terminated: other side closed (UND_ERR_SOCKET)",
+			"eval": "环境故障"
+		},
+		{
+			"name": "真 400，正文提到 timeout 参数",
+			"message": "400: {\"error\":{\"message\":\"Invalid value for 'timeout': must be an integer\"}}",
+			"eval": "认不出的错误"
+		},
+		{
+			"name": "真 404，正文提到 authentication",
+			"message": "404: {\"error\":{\"message\":\"authentication scheme not supported for this model\"}}",
+			"eval": "认不出的错误"
+		},
+		{
+			"name": "真 400，正文提到 insufficient",
+			"message": "400: {\"error\":{\"message\":\"insufficient permissions for tool use\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "真 404，正文提到 rate limit",
+			"message": "404: {\"error\":{\"message\":\"see rate limit docs: model not found\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "真 400，正文提到 fetch failed",
+			"message": "400: {\"error\":{\"message\":\"image url fetch failed\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "429，正文提到上下文",
+			"message": "429: {\"error\":{\"message\":\"maximum context reached\"}}",
+			"eval": "上下文耗尽"
+		},
+		{
+			"name": "500，正文说超时",
+			"message": "500: {\"error\":{\"message\":\"request timed out upstream\"}}",
+			"eval": "环境故障"
+		},
+		{
+			"name": "没有状态码，正文说超时",
+			"message": "upstream said the request timed out",
+			"eval": "环境故障"
+		},
+		{
+			"name": "没有状态码，正文说限流",
+			"message": "rate limit exceeded",
+			"eval": "环境故障"
+		},
+		{
+			"name": "没有状态码，正文说上下文超长",
+			"message": "prompt is too long: 210000 tokens",
+			"eval": "上下文耗尽"
+		},
+		{
+			"name": "没有状态码，正文里提到连接被拒",
+			"message": "upstream relay hit ECONNREFUSED earlier",
+			"eval": "环境故障"
+		},
+		{
+			"name": "开头的数字不是状态码",
+			"message": "443 bytes received then the stream was reset",
+			"eval": "认不出的错误"
+		},
+		{
+			"name": "正文里的数字不当成状态码",
+			"message": "model said 404 things went wrong",
+			"eval": "认不出的错误"
+		},
+		{
+			"name": "整句只有状态码的数字（评测集 test_classify.py 里重试成功那条的 errorMessage）",
+			"message": "503",
+			"eval": "环境故障"
+		}
+	]
+}

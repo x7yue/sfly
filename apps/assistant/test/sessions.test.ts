@@ -255,7 +255,7 @@ describe("一轮的结局", () => {
 		expect(await harness.turnEnd(id)).toMatchObject({
 			outcome: "model_unavailable",
 			// 不带「模型不可用」：页面按结局加这个前缀（#640）。
-			reason: "上游出错（上游返回 503）",
+			reason: "模型端点出错（503）",
 			error_class: "upstream",
 		});
 		const notices = harness.events
@@ -713,7 +713,7 @@ describe("审查补的守护", () => {
 		expect(end).toMatchObject({
 			outcome: "model_unavailable",
 			error_class: "auth",
-			reason: "上游拒绝了密钥（上游返回 401）",
+			reason: "密钥被拒绝（401）",
 		});
 		expect(harness.logs.join("\n")).toContain("上游模型出错：401 unauthorized");
 	});
@@ -803,8 +803,9 @@ describe("审查补的守护", () => {
 		expect(harness.logs.join("\n")).toContain("MARKER-local-31");
 	});
 
-	it("一轮开头写 skill 之外的步骤出错（这里是读不到模型文件）：原因不放行本机的原文，原文进日志", async () => {
-		const harness = await start();
+	it("一轮开头写 skill 之外的步骤出错（这里是检查之后模型文件没了）：原因不放行本机的原文，原文进日志", async () => {
+		// 新的一轮开始之前会检查模型文件（#548），文件没了会 503：这里要的是检查之后才出的错，所以不检查。
+		const harness = await start({ noModelGate: true });
 		const models = join(harness.root, "config", "models.json");
 		rmSync(models);
 		const id = crypto.randomUUID();

@@ -1,5 +1,6 @@
 import {
 	domainKey,
+	type Readiness,
 	SESSION_MESSAGE_MAX_CHARS,
 	type SessionDetailResponse,
 	sessionsApi,
@@ -16,6 +17,7 @@ import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
+import { STATUS_POLL_MS } from "#/lib/polling";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
@@ -23,12 +25,15 @@ import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EndSession, endMutationKey } from "./EndSession";
+import { SESSION_PROJECT } from "./project";
+import { READINESS_ID, ReadinessLine } from "./ReadinessLine";
 import { ResultsPanel } from "./ResultsPanel";
 import { SessionTimeline } from "./SessionTimeline";
 import {
 	announcement,
 	type ComposerMode,
 	composerMode,
+	hasModelProblem,
 	SESSION_STATUS,
 	sessionStatusText,
 } from "./session-text";
@@ -70,6 +75,25 @@ export function SessionPage({ id }: { id: string }) {
 	);
 }
 
+/**
+ * 模型此刻能不能用（没有配置、连不上，#548）：打开会话时随会话视图带来的就绪状态里有模型的问题的，之后用项目的会话列表里的那份
+ * （每 5 秒查一次、窗口重新获得焦点时也查），好了页面自己恢复，不用重新打开；打开时没有问题的不再查：之后才出的问题，说话时的 503
+ * 把原因写在输入框下面。助手和工作台的问题不在会话页管（助手页的就绪状态写）。
+ */
+function useReadiness(initial: Readiness): Readiness {
+	const list = useQuery({
+		...apiQuery(sessionsApi.list, { params: { project: SESSION_PROJECT } }),
+		enabled: hasModelProblem(initial),
+		refetchOnWindowFocus: true,
+		refetchInterval: (query) =>
+			query.state.data !== undefined && !hasModelProblem(query.state.data.readiness)
+				? false
+				: STATUS_POLL_MS,
+		refetchIntervalInBackground: false,
+	});
+	return list.data?.readiness ?? initial;
+}
+
 function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	const { state, results, loadOlder, loadingOlder, olderError, gone, syncQueue } =
 		useSessionTimeline(detail);
@@ -97,6 +121,9 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	const status = SESSION_STATUS[state.status];
 	const said = useAnnouncement(state);
 	const mode = composerMode(state);
+	const readiness = useReadiness(detail.readiness);
+	// 空闲的会话此刻说不了话（模型没有配置或连不上）：顶上写缺什么，「发送」不可用，输入框照常可以写（和助手页一样）。
+	const blocked = state.status === "idle" && hasModelProblem(readiness);
 	return (
 		<div className="mx-auto flex w-full max-w-300 flex-col">
 			<PageHeader
@@ -122,6 +149,11 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 					</>
 				}
 			/>
+			{blocked && (
+				<div className="mb-3">
+					<ReadinessLine readiness={readiness} />
+				</div>
+			)}
 			{/* 读屏读一句：一轮结束、排到了、插话没有送到、会话被结束（时间线是逐字更新的，不整个播报）。 */}
 			<output aria-live="polite" className="sr-only">
 				{said}
@@ -140,6 +172,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 						mode={mode}
 						items={state.items}
 						lastSeq={state.lastSeq}
+						notReady={blocked}
 						onSent={syncQueue}
 						onGone={onGone}
 					/>
@@ -245,6 +278,7 @@ function Composer({
 	mode,
 	items,
 	lastSeq,
+	notReady,
 	onSent,
 	onGone,
 }: {
@@ -252,6 +286,8 @@ function Composer({
 	mode: ComposerMode;
 	items: readonly TimelineItem[];
 	lastSeq: number;
+	/** 助手此刻不能用（就绪状态在页面顶上，这里不再写一遍）：「发送」不可用，输入框和按钮用 aria-describedby 指向那一块。 */
+	notReady: boolean;
 	/** 空闲的会话说完话之后：核对一次状态（排上了队时控制面可能没有推 `turn_queued`）；参数是发出这句话时页面上最大的序号。 */
 	onSent: (after: number) => void;
 	onGone: (error: unknown) => boolean;
@@ -302,7 +338,7 @@ function Composer({
 	}, [items, unconfirmed, send.reset]);
 	const canWrite = (mode.kind === "send" || mode.kind === "steer") && !ending;
 	const empty = text.trim() === "";
-	const canSend = canWrite && !empty && !send.isPending;
+	const canSend = canWrite && !empty && !send.isPending && !notReady;
 	const submit = () => {
 		if (!canSend) return;
 		// 发出的这一刻就把焦点交给输入框：「发送」随即不可用，浏览器会让被禁用的按钮失去焦点、落到 body 上
@@ -357,7 +393,7 @@ function Composer({
 				ref={field}
 				data-session-composer
 				aria-label={SESSION.page.sendLabel}
-				aria-describedby={note === null ? undefined : noteId}
+				aria-describedby={notReady ? READINESS_ID : note === null ? undefined : noteId}
 				placeholder={
 					ending
 						? SESSION.page.endingPlaceholder
@@ -394,6 +430,7 @@ function Composer({
 					type="submit"
 					variant="primary"
 					title={`${mode.kind === "steer" ? SESSION.page.sendSteer : SESSION.page.send}（${shortcutText("assistant-send")}）`}
+					aria-describedby={notReady ? READINESS_ID : undefined}
 					disabled={!canSend}
 				>
 					{send.isPending
