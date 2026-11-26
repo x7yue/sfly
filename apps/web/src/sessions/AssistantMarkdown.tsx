@@ -41,7 +41,7 @@ import { FollowContext } from "./timeline-follow";
  *   只显示文字，不可点；
  * - **嵌套太深的退回纯文字**：几 KB 的几千层嵌套引用会让 mdast 转 hast 的递归爆栈（`RangeError`），整个会话页换成路由默认的错误页，
  *   刷新也一样；再深一点（1800 层以上）渲染出来的 DOM 让浏览器的排版爆栈、**整个标签页崩溃**，错误边界兜不住（审查 #762）。三道：
- *   ① 先查每一行开头的层数（{@link tooDeeplyNested}，线性）和括号的嵌套深度（{@link tooManyOpenBrackets}，线性；连写的 `![` 解析是平方级），
+ *   ① 先查每一行开头的层数（{@link tooDeeplyNested}，线性）和 `![`、`[` 出现的次数（{@link tooManyOpenBrackets}，线性；连写的 `![` 解析是平方级，不看闭合只数次数），
  *   超过的不交给 Markdown——这是快速路径，**不是唯一的一道**：行首检查认不出以 `[` 开头的脚注定义里的深引用（`[^a]: >>>>…`）；
  *   ② **在解析出来的树上量深度**（{@link rehypeWrapText} 遍历时记，超过 {@link MAX_TREE_DEPTH} 抛 {@link MarkdownTooDeepError}），
  *   不论怎么写出来的，树深了就不去渲染，浏览器不会看到深的 DOM；③ 再包一个错误边界（{@link MarkdownBoundary}），② 抛的和别的原因让渲染
@@ -232,31 +232,39 @@ export function tooDeeplyNested(text: string): boolean {
 }
 
 /**
- * 括号的嵌套深度：`[` 加一、`]` 减一（不小于 0），取最大值。线性。嵌套着成对的 `![ … ](u)`（所有开括号在前、闭括号在后）解析是平方级——
- * 9 KB 约 0.5 秒、18 KB 约 1.8 秒、36 KB 约 7.7 秒，每次打开都冻住（审查 #762 第二轮）；没闭合的 `[`、平摊的 `[1,2]`、平摊的链接、
- * 代码块里的大数组都是线性的，所以量深度，不数个数（数个数会把一个大数组误伤成纯文字）。
+ * 数 `![` 出现的次数和 `[` 的个数（**不看闭合**）。线性，一遍扫完。
+ *
+ * 为什么数次数、不量嵌套深度：嵌套着成对的 `![ … ](u)`（所有开括号在前、闭括号在后）解析是平方级——9 KB 约 0.5 秒、18 KB 约 1.8 秒、
+ * 36 KB 约 7.7 秒，每次打开都冻住（审查 #762 第二轮）。第二轮按深度（`[` 加一、`]` 减一）判，能被绕过（第三轮）：转义的 `\]`、
+ * 行内代码里的 `]` 解析时不关 `![`，扫描时却被当成闭括号，深度回落——`![\]` × 6000（48 KB）冻 12 秒、`![`]`` × 3000 近 3 秒、
+ * 不成对的 `[\]` × 6000 2 秒。扫描没法完整复现 Markdown 的括号规则（转义、行内代码、代码块、链接引用定义……），照着它做总会有漏的，
+ * 所以只数出现了几次：不管后面怎么闭合，开括号的个数不超就一定不会慢。
  */
-export function bracketDepth(text: string): number {
-	let depth = 0;
-	let max = 0;
+export function openBracketCounts(text: string): { images: number; brackets: number } {
+	let images = 0;
+	let brackets = 0;
 	for (let i = 0; i < text.length; i += 1) {
-		const code = text.charCodeAt(i);
-		if (code === 91) {
-			depth += 1;
-			if (depth > max) max = depth;
-		} else if (code === 93 && depth > 0) {
-			depth -= 1;
-		}
+		if (text.charCodeAt(i) !== 91) continue;
+		brackets += 1;
+		if (i > 0 && text.charCodeAt(i - 1) === 33) images += 1;
 	}
-	return max;
+	return { images, brackets };
 }
 
-/** 括号嵌套多深以上不交给 Markdown：正常的话不超过十来层；这个深度的解析约二三十毫秒（平方级）。 */
-export const MAX_BRACKET_DEPTH = 256;
+/** `![` 出现多少次以上不交给 Markdown：正常的话几十张图封顶；嵌套着的 200 个解析约 17 毫秒（平方级）。 */
+export const MAX_IMAGE_OPENERS = 200;
 
-/** 括号嵌套太深（连写的 `![`）：解析会冻住页面，按纯文字显示。 */
-export const tooManyOpenBrackets = (text: string): boolean =>
-	bracketDepth(text) > MAX_BRACKET_DEPTH;
+/** `[` 多少个以上不交给 Markdown：一百多个链接、几百个 `[1,2]` 都在以内；嵌套着的 1000 个解析约 38 毫秒，两个上限同时顶满最坏约 53 毫秒（Node 里量的）。 */
+export const MAX_OPEN_BRACKETS = 1000;
+
+/**
+ * 连写的 `![`、`[` 太多：解析会冻住页面，按纯文字显示。**代价**：带很多方括号的大数组、一条里写了上千个链接的话，也显示成纯文字（代码照样能读），
+ * 拿不准时宁可误判（复审 #762 第三轮定的）。
+ */
+export const tooManyOpenBrackets = (text: string): boolean => {
+	const { images, brackets } = openBracketCounts(text);
+	return images > MAX_IMAGE_OPENERS || brackets > MAX_OPEN_BRACKETS;
+};
 
 /** hast 树里的一个节点（只写这里用到的几项：不依赖 `@types/hast`）。 */
 interface HastNode {

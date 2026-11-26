@@ -1051,12 +1051,19 @@ for (const n of [1500, 2000, 3000]) {
 	});
 }
 
-test("连写的 `![`（括号嵌套太深，解析是平方级）：按纯文字显示，页面不冻住", async ({
+test("连写的 `![`、`[`（解析是平方级）：按纯文字显示，页面不冻住；转义的 `]`、行内代码里的 `]` 绕不过去", async ({
 	page,
 	controlPlane,
 }) => {
 	const usage = { input: 1, output: 1, cache_read: 0, cache_write: 0 };
-	const nested = `${"![".repeat(6000)}x${"](u)".repeat(6000)}`;
+	// 每一种在修之前都让页面冻住几秒到十几秒：嵌套成对的 36 KB 7.7 秒；`![\]` × 6000（48 KB）12 秒、`![`]`` × 3000 近 3 秒、
+	// 不成对的 `[\]` × 6000 2 秒（复审 #762 第三轮：按括号的嵌套深度判能被转义的 `]`、行内代码里的 `]` 绕过，现在数次数，不看闭合）。
+	const freezers = [
+		`${"![".repeat(6000)}x${"](u)".repeat(6000)}`,
+		"![\\]".repeat(6000),
+		"![`]`".repeat(3000),
+		"[\\]".repeat(6000),
+	];
 	const events: SessionEventBody[] = [
 		{
 			type: "user_message",
@@ -1067,17 +1074,19 @@ test("连写的 `![`（括号嵌套太深，解析是平方级）：按纯文字
 			author_user_id: null,
 		},
 		{ type: "turn_started", turn: 1 },
-		{ type: "assistant_message", text: nested, usage },
+		...freezers.map((text): SessionEventBody => ({ type: "assistant_message", text, usage })),
 		{ type: "assistant_message", text: "后面一条正常的话", usage },
 		{ type: "turn_end", turn: 1, outcome: "completed", reason: "", duration_ms: 1000 },
 	];
 	const start = Date.now();
 	await open(page, controlPlane.database.url, events);
 	const messages = page.getByTestId("assistant-message");
-	await expect(messages).toHaveCount(2);
-	await expect(messages.nth(0).locator('[data-fallback="plain"]')).toBeVisible();
-	await expect(messages.nth(0).locator("img")).toHaveCount(0);
-	await expect(messages.nth(1)).toHaveText("后面一条正常的话");
-	// 36 KB 的连写在浏览器里原来要 7.7 秒：退回纯文字之后整页几秒内能用（耗时只作上限）。
+	await expect(messages).toHaveCount(freezers.length + 1);
+	for (let i = 0; i < freezers.length; i += 1) {
+		await expect(messages.nth(i).locator('[data-fallback="plain"]')).toBeVisible();
+		await expect(messages.nth(i).locator("img")).toHaveCount(0);
+	}
+	await expect(messages.nth(freezers.length)).toHaveText("后面一条正常的话");
+	// 四条加起来修之前（第二轮的深度判法下）要 17 秒以上（嵌套成对的那条当时已拦住，其余三条约 17 秒）：退回纯文字之后整页几秒内能用（耗时只作上限）。
 	expect(Date.now() - start).toBeLessThan(20_000);
 });

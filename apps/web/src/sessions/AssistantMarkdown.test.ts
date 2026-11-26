@@ -4,14 +4,15 @@ import { describe, expect, it } from "vitest";
 import { hasHidden } from "#/lib/untrusted-text";
 import {
 	AssistantMarkdown,
-	bracketDepth,
 	linkHost,
-	MAX_BRACKET_DEPTH,
+	MAX_IMAGE_OPENERS,
 	MAX_NESTING_LEVELS,
+	MAX_OPEN_BRACKETS,
 	MAX_TREE_DEPTH,
 	MarkdownBoundary,
 	MarkdownTooDeepError,
 	nestingLevels,
+	openBracketCounts,
 	rehypeWrapText,
 	tooDeeplyNested,
 	tooManyOpenBrackets,
@@ -310,38 +311,63 @@ describe("嵌套的深度要在解析出来的树上量（复审 #762 第二轮�
 	});
 });
 
-describe("括号嵌套太深的助手的话（连写的 `![`）退回纯文字", () => {
+describe("连写的 `![`、`[`（解析是平方级）退回纯文字：数次数，不看闭合", () => {
 	// 嵌套着成对的 `![ … ](u)`（所有开括号在前、闭括号在后）解析是平方级：9 KB 约 0.5 秒、18 KB 约 1.8 秒、36 KB 约 7.7 秒（浏览器里量的，
-	// 每次打开都冻住）。没闭合的 `[`、平摊的 `[1,2]`、平摊的链接、代码块里的大数组都是线性的，所以按括号的嵌套深度判，不按个数判。
+	// 每次打开都冻住）。第二轮按「括号的嵌套深度」判（`[` 加一、`]` 减一）能被绕过（复审 #762 第三轮）：转义的 `\]`、行内代码里的 `]` 不关 `![`，
+	// 深度停在 1，解析照样平方级——`![\]` × 6000（48 KB）12 秒、`![`]`` × 3000 近 3 秒、不成对的 `[\]` × 6000 2 秒。所以**数次数，不看闭合**：
+	// `![` 出现的次数超过 {@link MAX_IMAGE_OPENERS}、或者 `[` 的个数超过 {@link MAX_OPEN_BRACKETS}，不交给 Markdown。
+	// 代价（拿不准时的误判）：带很多方括号的大数组、很多个链接的那一条显示成纯文字，代码照样能读。
 	const nestedImages = (n: number) => `${"![".repeat(n)}x${"](u)".repeat(n)}`;
 
-	it("括号深度：`[` 加一、`]` 减一（不小于 0），取最大值；平摊的不累加", () => {
-		expect(bracketDepth("没有括号")).toBe(0);
-		expect(bracketDepth("[a](u) [b](v) [c](w)")).toBe(1);
-		expect(bracketDepth("[[1,2],[3,4]]")).toBe(2);
-		expect(bracketDepth("![![![x](a)](b)](c)")).toBe(3);
-		expect(bracketDepth("]]]] [a]")).toBe(1);
-		expect(bracketDepth(nestedImages(1000))).toBe(1000);
+	it("数 `![` 的次数和 `[` 的个数（线性）；`]`、转义、行内代码都不影响", () => {
+		expect(openBracketCounts("没有括号")).toEqual({ images: 0, brackets: 0 });
+		expect(openBracketCounts("![a](u) [b](v)")).toEqual({ images: 1, brackets: 2 });
+		expect(openBracketCounts("![\\]![\\]")).toEqual({ images: 2, brackets: 2 });
+		expect(openBracketCounts("![`]`![`]`")).toEqual({ images: 2, brackets: 2 });
+		expect(openBracketCounts("[\\][\\][\\]")).toEqual({ images: 0, brackets: 3 });
+		expect(openBracketCounts("]]]] ![")).toEqual({ images: 1, brackets: 1 });
+		expect(openBracketCounts(nestedImages(1000))).toEqual({ images: 1000, brackets: 1000 });
 	});
 
-	it("深度超过 MAX_BRACKET_DEPTH 的不交给 Markdown；没闭合的 `[` 很多也算（拿不准，宁可按纯文字）；大数组、很多个链接不受影响", () => {
-		expect(tooManyOpenBrackets(nestedImages(MAX_BRACKET_DEPTH + 1))).toBe(true);
-		expect(tooManyOpenBrackets(nestedImages(MAX_BRACKET_DEPTH))).toBe(false);
-		expect(tooManyOpenBrackets("[".repeat(MAX_BRACKET_DEPTH + 1))).toBe(true);
-		expect(tooManyOpenBrackets("[[1,2],[3,4]]\n".repeat(5000))).toBe(false);
-		expect(tooManyOpenBrackets("[a](https://e.example/x) ".repeat(5000))).toBe(false);
-		expect(tooManyOpenBrackets("[1,2] ".repeat(20_000))).toBe(false);
+	it("`![` 超过 MAX_IMAGE_OPENERS、`[` 超过 MAX_OPEN_BRACKETS 的不交给 Markdown，等于上限的不拦", () => {
+		expect(tooManyOpenBrackets("![a](u) ".repeat(MAX_IMAGE_OPENERS))).toBe(false);
+		expect(tooManyOpenBrackets("![a](u) ".repeat(MAX_IMAGE_OPENERS + 1))).toBe(true);
+		expect(tooManyOpenBrackets("[a] ".repeat(MAX_OPEN_BRACKETS))).toBe(false);
+		expect(tooManyOpenBrackets("[a] ".repeat(MAX_OPEN_BRACKETS + 1))).toBe(true);
+		// 不看闭合：没闭合的、转义的、行内代码里的，一样数。
+		expect(tooManyOpenBrackets("![\\]".repeat(MAX_IMAGE_OPENERS + 1))).toBe(true);
+		expect(tooManyOpenBrackets("![`]`".repeat(MAX_IMAGE_OPENERS + 1))).toBe(true);
+		expect(tooManyOpenBrackets("[\\]".repeat(MAX_OPEN_BRACKETS + 1))).toBe(true);
 	});
 
-	it("渲染 9 KB、36 KB 的连写 `![`：退回纯文字，在时限内完成（修之前 0.5 到 7.7 秒）", () => {
-		for (const n of [1500, 6000]) {
+	it("正常的话不受影响：一百多个链接、几十张图、几百个 `[1,2]`", () => {
+		expect(tooManyOpenBrackets("[a](https://e.example/x) ".repeat(150))).toBe(false);
+		expect(tooManyOpenBrackets("![a](https://e.example/x.png) ".repeat(50))).toBe(false);
+		expect(tooManyOpenBrackets("[1,2] ".repeat(800))).toBe(false);
+	});
+
+	it("代价：带很多方括号的大数组、很多个链接的那一条显示成纯文字（代码照样能读）", () => {
+		expect(tooManyOpenBrackets("[[1,2],[3,4]]\n".repeat(5000))).toBe(true);
+		expect(tooManyOpenBrackets("[a](https://e.example/x) ".repeat(5000))).toBe(true);
+	});
+
+	// 每一种写法渲染都要在时限内完成并退回纯文字（耗时只作上限，CODING_STANDARDS「耗时只作超时上限」）。修之前每个都是几秒到十几秒。
+	const FREEZERS: [name: string, text: string][] = [
+		["嵌套着成对的 `![ … ](u)` × 6000（36 KB）", nestedImages(6000)],
+		["`![\\]` 连写 × 6000（48 KB）：转义的 `]` 不关 `![`", "![\\]".repeat(6000)],
+		["`![`]`` 连写 × 3000：行内代码里的 `]` 不关 `![`", "![`]`".repeat(3000)],
+		["不成对的 `[\\]` 连写 × 6000", "[\\]".repeat(6000)],
+		["`![` 连写 × 6000，一个 `]` 也没有", `${"![".repeat(6000)}x`],
+	];
+	for (const [name, text] of FREEZERS) {
+		it(`渲染 ${name}：退回纯文字，500 毫秒内完成`, () => {
 			const start = performance.now();
-			const html = render(nestedImages(n));
-			expect(performance.now() - start, `n=${n}`).toBeLessThan(500);
+			const html = render(text);
+			expect(performance.now() - start).toBeLessThan(500);
 			expect(html).toContain('data-fallback="plain"');
 			expect(html).not.toContain("<img");
-		}
-	});
+		});
+	}
 
 	it("检查本身是线性的：几十万个字符也很快", () => {
 		const start = performance.now();

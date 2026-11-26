@@ -6,6 +6,31 @@ const AT_BOTTOM = 48;
 /** 时间线里每一行都带着这个属性（值是行的 key）：往前翻页时靠它认出「刚才看着的那一行」。 */
 export const ROW_KEY_ATTRIBUTE = "data-row-key";
 
+/**
+ * 人刚往上翻、滚动事件还没到：位置比上次定位时小（小于 2 像素的差当作抖动），就不再跟随。滚动事件在下一帧才派发，
+ * 事件还没到时 `stuck` 仍是真，内容变高时只能从位置上看出人已经走了。**每一处「内容变了、要不要滚到底」都要先过这一道**
+ * （复审 #762 第三轮：`follow` 少了它，人刚往上翻就被拉回去）。
+ */
+export function releaseIfScrolledUp(
+	el: { scrollTop: number },
+	lastTop: { current: number },
+	stuck: { current: boolean },
+): void {
+	if (el.scrollTop < lastTop.current - 2) stuck.current = false;
+}
+
+/** 跟随：先看人是不是刚往上翻了，还在底部的才滚到最底并记下位置。 */
+export function followToEnd(
+	el: { scrollTop: number; scrollHeight: number },
+	lastTop: { current: number },
+	stuck: { current: boolean },
+): void {
+	releaseIfScrolledUp(el, lastTop, stuck);
+	if (!stuck.current) return;
+	el.scrollTop = el.scrollHeight;
+	lastTop.current = el.scrollTop;
+}
+
 /** 一行相对滚动容器顶端的位置（滚动容器是定位元素，`offsetTop` 就是相对它的）。 */
 interface Anchor {
 	key: string;
@@ -87,8 +112,7 @@ export function useTimelineScroll({ head, tail }: { head: string | null; tail: s
 		if (!el) return;
 		const before = previous.current;
 		previous.current = { head, tail };
-		// 滚动事件在下一帧才派发：人刚往上翻、事件还没到时，从位置上也看得出来。
-		if (el.scrollTop < lastTop.current - 2) stuck.current = false;
+		releaseIfScrolledUp(el, lastTop, stuck);
 		const prepended = before.head !== head && before.head !== null;
 		const row =
 			prepended && anchor.current
@@ -109,13 +133,11 @@ export function useTimelineScroll({ head, tail }: { head: string | null; tail: s
 
 	/**
 	 * 内容在事件到达之外的时刻变高了（逐字出现的话被节流，延后那次渲染才画出新的文字，见 `timeline-follow.ts`）：在底部（跟随）的才滚到最新，
-	 * 往上翻看的人不动。
+	 * 往上翻看的人不动（包括刚往上翻、滚动事件还没到的：{@link releaseIfScrolledUp}）。
 	 */
 	const follow = useCallback(() => {
 		const el = scroller.current;
-		if (!el || !stuck.current) return;
-		el.scrollTop = el.scrollHeight;
-		lastTop.current = el.scrollTop;
+		if (el) followToEnd(el, lastTop, stuck);
 	}, []);
 
 	const scrollToBottom = useCallback(() => {
