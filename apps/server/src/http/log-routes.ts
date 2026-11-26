@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { pipeline, Readable, Transform, type TransformCallback } from "node:stream";
 import {
+	LOG_EXPECT_HEADER,
 	LOG_FILE_PROBLEMS_LIMIT,
 	type LogLineView,
 	logsApi,
@@ -10,7 +11,12 @@ import {
 	type RunLogLine,
 } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { LOG_FILE_GONE_CAUSES, LogFilesGoneError, logFileProblem } from "../logs/log-files.js";
+import {
+	formatLogExpect,
+	LOG_FILE_GONE_CAUSES,
+	LogFilesGoneError,
+	logFileProblem,
+} from "../logs/log-files.js";
 import type { LogMask } from "../logs/log-mask.js";
 import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
 import {
@@ -61,7 +67,9 @@ const PURGED = "logs of this run were removed after retention";
  *   **断开连接看不看得出没下完取决于传输**：直连、或者反向代理用 HTTP/1.1 连控制面（响应分块，没有结尾的 0 长度块）时，curl（退出码 18）、
  *   `fetch`、`@sfly/client`、浏览器的下载都看得出；反向代理用 HTTP/1.0 连控制面时（nginx 1.29.7 之前 `proxy_http_version` 的默认值就是 1.0）
  *   响应靠关闭连接来结束，断开和正常结束分不出来，客户端拿到半截文件、不报错（HTTP/1.0 的客户端直连也一样）；所以反向代理要配
- *   `proxy_http_version 1.1`（README「反向代理」）。不靠传输层的核对办法见 #721。
+ *   `proxy_http_version 1.1`（README「反向代理」）。**不靠传输层的核对**（#721）：200 的响应带头 `x-sfly-log-expect: tasks=<m>; last_seq_sum=<S>`
+ *   （范围内有日志的任务数、各任务最后一个序号之和；大小固定，不逐任务列：几百个任务会撑破代理的头缓冲；序号有缺口，所以合计的是最后一个序号
+ *   不是行数），命令行读完按任务记下读到的最大序号核对，代理把半截当完整的发出去也看得出来。
  *   读的过程中文件被删除：任务日志已经打开的文件不受影响，照常读完；按运行下载每一批都重新打开文件，所以会断开。两种都说得通
  *   （判断的时刻是请求开始那一刻）。文件比数据库记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）不是问题。
  *   从没有日志的任务（没有行写入过）下载是空的。
@@ -131,12 +139,14 @@ export function registerLogRoutes(
 	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply, request) => {
 		let rows: AsyncGenerator<string> | undefined;
 		let first: IteratorResult<string> | undefined;
+		let expect = "";
 		try {
-			const batches = isUuid(params.id)
+			const read = isUuid(params.id)
 				? await deps.runLogs.readAll(params.id, query.nodes)
 				: undefined;
-			if (!batches) return sendError(reply, 404, "not_found", "run not found");
-			rows = jsonRows(batches);
+			if (!read) return sendError(reply, 404, "not_found", "run not found");
+			expect = formatLogExpect(read.expect);
+			rows = jsonRows(read.batches);
 			// 第一批在响应开始之前读：检查通过之后、读第一批之前文件被删了，也是 410，不是响应还没开始就报错的 500（#669）。
 			first = await rows.next();
 		} catch (error) {
@@ -151,6 +161,7 @@ export function registerLogRoutes(
 		return reply
 			.header("content-type", `${logsApi.runDownload.contentType}; charset=utf-8`)
 			.header("content-disposition", attachment(`run-${params.id}.log.jsonl`))
+			.header(LOG_EXPECT_HEADER, expect)
 			.send(Readable.from(resumed(first, rows)));
 	});
 
@@ -271,7 +282,12 @@ export function registerLogRoutes(
 		const headers = () =>
 			reply
 				.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
-				.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
+				.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`))
+				// 应当到的最后一个序号（#721）：数据库记的；任务还在写时读到的可以更多，不会更少。
+				.header(
+					LOG_EXPECT_HEADER,
+					formatLogExpect({ tasks: info.seq > 0 ? 1 : 0, lastSeqSum: info.seq }),
+				);
 		if (size === undefined || size === 0) {
 			headers();
 			return reply.send("");

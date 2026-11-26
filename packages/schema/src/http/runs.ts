@@ -792,7 +792,8 @@ export const logsApi = {
 	 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`（说明是「保留期清理」）；有行写入过的任务日志文件
 	 * 不见了或者比数据库记的短（被删除、截短，主机掉电，数据库和数据目录分开恢复）时同样 410 `expired`，错误的 `details` 是
 	 * `{ tasks: [{ task_id, node_id, attempt, reason: "missing" | "short" }], total }`（#669）；下载进行中文件被截短时响应已经开始，
-	 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时看不出来（见 README「反向代理」）。
+	 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时传输层看不出来（见 README「反向代理」），
+	 * 所以 200 的响应带头 {@link LOG_EXPECT_HEADER}，客户端读完核对。
 	 */
 	download: download({
 		path: "/tasks/:id/logs/download",
@@ -878,6 +879,20 @@ export const ArtifactView = z.object({
 	/** 对 Agent 可见的完整下载地址（节点输出里的产物引用）；浏览器用 `/api/tasks/:id/artifacts/<name>`。 */
 	url: z.string(),
 });
+
+/**
+ * 日志下载的响应头（#721）：`tasks=<m>; last_seq_sum=<S>`——这次下载范围内有日志的任务数 `m`，和它们各自最后一个序号（数据库记的
+ * `log_seq`）之和 `S`。「读的过程中文件被截短、连接被断开」（#669）要靠传输层传到客户端，反向代理用 HTTP/1.0 连控制面时看不出来；
+ * 有了它，客户端读完后按任务记下读到的最大序号，任务数或合计比头里的少就是没下完，不靠传输层。
+ * - 大小固定（几十个字节），和任务个数无关：逐任务列「任务:序号」，几百个任务就几 KB，超过 nginx 默认的 `proxy_buffer_size`（4 KB 或
+ *   8 KB）会回 502。
+ * - 合计的是最后一个序号，不是行数：序号不是一行一个、连续的（Agent 断线排队时丢弃的行在文件里留序号缺口）。
+ * - 每一行带自己的序号：按运行下载只读到请求那一刻的快照，读到的每个任务的最大序号不会超过它的 `log_seq`，所以合计相等当且仅当每个
+ *   任务的最后一行都读到了（运行还在写时也一样）；任务下载读到文件此刻的内容，读到的只会不少于。
+ * 只在 200 的响应里有；从没有日志的任务（没有行写入过）是 `tasks=0; last_seq_sum=0`。旧的控制面没有这个头：客户端不核对。
+ * 浏览器的下载是普通下载，不核对。
+ */
+export const LOG_EXPECT_HEADER = "x-sfly-log-expect";
 
 /** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版本 Agent 不带。 */
 export const AGENT_MODIFIED_MS_HEADER = "x-sfly-agent-modified-ms";
