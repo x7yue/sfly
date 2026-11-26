@@ -321,6 +321,81 @@ test("成果：提交（第几轮、提交号前 7 位、几个文件、增删�
 	expect(new URL(page.url()).searchParams.get("b")).toBe("1");
 });
 
+test("成果：场景名当作别人写的文字、限宽：太长的在时间线的行里和成果栏里截断，悬停给全文，行还是一行、不超出成果栏", async ({
+	page,
+	controlPlane,
+}) => {
+	// 会话令牌能新建、改名场景：名字可以很长，里面也可以有看不见的字符（这里是一个从右到左的方向标记）。
+	const name = `${"很长的场景名".repeat(20)}\u202e结尾`;
+	const shown = name.replace("\u202e", "⟨U+202E⟩");
+	const id = await seedSession(controlPlane.database.url, {
+		title: TITLE,
+		status: "idle",
+		events: [
+			{
+				type: "user_message",
+				message_id: randomUUID(),
+				text: "做一个很长名字的场景",
+				steer: false,
+				author: "tester",
+				author_user_id: null,
+			},
+			{ type: "turn_started", turn: 1 },
+			{
+				type: "platform",
+				kind: "scenario_version",
+				turn: 1,
+				scenario_id: randomUUID(),
+				name,
+				version: 1,
+			},
+			{ type: "platform", kind: "run", turn: 1, run_id: randomUUID(), scenario_name: name },
+			{
+				type: "turn_end",
+				turn: 1,
+				outcome: "completed",
+				reason: "助手已完成",
+				steps: 1,
+				model_calls: 1,
+				duration_ms: 1000,
+			},
+		],
+	});
+	await page.goto(`/sessions/${id}`);
+	const box = async (locator: ReturnType<Page["locator"]>) => {
+		const found = await locator.boundingBox();
+		if (found === null) throw new Error("元素没有占位置");
+		return found;
+	};
+	const panel = await box(results(page));
+	// 悬停给全文；看完把鼠标移开、等提示收起，不让它挡住下一个要悬停的地方。
+	const tooltip = page.locator('[data-slot="tooltip-content"]');
+	const hoverShows = async (target: ReturnType<Page["locator"]>, text: string) => {
+		await target.hover();
+		await expect(tooltip).toContainText(text);
+		await page.mouse.move(0, 0);
+		await expect(tooltip).toHaveCount(0);
+	};
+
+	// 时间线上的两行：名字最宽 18rem（288px），截断了，行还是一行高。
+	for (const kind of ["record-run", "record-version"]) {
+		const row = timeline(page).getByTestId(kind);
+		const clipped = row.locator('[data-slot="truncate"]');
+		await expect(clipped).toHaveAttribute("data-truncated", "true");
+		expect((await box(clipped)).width).toBeLessThanOrEqual(288);
+		expect((await box(row)).height).toBeLessThan(40);
+		await hoverShows(clipped, shown);
+	}
+
+	// 成果栏里的版本和运行：名字截断，链接不超出成果栏，悬停给全文（方向标记写成文字）。
+	for (const testId of ["result-version", "result-run"]) {
+		const item = results(page).getByTestId(testId);
+		const found = await box(item);
+		expect(found.x + found.width).toBeLessThanOrEqual(panel.x + panel.width + 1);
+		await hoverShows(item.getByRole("link"), shown);
+	}
+});
+
 test("成果：只读到最近一页事件时说明更早的成果还没有列出", async ({ page, controlPlane }) => {
 	// 一页 200 条持久事件：前面 1 条用户的话加 200 条助手的话把平台记录挤到更早的一页里。
 	const events: SessionEventBody[] = [
