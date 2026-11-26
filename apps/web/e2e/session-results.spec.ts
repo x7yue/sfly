@@ -427,7 +427,7 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 		224,
 	);
 	await longLink.hover();
-	await expect(page.getByRole("tooltip")).toContainText(longTitle);
+	await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(longTitle);
 	await expect(longLink).toHaveAttribute("href", `/sessions/${longSessionId}`);
 
 	await page.goto("/");
@@ -474,8 +474,12 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 	await expect(row(2)).toContainText(`bob ${via} ·`);
 	await expect(row(1)).toContainText("tester ·");
 	await expect(row(1)).not.toContainText("经");
-	// 右边的标题行（默认显示最新版本）也写「经 会话」。
-	const pane = page.getByText("只读", { exact: true }).locator("..");
+	// 下面并排的两个版本（默认是 v1 和最新的 v2），右边（B）的标题行也写「经 会话」，左边（A）是人保存的，不写。
+	const paneOf = (n: number) => page.getByText("只读", { exact: true }).nth(n).locator("..");
+	const left = paneOf(0);
+	const pane = paneOf(1);
+	await expect(left).toContainText("tester ·");
+	await expect(left).not.toContainText("经");
 	await expect(pane).toContainText(`bob ${via} ·`);
 	await expect(pane.locator('[data-via="session"] a')).toHaveAttribute(
 		"href",
