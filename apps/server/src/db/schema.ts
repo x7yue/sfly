@@ -939,10 +939,27 @@ export const sessionEvents = pgTable(
 		type: text("type").notNull(),
 		payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
 		createdAt: timestamptz("created_at").notNull(),
+		// 助手服务发来的持久事件在助手服务里的位置（纪元加纪元内的序号，#545）：重连时重复收到的事件不存两次
+		// （`session_events_assistant_source` 唯一），控制面重启后用最后一条的位置接着收。控制面自己写的事件没有这两列。
+		assistantEpoch: text("assistant_epoch"),
+		assistantSeq: bigint("assistant_seq", { mode: "number" }),
 	},
 	(t) => [
 		primaryKey({ columns: [t.sessionId, t.seq] }),
 		check("session_events_seq", sql`${t.seq} >= 1`),
+		check(
+			"session_events_assistant_source",
+			sql`(${t.assistantEpoch} is null) = (${t.assistantSeq} is null)`,
+		),
+		// 纪元和序号是整个助手服务共用的，不分会话：同一个位置的事件只存一条。只覆盖有位置的行（控制面自己写的事件两列都空，
+		// 不占索引）；`hello` 时按纪元查最大序号（`lastSeqOfEpoch`）也走它。
+		uniqueIndex("session_events_assistant_source_idx")
+			.on(t.assistantEpoch, t.assistantSeq)
+			.where(sql`${t.assistantEpoch} is not null`),
+		// 控制面（重）启动时找最后收到的那条助手事件：纪元是随机串、没有先后，按事件产生的时间（助手服务盖的）往回找。
+		index("session_events_assistant_latest")
+			.on(t.createdAt.desc(), t.assistantSeq.desc())
+			.where(sql`${t.assistantEpoch} is not null`),
 		// 「上一轮的结局」（会话视图和列表里的 last_turn_outcome）取每个会话最近一条 turn_end：只给 turn_end 建索引
 		// （每轮一条），按序号倒序，查询不用扫整个会话的事件（几万条）。谓词写成字面量，查询里也要写成字面量才用得上它。
 		index("session_events_turn_end")

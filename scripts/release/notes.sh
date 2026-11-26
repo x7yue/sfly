@@ -4,6 +4,8 @@
 set -euo pipefail
 version=${1:?用法：notes.sh <版本> <镜像名>}
 image=${2:?用法：notes.sh <版本> <镜像名>}
+# 助手和工作台镜像和控制面镜像在同一个命名空间下。
+registry=${image%/*}
 
 cat <<EOF
 ## 安装
@@ -19,6 +21,17 @@ docker pull ${image}:${version}
 无法访问 ghcr.io 时，下载附件 \`sfly-server-${version}-linux-<amd64|arm64>.tar.gz\`，然后执行：
 \`gunzip -c sfly-server-${version}-linux-amd64.tar.gz | docker load\`。
 部署方式见仓库中的 \`deploy/docker-compose.yml\`。
+
+**助手和工作台**（可选；Docker 镜像，linux/amd64 与 linux/arm64）：不用助手的部署不需要它们。要用时在 compose 里加 \`--profile assistant\`，
+设置和步骤见 README「部署与运维」的「助手和工作台」：
+
+\`\`\`sh
+docker pull ${registry}/sfly-assistant:${version}
+docker pull ${registry}/sfly-workbench:${version}
+\`\`\`
+
+无法访问 ghcr.io 时，下载附件 \`sfly-assistant-${version}-linux-<amd64|arm64>.tar.gz\` 和 \`sfly-workbench-${version}-linux-<amd64|arm64>.tar.gz\`，用同样的 \`gunzip -c … | docker load\` 加载。
+工作台镜像里没有 Agent：第一次启动时它从控制面装 Agent、uv 和 sfly 命令行（版本和控制面一致），所以离线部署要在控制面上配好 PyPI 和 GitHub Release 镜像。
 
 **Agent**（musl 静态链接，不依赖 glibc 版本）：控制面镜像带着同版本的 x86_64 / aarch64 Agent，在测试机上运行
 

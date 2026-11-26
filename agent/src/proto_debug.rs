@@ -169,6 +169,40 @@ mod tests {
         }
     }
 
+    /// 控制面下发的镜像地址里凭据有文字规则认不出的字符（#757）：`connect` 一收到 Welcome 就登记
+    /// （`environment::register_welcome_addresses`），之后 `Welcome` 的 `Debug` 里没有用户名和密码。
+    #[test]
+    fn welcome_debug_masks_mirror_addresses_whose_credentials_have_awkward_characters() {
+        let welcome = Welcome {
+            pypi_mirror: "https://wduser1:Hd1\"xq Tl1yz@wd1.example/simple".into(),
+            github_release_mirror: "https://wduser2:Hd2`xq<Tl2yz>@wd2.example/github-release"
+                .into(),
+            sdk_wheel_url: r"https://WD3\wduser3:Hd3xqTl3yz@wd3.example/sdk.whl".into(),
+            ..Default::default()
+        };
+        crate::environment::register_welcome_addresses(&welcome);
+        for text in [format!("{welcome:?}"), format!("{welcome:#?}")] {
+            for secret in [
+                "wduser1",
+                "Hd1",
+                "Tl1yz",
+                "wduser2",
+                "Hd2",
+                "Tl2yz",
+                "wduser3",
+                "WD3",
+                "Hd3xqTl3yz",
+            ] {
+                assert!(!text.contains(secret), "{secret}：{text}");
+            }
+            assert!(text.contains("https://***@wd1.example/simple"), "{text}");
+            assert!(
+                text.contains("https://***@wd2.example/github-release"),
+                "{text}"
+            );
+        }
+    }
+
     #[test]
     fn assign_task_debug_hides_the_task_token_everywhere_it_can_be_printed() {
         let task = AssignTask {

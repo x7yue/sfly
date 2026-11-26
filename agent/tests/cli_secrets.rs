@@ -159,3 +159,45 @@ async fn a_server_address_without_a_scheme_is_written_without_the_password_too()
     )
     .await;
 }
+
+/// 控制面地址的凭据里有文字规则认不出的字符（#757）：`--server` 在配置里就登记了，连不上的报错和之后每次重连的报错里都没有。
+/// 地址写不成合法的 URI（空格、`"`、`<`、`>`）时连接在解析地址那一步就失败，报错里同样不能有凭据。
+#[tokio::test]
+async fn a_server_address_with_awkward_password_characters_is_written_without_it_too() {
+    for (label, server) in [
+        ("双引号", "http://srvuser2:Hd2\"xqTl2yz@127.0.0.1:9"),
+        ("空格", "http://srvuser2:Hd2 xqTl2yz@127.0.0.1:9"),
+        ("反引号", "http://srvuser2:Hd2`xqTl2yz@127.0.0.1:9"),
+        ("小于大于", "http://srvuser2:Hd2<xq>Tl2yz@127.0.0.1:9"),
+        (
+            "用户名里有反斜杠",
+            r"http://SRV2\srvuser2:Hd2xqTl2yz@127.0.0.1:9",
+        ),
+        ("没写协议", "srvuser2:Hd2\"xqTl2yz@127.0.0.1:9"),
+    ] {
+        let mut options = AgentOptions::new(server, "agent-cli-server-awkward");
+        options.pipe_stderr = true;
+        let mut agent = spawn_agent(options);
+        let stderr = capture_stderr(&mut agent);
+        wait_until(
+            &format!("{label}：连不上控制面的报错写了两次"),
+            || {
+                stderr
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|line| line.contains("cannot connect"))
+                    .count()
+                    >= 2
+            },
+        )
+        .await;
+        let output = stderr.lock().unwrap().join("\n");
+        for secret in ["srvuser2", "Hd2", "Tl2yz", "SRV2"] {
+            assert!(
+                !output.contains(secret),
+                "{label}：{secret} 在输出里：{output}"
+            );
+        }
+    }
+}

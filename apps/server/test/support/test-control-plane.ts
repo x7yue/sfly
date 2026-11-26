@@ -68,6 +68,12 @@ export async function startTestControlPlane(
 		 * 模板是按源码里的迁移目录迁移好的，不能和 `migrationsDir` 一起给（老迁移目录对着新结构的库没有意义）。
 		 */
 		template?: string;
+		/**
+		 * 配置了助手服务（`assistantUrl`）时，启动和重启之后等事件流连上再返回（默认等，最多 10 秒，连不上不报错、直接返回）：
+		 * 事件流没连上时就绪状态写助手服务连不上、建会话和说话 503（#545），不等的话测试一建会话就可能撞上刚启动、还没连上的那几毫秒。
+		 * 助手服务本来就连不上的用例（地址写错、密钥不对）传 `false`，不等那 10 秒。
+		 */
+		waitForAssistant?: boolean;
 	} & Pick<
 		ControlPlaneOptions,
 		| "logLimitBytes"
@@ -198,6 +204,16 @@ export async function startTestControlPlane(
 		throw error;
 	}
 
+	/** 等事件流连上（见 `waitForAssistant`）：连不上就等到时限、不报错。 */
+	const settleAssistant = async () => {
+		if (!options.assistantUrl || options.waitForAssistant === false) return;
+		const deadline = Date.now() + 10_000;
+		while (!current.assistantConnected() && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	};
+	await settleAssistant();
+
 	// 假 Agent 没写 token 时用 Agent 凭据连接：按名字向这个控制面签发（和真实的部署一样，#492）。
 	// 重启后库可能是另一个样子（升级测试会先把库退回旧结构）：凭据重新签发。
 	const registerIssuer = () =>
@@ -238,6 +254,7 @@ export async function startTestControlPlane(
 			current = await start(ports);
 			unregister();
 			unregister = registerIssuer();
+			await settleAssistant();
 		},
 		async close() {
 			unregister();
