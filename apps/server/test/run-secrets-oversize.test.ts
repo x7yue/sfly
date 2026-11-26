@@ -1,4 +1,4 @@
-// 保密值太多的运行，整个运行看得到原因（#657）：运行视图（`GET /runs/:id`）和运行摘要（`GET /runs/:id/summary`）有 `secrets_oversize`：
+// secret 值太多的运行，整个运行看得到原因（#657）：运行视图（`GET /runs/:id`）和运行摘要（`GET /runs/:id/summary`）有 `secrets_oversize`：
 // 为 true 时这次运行里要打码的内容整段盖住，使用者据此知道为什么看到的全是 `******`；不含任何值。真实的控制面和假 Agent；值都是假值。
 import { SECRET_MASK as MASK } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -40,7 +40,7 @@ describe("运行视图和运行摘要里的 secrets_oversize", () => {
 	const summaryOf = (runId: string) =>
 		api.getJson<{ secrets_oversize?: boolean; failed_tasks: unknown[] }>(`/runs/${runId}/summary`);
 
-	it("保密值的所有写法合计超过上限：两个接口都是 true；不太大的、没有保密参数的运行是 false；整段盖住的内容不含值", async () => {
+	it("secret 值的所有写法合计超过上限：两个接口都是 true；不太大的、没有 secret 参数的运行是 false；整段盖住的内容不含值", async () => {
 		const bigValues = Array.from({ length: 50 }, (_, i) => `fake-oversize-${i}-${"p".repeat(100)}`);
 		const bigId = await api.orchestrationWith(scenario(true));
 		const plainId = await api.orchestrationWith(scenario(false));
@@ -55,7 +55,7 @@ describe("运行视图和运行摘要里的 secrets_oversize", () => {
 			expect((await summaryOf(bigRun)).secrets_oversize).toBe(true);
 			expect((await summaryOf(smallRun)).secrets_oversize).toBe(false);
 			expect((await summaryOf(plainRun)).secrets_oversize).toBe(false);
-			// 运行视图里的保密参数照旧读成掩码，字段本身不含任何值
+			// 运行视图里的 secret 参数照旧读成掩码，字段本身不含任何值
 			const view = JSON.stringify(await api.run(bigRun));
 			expect(view).not.toContain("fake-oversize");
 			expect(view).toContain(MASK);
