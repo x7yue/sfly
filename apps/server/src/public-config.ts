@@ -1,8 +1,9 @@
-import { withoutUserinfo } from "./userinfo.js";
+import { publicAddress } from "./userinfo.js";
 
 /**
  * 控制面配置的镜像（ADR 0012）：在 Welcome 里下发给 Agent，install.sh --dev、sfly init 也用；未配置时 undefined。
- * 配置的地址可以带用户名和密码；Welcome 是经过认证的连接，原样下发，公开的地方用 {@link publicMirrors} 的结果。
+ * 配置的地址可以带用户名和密码；Welcome 里原样下发（那里是不是经过认证见 docs/guide/install-agent.md「带用户名和密码的私有索引」：
+ * 过渡期没配共享令牌时，连得上 Agent 网关、又知道旧方式登记的名字的连接也拿得到），不用登录就能读的地方用 {@link publicMirrors} 的结果。
  */
 export interface Mirrors {
 	/** PyPI 镜像（简单索引地址）。 */
@@ -12,15 +13,25 @@ export interface Mirrors {
 }
 
 /**
- * 镜像地址去掉用户名和密码，给不用登录就能读的地方（`/install.sh`、`/sdk/project-settings`，#755）。没带凭据的地址原样
- * （包括 `file://` 和绝对路径）。
+ * 镜像地址去掉用户名和密码，给不用登录就能读的地方（`/install.sh`、`/sdk/project-settings`，#755）：按单个地址去，去完解析一遍
+ * 还有用户名或密码的不公开（{@link publicAddress}），记在 `withheld` 里：调用方打一条警告（只写是哪个镜像，不写地址），
+ * 公开的地方当它没配。没带凭据的地址原样（包括 `file://` 和绝对路径）。
  */
-export const publicMirrors = (mirrors: Mirrors): Mirrors => ({
-	...(mirrors.pypi !== undefined && { pypi: withoutUserinfo(mirrors.pypi) }),
-	...(mirrors.githubRelease !== undefined && {
-		githubRelease: withoutUserinfo(mirrors.githubRelease),
-	}),
-});
+export function publicMirrors(mirrors: Mirrors): {
+	mirrors: Mirrors;
+	withheld: Array<keyof Mirrors>;
+} {
+	const shown: Mirrors = {};
+	const withheld: Array<keyof Mirrors> = [];
+	for (const key of ["pypi", "githubRelease"] as const) {
+		const address = mirrors[key];
+		if (address === undefined) continue;
+		const safe = publicAddress(address);
+		if (safe === undefined) withheld.push(key);
+		else shown[key] = safe;
+	}
+	return { mirrors: shown, withheld };
+}
 
 /**
  * 控制面对外公开的配置：Agent 和开发机看到的地址、版本号和镜像。Agent 下载与 install.sh、SDK wheel 与 sfly 简单索引、

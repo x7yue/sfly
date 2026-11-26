@@ -107,9 +107,15 @@ unit_value() {
 	printf '%s' "$1" | sed 's/%/%%/g'
 }
 
+# download <地址> <保存到> [netrc]：第三个参数是 netrc 时 curl 也读 ~/.netrc（只用在从镜像下载 uv 的安装脚本那一次：镜像要认证时凭据在那里；
+# 下载 Agent 二进制不用：坏的 ~/.netrc 会让以前装得上的机器失败，default 项还会把凭据以 Basic 发给控制面）。
 download() {
 	if command -v curl >/dev/null 2>&1; then
-		curl -fsSL --netrc-optional -A "$user_agent" -o "$2" "$1"
+		if [ "${3:-}" = netrc ]; then
+			curl -fsSL --netrc-optional -A "$user_agent" -o "$2" "$1"
+		else
+			curl -fsSL -A "$user_agent" -o "$2" "$1"
+		fi
 	elif command -v wget >/dev/null 2>&1; then
 		wget -q -U "$user_agent" -O "$2" "$1"
 	else
@@ -120,7 +126,9 @@ download() {
 # 在目录 $1 下写 curl 和 wget 的配置（运行时设置 CURL_HOME=$1、WGETRC=$1/wgetrc），让第三方安装脚本里
 # 改不了参数的 curl、wget 也带上 User-Agent。原有的 curlrc、wgetrc 照抄在前面，User-Agent 放最后（后出现的生效）；
 # 设置 CURL_HOME 后老版本 curl 不再读 ~/.curlrc，所以要照抄。
-user_agent_config() {
+# 文件建在子 shell 里、umask 077：里面照抄了用户自己的 ~/.curlrc（可能有 --user 之类的凭据），别人不该读到。
+user_agent_config() (
+	umask 077
 	mkdir -p "$1"
 	{
 		for f in "${CURL_HOME:+$CURL_HOME/.curlrc}" "${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/curlrc}" "${HOME:+$HOME/.curlrc}"; do
@@ -130,15 +138,16 @@ user_agent_config() {
 			fi
 		done
 		printf 'user-agent = "%s"\n' "$user_agent"
-		# 镜像要认证时凭据在 ~/.netrc 里，uv 的安装脚本里改不了参数的 curl 也要读它（没有 ~/.netrc 时不受影响）。
-		printf 'netrc-optional\n'
+		# 用镜像时：镜像要认证，凭据在 ~/.netrc 里，uv 的安装脚本里改不了参数的 curl 也要读它（没有 ~/.netrc 时不受影响）。
+		# 没有镜像时不加：uv 从官方来源下载，不需要 ~/.netrc，也不能把里面 default 项的凭据发给官方来源。
+		if [ -n "${mirror:-}" ]; then printf 'netrc-optional\n'; fi
 	} >"$1/.curlrc"
 	{
 		f=${WGETRC:-${HOME:+$HOME/.wgetrc}}
 		if [ -n "$f" ] && [ -f "$f" ]; then cat "$f" && echo; fi
 		printf 'user_agent = %s\n' "$user_agent"
 	} >"$1/wgetrc"
-}
+)
 
 sha256_of() {
 	if command -v sha256sum >/dev/null 2>&1; then
@@ -400,7 +409,7 @@ install_dev() {
 			installer_url=https://astral.sh/uv/install.sh
 		fi
 		echo "安装 uv 到 $user_bin：$installer_url"
-		download "$installer_url" "$uv_installer" || die "下载 uv 安装脚本失败：$installer_url"
+		download "$installer_url" "$uv_installer" ${mirror:+netrc} || die "下载 uv 安装脚本失败：$installer_url"
 		user_agent_config "$user_agent_dir"
 		(
 			export UV_INSTALL_DIR="$user_bin" UV_NO_MODIFY_PATH=1

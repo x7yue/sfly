@@ -1,9 +1,11 @@
 // 镜像地址带用户名和密码时，不用登录就能读的地方不把它们写出去（#755）：`/install.sh`（正文和 `--help` 的输出）、
-// `/sdk/project-settings`（`sfly init` 写进新节点包的 pyproject.toml）。Agent 握手的 Welcome 是经过认证的连接，照旧原样下发。
+// `/sdk/project-settings`（`sfly init` 写进新节点包的 pyproject.toml）。Agent 握手的 Welcome 照旧原样下发（过渡期没配共享令牌时，
+// 连得上 Agent 网关、又知道旧方式登记的名字的连接也拿得到，#494 之后只给带 Agent 凭据的连接：docs/guide/install-agent.md）。
 // 没配凭据的地址原样。凭据只写在本文件的常量里，断言逐个检查用户名和密码都没有出现。
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { readEnvSettings } from "../src/config/env-settings.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -96,7 +98,108 @@ describe("公开的地方不带镜像地址里的用户名和密码", () => {
 		}
 	});
 
-	it("Agent 握手的 Welcome（经过认证的连接）照旧原样下发带凭据的地址", async () => {
+	it('密码里有 " ` < > 空格、制表符、换行、U+00A0、全角空格（启动检查放行、uv 也认）：/install.sh、--help、/sdk/project-settings 里照样没有用户名和密码（审查 #756 的真控制面复现）', async () => {
+		for (const pw of [
+			'Xy7"k',
+			"Xy7`k",
+			"Xy7<k",
+			"Xy7>k",
+			"Xy7 k",
+			"Xy7\tk",
+			"Xy7\nk",
+			"Xy7 k",
+			"Xy7　k",
+		]) {
+			const pypi = `https://deploy:${pw}@pypi.internal/simple`;
+			const github = `https://deploy:${pw}@gh.internal/github-release`;
+			// 和启动时读环境变量走同一条检查：放行。
+			const settings = readEnvSettings({
+				SFLY_PYPI_MIRROR: pypi,
+				SFLY_GITHUB_RELEASE_MIRROR: github,
+			});
+			expect(settings.pypiMirror, JSON.stringify(pw)).toBeDefined();
+			expect(settings.githubReleaseMirror, JSON.stringify(pw)).toBeDefined();
+			const control = await start(
+				settings.pypiMirror as string,
+				settings.githubReleaseMirror as string,
+			);
+			const script = await (await control.fetch("/install.sh")).text();
+			const project = await (await control.fetch("/sdk/project-settings")).text();
+			// 密码在各种写法里都找一遍：原文、JSON 转义、百分号编码、删掉换行制表符之后的。
+			const forms = [
+				pw,
+				JSON.stringify(pw).slice(1, -1),
+				encodeURIComponent(pw),
+				pw.replace(/[\t\n\r]/g, ""),
+			];
+			for (const [what, text] of [
+				["/install.sh", script],
+				["/sdk/project-settings", project],
+			] as const) {
+				expect(text, `${what}（${JSON.stringify(pw)}）`).not.toContain("deploy");
+				for (const form of forms)
+					expect(text, `${what}：${JSON.stringify(form)}`).not.toContain(form);
+			}
+			expect(script).toContain("PYPI_MIRROR='https://pypi.internal/simple'");
+			expect(script).toContain("GITHUB_RELEASE_MIRROR='https://gh.internal/github-release'");
+			expect(JSON.parse(project)).toMatchObject({
+				pypi_mirror: "https://pypi.internal/simple",
+				python_install_mirror:
+					"https://gh.internal/github-release/astral-sh/python-build-standalone/",
+			});
+			// Agent 握手拿到的是配置的原值（没有被改过）。
+			const agent = await FakeAgent.connect(control.grpcUrl, { name: "agent-odd-password" });
+			agents.push(agent);
+			expect(agent.welcome).toMatchObject({
+				pypiMirror: settings.pypiMirror,
+				githubReleaseMirror: settings.githubReleaseMirror,
+			});
+			await agent.disconnect();
+			agents.pop();
+			await control.close();
+			cp = undefined;
+		}
+	}, 120_000);
+
+	it("去不干净的镜像地址不公开（当没配），启动时打一条警告，只写是哪个环境变量、不写地址；另一个镜像和 Welcome 不受影响", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			// 解析器不认的写法（密码里有没转义的 \），启动检查本来会拒；这里直接给控制面，看兜底。
+			cp = await startTestControlPlane({
+				pypiMirror: "https://deploy:Xy7\\k@pypi.internal/simple",
+				githubReleaseMirror: GITHUB_WITH,
+				logger: true,
+			});
+			const script = await (await cp.fetch("/install.sh")).text();
+			const project = await (await cp.fetch("/sdk/project-settings")).text();
+			expect(script).toContain("PYPI_MIRROR=''");
+			expect(script).toContain(`GITHUB_RELEASE_MIRROR='${GITHUB_PUBLIC}'`);
+			expect(JSON.parse(project)).toMatchObject({ pypi_mirror: null });
+			for (const text of [script, project]) {
+				expect(text).not.toContain("deploy");
+				expectNoCredentials(text, "公开的响应");
+			}
+			const warnings = warn.mock.calls
+				.map((call) => String(call[0]))
+				.filter((line) => line.includes("SFLY_PYPI_MIRROR"));
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).not.toContain("deploy");
+			expect(warnings[0]).not.toContain("Xy7");
+			expect(warnings[0]).not.toContain("pypi.internal");
+			expect(
+				warn.mock.calls.some((call) => String(call[0]).includes("SFLY_GITHUB_RELEASE_MIRROR")),
+			).toBe(false);
+			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-withheld" });
+			agents.push(agent);
+			expect(agent.welcome).toMatchObject({
+				pypiMirror: "https://deploy:Xy7\\k@pypi.internal/simple",
+			});
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it("Agent 握手的 Welcome 照旧原样下发带凭据的地址", async () => {
 		const control = await start(PYPI_WITH, GITHUB_WITH);
 		const agent = await FakeAgent.connect(control.grpcUrl, { name: "agent-credentialed-mirrors" });
 		agents.push(agent);

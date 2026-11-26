@@ -68,7 +68,7 @@ import type { SessionRow } from "./sessions/session-store.js";
 import { SessionStore } from "./sessions/session-store.js";
 import { listening } from "./util/listen-error.js";
 import { Mutex } from "./util/mutex.js";
-import { printError, printInfo } from "./util/output.js";
+import { printError, printInfo, printWarning } from "./util/output.js";
 import { periodic } from "./util/periodic.js";
 import { safeError } from "./util/safe-error.js";
 
@@ -261,6 +261,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	}
 }
 
+/** 两个镜像在环境变量里的名字（警告里写它，不写地址）。 */
+const MIRROR_VARIABLES = {
+	pypi: "SFLY_PYPI_MIRROR",
+	githubRelease: "SFLY_GITHUB_RELEASE_MIRROR",
+} as const;
+
 async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
@@ -334,6 +340,16 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
+	// 不用登录就能读的地方（/install.sh、/sdk/project-settings）用去掉用户名和密码的地址（#755）；去不干净的那个当没配，打一条警告
+	// （只写是哪个环境变量，不写地址）。Welcome 用上面的原值。
+	const published = publicMirrors(mirrors);
+	for (const key of published.withheld) {
+		if (logger) {
+			printWarning(
+				`sfly: ${MIRROR_VARIABLES[key]} 地址里的用户名和密码没能去掉（写法认不出来），/install.sh 和 /sdk/project-settings 里把它当作没配；Agent 握手时下发的不受影响`,
+			);
+		}
+	}
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const preflight = createPreflight({ version });
@@ -542,7 +558,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			grpcUrl: () => publicGrpcUrl,
 			version,
 			// 公开的地方（不用登录的 /install.sh、/sdk/project-settings）不带用户名和密码；Welcome 用上面的原值（#755）。
-			mirrors: publicMirrors(mirrors),
+			mirrors: published.mirrors,
 		},
 		sdkWheels,
 		stdIndex: createStdIndex({
