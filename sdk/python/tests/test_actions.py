@@ -817,7 +817,7 @@ def test_normal_names_and_full_lists_fit_far_below_the_budget_and_nothing_is_tri
         5,
     )
     assert (summary["running_complete"], summary["lists_trimmed"]) == (True, False)
-    assert sink.sizes[-1] < MAX_SUMMARY_BYTES // 2  # 量到的约 0.3 MiB
+    assert sink.sizes[-1] < MAX_SUMMARY_BYTES // 4  # 量到的约 0.15 MiB（见 perf726）
 
 
 def test_when_the_lists_do_not_fit_the_lowest_priority_is_dropped_first_and_it_is_marked(

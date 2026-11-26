@@ -160,6 +160,22 @@ pub fn telemetry(limit: usize, metric_limit: usize) -> (Telemetry, TelemetryRece
     )
 }
 
+/// 丢掉一条比整个队列还大的消息时写进标准错误的一行：哪一种、哪个任务、多大。不带消息的内容
+/// （日志行、通知、动作明细里可能有 secret 值）。
+fn oversize_note(message: &AgentMessage, size: usize, limit: usize) -> String {
+    let (kind, task_id) = match &message.body {
+        Some(agent_message::Body::Logs(batch)) => ("log lines", batch.task_id.as_str()),
+        Some(agent_message::Body::Notification(notification)) => {
+            ("notification", notification.task_id.as_str())
+        }
+        Some(agent_message::Body::Actions(batch)) => ("action details", batch.task_id.as_str()),
+        _ => ("message", ""),
+    };
+    format!(
+        "telemetry message ({kind}) of task {task_id} is {size} bytes, larger than the whole queue ({limit} bytes): dropping this one message; the ones before and after it are not affected"
+    )
+}
+
 impl Telemetry {
     pub fn send(&self, message: AgentMessage) {
         let size = message.encoded_len();
@@ -172,11 +188,9 @@ impl Telemetry {
             )
         );
         if limited && size > self.limit {
-            // 这一条比整个队列还大，什么时候都排不下：只丢它（前后的消息不受影响），每次都写明，不并进下面「队列满了」的说明。
-            eprintln!(
-                "telemetry message of {size} bytes is larger than the whole queue ({} bytes): dropping this one message; the ones before and after it are not affected",
-                self.limit
-            );
+            // 这一条比整个队列还大，什么时候都排不下：只丢它（前后的消息不受影响），每次都写明（哪一种、哪个任务、多大），
+            // 不并进下面「队列满了」的说明，也不动 `dropping`：队列没满，下一次真的满了时那条说明照常写一次。
+            eprintln!("{}", oversize_note(&message, size, self.limit));
             return;
         }
         if limited && self.queued.load(Ordering::SeqCst) + size > self.limit {
@@ -1017,31 +1031,25 @@ impl Forwarder {
 
     /// 排一行日志。比一批的字节上限（[`MAX_BATCH_BYTES`]）还大的一行：先把攒着的发出去，这一行自己成一批，
     /// 不和前面的合成一批（合成一批的话，这一批比队列剩下的空间大时整批被丢掉，前面正常的行也跟着丢）。
+    /// 这一行自己的那一批由调用的人接着调的 [`Forwarder::flush_full_batch`] 发出（字节数到了上限就发，这时
+    /// 攒着的只有它一行）：这里只管「排进去之前先发」，不再重复发一次。调用的人都是排一个、检查一次（`lines`、`events`）。
     fn push_pending(&mut self, line: Pending) {
         let size = line.size();
-        let alone = size > MAX_BATCH_BYTES;
-        if alone {
+        if size > MAX_BATCH_BYTES {
             self.flush_lines();
         }
         self.pending_bytes += size;
         self.pending.push(line);
-        if alone {
-            self.flush_lines();
-        }
     }
 
     /// 排一个动作明细事件，规矩同 [`Forwarder::push_pending`]。
     fn push_action(&mut self, event: ActionEvent) {
         let size = event.encoded_len();
-        let alone = size > MAX_BATCH_BYTES;
-        if alone {
+        if size > MAX_BATCH_BYTES {
             self.flush_actions();
         }
         self.actions_bytes += size;
         self.actions.push(event);
-        if alone {
-            self.flush_actions();
-        }
     }
 
     /// 一批攒满了（条数或字节数）就发出，不等下一个 [`TICK`]。
@@ -1909,67 +1917,105 @@ mod batch_tests {
         assert_eq!(batches, vec![vec![1, 2, 3, 4, 5], vec![7, 8, 9, 10, 11]]);
     }
 
-    /// 排的那一下自己就让这一行（这个事件）单独成一批，不靠调用的人接着调 `flush_full_batch`：
-    /// 前面攒着的先发出，这一个发出，后面的另起一批。
-    #[tokio::test]
-    async fn pushing_a_log_line_bigger_than_a_batch_sends_it_alone_without_the_caller_flushing() {
-        let (mut forwarder, drain) = forwarder();
-        for i in 0..5 {
-            let mut line = full_line(i);
-            line.text = if i == 2 {
-                "x".repeat(3 << 20)
-            } else {
-                "x".into()
-            };
-            line.before.clear();
-            line.after.clear();
-            forwarder.push_pending(line);
+    fn log_batch_message(task_id: &str, lines: usize) -> AgentMessage {
+        AgentMessage {
+            body: Some(agent_message::Body::Logs(LogBatch {
+                task_id: task_id.into(),
+                attempt: 1,
+                lines: (0..lines)
+                    .map(|i| LogLine {
+                        seq: i as u64,
+                        text: "x".repeat(100),
+                        ..Default::default()
+                    })
+                    .collect(),
+            })),
         }
-        forwarder.poll(true);
-        drop(forwarder);
-        let batches: Vec<Vec<u64>> = drain
-            .await
-            .unwrap()
-            .iter()
-            .filter_map(|m| match &m.body {
-                Some(agent_message::Body::Logs(batch)) => {
-                    Some(batch.lines.iter().map(|l| l.seq).collect())
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(batches, vec![vec![1, 2], vec![3], vec![4, 5]]);
     }
 
+    /// 比整个队列还大的一条只丢它：不动 `dropping`（队列没有满），队列里已有的和后面的消息照常进出。
+    /// 去掉 `Telemetry::send` 里专门的那一支，它会落进「队列满了」那一支、把 `dropping` 设成 true，这条用例才红。
     #[tokio::test]
-    async fn pushing_an_action_event_bigger_than_a_batch_sends_it_alone_without_the_caller_flushing()
-     {
-        let (mut forwarder, drain) = forwarder();
-        for i in 0..5 {
-            let name_bytes = if i == 2 { 3 << 20 } else { 10 };
-            forwarder.event(&mark_event(i, name_bytes), i as i64);
+    async fn an_oversize_message_is_dropped_alone_without_marking_the_queue_as_full() {
+        let (telemetry, mut rx) = telemetry(10_000, 1000);
+        telemetry.send(log_batch_message("t", 3)); // 排得下的，已经在队列里
+        let queued = telemetry.queued.load(Ordering::SeqCst);
+        assert!(queued > 0);
+
+        telemetry.send(log_batch_message("t", 500)); // 比整个队列（10 000 字节）还大
+        assert!(
+            !telemetry.dropping.load(Ordering::SeqCst),
+            "队列没有满：不能当成「队列满了」，否则下一次真的满了时那条说明被当成已经写过而不写"
+        );
+        assert_eq!(
+            telemetry.queued.load(Ordering::SeqCst),
+            queued,
+            "队列的用量不变"
+        );
+
+        telemetry.send(log_batch_message("t", 2)); // 之后的照常进来
+        assert!(telemetry.queued.load(Ordering::SeqCst) > queued);
+        drop(telemetry);
+        let mut got = 0;
+        while rx.recv().await.is_some() {
+            got += 1;
         }
-        forwarder.poll(true);
-        drop(forwarder);
-        let batches: Vec<Vec<u64>> = drain
-            .await
-            .unwrap()
-            .iter()
-            .filter_map(|m| match &m.body {
-                Some(agent_message::Body::Actions(batch)) => Some(
-                    batch
-                        .events
-                        .iter()
-                        .map(|e| match &e.kind {
-                            Some(action_event::Kind::Mark(mark)) => mark.id,
-                            _ => panic!("不是标记"),
-                        })
-                        .collect(),
-                ),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(batches, vec![vec![0, 1], vec![2], vec![3, 4]]);
+        assert_eq!(got, 2, "前后两条都送到，只丢了超大的那一条");
+    }
+
+    /// 队列真的满了时，另一支照旧：`dropping` 为 true（说明只写一次），超大的那一支不碰它。
+    #[tokio::test]
+    async fn a_full_queue_still_marks_it_and_an_oversize_one_does_not_clear_it() {
+        let (telemetry, _rx) = telemetry(2_000, 1000);
+        telemetry.send(log_batch_message("t", 10)); // 约 1.3 KB
+        telemetry.send(log_batch_message("t", 10)); // 装不下：队列满了
+        assert!(telemetry.dropping.load(Ordering::SeqCst));
+        telemetry.send(log_batch_message("t", 100)); // 比整个队列还大：只丢它，不改状态
+        assert!(telemetry.dropping.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn the_oversize_note_names_the_kind_and_the_task_but_not_the_content() {
+        let mut logs = log_batch_message("task-7", 1);
+        let Some(agent_message::Body::Logs(batch)) = &mut logs.body else {
+            unreachable!()
+        };
+        batch.lines[0].text = "hunter2-the-secret".into();
+        let note = oversize_note(&logs, 5_000_000, 4_000_000);
+        assert!(note.contains("log lines"), "{note}");
+        assert!(note.contains("task-7"), "{note}");
+        assert!(
+            note.contains("5000000") && note.contains("4000000"),
+            "{note}"
+        );
+        assert!(!note.contains("hunter2"), "不写内容：{note}");
+
+        let notification = AgentMessage {
+            body: Some(agent_message::Body::Notification(Notification {
+                task_id: "task-8".into(),
+                attempt: 1,
+                event_json: "{\"message\":\"hunter2\"}".into(),
+            })),
+        };
+        let note = oversize_note(&notification, 10, 5);
+        assert!(
+            note.contains("notification") && note.contains("task-8"),
+            "{note}"
+        );
+        assert!(!note.contains("hunter2"), "{note}");
+
+        let actions = AgentMessage {
+            body: Some(agent_message::Body::Actions(ActionBatch {
+                task_id: "task-9".into(),
+                attempt: 1,
+                events: Vec::new(),
+            })),
+        };
+        let note = oversize_note(&actions, 10, 5);
+        assert!(
+            note.contains("action details") && note.contains("task-9"),
+            "{note}"
+        );
     }
 
     #[tokio::test]
