@@ -285,6 +285,15 @@ describe("嵌套的深度要在解析出来的树上量（复审 #762 第二轮�
 			expect(state).toEqual({ text: "ab", streaming: true, failed: false });
 		});
 
+		it("整条消息到了而文字和最后显示的一样（最常见：最后一段已经显示了）：也重试一次，只是 streaming 变假就够", () => {
+			const state: State = { text: "abcd", streaming: true, failed: true };
+			expect(next({ text: "abcd", streaming: false }, state)).toEqual({
+				text: "abcd",
+				streaming: false,
+				failed: false,
+			});
+		});
+
 		it("整条消息到了（streaming 变假）：重试一次（failed 清掉）；这一次再失败就一直是失败，直到文字变了", () => {
 			let state: State = { text: "abcd", streaming: true, failed: true };
 			state = next({ text: "abcde", streaming: false }, state);
