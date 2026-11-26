@@ -66,6 +66,8 @@ describe("一轮结束时提交", () => {
 		]);
 		// 事件是持久的：带 seq（控制面按它落库）。
 		expect(harness.events.of(id).find((r) => r.event.type === "platform")?.seq).toBeGreaterThan(0);
+		// 提交之后工作台上 git status 是干净的（临时索引换成了真的索引）。
+		expect(safeGit(harness.workdir, "status", "--porcelain")).toBe("");
 	});
 
 	it("没有改动的一轮：没有提交，也没有 platform 事件", async () => {
@@ -379,6 +381,23 @@ describe("提交不成时这一轮照常结束，留给下一轮开始前", () =
 		expect(commitsOf(harness, id)).toEqual([]);
 	}, 60_000);
 
+	it("提交做成了、把索引换到真的位置没做成：这一轮照常结束，platform 事件照发，日志里写了", async () => {
+		const harness = await start({
+			wrapAgent: (client) => ({
+				...client,
+				run: (argv, options) => (argv[0] === "mv" ? Promise.resolve(1) : client.run(argv, options)),
+			}),
+		});
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { session: SESSION, text: "run:echo hi > a.txt;;settle" });
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		expect(commitsOf(harness, id).map((c) => c.files.map((f) => f.path))).toEqual([["a.txt"]]);
+		expect(commitsOf(harness, id)[0]?.hash).toBe(
+			safeGit(harness.workdir, "rev-parse", "HEAD").trim(),
+		);
+		expect(harness.logs.some((line) => line.includes("把索引换到真的位置没做成"))).toBe(true);
+	}, 60_000);
+
 	it("提交超过期限（工作台卡在 write-tree）：放弃，这一轮照原来的结局结束，没有 platform 事件；下一轮开始前补提交", async () => {
 		const clock = new ManualClock();
 		const harness = await start({ clock });
@@ -493,8 +512,7 @@ describe("提交是平台做的", () => {
 		const before = JSON.stringify(commitsOf(harness, id));
 		const original = commitsOf(harness, id)[0]?.hash as string;
 
-		// 模型自己在用 git（索引里有 a.txt），把历史改写掉：平台的那个提交不在 HEAD 的历史里了。
-		git(harness.workdir, "add", "-A");
+		// 模型自己用 git 把历史改写掉：平台的那个提交不在 HEAD 的历史里了（真的索引是平台提交之后换上来的，不用先 git add）。
 		safeGit(harness.workdir, "reset", "--hard", "HEAD~1");
 		writeFileSync(join(harness.workdir, "other.txt"), "rewritten\n");
 		git(harness.workdir, "add", "-A");
@@ -581,7 +599,7 @@ describe("基准是平台自己上次记下的提交：模型自己用 git 也�
 		await harness.prompt(id, {
 			turn: 2,
 			session: SESSION,
-			text: "run:git add -A; git reset -q --hard HEAD~1;;settle",
+			text: "run:git reset -q --hard HEAD~1;;settle",
 		});
 		await harness.turnEnd(id, 2);
 		const second = commitsOf(harness, id).find((c) => c.turn === 2);
@@ -615,6 +633,46 @@ describe("基准是平台自己上次记下的提交：模型自己用 git 也�
 			true,
 		);
 		expect(lost?.diff).toContain("+又一个");
+	}, 60_000);
+});
+
+describe("同一个工作区上的几个会话", () => {
+	it("别的会话提交没做成留下的改动：这个会话下一轮开始前单独提交，不记进它自己的那一轮", async () => {
+		// 会话 B 这一轮提交做不成：把暂存的树写出来（write-tree）这一步让它失败（`failCommits` 为 true 时）。
+		let failCommits = false;
+		const harness = await start({
+			wrapAgent: (client) => ({
+				...client,
+				run: (argv, options) =>
+					failCommits && argv.includes("write-tree")
+						? Promise.resolve(1)
+						: client.run(argv, options),
+			}),
+		});
+		const a = crypto.randomUUID();
+		const b = crypto.randomUUID();
+		await harness.prompt(a, { session: SESSION, text: "run:echo a1 > a1.txt;;settle" });
+		await harness.turnEnd(a);
+		expect(commitsOf(harness, a).map((c) => c.files.map((f) => f.path))).toEqual([["a1.txt"]]);
+
+		// 会话 B（同一个工作台、同一个工作区）这一轮改了文件，提交没做成。
+		failCommits = true;
+		await harness.prompt(b, { session: SESSION, text: "run:echo b1 > b1.txt;;settle" });
+		expect(await harness.turnEnd(b)).toMatchObject({ outcome: "completed" });
+		failCommits = false;
+		expect(commitsOf(harness, b)).toEqual([]);
+		expect(existsSync(join(harness.workdir, "b1.txt"))).toBe(true);
+
+		// 会话 A 的第 2 轮：A 自己上一轮提交过了，但工作区上有 B 留下的改动：先单独提交，再提交 A 自己这一轮的。
+		await harness.prompt(a, { turn: 2, session: SESSION, text: "run:echo a2 > a2.txt;;settle" });
+		await harness.turnEnd(a, 2);
+		const events = commitsOf(harness, a).filter((c) => c.files[0]?.path !== "a1.txt");
+		expect(events.map((c) => c.files.map((f) => f.path))).toEqual([["b1.txt"], ["a2.txt"]]);
+		expect(
+			log(harness.workdir)
+				.slice(0, 2)
+				.map((line) => line.split(" | ").at(-1)),
+		).toEqual([`${label(a)}第 2 轮`, `${label(a)}第 1 轮被打断时留下的改动`]);
 	}, 60_000);
 });
 

@@ -229,11 +229,6 @@ interface Session {
 	/** 「在停止」的一轮（第 m 轮）。 */
 	stopping: Turn | undefined;
 	lastActive: number;
-	/**
-	 * 工作区里没有没提交的改动：上一轮的提交做成了（或者没有改动），或者刚初始化。助手服务刚启动、一轮开始时是 false：
-	 * 下一轮开始前不是 true 就查一遍有没有上一轮（被打断、提交没做成）留下的改动。
-	 */
-	committed: boolean;
 }
 
 export type CommandResult =
@@ -254,6 +249,12 @@ export class SessionManager {
 	readonly #prepareBudgetMs: number;
 	/** 平台在每个工作区上次记下的提交号（助手服务自己的数据目录里）：一轮改了什么按它算。 */
 	readonly #recorded: RecordedCommits;
+	/**
+	 * 工作区里没有没提交的改动：这个工作区最近一次的提交做成了（或者没有改动），或者刚初始化。**按工作区记**（工作台地址加路径，和
+	 * {@link RecordedCommits} 的键一样），不按会话：同一个工作区上别的会话被打断、提交没做成留下的改动，这个会话下一轮开始前也要先单独提交，
+	 * 不能记进它自己的那一轮。助手服务刚启动时没有记录、一轮开始时记成 false：下一轮开始前不是 true 就查一遍有没有留下的改动。
+	 */
+	readonly #clean = new Map<string, boolean>();
 	/** 正在关的 pi 进程（关 stdin 之后、退出之前）。 */
 	readonly #closing = new Set<PiProcess>();
 	/** 中止记号：会话 ID → 中止到第几轮（见 {@link abort}）。按最近一次提高的先后排，满了丢最早的。 */
@@ -568,7 +569,6 @@ export class SessionManager {
 				stopping: undefined,
 				stuck: undefined,
 				lastActive: this.#clock.now(),
-				committed: false,
 			};
 			this.#sessions.set(id, session);
 		}
@@ -687,7 +687,7 @@ export class SessionManager {
 			if (!process || process.exited || turn.ended || turn.stop) return;
 			turn.prompted = true;
 			// 这一轮开始改工作区了：做完提交之前它不算干净。
-			session.committed = false;
+			this.#setClean(turn, false);
 			const response = await process.request({ type: "prompt", message: body.text });
 			if (spawned) {
 				// 冷启动：从收到这句话到新起的 pi 接受它（写 skill、起进程、加载扩展、恢复会话）。
@@ -1091,14 +1091,14 @@ export class SessionManager {
 		}
 		// 这一轮就是因为工作台连不上而失败的（探过了）：不去提交，不多等；改动留给下一轮开始之前。
 		if (end.outcome === "failed" && end.reason.startsWith(WORKBENCH_UNREACHABLE)) {
-			session.committed = false;
+			this.#setClean(turn, false);
 			this.#conclude(session, turn, end, undefined, after);
 			return;
 		}
 		// 停止的期限快到了（控制面在那之后自己补结局、丢掉晚到的事件）：不提交，同步收尾，改动留给下一轮开始之前。
 		const budget = this.#commitBudget(turn);
 		if (budget < MIN_COMMIT_BUDGET_MS) {
-			session.committed = false;
+			this.#setClean(turn, false);
 			this.options.log(
 				`会话 ${session.id} 第 ${turn.number} 轮：离停止的期限太近，这一轮的提交留给下一轮开始之前`,
 			);
@@ -1168,8 +1168,8 @@ export class SessionManager {
 	}
 
 	/**
-	 * 一轮开始、交给 pi 之前整理工作区：不是 git 仓库就初始化（初次提交，不发事件）；是仓库、而且这一轮之前的提交没做成（`committed` 不是
-	 * true：会话刚开始、被打断、助手服务重启过、提交出了错）就先把留下的改动单独提交，发 `platform` 事件：
+	 * 一轮开始、交给 pi 之前整理工作区：不是 git 仓库就初始化（初次提交，不发事件）；是仓库、而且这个工作区不是干净的（{@link SessionManager.#clean}
+	 * 不是 true：刚开始、被打断、助手服务重启过、提交出了错，包括同一个工作区上别的会话留下的）就先把留下的改动单独提交，发 `platform` 事件：
 	 * 第 1 轮是「会话开始之前工作区里留下的改动」（`turn` 是 1），之后是「第 N-1 轮被打断时留下的改动」（`turn` 是被打断的那一轮，
 	 * 事件在这一轮的事件流里发出）。这些改动按平台上次记下的提交算，没记过的退回和 `HEAD` 比（差异开头有说明）。
 	 * 出了错只记日志，这一轮照常开始。这一轮被停止、结束时放弃。
@@ -1189,10 +1189,10 @@ export class SessionManager {
 			const created = await ensureRepository(agent, workdir, { signal: controller.signal });
 			if (created.created) {
 				this.#remember(session, address, workdir, created.recorded);
-				session.committed = true;
+				this.#setClean(turn, true);
 				return;
 			}
-			if (session.committed) return;
+			if (this.#isClean(turn)) return;
 			const first = turn.number === 1;
 			const outcome = await commitChanges(agent, workdir, {
 				message: `${this.#label(session, turn)}${first ? "会话开始之前工作区里留下的改动" : `第 ${turn.number - 1} 轮被打断时留下的改动`}`,
@@ -1202,7 +1202,8 @@ export class SessionManager {
 				recorded: this.#recorded.get(address, workdir),
 			});
 			this.#remember(session, address, workdir, outcome.recorded);
-			session.committed = true;
+			this.#logIndex(session, turn, outcome.indexError);
+			this.#setClean(turn, true);
 			if (outcome.result && !turn.ended) {
 				this.#emit(
 					session,
@@ -1219,6 +1220,27 @@ export class SessionManager {
 			agent.close();
 			turn.prepare = undefined;
 		}
+	}
+
+	#workspaceKey(turn: Turn): string {
+		const { address, workdir } = turn.body.workbench;
+		return `${address}\0${workdir}`;
+	}
+
+	#isClean(turn: Turn): boolean {
+		return this.#clean.get(this.#workspaceKey(turn)) === true;
+	}
+
+	#setClean(turn: Turn, clean: boolean): void {
+		this.#clean.set(this.#workspaceKey(turn), clean);
+	}
+
+	/** 提交成功之后把临时索引换到真的索引的位置没做成：提交已经做成了，只记日志（模型那边的索引是旧的）。 */
+	#logIndex(session: Session, turn: Turn, error: string | undefined): void {
+		if (error === undefined) return;
+		this.options.log(
+			`会话 ${session.id} 第 ${turn.number} 轮：提交已经做成，但把索引换到真的位置没做成（工作台上的 git status 会是旧的）：${this.#forLog(session, error)}`,
+		);
 	}
 
 	/** 记下平台这一刻在这个工作区的提交（下一轮的基准）。写不了（数据目录满了）只记日志：下一轮退回和 `HEAD` 比。 */
@@ -1295,10 +1317,11 @@ export class SessionManager {
 				recorded: this.#recorded.get(address, workdir),
 			});
 			this.#remember(session, address, workdir, outcome.recorded);
-			session.committed = true;
+			this.#logIndex(session, turn, outcome.indexError);
+			this.#setClean(turn, true);
 			return outcome.result && commitEventBody(turn.number, outcome.result, session.redactor);
 		} catch (error) {
-			session.committed = false;
+			this.#setClean(turn, false);
 			this.options.log(
 				`会话 ${session.id} 第 ${turn.number} 轮：提交工作区（工作台 ${name}）${controller.signal.aborted ? "被放弃了" : "失败"}：${this.#forLog(session, error instanceof Error ? error.message : String(error))}`,
 			);

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { posix } from "node:path";
 import { Code } from "@connectrpc/connect";
 import { type AssistantEvent, type CommitFile, SESSION_EVENT_LIMITS } from "@sfly/schema";
@@ -36,8 +37,10 @@ import type { Redactor } from "./redact.js";
  *      `.git/info/attributes` 里的过滤器、`fsmonitor` 就会执行（`diff.ignoreSubmodules`、`submodule.recurse` 都拦不住）；
  *      索引里的 `skip-worktree`、`assume-unchanged` 位会让改了的文件不进提交（记录少记）。空索引里什么都没有：工作区里的子仓库当作
  *      普通的嵌套仓库，记成一个 `gitlink`，不进去看。
- *    - 代价：每一轮都把工作区里的文件全读一遍（没有索引里的文件状态可省）；**真的索引平台不再更新**，所以在工作台上直接 `git status`
- *      会看到上一轮的改动像是没暂存（`HEAD` 已经是平台的提交、索引还是旧的）；模型自己 `git add -A` 一下就对了。
+ *    - 代价：每一轮都把工作区里的文件全读一遍、哈希一遍（没有索引里的文件状态可省）：大工作区里 `add -A` 是主要耗时，30 秒的期限不够时
+ *      这一轮的改动留给下一轮（sessions.ts）。
+ *    - **提交成功之后把临时索引换到真的索引的位置**（见下面「提交之后换索引」）：模型在工作台上接着用 git 时，`git status`、`git commit`、
+ *      `git reset --hard` 看到的是平台提交之后的状态。
  *    - 工作区里的 `.gitattributes` 另用 `GIT_ATTR_SOURCE`（空树）绕开，存进去的就是工作区里的字节（不做换行转换、不展开 `$Id$`）。
  *      只把属性来源设成空树**不够**：它只换掉工作区里的 `.gitattributes`，`.git/info/attributes` 照样读（在 git 2.47 上实测），
  *      所以才要上面的临时仓库。`.git/info/exclude` 是数据，用 `core.excludesFile` 指过来照常生效。
@@ -51,6 +54,17 @@ import type { Redactor } from "./redact.js";
  *    不靠 `.gitignore`：`.gitignore` 在模型手里，它删了、改了、写了 `!.agents/skills/` 都一样。只管根目录那一个：命令在工作区根目录里
  *    执行，路径是相对根的；节点包里 `sfly init` 放进去的 `<包>/.agents/skills/` 是用户的东西，照常提交。
  *
+ * ## 提交之后换索引
+ *
+ * 暂存用的是临时仓库里的索引，所以平台提交之后真的索引（`.git/index`）还是旧的：`HEAD` 已经是平台的提交、索引里却没有它的内容，模型
+ * 接着在工作台上 `git status` 会看到上一轮的改动像是没暂存，不带 `git add` 的 `git commit` 会提交一个把文件都删掉的提交，`git reset --hard`
+ * 删不掉它没暂存过的文件（「`reset --hard` 退回去，这一轮记成删掉」靠这一步）。所以 **`update-ref` 成功之后**，把临时索引复制到真的索引
+ * 旁边的一个新名字（名字里有随机串），再 `mv -f` 换到真的索引的位置（同一个目录里的重命名，读的人不会读到写了一半的）。这两条命令不是
+ * git 命令：没有钩子（`post-index-change` 不会跑），不读任何仓库配置。**换不成不影响这次提交**：提交和 `update-ref` 已经做完了，
+ * 结果照常返回，换索引的失败写在 {@link CommitOutcome.indexError}（调用方记日志），模型那边的索引留着旧的，和不换时一样。
+ * 真的索引的位置（`.git/index`）是符号链接时，`mv` 换掉的是链接本身，不写到它指向的地方；指到目录的符号链接（`mv` 当成「移进目录」）、
+ * `.git` 是 `gitdir:` 文件时写到哪里，和模型自己的权限相同，防不了。
+ *
  * ## 记什么：基准是平台自己上次记下的提交
  *
  * 一轮的记录是「这一轮的树」和「平台上次记下的树」之差，**不是**和 `HEAD` 比：模型自己 `git commit`、`git reset --hard`、改写历史之后，
@@ -60,20 +74,21 @@ import type { Redactor } from "./redact.js";
  * - 这一轮的树等于上次记下的树：没有改动，不提交、不发事件。
  * - 不等：做一个提交，**父提交是当前的 `HEAD`**（模型的历史接着往下；模型已经把改动都提交了时，这是一个空提交，只记这一轮），
  *   事件里的文件统计和差异是「上次记下的树 → 这一轮的树」。
- * - 从没记过（第一轮、助手服务的数据目录丢了）或记的提交已经不在仓库里（模型 `gc`、删了对象）：退回和 `HEAD` 比，
+ * - 从没记过（第一轮、助手服务的数据目录丢了）或记的提交读不出来（模型 `gc`、删了对象、对象被写坏：读它的提交、它的树、或者取差异要读的
+ *   文件对象时出错）：退回和 `HEAD` 比，
  *   差异开头加一行说明（{@link CommitResult.note}：事件的契约里没有放这件事的字段，不改契约）。
  *
  * 没做到的：
  * - 模型在提交进行的同时还有进程在往 `.git/` 里写（它起的后台进程，包括脱离进程组的：`setsid`）时，上面的「读不到」不保证；
  *   提交不会在命令结束之后还被什么执行。
- * - 平台用的 `git`、`mktemp`、`rm` 是工作台 `PATH` 上找到的那几个：Agent 以 root 运行、或 `PATH` 里有模型能写的目录时，模型能换掉它们。
+ * - 平台用的 `git`、`mktemp`、`rm`、`cp`、`mv` 是工作台 `PATH` 上找到的那几个：Agent 以 root 运行、或 `PATH` 里有模型能写的目录时，模型能换掉它们。
  *   这和模型本来就有的权限一样，防不了。
- * - `.git/logs/HEAD` 是符号链接、`.git` 是一个 `gitdir:` 文件（指到别处）时，平台更新分支会写到那个地方：同样是模型自己的权限。
+ * - `.git/logs/HEAD` 是符号链接、`.git` 是一个 `gitdir:` 文件（指到别处）时，平台更新分支、换索引会写到那个地方：同样是模型自己的权限。
  * - 模型存心毁掉平台的记录：先自己提交全部改动，再改写历史并清掉平台上次记下的提交对象，这一轮会退回和 `HEAD` 比、记成没有改动
  *   （上面第三种）；`HEAD` 指到不存在的提交时平台提交不成（记日志、不发事件，每一轮都再试）。要防这些得把记录放到模型够不着的地方（#752 起）。
  * - 经过滤器管理的文件（git-lfs 一类）按工作区里的原样提交，不经过滤器。
- * - 提交进行中平台被放弃（期限到了、助手服务退出）：这一轮照常结束，`update-ref` 可能已经在工作台上做了、事件没发出去；
- *   这一轮的提交做成了、但这一轮已经结束（晚到的事件被丢）。这两个窗口很小，不处理（记日志）。
+ * - 提交进行中平台被放弃（期限到了、助手服务退出）：这一轮照常结束，`update-ref` 可能已经在工作台上做了、事件没发出去（换索引
+ *   也可能没做，模型那边的索引是旧的）；这一轮的提交做成了、但这一轮已经结束（晚到的事件被丢）。这几个窗口很小，不处理（记日志）。
  *
  * 连不上工作台、git 不在、仓库坏了：抛 {@link WorkspaceError} 或工作台的错误，由调用方记日志；这一轮照常结束，留给下一轮开始前再试
  * （sessions.ts）。
@@ -196,16 +211,20 @@ export interface CommitOutcome {
 	/** 这一轮的提交；没有改动是 undefined（什么也没留下）。 */
 	result: CommitResult | undefined;
 	/**
-	 * 之后平台记下的提交号（下一轮的基准）：提交了是新的提交；没有改动时是原来记的；没有记过（或记的不在了）时是 `HEAD`
+	 * 之后平台记下的提交号（下一轮的基准）：提交了是新的提交；没有改动时是原来记的；没有记过（或记的读不出来）时是 `HEAD`
 	 * （没有改动，`HEAD` 的树就是这一轮的树）。
 	 */
 	recorded: string | undefined;
+	/** 提交成功之后把临时索引换到真的索引的位置没做成：原因（给日志）。做成了、或者没有提交时 undefined。 */
+	indexError?: string;
 }
 
 interface Repository {
 	gitDir: string;
 	objects: string;
 	exclude: string;
+	/** 真的索引的位置（提交之后临时索引换到这里）。 */
+	index: string;
 }
 
 interface GitCall {
@@ -306,6 +325,8 @@ async function findRepository(
 			"objects",
 			"--git-path",
 			"info/exclude",
+			"--git-path",
+			"index",
 		],
 		cwd: workdir,
 		// 不往上找：工作区之上的目录里有仓库也不算。
@@ -313,12 +334,12 @@ async function findRepository(
 		signal,
 	});
 	if (result.code === 0) {
-		const [gitDir, objects, exclude] = result.stdout.toString("utf8").split("\n");
-		if (!gitDir || !objects || !exclude) {
+		const [gitDir, objects, exclude, index] = result.stdout.toString("utf8").split("\n");
+		if (!gitDir || !objects || !exclude || !index) {
 			throw new WorkspaceError("git rev-parse 的输出认不出来");
 		}
 		const at = (path: string) => posix.resolve(workdir, path);
-		return { gitDir, objects: at(objects), exclude: at(exclude) };
+		return { gitDir, objects: at(objects), exclude: at(exclude), index: at(index) };
 	}
 	if (/not a git repository/i.test(result.stderr)) return undefined;
 	must(result, "git rev-parse");
@@ -431,7 +452,7 @@ export async function commitChanges(
 			.toString("utf8")
 			.trim();
 
-		// 基准：平台上次记下的提交的树；没记过、不在了就退回 HEAD 的树。
+		// 基准：平台上次记下的提交的树；没记过、读不出来就退回 HEAD 的树。
 		const recordedTree = await treeOf(run, objects, input.recorded);
 		const headTree = parent
 			? must(await run(["rev-parse", `${parent}^{tree}`], objects), "git rev-parse")
@@ -442,7 +463,7 @@ export async function commitChanges(
 		if (tree === baseTree) {
 			return { result: undefined, recorded: recordedTree ? input.recorded : parent };
 		}
-		const note = recordedTree ? undefined : fallbackNote(input.recorded, parent);
+		let note = recordedTree ? undefined : fallbackNote(input.recorded, parent);
 
 		const author = identity(input.author);
 		const hash = must(
@@ -466,22 +487,40 @@ export async function commitChanges(
 		let diff: Buffer = Buffer.alloc(0);
 		let diffComplete = true;
 		if (input.summary !== false) {
-			const show = ["diff-tree", "-r", "--no-renames"];
-			const numstat = await run(
-				[...show, "--numstat", "-z", "--no-ext-diff", "--no-textconv", baseTree, tree],
-				compare,
-				NUMSTAT_LIMIT_BYTES,
-			);
-			files = parseNumstat(must(numstat, "git diff-tree"), numstat.cut);
 			const limit = SESSION_EVENT_LIMITS.commitDiffBytes + (input.diffExtraBytes ?? 0);
-			const patch = await run(
-				[...show, "-p", "--no-color", "--no-ext-diff", "--no-textconv", baseTree, tree],
-				compare,
-				limit + 1,
-			);
-			must(patch, "git diff-tree");
-			diffComplete = patch.stdout.length <= limit && !patch.cut;
-			diff = patch.stdout.subarray(0, limit);
+			const summarize = async (base: string) => {
+				const show = ["diff-tree", "-r", "--no-renames"];
+				const numstat = await run(
+					[...show, "--numstat", "-z", "--no-ext-diff", "--no-textconv", base, tree],
+					compare,
+					NUMSTAT_LIMIT_BYTES,
+				);
+				const changed = parseNumstat(must(numstat, "git diff-tree"), numstat.cut);
+				const patch = await run(
+					[...show, "-p", "--no-color", "--no-ext-diff", "--no-textconv", base, tree],
+					compare,
+					limit + 1,
+				);
+				must(patch, "git diff-tree");
+				return {
+					files: changed,
+					diff: patch.stdout.subarray(0, limit),
+					complete: patch.stdout.length <= limit && !patch.cut,
+				};
+			};
+			let summary: Awaited<ReturnType<typeof summarize>>;
+			try {
+				summary = await summarize(baseTree);
+			} catch (error) {
+				// 平台上次记下的提交的树在、但取差异要读的对象不在或被写坏了（git 退出码非零）：和「记下的提交读不出来」一样退回和 HEAD 比，
+				// 不能让每一轮都为这个失败下去。别的错（工作台不回话、被放弃）不在这里处理。
+				if (!(error instanceof WorkspaceError) || !recordedTree) throw error;
+				note = fallbackNote(input.recorded, parent);
+				summary = await summarize(headTree);
+			}
+			files = summary.files;
+			diff = summary.diff;
+			diffComplete = summary.complete;
 		}
 
 		// 分支最后动：上面任何一步失败，仓库里只多了没人引用的对象。
@@ -501,14 +540,21 @@ export async function commitChanges(
 			}),
 			"git update-ref",
 		);
-		return { result: { hash, files, diff, diffComplete, note }, recorded: hash };
+		// 提交已经做成：换索引没做成也不抛，结果照常返回（见文件头「提交之后换索引」）。
+		const indexError = await swapIndex(agent, posix.join(scratch, "index"), repo.index, signal);
+		return {
+			result: { hash, files, diff, diffComplete, note },
+			recorded: hash,
+			...(indexError !== undefined && { indexError }),
+		};
 	} finally {
 		await removeScratch(agent, scratch, signal);
 	}
 }
 
 /**
- * 平台上次记下的提交的树；没记过、不在仓库里（连同它的树）时 undefined。不去远端取（`GIT_NO_LAZY_FETCH`）：缺的对象就是缺的。
+ * 平台上次记下的提交的树的对象号；没记过、读不出来（提交不在、对象被写坏：`rev-parse` 退出码非零，任何一种）时 undefined。
+ * 只读提交本身，不去远端取（`GIT_NO_LAZY_FETCH`）：缺的对象就是缺的。树里的对象在不在，取差异时才知道（见 {@link commitChanges}）。
  */
 async function treeOf(
 	run: (args: string[], env: Record<string, string>) => Promise<GitResult>,
@@ -517,18 +563,55 @@ async function treeOf(
 ): Promise<string | undefined> {
 	if (!recorded || !OBJECT_ID.test(recorded)) return undefined;
 	const found = await run(["rev-parse", "-q", "--verify", `${recorded}^{tree}`], objects);
-	if (found.code === 1) return undefined;
-	const tree = must(found, "git rev-parse").toString("utf8").trim();
-	if (!OBJECT_ID.test(tree)) throw new WorkspaceError("git rev-parse 的输出认不出来");
-	// 提交在、它的树不在（模型删了对象）：同样退回。
-	const exists = await run(["cat-file", "-e", tree], objects);
-	return exists.code === 0 ? tree : undefined;
+	if (found.code !== 0) return undefined;
+	const tree = found.stdout.toString("utf8").trim();
+	return OBJECT_ID.test(tree) ? tree : undefined;
+}
+
+/**
+ * 提交成功之后把临时索引换到真的索引的位置：复制到真的索引旁边的一个新名字（有随机串）、再 `mv -f` 换上去。不是 git 命令：
+ * 没有钩子，不读仓库配置。返回 undefined 是换成了；没换成返回原因（给日志），临时的副本尽量删掉。
+ */
+async function swapIndex(
+	agent: WorkspaceAgent,
+	from: string,
+	to: string,
+	signal: AbortSignal | undefined,
+): Promise<string | undefined> {
+	const copy = `${to}.sfly-${randomBytes(6).toString("hex")}`;
+	try {
+		for (const argv of [
+			["cp", from, copy],
+			["mv", "-f", copy, to],
+		]) {
+			const done = await execute(agent, argv, { cwd: "/", signal });
+			if (done.code !== 0) {
+				const detail = done.stderr.trim().slice(0, 300);
+				throw new WorkspaceError(
+					`${argv[0]} 失败（退出码 ${done.code}）${detail ? `：${detail}` : ""}`,
+				);
+			}
+		}
+		return undefined;
+	} catch (error) {
+		try {
+			await execute(agent, ["rm", "-f", copy], {
+				cwd: "/",
+				signal: AbortSignal.timeout(ABANDONED_CLEANUP_MS),
+			});
+		} catch {
+			// 连不上工作台：留着一个小文件。
+		}
+		return error instanceof Error ? error.message : String(error);
+	}
 }
 
 /** 基准退回到 `HEAD` 时差异开头那一行：平台自己的话，说明这份差异是和什么比的。 */
 function fallbackNote(recorded: string | undefined, head: string | undefined): string {
 	const against = head ? `仓库当前提交（${head.slice(0, 7)}）` : "空仓库";
-	const why = recorded ? "平台上次记下的提交已经不在仓库里" : "平台还没有记过这个工作区的提交";
+	const why = recorded
+		? "平台上次记下的提交读不出来（对象不在或已损坏）"
+		: "平台还没有记过这个工作区的提交";
 	return `（${why}，下面是和${against}的差异）\n`;
 }
 

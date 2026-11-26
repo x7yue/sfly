@@ -1,12 +1,17 @@
 // 工作区的提交（#546）：助手服务经能力端口在工作台上做 git 初始化和每一轮结束时的提交。假工作台在本机真的执行命令，
 // 所以这里跑的是真的 git：初始化、提交、模型布下陷阱时提交不执行它们、差异的截断和打码。
 import {
+	chmodSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -101,8 +106,9 @@ describe("初始化工作区", () => {
 		expect(log(workdir)).toEqual([
 			`${PLATFORM_IDENTITY.name} | ${PLATFORM_IDENTITY.name} | 初始化工作区`,
 		]);
-		// 平台不碰模型的索引（暂存在临时仓库里）：初始化出来的仓库里没有 .git/index，直到有人自己暂存。
-		expect(existsSync(join(workdir, ".git", "index"))).toBe(false);
+		// 提交之后临时索引换成了真的索引：初始化出来的仓库里有 .git/index，`git status` 是干净的。
+		expect(existsSync(join(workdir, ".git", "index"))).toBe(true);
+		expect(safeGit(workdir, "status", "--porcelain", "--ignored=no")).toBe("");
 	});
 
 	it("已经是仓库：什么都不做（没有提交，.gitignore 不改）", async () => {
@@ -174,10 +180,10 @@ describe("提交", () => {
 				"HEAD",
 			),
 		);
-		// 提交的树就是工作区里的东西（`git status` 不能拿来比：平台不更新模型的索引，见 workspace.ts 文件头）。
 		expect(tracked()).toEqual([".gitignore", "a.txt", "logo.png", "sub/new.txt"]);
 		expect(safeGit(workdir, "show", "HEAD:a.txt")).toBe("one\nTWO\nthree\n");
-		expect(existsSync(join(workdir, ".git", "index"))).toBe(false);
+		// 提交之后工作区是干净的：模型在工作台上 `git status` 看不到没提交的东西（临时索引换成了真的索引）。
+		expect(safeGit(workdir, "status", "--porcelain")).toBe("");
 	});
 
 	it("没有改动：不提交（返回 undefined），已有的提交不变", async () => {
@@ -387,17 +393,17 @@ describe("模型布下的陷阱（续）：子模块、部分克隆、属性、�
 		expect(diff).not.toContain("Binary files");
 	});
 
-	it("模型的索引里有 skip-worktree、assume-unchanged：改了的文件照样进提交；平台不动模型的索引", async () => {
+	it("模型的索引里有 skip-worktree、assume-unchanged：改了的文件照样进提交；提交之后真的索引是新的（位已清掉）", async () => {
 		for (const flag of ["--skip-worktree", "--assume-unchanged"]) {
-			model("reset", "-q"); // 平台不更新索引：先按 HEAD 把模型的索引填好
 			model("update-index", flag, "a.txt");
 			write("a.txt", `藏起来的改动 ${flag}\n`);
-			const index = readFileSync(join(workdir, ".git", "index"));
+			expect(safeGit(workdir, "status", "--porcelain"), `${flag} 藏住了改动`).toBe("");
 			const result = await commit(`${MESSAGE} ${flag}`);
 			expect(result?.files, flag).toEqual([{ path: "a.txt", additions: 1, deletions: 1 }]);
 			expect(result?.diff.toString("utf8"), flag).toContain(`+藏起来的改动 ${flag}`);
-			expect(readFileSync(join(workdir, ".git", "index")).equals(index), flag).toBe(true);
-			model("update-index", flag.replace("--", "--no-"), "a.txt");
+			// 换上去的是平台暂存出来的新索引：位没有了，状态干净。
+			expect(safeGit(workdir, "ls-files", "-v", "a.txt").startsWith("H "), flag).toBe(true);
+			expect(safeGit(workdir, "status", "--porcelain"), flag).toBe("");
 		}
 	});
 
@@ -440,6 +446,105 @@ describe("模型布下的陷阱（续）：子模块、部分克隆、属性、�
 		expect(gits.some((run) => run.env.GIT_INDEX_FILE === join(workdir, ".git", "index"))).toBe(
 			false,
 		);
+	});
+});
+
+describe("提交之后把临时索引换到真的索引的位置", () => {
+	beforeEach(async () => {
+		write("a.txt", "one\n");
+		write("keep.txt", "k\n");
+		await initialize();
+	});
+
+	it("平台提交之后工作区里 git status 是干净的；模型不带 add 的 git commit 不会把文件删掉", async () => {
+		write("a.txt", "two\n");
+		write("new.txt", "new\n");
+		rmSync(join(workdir, "keep.txt"));
+		await commit();
+		expect(safeGit(workdir, "status", "--porcelain")).toBe("");
+		const platform = safeGit(workdir, "rev-parse", "HEAD^{tree}").trim();
+		// 模型接着用 git：没有 add 就提交（空提交），树和平台的一样，文件一个没少。
+		model("commit", "-q", "--allow-empty", "-m", "模型的提交");
+		expect(safeGit(workdir, "rev-parse", "HEAD^{tree}").trim()).toBe(platform);
+		expect(tracked()).toEqual([".gitignore", "a.txt", "new.txt"]);
+		// 模型自己改一个文件再 git commit -a：只有这个改动。
+		write("a.txt", "three\n");
+		model("commit", "-qam", "改 a");
+		expect(safeGit(workdir, "show", "--format=", "--name-status", "HEAD").trim()).toBe("M\ta.txt");
+	});
+
+	it("模型已经暂存了一部分：换上来的是平台暂存出来的完整的索引，不是模型自己的", async () => {
+		write("a.txt", "two\n");
+		write("b.txt", "b\n");
+		model("add", "b.txt"); // 模型自己的暂存
+		await commit();
+		expect(safeGit(workdir, "diff", "--cached", "--name-only")).toBe("");
+		expect(safeGit(workdir, "status", "--porcelain")).toBe("");
+	});
+
+	it("没有改动：不提交，也不动真的索引（没有换索引的命令）", async () => {
+		const index = join(workdir, ".git", "index");
+		const before = readFileSync(index);
+		const runs = bench.runs.length;
+		expect(await commit()).toBeUndefined();
+		expect(readFileSync(index).equals(before)).toBe(true);
+		expect(
+			bench.runs.slice(runs).filter((run) => run.argv[0] === "cp" || run.argv[0] === "mv"),
+		).toEqual([]);
+	});
+
+	it("换不成（mv 失败）：提交和 update-ref 已经做成，结果照常返回，indexError 写原因，临时的副本删掉", async () => {
+		write("a.txt", "two\n");
+		const before = readFileSync(join(workdir, ".git", "index"));
+		const broken: AgentClient = {
+			...agent,
+			run: (argv, options) => (argv[0] === "mv" ? Promise.resolve(1) : agent.run(argv, options)),
+		};
+		const outcome = await commitChanges(broken, workdir, {
+			message: MESSAGE,
+			author: ALICE,
+			recorded,
+		});
+		expect(outcome.result?.files).toEqual([{ path: "a.txt", additions: 1, deletions: 1 }]);
+		expect(outcome.recorded).toBe(safeGit(workdir, "rev-parse", "HEAD").trim());
+		expect(outcome.indexError).toMatch(/mv 失败/);
+		// 真的索引没动、没有留下副本。
+		expect(readFileSync(join(workdir, ".git", "index")).equals(before)).toBe(true);
+		expect(readdirSync(join(workdir, ".git")).filter((name) => name.includes(".sfly-"))).toEqual(
+			[],
+		);
+	});
+
+	it(".git/index 是符号链接：换掉的是链接本身，不写到它指向的地方", async () => {
+		const outside = join(root, "outside-index");
+		renameSync(join(workdir, ".git", "index"), outside);
+		symlinkSync(outside, join(workdir, ".git", "index"));
+		const before = readFileSync(outside);
+		write("a.txt", "two\n");
+		const outcome = await commitChanges(agent, workdir, {
+			message: MESSAGE,
+			author: ALICE,
+			recorded,
+		});
+		expect(outcome.indexError).toBeUndefined();
+		expect(readFileSync(outside).equals(before)).toBe(true);
+		expect(lstatSync(join(workdir, ".git", "index")).isSymbolicLink()).toBe(false);
+		expect(safeGit(workdir, "status", "--porcelain")).toBe("");
+	});
+
+	it("换索引的命令不是 git：没有钩子（post-index-change 不跑），名字里有随机串", async () => {
+		const traps = plantTraps(workdir);
+		write("a.txt", "two\n");
+		const runs = bench.runs.length;
+		await commit();
+		expect(traps.ran()).toEqual([]);
+		const swaps = bench.runs
+			.slice(runs)
+			.filter((run) => run.argv[0] === "cp" || run.argv[0] === "mv");
+		expect(swaps.map((run) => run.argv[0])).toEqual(["cp", "mv"]);
+		const copy = swaps[0]?.argv[2] as string;
+		expect(copy).toMatch(/\/\.git\/index\.sfly-[0-9a-f]{12}$/);
+		expect(swaps[1]?.argv).toEqual(["mv", "-f", copy, join(workdir, ".git", "index")]);
 	});
 });
 
@@ -508,7 +613,7 @@ describe("基准是平台自己上次记下的提交，不是 HEAD", () => {
 	it("git reset --hard 退回去：这些文件记成被删掉", async () => {
 		write("b.txt", "new\n");
 		await commit("第一次");
-		model("add", "-A"); // 模型自己在用 git：它的索引里有这些文件（平台不更新索引），reset --hard 才会删掉它们
+		// 模型自己 reset --hard：真的索引是平台提交之后换上来的，里面有这些文件，reset 才会把它们删掉。
 		model("reset", "--hard", "HEAD~1");
 		expect(existsSync(join(workdir, "b.txt"))).toBe(false);
 		const result = await commit("第二次");
@@ -565,10 +670,64 @@ describe("基准是平台自己上次记下的提交，不是 HEAD", () => {
 		write("a.txt", "two\n");
 		const result = await commit(MESSAGE, { recorded: "2".repeat(40) });
 		expect(result?.files).toEqual([{ path: "a.txt", additions: 1, deletions: 1 }]);
-		expect(result?.note).toContain("平台上次记下的提交已经不在仓库里");
+		expect(result?.note).toContain("平台上次记下的提交读不出来");
 		const event = commitEventBody(1, result as CommitResult, new Redactor());
 		expect(event.diff.startsWith(result?.note as string)).toBe(true);
 		expect(event.diff).toContain("+two");
+	});
+
+	/** 平台记下一个提交（把 a.txt 改成 two），模型接着 reset --hard 回到初始提交：HEAD 的树和平台记下的树不同。返回平台那个提交。 */
+	const recordedThenReset = async () => {
+		write("a.txt", "two\n");
+		const first = (await commit("第一次"))?.hash as string;
+		model("reset", "--hard", "HEAD~1");
+		return first;
+	};
+	const looseObject = (id: string) => join(workdir, ".git", "objects", id.slice(0, 2), id.slice(2));
+	const expectFellBackToHead = (result: CommitResult | undefined) => {
+		expect(result?.note).toContain("平台上次记下的提交读不出来");
+		// 和 HEAD（初始提交：a.txt 是 one）比。
+		expect(result?.files).toEqual([{ path: "a.txt", additions: 1, deletions: 1 }]);
+		expect(result?.diff.toString("utf8")).toContain("-one");
+		expect(result?.diff.toString("utf8")).toContain("+three");
+	};
+
+	it("记下的提交在、它的树不在（模型删了对象）：退回和 HEAD 比，差异开头写明，不抛错；以后的提交照常", async () => {
+		const first = await recordedThenReset();
+		const tree = safeGit(workdir, "rev-parse", `${first}^{tree}`).trim();
+		rmSync(looseObject(tree));
+		write("a.txt", "three\n");
+		expectFellBackToHead(await commit("第二次"));
+		// 基准换成了新的提交，下一轮没有说明行。
+		write("a.txt", "four\n");
+		const next = await commit("第三次");
+		expect(next?.note).toBeUndefined();
+		expect(next?.files).toEqual([{ path: "a.txt", additions: 1, deletions: 1 }]);
+	});
+
+	it("记下的提交的树里、取差异要读的文件对象被删了：退回和 HEAD 比，差异开头写明，不抛错", async () => {
+		const first = await recordedThenReset();
+		rmSync(looseObject(safeGit(workdir, "rev-parse", `${first}:a.txt`).trim()));
+		write("a.txt", "three\n");
+		expectFellBackToHead(await commit("第二次"));
+	});
+
+	it("记下的提交对象被写坏了：退回和 HEAD 比，差异开头写明，不抛错", async () => {
+		const first = await recordedThenReset();
+		chmodSync(looseObject(first), 0o644);
+		writeFileSync(looseObject(first), "不是 git 对象");
+		write("a.txt", "three\n");
+		expectFellBackToHead(await commit("第二次"));
+	});
+
+	it("HEAD 的树也读不出来（仓库坏了）：抛错，不假装成功，分支不动", async () => {
+		await recordedThenReset();
+		const head = safeGit(workdir, "rev-parse", "HEAD").trim();
+		rmSync(looseObject(safeGit(workdir, "rev-parse", "HEAD^{tree}").trim()));
+		write("a.txt", "three\n");
+		recorded = "2".repeat(40);
+		await expect(commit("第二次")).rejects.toThrow(/git (rev-parse|diff-tree)/);
+		expect(safeGit(workdir, "rev-parse", "HEAD").trim()).toBe(head);
 	});
 
 	it("还没有提交的仓库（HEAD 没出生）：和空仓库比，说明里这么写", async () => {
