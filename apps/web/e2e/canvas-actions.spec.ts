@@ -321,7 +321,8 @@ test("检查器：名称太多、表里只列了一部分时，失败数用合�
 
 	const area = panel.getByRole("region", { name: "动作" });
 	await expect(area.getByRole("list", { name: "最近的失败" }).getByRole("listitem")).toHaveCount(5);
-	await expect(area).toContainText(/最近的失败\s*5(?!\d)/); // 不是 0：合计的失败数
+	// 失败列表的标题旁边是合计的失败数 5（不是名称表里各项加起来的 0）
+	await expect(area.getByRole("heading", { name: /^最近的失败/ })).toHaveText(/5$/);
 	await expect(area.getByTestId("unlisted-names")).toHaveText(
 		"另有一些名称没有列出：共 40 个动作和标记，其中 5 个失败",
 	);

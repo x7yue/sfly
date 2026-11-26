@@ -876,6 +876,41 @@ def test_when_the_lists_do_not_fit_the_lowest_priority_is_dropped_first_and_it_i
     assert (d["total"], d["failed"]) == (full["total"], 2)
 
 
+def test_one_entry_that_does_not_fit_stops_the_fitting_even_if_a_later_smaller_one_would(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """装不下一项就停：它后面更小的、更低优先级的项也不再装（省去的永远是优先级低的，不会出现高优先级的
+    列表缺了一项、低优先级的列表却装进来更小的）。"""
+    actions, sink = sink_actions()
+    actions.start("失败").fail("拒单")  # 最近失败的 1 项，也在最近结束的里
+    big = actions.start("很长的进行中" + "名" * 2000)  # 正在做的这一项很大
+    actions.start("小").end()  # 最近结束的里还有一个很小的
+    actions.flush()
+    assert sink.last is not None
+    failed_cost = len(_dumps(sink.last["recent_failed"][0]).encode()) + 2
+    big_cost = len(_dumps(sink.last["running"][0]).encode()) + 2
+    small_cost = len(_dumps(sink.last["recent"][0]).encode()) + 2  # 最近结束的第一项（最近的在前）
+    assert big_cost > 3 * small_cost > 0
+    empty = {
+        **sink.last,
+        "running": [],
+        "recent": [],
+        "recent_failed": [],
+        "running_complete": False,
+    }
+    base = len(_dumps(empty).encode()) + 1
+    # 装得下最近失败的那一项和最近结束的那个小的，装不下正在做的那个大的
+    monkeypatch.setattr("sfly.actions.MAX_SUMMARY_BYTES", base + failed_cost + small_cost + 1)
+    actions._dirty = True
+    actions.flush()
+    summary = sink.last
+    assert [e["name"] for e in summary["recent_failed"]] == ["失败"]
+    assert summary["running"] == []
+    assert summary["recent"] == [], "正在做的装不下就停，后面最近结束的里更小的那一项也不装"
+    assert (summary["lists_trimmed"], summary["running_complete"]) == (True, False)
+    big.end()
+
+
 def test_running_complete_says_whether_every_running_action_is_listed() -> None:
     actions, sink = sink_actions()
     for i in range(50):
