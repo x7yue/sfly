@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { agentBinariesApi } from "@sfly/schema";
+import { agentBinariesApi, TOKEN_PREFIXES } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type AgentBinaries, agentBinaryUrl } from "../agent-binaries/agent-binaries.js";
 import { renderInstallScript } from "../agent-binaries/install-script.js";
@@ -61,6 +61,7 @@ export function registerAgentBinaryRoutes(
 					SHA256_AARCH64: sha256("aarch64"),
 					PYPI_MIRROR: mirrors.pypi ?? "",
 					GITHUB_RELEASE_MIRROR: mirrors.githubRelease ?? "",
+					AGENT_CREDENTIAL_PREFIX: TOKEN_PREFIXES.agent,
 				}),
 			);
 	});

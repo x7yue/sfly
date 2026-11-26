@@ -96,6 +96,12 @@
             ],
             "description": "同 `capped_at`，用 Agent 时间表示。"
           },
+          "failed_total": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "全部名称合计失败的动作数：包括没进 `names` 的名称的失败（`names` 里各项的 `failed` 加起来会少算它们）。\n控制台的失败数用它。"
+          },
           "names": {
             "type": "array",
             "items": {
@@ -153,7 +159,44 @@
                 "agent_capped_at"
               ]
             },
-            "description": "每种名称一项，按第一次出现的先后。"
+            "description": "每种名称一项，按第一次出现的先后，最多 `ACTION_LIMITS.summaryNames` 种，名称很长时更少（名称表的字节预算\n`ACTION_LIMITS.summaryNamesBytes`）。没进表的名称合在一起写在 `unlisted`；`names_complete` 为 false。"
+          },
+          "names_complete": {
+            "type": "boolean",
+            "description": "`names` 是不是全部的名称。"
+          },
+          "unlisted": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "failed": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "reported": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "total",
+                  "failed",
+                  "reported"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "没进 `names` 的名称合在一起的计数（动作和标记的个数、其中失败的动作数、有明细的个数）：`names_complete` 为\nfalse 时有，否则为 null。不写名称，也没有它们有几种名称的数（SDK 不记）。"
           },
           "running": {
             "type": "array",
@@ -215,11 +258,15 @@
                 "agent_started_at"
               ]
             },
-            "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。"
+            "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列；摘要装不下\n（`ACTION_LIMITS.summaryBytes`）时更少，优先级低的先省。"
           },
           "running_complete": {
             "type": "boolean",
-            "description": "`running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。"
+            "description": "`running` 是不是全部正在做的动作：没列全（超过 `ACTION_LIMITS.running` 个，或因为摘要的大小被省去了）时为 false。"
+          },
+          "lists_trimmed": {
+            "type": "boolean",
+            "description": "`running`、`recent`、`recent_failed` 里有没有因为摘要的大小（`ACTION_LIMITS.summaryBytes`）被省去的项。"
           },
           "recent": {
             "type": "array",
@@ -422,9 +469,13 @@
           "control_plane_capped",
           "capped_at",
           "agent_capped_at",
+          "failed_total",
           "names",
+          "names_complete",
+          "unlisted",
           "running",
           "running_complete",
+          "lists_trimmed",
           "recent",
           "recent_failed"
         ]
@@ -874,6 +925,12 @@
               ],
               "description": "同 `capped_at`，用 Agent 时间表示。"
             },
+            "failed_total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "description": "全部名称合计失败的动作数：包括没进 `names` 的名称的失败（`names` 里各项的 `failed` 加起来会少算它们）。\n控制台的失败数用它。"
+            },
             "names": {
               "type": "array",
               "items": {
@@ -931,7 +988,44 @@
                   "agent_capped_at"
                 ]
               },
-              "description": "每种名称一项，按第一次出现的先后。"
+              "description": "每种名称一项，按第一次出现的先后，最多 `ACTION_LIMITS.summaryNames` 种，名称很长时更少（名称表的字节预算\n`ACTION_LIMITS.summaryNamesBytes`）。没进表的名称合在一起写在 `unlisted`；`names_complete` 为 false。"
+            },
+            "names_complete": {
+              "type": "boolean",
+              "description": "`names` 是不是全部的名称。"
+            },
+            "unlisted": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "reported": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "failed",
+                    "reported"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "没进 `names` 的名称合在一起的计数（动作和标记的个数、其中失败的动作数、有明细的个数）：`names_complete` 为\nfalse 时有，否则为 null。不写名称，也没有它们有几种名称的数（SDK 不记）。"
             },
             "running": {
               "type": "array",
@@ -993,11 +1087,15 @@
                   "agent_started_at"
                 ]
               },
-              "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。"
+              "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列；摘要装不下\n（`ACTION_LIMITS.summaryBytes`）时更少，优先级低的先省。"
             },
             "running_complete": {
               "type": "boolean",
-              "description": "`running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。"
+              "description": "`running` 是不是全部正在做的动作：没列全（超过 `ACTION_LIMITS.running` 个，或因为摘要的大小被省去了）时为 false。"
+            },
+            "lists_trimmed": {
+              "type": "boolean",
+              "description": "`running`、`recent`、`recent_failed` 里有没有因为摘要的大小（`ACTION_LIMITS.summaryBytes`）被省去的项。"
             },
             "recent": {
               "type": "array",
@@ -1200,9 +1298,13 @@
             "control_plane_capped",
             "capped_at",
             "agent_capped_at",
+            "failed_total",
             "names",
+            "names_complete",
+            "unlisted",
             "running",
             "running_complete",
+            "lists_trimmed",
             "recent",
             "recent_failed"
           ]

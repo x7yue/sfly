@@ -65,7 +65,14 @@ const orchestrationDocument = customType<{
 });
 
 /** 存下的动作摘要：SDK 写的那一份；控制面有没有兜底丢弃过明细记在任务上（`tasks.action_capped`），读取时才合进去。 */
-export type StoredActionSummary = Omit<ActionSummaryView, "control_plane_capped">;
+export type StoredActionSummary = Omit<
+	ActionSummaryView,
+	"control_plane_capped" | AddedSummaryField
+> &
+	Partial<Pick<ActionSummaryView, AddedSummaryField>>;
+
+/** 后来才有的摘要字段（#726）：之前存下的摘要没有，读出来时补上（`summaryOfTask`）。 */
+type AddedSummaryField = "failed_total" | "names_complete" | "unlisted" | "lists_trimmed";
 
 /** Agent 上报的信息（Hello）。 */
 export interface AgentInfo {

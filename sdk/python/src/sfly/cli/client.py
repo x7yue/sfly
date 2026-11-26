@@ -87,6 +87,57 @@ def origin_of(url: str) -> tuple[str, str, int | None]:
     return scheme, (parts.hostname or "").lower(), port
 
 
+def without_userinfo(address: str) -> str:
+    """写给人看的地址：去掉用户名段（`用户名:密码@`）。`--server`、`SFLY_SERVER` 里可以带用户名和
+    密码，报错、提示里写地址的地方都经过这里。没写协议的地址（漏了 `http://`）也一样：到第一个
+    `/`、`?`、`#` 为止是主机那一段，去掉其中最后一个 `@` 之前的部分；没有 `@` 的原样返回。
+    和 Agent 的 `without_userinfo`（`agent/src/secret.rs`）同一个规则。"""
+    scheme, separator, rest = address.partition("://")
+    if not separator:
+        scheme, rest = "", address
+    end = next((i for i, char in enumerate(rest) if char in "/?#"), len(rest))
+    authority, tail = rest[:end], rest[end:]
+    if "@" not in authority:
+        return address
+    host = authority.rsplit("@", 1)[1]
+    return f"{scheme}{separator}{host}{tail}"
+
+
+def has_userinfo(address: str) -> bool:
+    return without_userinfo(address) != address
+
+
+def address_problem(address: str) -> str | None:
+    """控制面地址里带着用户名段时的说明（地址用去掉用户名段的写法）；没有问题时为 None。
+    Python 的 HTTP 客户端不支持地址里的用户名和密码（`http://用户名:密码@主机` 连不上，不带端口时
+    还会把原文写进异常），所以带了就在发任何请求之前报错。"""
+    if not has_userinfo(address):
+        return None
+    return (
+        f"控制面地址里不要带用户名和密码（{without_userinfo(address)}）："
+        "用 SFLY_API_TOKEN 或 sfly login 提供身份"
+    )
+
+
+def check_address(address: str) -> None:
+    """地址里带用户名段就抛 `CliError`（还没有发出任何请求）。"""
+    if (problem := address_problem(address)) is not None:
+        raise CliError(
+            "address_has_userinfo",
+            problem,
+            next="sfly login（脚本、CI 里设置环境变量 SFLY_API_TOKEN）",
+        )
+
+
+_USERINFO_IN_TEXT = re.compile(r"(?<=://)[^\s/@'\"]*@|(?<=')[^\s/@']*@(?=[^\s']*')")
+
+
+def scrub_userinfo(text: str) -> str:
+    """底层异常的原文里可能带着地址里的用户名段（`://用户名:密码@主机`，或 `http.client` 的
+    「nonnumeric port: '密码@主机'」）：写给人看之前去掉。"""
+    return _USERINFO_IN_TEXT.sub("", text)
+
+
 class _KeepTokenOnSameOrigin(urllib.request.HTTPRedirectHandler):
     """跟随重定向，但重定向到不同的源时去掉 `Authorization`：urllib 默认把请求头原样带到新地址。"""
 
@@ -285,14 +336,27 @@ class Client:
             return
         self._warned_plain_http = True
         print(
-            f"警告：{self.server} 是 http 地址，{what}会以明文发送，网络上的人看得到："
+            f"警告：{self.shown_server} 是 http 地址，{what}会以明文发送，网络上的人看得到："
             "有条件的话用 https 地址访问控制面",
             file=self._stderr or sys.stderr,
         )
 
     def url(self, path: str, query: Mapping[str, Any] | None = None) -> str:
         """控制面上 `path`（以 `/` 开头，参数已编码）加查询参数的完整地址；值为 None 的参数省略。"""
-        url = f"{self.server}{path}"
+        return self._url(self.server, path, query)
+
+    @property
+    def shown_server(self) -> str:
+        """控制面地址，写给人看的写法（去掉用户名段）。"""
+        return without_userinfo(self.server)
+
+    def shown_url(self, path: str, query: Mapping[str, Any] | None = None) -> str:
+        """`url()`，写给人看的写法（报错、提示里的命令用它）。"""
+        return self._url(self.shown_server, path, query)
+
+    @staticmethod
+    def _url(server: str, path: str, query: Mapping[str, Any] | None) -> str:
+        url = f"{server}{path}"
         pairs = {k: _query_value(v) for k, v in (query or {}).items() if v is not None}
         return f"{url}?{urllib.parse.urlencode(pairs)}" if pairs else url
 
@@ -323,7 +387,7 @@ class Client:
             raise CliError(
                 "invalid_response",
                 f"控制面的响应不是 JSON（{method} {path}）",
-                next=f"curl {self.url('/health')}",
+                next=f"curl {self.shown_url('/health')}",
             ) from None
 
     def get(self, path: str, query: Mapping[str, Any] | None = None) -> Any:
@@ -343,6 +407,7 @@ class Client:
         """发请求并返回打开的响应（调用方负责关闭），给流式读取（SSE、下载）用；
         `body` 是 JSON 请求体，`raw` 是原样的字节（上传归档，Content-Type 由 `headers` 给）；
         失败时抛 `CliError`（连不上）或 `ApiError`（错误响应）。"""
+        check_address(self.server)
         data = raw
         self._note_nickname_ignored()
         self.note_plain_http()
@@ -367,8 +432,8 @@ class Client:
     def _unreachable(self, reason: object) -> CliError:
         return CliError(
             "unreachable",
-            f"无法连接控制面 {self.server}：{reason}\n{ADDRESS_HELP}",
-            next=f"curl {self.url('/health')}",
+            f"无法连接控制面 {self.shown_server}：{scrub_userinfo(str(reason))}\n{ADDRESS_HELP}",
+            next=f"curl {self.shown_url('/health')}",
         )
 
     def _observe(self, headers: Message[str, str]) -> None:
@@ -392,7 +457,7 @@ class Client:
     def _api_error(self, error: urllib.error.HTTPError) -> ApiError:
         text = error.read().decode("utf-8", "replace")
         status = error.code
-        next_command = f"curl {self.url('/health')}" if status >= 500 else None
+        next_command = f"curl {self.shown_url('/health')}" if status >= 500 else None
         if parsed := parse_error_body(text):
             code, message, details = parsed
             return ApiError(status, code, message, details, next_command)

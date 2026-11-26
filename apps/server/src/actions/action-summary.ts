@@ -31,10 +31,11 @@ import {
  */
 
 /**
- * 摘要里最多列多少种名称：SDK 不限（超过 100 种时在任务日志里警告一次），名称里带订单号这样的写法会让每秒一份的摘要
- * 越来越大，这里只存前这么多种（SDK 按第一次出现的先后列），合计和其余字段照常。
+ * 摘要里最多列多少种名称（`ACTION_LIMITS.summaryNames`）：SDK 也只列这么多种（按第一次出现的先后，之后新的名称不进摘要），
+ * 名称里带订单号这样的写法不会让每秒一份的摘要越来越大；这里是兜底（被改过的 SDK 列得更多时也只存前这么多种），
+ * 合计和其余字段照常。
  */
-export const SUMMARY_NAMES_LIMIT = 1000;
+export const SUMMARY_NAMES_LIMIT = ACTION_LIMITS.summaryNames;
 
 const Running = z.object({
 	id: z.number().int(),
@@ -62,7 +63,17 @@ const NameCount = z.object({
 	capped_mono: z.number().nullable(),
 });
 
-/** 事件管道里的一行 `action_summary`（ActionSummary.event_json）。 */
+/** 没进名称表的名称合在一起的计数（SDK 的 `unlisted`）。 */
+const Unlisted = z.object({
+	total: z.number().int(),
+	failed: z.number().int(),
+	reported: z.number().int(),
+});
+
+/**
+ * 事件管道里的一行 `action_summary`（ActionSummary.event_json）。`failed`、`names_complete`、`unlisted`、
+ * `running_complete`、`lists_trimmed` 是 #726 加的，旧的 SDK 没有（可省），读出来时按旧的写法补。
+ */
 const ActionSummaryEvent = z.object({
 	type: z.literal("action_summary"),
 	total: z.number().int(),
@@ -70,7 +81,12 @@ const ActionSummaryEvent = z.object({
 	reported: z.number().int(),
 	capped_ts: z.number().nullable(),
 	capped_mono: z.number().nullable(),
+	failed: z.number().int().optional(),
+	names_complete: z.boolean().optional(),
+	unlisted: Unlisted.nullable().optional(),
 	names: z.array(NameCount),
+	running_complete: z.boolean().optional(),
+	lists_trimmed: z.boolean().optional(),
 	running: z.array(Running),
 	recent: z.array(Ended),
 	recent_failed: z.array(Ended),
@@ -129,6 +145,12 @@ export function actionSummaryView(
 	});
 	const doing = event.running.slice(0, ACTION_LIMITS.running);
 	const outermost = earliestOutermost(doing);
+	// 名称表：SDK 列出的，控制面再按自己的上限截一遍（被改过的 SDK 列得更多时）；两边没列出的合在一起。
+	const listed = event.names.slice(0, SUMMARY_NAMES_LIMIT);
+	const dropped = event.names.slice(SUMMARY_NAMES_LIMIT);
+	const namesComplete = (event.names_complete ?? true) && dropped.length === 0;
+	const sumOf = (key: "total" | "failed" | "reported") =>
+		(event.unlisted?.[key] ?? 0) + dropped.reduce((sum, n) => sum + n[key], 0);
 	return {
 		summary: {
 			total: event.total,
@@ -136,15 +158,25 @@ export function actionSummaryView(
 			reported: event.reported,
 			capped: event.total > event.reported,
 			...cappedAt(event.capped_ts, event.capped_mono),
-			names: event.names.slice(0, SUMMARY_NAMES_LIMIT).map((n) => ({
+			// 旧的 SDK 没有合计的失败数：名称表里各项加起来（控制面自己截掉的也在里面）。
+			failed_total: event.failed ?? event.names.reduce((sum, n) => sum + n.failed, 0),
+			names: listed.map((n) => ({
 				name: name(n.name),
 				total: n.total,
 				failed: n.failed,
 				reported: n.reported,
 				...cappedAt(n.capped_ts, n.capped_mono),
 			})),
+			names_complete: namesComplete,
+			unlisted: namesComplete
+				? null
+				: { total: sumOf("total"), failed: sumOf("failed"), reported: sumOf("reported") },
 			running: doing.map(running),
-			running_complete: event.running.length < ACTION_LIMITS.running,
+			// 新的 SDK 自己说（它省过字节预算装不下的）；旧的按条数：列满 50 个就当作可能有遗漏。
+			running_complete:
+				(event.running_complete ?? event.running.length < ACTION_LIMITS.running) &&
+				event.running.length <= ACTION_LIMITS.running,
+			lists_trimmed: event.lists_trimmed ?? false,
 			recent: event.recent.slice(0, ACTION_LIMITS.recent).map(ended),
 			recent_failed: event.recent_failed.slice(0, ACTION_LIMITS.recentFailed).map(ended),
 		},
@@ -176,9 +208,13 @@ export const EMPTY_SUMMARY: StoredActionSummary = {
 	capped: false,
 	capped_at: null,
 	agent_capped_at: null,
+	failed_total: 0,
 	names: [],
+	names_complete: true,
+	unlisted: null,
 	running: [],
 	running_complete: true,
+	lists_trimmed: false,
 	recent: [],
 	recent_failed: [],
 };
@@ -193,7 +229,16 @@ export function summaryOfTask(
 	task: { status: TaskStatus; actionCapped: boolean },
 	stored: StoredActionSummary | null,
 ): ActionSummaryView {
-	const summary = { ...(stored ?? EMPTY_SUMMARY), control_plane_capped: task.actionCapped };
+	const base = stored ?? EMPTY_SUMMARY;
+	const summary: ActionSummaryView = {
+		...base,
+		// 之前存下的摘要没有后来加的字段：失败数用名称表里各项加起来的，别的取「全部列出、没有省去」。
+		failed_total: base.failed_total ?? base.names.reduce((sum, n) => sum + n.failed, 0),
+		names_complete: base.names_complete ?? true,
+		unlisted: base.unlisted ?? null,
+		lists_trimmed: base.lists_trimmed ?? false,
+		control_plane_capped: task.actionCapped,
+	};
 	return isDoing(task.status) ? summary : { ...summary, running: [], running_complete: true };
 }
 

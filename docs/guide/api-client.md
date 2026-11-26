@@ -238,7 +238,7 @@ for (const node of live.chains.flatMap((chain) => chain.nodes)) {
 ```
 
 - 运行视图里执行中的尝试带 `current_action`：最外层、开始得最早的那个正在做的动作，写名称和开始时间（控制面时间）。没有正在做的最外层动作、尝试已经结束时为 `null`。Agent 列表里正在执行的任务（`running_tasks`）也带它，还带 `progress`：这次尝试最新的进度（`ctx.progress`），和运行视图里同一次尝试的相同，没上报过时为 `null`。
-- `actions.summary` 读一个任务（一次尝试）的动作摘要：每种名称的个数（动作和标记合计）和失败的动作数（`names`，从什么时候起只计数写在 `capped_at`）、正在做的动作（`running`，带层级，最多 50 个，列满时 `running_complete` 为 `false`）、最近结束的 20 个动作和最近失败的 5 个动作，以及动作和标记的合计数、有没有超出上限（`capped`）。任务结束以后 `running` 为空，其余照旧。
+- `actions.summary` 读一个任务（一次尝试）的动作摘要：每种名称的个数（动作和标记合计）和失败的动作数（`names`，最多 1000 种，名称很长时更少，从什么时候起只计数写在 `capped_at`；名称表没列全时 `names_complete` 为 `false`，没列出的名称合在一起的个数、失败数、有明细的个数在 `unlisted`）、全部名称合计的失败数（`failed_total`：没列出的名称的失败不在 `names` 各项里，别自己把各项加起来）、正在做的动作（`running`，带层级，最多 50 个，没列全时 `running_complete` 为 `false`）、最近结束的 20 个动作和最近失败的 5 个动作（摘要因为太大省去了一些时 `lists_trimmed` 为 `true`），以及动作和标记的合计数、有没有超出上限（`capped`）。任务结束以后 `running` 为空，其余照旧。
 - 摘要是节点每秒最多上报一次的那一份，不是实时的每一个动作。字段和失败原因是节点写的数据，显示时当作文本。
 
 每一个动作和标记的明细按任务分页读，再接上实时推送：

@@ -15,13 +15,13 @@ curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 安装脚本识别 CPU 架构，从控制面下载 sfly Agent {{SFLY_VERSION}} 并校验 sha256，写好配置，注册并启动 systemd 服务。
 
 - `--name`：Agent 名称，全局唯一，场景按名称选择 Agent。上面的命令用主机名，也可以换成别的名称。
-- `--token '<令牌>'`：控制面配置了共享令牌时必填，向平台管理员索取（这是 Agent 连控制面用的共享令牌，不是个人令牌；命令行登录用的个人令牌见「用命令行操作平台」）。令牌不对时控制面拒绝这台 Agent 的连接，Agent 不退出，一直重试（见下面的「被控制面拒绝」）。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
+- `--token '<凭据>'`：这台 Agent 的 **Agent 凭据**（`sfly_agt_` 开头），向平台管理员索取，签发办法见下面的「Agent 凭据」。凭据只对签发时指定的那个名字有效，所以 `--name` 要和它一致；凭据不对（写错、被吊销、名字对不上）时控制面拒绝这台 Agent 的连接，Agent 不退出，一直重试（见下面的「被控制面拒绝」）。这不是个人令牌（命令行登录用的个人令牌见「用命令行操作平台」）。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，凭据不会留在 shell 历史和进程列表里（见下面的例子）。过渡期里控制面还接受共享注册令牌、以及不带凭据的已登记的 Agent（只在本版本内，下一个版本起拒绝，见「Agent 凭据」）。
 - `--slots <数量>`：同时执行的任务上限，默认 4。
 - `--listen-port <端口>`、`--public-address <地址>`：供其它 Agent 连接的端口（默认 50052）和对外地址，见下面的「供其它 Agent 连接的端口」。
 - `--no-auto-update`：不自动更新（见「版本与自动更新」）。
 - 完整参数：`curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --help`。
 
-用环境变量传共享令牌：先读入令牌（粘贴后回车，输入不显示），再运行安装命令：
+用环境变量传凭据：先读入凭据（粘贴后回车，输入不显示），再运行安装命令（`--name` 写签发凭据时指定的名字）：
 
 ```text
 read -rs SFLY_TOKEN && export SFLY_TOKEN
@@ -37,7 +37,7 @@ curl -fsSL {{SFLY_URL}}/install.sh | sudo sh -s -- --name "$(uname -n)"
 ```
 
 - Agent 以 root 运行，文件在 root 的家目录下（通常是 `/root/.sfly`，以安装脚本最后打印的路径为准），下面写的 `~/.sfly` 都指这个目录。之后升级、改配置也要用 `sudo`。
-- `sudo` 默认不传递环境变量：用环境变量传共享令牌、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
+- `sudo` 默认不传递环境变量：用环境变量传凭据、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
 - 同一台机器上之前用普通用户装过时，先停掉那个 Agent（`systemctl --user disable --now sfly-agent`，或结束前台进程），否则两个同名的 Agent 会同时连接控制面。
 
 Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动时它会准备运行环境，需要一两分钟：
@@ -90,11 +90,26 @@ loginctl enable-linger "$(id -un)"
 
 ## 开发机：`--dev`
 
-在写节点包的机器上加 `--dev`，除了 Agent，再装好 uv（PATH 上没有时，装到 `~/.local/bin`）和 `sfly` 命令行 {{SFLY_VERSION}}（`uv tool install`，从控制面的 sfly 索引 `{{SFLY_URL}}/simple/` 安装）。加 `--dev` 时 `--name` 可以省略，联调用的 Agent 默认叫 `dev-<用户名>-<主机名>`（主机名不带域名），不和测试机上的 Agent 重名：
+在写节点包的机器上加 `--dev`，除了 Agent，再装好 uv（PATH 上没有时，装到 `~/.local/bin`）和 `sfly` 命令行 {{SFLY_VERSION}}（`uv tool install`，从控制面的 sfly 索引 `{{SFLY_URL}}/simple/` 安装）。**加 `--dev` 又不给 `--name` 时，这台 Agent 是你自己的开发 Agent**：装好 `sfly` 之后安装脚本用你的登录向控制面注册，名字由控制面按你的登录生成（`dev-<登录名>-<主机>`，主机是这台机器的主机名，不带域名，只留小写字母、数字和连字符），凭据记在你名下，一起写进 `agent.env`。名字里有你的登录名，所以不会和测试机上的 Agent、别人的开发 Agent 重名。
+
+注册要用你自己的身份，所以先准备好登录：在控制台账号菜单的「令牌」页签发一个个人令牌，读进环境变量（粘贴后回车，输入不显示）：
+
+```text
+read -rs SFLY_API_TOKEN && export SFLY_API_TOKEN
+```
+
+然后运行：
 
 ```sh
 curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --dev
 ```
+
+没有设置令牌时：在终端里运行，安装脚本让你 `sfly login`（问登录名和密码）再继续；没有终端（脚本、CI、不带 `-t` 的 ssh）就**直接失败**并写明怎么办，不会等着输入。失败时 Agent 二进制和 `sfly` 命令行已经装好，设置好令牌（或在这台机器上 `sfly login`）之后重新运行同一条命令即可。
+
+- **重新运行（升级）**：`agent.env` 里已经有开发 Agent 的名字（`dev-` 开头）和 **Agent 凭据**（`sfly_agt_` 开头）时沿用，不再注册（同一个人在同一个项目里用同一个主机名只能注册一次）；`agent.env` 里是共享令牌（旧版本装的）不算，照常注册新的。要换成新的：先 `sfly agent revoke-dev <名称>` 吊销旧凭据，再删掉 `agent.env` 里的 `SFLY_AGENT_NAME` 和 `SFLY_TOKEN` 两行，重新运行。
+- **名字被占用**：注册时控制面回「已经有一台叫……」，安装脚本失败（Agent 二进制和 `sfly` 命令行已经装好，没有写 `agent.env`），写明办法，选一个后重新运行同一条命令：加 `--dev-host <另一个主机名>`，名字里「主机」那一段就用它（两台机器的主机名一样时用这个）；如果这个名字是你自己以前注册的开发 Agent（比如换了机器或删了 `agent.env`），先 `sfly agent revoke-dev <名称>` 吊销它再重新运行；如果它是旧版本 `--dev` 装的开发机的名字，请管理员为它签发凭据（`sfly agent credentials issue <名称>`），再用 `--dev --name <名称>` 重新运行，凭据经环境变量 `SFLY_TOKEN` 给。
+- **自己起名字**：`--dev --name <名称>` 照旧可用，这时不注册：`--token`（或 `SFLY_TOKEN`）要给管理员为这个名字签发的 Agent 凭据。
+- **旧版本装的**：以前 `--dev` 默认叫 `dev-<系统用户名>-<主机名>`、用共享令牌或没有凭据。重新运行现在的 `--dev` 会向控制面注册新的开发 Agent，名字是 `dev-<登录名>-<主机>`；旧名字那一行留在 Agent 列表里（离线），场景里选了旧名字的节点要改成新的。系统用户名恰好就是登录名、主机名也没变时，新名字和旧名字相同，控制面认为它是别人留下的（你名下没有过它的凭据），注册被拒绝，见上面的「名字被占用」：换 `--dev-host`，或者请管理员为旧名字签发凭据、用 `--dev --name <旧名称>` 保留旧名字。环境里还留着 `SFLY_TOKEN`（旧版本用来传共享令牌）时，`--dev` 不给 `--name` 会直接报错：先 `unset SFLY_TOKEN`，或者同时给 `--name`。
 
 安装脚本提示 `~/.local/bin` 不在 PATH 上时，把它加进 shell 配置（例如 `~/.bashrc`），当前终端里先执行：
 
@@ -105,6 +120,41 @@ sfly --version
 
 `sfly --version` 输出 `sfly {{SFLY_VERSION}}` 即安装完成。`sfly` 记住了控制面地址（`~/.sfly/agent.env`），`sfly init`、`sfly dev`、`sfly publish` 不用再传 `--server`。控制面升级后重新运行同一条安装命令，`sfly` 就升级到控制面的版本。
 
+## Agent 凭据
+
+每台 Agent 用**管理员为它签发的凭据**（`sfly_agt_` 开头）连接控制面，下载节点包、上传产物也带着它。凭据**按台签发**：只对签发时指定的那个名字有效，拿到它只能冒充这一台 Agent；控制面只存哈希，原值只在签发时显示一次。同一台 Agent 可以同时有几个有效的凭据，方便轮换。
+
+**签发要先有管理员账号**：第一次给 Agent 签发凭据之前，控制面要先有平台管理员——部署时设置 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD` 建第一个平台管理员，或者用初始化码在 `/setup` 页建（见「用户」）。签发、列出、吊销凭据都要管理员（项目的「管理」范围）登录，没有登录是 401。在能运行 `sfly` 的机器上（比如上面装好的开发机）登录后签发：
+
+```sh
+sfly agent credentials issue worker-1
+```
+
+输出里有凭据的原值（单独一行，只显示这一次）和装到那台机器上的命令。列出这台 Agent 的凭据（前缀、状态、最后使用时间，不含原值）：
+
+```sh
+sfly agent credentials list worker-1
+```
+
+装到测试机上时，凭据经环境变量 `SFLY_TOKEN` 传给安装命令（见上面「安装」），`--name` 写签发时的名字。要批量或远程安装、又不想让凭据经过终端屏幕和 shell 历史：用 `--token-only` 只往 stdout 写原值一行，管道交给远程机器上的 `read`（安装脚本自己的标准输入是 `curl` 送来的脚本，所以凭据由前面的 `read` 读进环境变量）：
+
+```text
+sfly agent credentials issue worker-1 --token-only | ssh worker-1 \
+  'read -r SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name worker-1'
+```
+
+**轮换**：先签发新的，写进那台 Agent 的 `agent.env`（`SFLY_TOKEN=<新凭据>`）并重启 Agent，确认它用新凭据连上之后，再吊销旧的（`sfly agent credentials revoke <名称> <凭据 id>`，id 在 `credentials list` 的第一列）。吊销立即生效：用它连着的连接断开，那台 Agent 手上任务的任务凭据也立刻不认。
+
+```text
+sfly agent credentials revoke worker-1 <凭据 id>
+```
+
+**从共享令牌换成 Agent 凭据**：还在用共享令牌（`SFLY_AGENT_TOKEN`）的 Agent，管理员给它签发凭据之后，**重启前要先把凭据换进 `agent.env`**（`SFLY_TOKEN`），否则重连被拒绝。一个名字在这个项目里有没吊销的 Agent 凭据，就只认凭据：共享令牌和不带凭据的连接不能再用这个名字；这个名字的凭据全部吊销之后才又接受旧方式。
+
+**过渡期**：不带凭据的 Agent 只在本版本内被接受，而且只限默认项目里已经登记过的名字（连上过的 Agent 就是登记过的）；下一个版本起拒绝，所以现在就给每台 Agent 签发凭据。[Agent 管理](/agents) 页面能看出每台 Agent 最近一次连接用的是哪种。
+
+**Agent 被控制面拒绝时不会退出**：凭据无效或被吊销、Agent 被停用……这些改一下控制面就会好，Agent 一直重试，改好之后自己连上，不用去机器上重启。原因（不含凭据）在 Agent 的标准错误里，怎么看、间隔多长、手上的任务怎么办，见上面的「被控制面拒绝」。
+
 ## 配置与文件
 
 所有东西都在 `~/.sfly` 下。要换成别的目录，运行安装脚本时设置环境变量 `SFLY_HOME`（systemd 服务会记住它；前台启动 Agent 和运行 `sfly` 时也要设置）：
@@ -113,7 +163,7 @@ sfly --version
 |---|---|
 | `bin/sfly-agent` | Agent 二进制 |
 | `bin/uv` | Agent 管理的 uv |
-| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、共享令牌、槽位数、是否自动更新、本机的镜像覆盖 |
+| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、Agent 凭据（`SFLY_TOKEN`，文件只有你读得到）、槽位数、是否自动更新、本机的镜像覆盖 |
 | `venv/` | 共享 venv：SDK 运行时和所有节点包都装在这里 |
 | `work/` | 任务工作目录（每个任务一个子目录），以及 `sfly dev` 连接的本地 socket `agent.sock` |
 | `procs/` | 后台进程目录（每次运行一个子目录）：节点启动的、节点结束后继续运行的进程（例如标准节点 `start_process`）的日志 |
@@ -189,7 +239,7 @@ Agent 和控制面必须是同一个版本。控制面升级（或回滚）后�
 - 配置了不自动更新：安装时加 `--no-auto-update`（`agent.env` 里写入 `SFLY_NO_AUTO_UPDATE=1`；也可以自己写这一行再重启 Agent，值可以是 `1`/`true`/`yes`）。需要严格控制版本的机器这样设置，升级时自己重新运行安装命令，这个设置会保留；要恢复自动更新，删掉 `agent.env` 里的这一行再重启 Agent。
 - Agent 二进制不在 `$SFLY_HOME/bin`（默认 `~/.sfly/bin`）下（不是安装脚本安装的），或者这个目录不可写。
 
-手动升级就是重新运行安装命令，名称、共享令牌和原来一样。
+手动升级就是重新运行安装命令，名称、凭据和原来一样。
 
 **旧 Agent 首次升级**：在有安装脚本之前部署的 Agent（从 GitHub Release 下载、自己写启动参数或 systemd 服务）没有自动更新能力，需要手动升级一次：停掉旧的进程或服务，在同一台机器上用原来的名称运行上面的安装命令。之后的版本都会自动更新。旧的 venv 和工作目录不再使用，可以删除。
 

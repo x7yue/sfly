@@ -107,6 +107,14 @@ export function ActionToolbar({
 						onClick={() => onFilter(withFailed(filter, !failed))}
 					/>
 				</fieldset>
+				{!summary.names_complete && summary.unlisted && (
+					<p data-testid="unlisted-names" className="m-0 flex-none py-0.75 text-fg-3">
+						{ACTION_PAGE.unlistedNames(
+							formatInteger(summary.unlisted.total),
+							formatInteger(summary.unlisted.failed),
+						)}
+					</p>
+				)}
 			</div>
 		</div>
 	);

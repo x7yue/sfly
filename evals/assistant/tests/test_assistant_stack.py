@@ -166,6 +166,10 @@ def test_install_passes_the_agent_tokens_by_name_not_in_the_arguments(
         assert set(call["secret_env"]) == {"SFLY_TOKEN"}
         assert not call.get("env")
         assert "sfly_agt_" not in call["script"]
+    # 开发环境容器的 Agent：`--dev` 不给 --name 时 install.sh 要向控制面注册、
+    # 不能再用 SFLY_TOKEN，所以自己起名字。
+    dev_install = next(c for c in installs if c["container"].endswith("-dev"))
+    assert "--dev --name dev-root-dev" in dev_install["script"]
 
 
 def test_reset_reissues_the_credentials_and_swaps_them_into_agent_env(

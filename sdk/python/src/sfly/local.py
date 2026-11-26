@@ -70,8 +70,8 @@ _MAX_LINE_BYTES = 64 * 1024
 #: 后果是什么（与 Agent 相同，#674；Agent 写的来源是 agent，这里是 system）。
 #: 这个数够不够用要看动作摘要（SDK 能写出的最长的一行）：摘要里每种动作名称一项，名称的种类
 #: 没有上限的时候（旧版本的 SDK），名称每种都在文档上限以内、种类够多（约 2.5 万种）就超过
-#: 4 MiB，整份摘要被丢弃，警告里写明丢的是动作摘要；名称的种类有上限之后（#726 限到 1000 种），
-#: 文档上限以内最长的一行约 1.7 MiB，4 MiB 够用。
+#: 4 MiB，整份摘要被丢弃，警告里写明丢的是动作摘要；名称的种类有上限、摘要有字节上界之后
+#: （#726：名称最多 1000 种，一份摘要序列化之后不超过 1 MiB），新的 SDK 写的摘要碰不到这个上限。
 _MAX_EVENT_LINE_BYTES = 4 * 1024 * 1024
 #: 被丢弃的一行开头留下的字节数：认出 `type` 够了（与 Agent 相同）。固定大小，不随行的长度变。
 _EVENT_HEAD_BYTES = 256
@@ -266,7 +266,9 @@ class ActionSummary:
     - `total`：记录的动作和标记的个数，`marks`：其中标记的个数，`reported`：上报了明细的个数；
       `capped_ts`：第一个因为合计已满而被丢弃明细的时刻（之后仍可能有已上报的明细），
       没有丢弃过时为 None；
-    - `names`：每种名称的计数；
+    - `names`：每种名称的计数（最多 1000 种，名称很长时更少）；`names_complete` 为 false 时
+      还有名称没有列出，它们合计的个数、失败数、有明细的个数在 `unlisted`；
+    - `failed`：全部名称合计失败的动作数（包括没有列出的名称）；
     - `running`：正在做的动作（最多 50 个，层级浅的优先，按 ID 排列）；
     - `recent`：最近结束的 20 个动作，最近的在前；`recent_failed`：最近失败的 5 个，最近的在前。
 
@@ -282,6 +284,10 @@ class ActionSummary:
     running: list[ActionRecord]
     recent: list[ActionRecord]
     recent_failed: list[ActionRecord]
+    failed: int = 0
+    names_complete: bool = True
+    #: 没有列出的名称合在一起的 `total`、`failed`、`reported`；名称都列出了时为 None。
+    unlisted: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -590,6 +596,13 @@ def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
         running=[_summary_record(e) for e in event["running"]],
         recent=[_summary_record(e) for e in event["recent"]],
         recent_failed=[_summary_record(e) for e in event["recent_failed"]],
+        failed=int(event.get("failed", 0)),
+        names_complete=bool(event.get("names_complete", True)),
+        unlisted=(
+            {key: int(value) for key, value in event["unlisted"].items()}
+            if event.get("unlisted")
+            else None
+        ),
     )
 
 
