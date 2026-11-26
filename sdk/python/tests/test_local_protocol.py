@@ -9,9 +9,13 @@
 from __future__ import annotations
 
 import json
+import os
+import queue
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,10 +29,13 @@ EXECUTOR = TESTDATA / "local-protocol-executor.sh"
 
 
 def expand(value: Any) -> Any:
-    """用例里的字符串可以写成 {"$repeat": 单元, "times": 次数, ...}（见用例表的说明），先展开。"""
+    """用例里的字符串可以写成 {"$repeat": 单元, "times": 次数, ...} 或 {"$char": "码点 ..."}
+    （见用例表的说明），先展开。"""
     if isinstance(value, list):
         return [expand(v) for v in value]
     if isinstance(value, dict):
+        if "$char" in value:
+            return "".join(chr(int(code, 16)) for code in value["$char"].split())
         if "$repeat" in value:
             return (
                 value.get("prefix", "")
@@ -182,8 +189,10 @@ def run(case: dict[str, Any], tmp_path: Path) -> tuple[Observed, tuple[int, int]
     (root / "case").mkdir()
     (root / "bin" / "python").symlink_to(EXECUTOR)
     files = {
-        "events.jsonl": "".join(line + "\n" for line in case["events"])
-        if "events" in case
+        # events_tail：最后一段没有换行（执行器没写完就退出了）。
+        "events.jsonl": "".join(line + "\n" for line in case.get("events", []))
+        + case.get("events_tail", "")
+        if "events" in case or "events_tail" in case
         else None,
         "stdout": case.get("stdout"),
         "stderr": case.get("stderr"),
@@ -333,6 +342,7 @@ def test_constants_shared_with_the_agent_are_the_ones_in_the_case_file() -> None
     constants = FILE["constants"]
     assert {
         "max_line_bytes": local._MAX_LINE_BYTES,
+        "max_event_line_bytes": local._MAX_EVENT_LINE_BYTES,
         "drain_timeout_ms": round(local._DRAIN_TIMEOUT * 1000),
         "stderr_tail_bytes": local._STDERR_TAIL_BYTES,
         "terminate_grace_ms": round(local.DEFAULT_GRACE * 1000),
@@ -471,3 +481,108 @@ def test_every_written_line_has_a_case_and_every_event_type_but_the_summary_is_w
         for line in next(c for c in EVENT_CASES if c["name"] == name)["events"]
     }
     assert written == set(FILE["event_types"]) - NOT_WRITTEN
+
+
+def test_a_long_line_is_split_on_character_boundaries_like_the_agent_does() -> None:
+    """超过 max_line_bytes 的一行拆开：每段不超过它，拆在字符边界上，接起来就是原来的行（#622）。"""
+    limit = local._MAX_LINE_BYTES
+    assert local._split_line(b"") == [b""]
+    assert local._split_line(b"x" * limit) == [b"x" * limit]
+    assert local._split_line(b"x" * (limit + 1)) == [b"x" * limit, b"x"]
+    for char in ("中", "😀", "é"):
+        line = ("z" + char * (limit // 2)).encode()
+        pieces = local._split_line(line)
+        assert len(pieces) >= 2
+        assert b"".join(pieces) == line
+        for piece in pieces:
+            assert len(piece) <= limit
+            piece.decode("utf-8")  # 不在字符中间拆：每段都是合法的 UTF-8
+    # 连续的后续字节（不是合法的 UTF-8）：不会退到头，每段仍不超过上限
+    broken = b"\x80" * (3 * limit)
+    assert all(len(p) <= limit for p in local._split_line(broken))
+    assert b"".join(local._split_line(broken)) == broken
+
+
+def test_an_event_line_of_exactly_the_cap_is_read_and_one_byte_more_is_dropped(
+    tmp_path: Path,
+) -> None:
+    """正好 max_event_line_bytes 字节的一行照常读（是日志就拆成几条），多一个字节的整行丢弃、
+    写一行警告，后面的行照常（#674）。"""
+    cap = local._MAX_EVENT_LINE_BYTES
+    head = '{"type":"log","ts":1700000000000,"level":"info","message":"'
+    tail = '"}'
+    padding = cap - len(head) - len(tail)
+    exactly = head + "x" * padding + tail
+    assert len(exactly) == cap
+    after = '{"type":"log","ts":1700000000001,"level":"info","message":"after"}'
+    observed, _ = run({"events": [exactly, "y" * (cap + 1), after]}, tmp_path)
+    logs = observed.execution.logs
+    assert [line.source for line in logs[-2:]] == ["system", "sdk"]
+    assert logs[-1].message == "after"
+    assert f"{cap + 1} 字节" in logs[-2].message
+    assert logs[-2].level == "warn"
+    pieces = logs[:-2]
+    assert all(line.source == "sdk" for line in pieces)
+    assert all(len(line.message) <= local._MAX_LINE_BYTES for line in pieces)
+    assert sum(len(line.message) for line in pieces) == padding
+
+
+def test_a_dropped_line_keeps_a_fixed_size_head_whatever_its_length() -> None:
+    """被丢弃的一行只留开头固定大小的一小段（认种类用，不随行的长度变，和 Agent 相同）；
+    管道在超长行的中间关闭、最后一行没写完，各有各的记录（#674）。"""
+    cap = local._MAX_EVENT_LINE_BYTES
+    read_fd, write_fd = os.pipe()
+    pump = SimpleNamespace(_events=SimpleNamespace(read_fd=read_fd), _event_lines=queue.Queue())
+    reader = threading.Thread(target=lambda: local._Pump._read_events(pump))  # type: ignore[arg-type]
+    reader.start()
+    head = b'{"type":"action_summary","ts":1,"names":{'
+    with os.fdopen(write_fd, "wb") as writer:
+        for filler in (cap, cap * 2 + 5):  # 带换行的两行超长的
+            writer.write(head + b"x" * filler + b"\n")
+        writer.write(b'{"type":"log","message":"' + b"y" * (cap + 3))  # 超长、中间关闭
+    reader.join(timeout=60)
+    assert not reader.is_alive()
+    items = [item for _, item in list(pump._event_lines.queue)]
+    assert [type(item).__name__ for item in items] == ["_Dropped"] * 3
+    first, second, closed = items
+    assert (first.size, second.size) == (len(head) + cap, len(head) + cap * 2 + 5)
+    assert not first.unfinished and not closed.unfinished
+    for dropped in (first, second):
+        assert len(dropped.head) == local._EVENT_HEAD_BYTES
+        assert local._kind_of_head(dropped.head) == "action_summary"
+    assert len(closed.head) == local._EVENT_HEAD_BYTES
+    assert local._kind_of_head(closed.head) == "log"
+    assert closed.size == len(b'{"type":"log","message":"') + cap + 3
+
+
+def test_the_last_line_without_a_newline_is_one_unfinished_record() -> None:
+    read_fd, write_fd = os.pipe()
+    pump = SimpleNamespace(_events=SimpleNamespace(read_fd=read_fd), _event_lines=queue.Queue())
+    reader = threading.Thread(target=lambda: local._Pump._read_events(pump))  # type: ignore[arg-type]
+    reader.start()
+    with os.fdopen(write_fd, "wb") as writer:
+        writer.write(b'{"type":"log","message":"ok"}\n{"type":"log","mess')
+    reader.join(timeout=10)
+    items = [item for _, item in list(pump._event_lines.queue)]
+    assert items[0] == b'{"type":"log","message":"ok"}'
+    assert items[1] == local._Dropped(size=len(b'{"type":"log","mess'), unfinished=True)
+    assert len(items) == 2
+
+
+def test_a_short_sdk_message_is_not_changed_by_the_splitting(tmp_path: Path) -> None:
+    """不超过 max_line_bytes 的消息原样记下，包括 JSON 里写成转义的孤立代理项
+    （拆开时才需要转成字节）。"""
+    event = '{"type":"log","ts":1700000000000,"level":"info","message":"a\\ud800b\\n"}'
+    observed, _ = run({"events": [event]}, tmp_path)
+    assert [line.message for line in observed.execution.logs] == ["a\ud800b\n"]
+
+
+@pytest.mark.parametrize("case", FILE["dropped_head_cases"], ids=lambda c: repr(c["head"])[:40])
+def test_the_kind_of_a_dropped_line_is_read_from_its_head_as_in_the_case_file(
+    case: dict[str, Any],
+) -> None:
+    assert local._kind_of_head(case["head"].encode()) == case["kind"]
+
+
+def test_the_kinds_a_dropped_line_is_told_apart_by_are_the_event_types() -> None:
+    assert set(local._DROPPED_KINDS) == set(FILE["event_types"]) == set(local._EVENT_HANDLERS)

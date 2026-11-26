@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import tempfile
@@ -41,6 +42,15 @@ ASSISTANT_SECRET_ENV = "SFLY_ASSISTANT_SECRET"
 REPO_DIR = EVALS_DIR.parent.parent
 POSTGRES_IMAGE = "postgres:18"
 SUT_AGENT = "sut-01"
+# 初始管理员：给 Agent 签发凭据要登录（不带凭据是 401，#492）。登录名固定，
+# 密码每次建库随机生成，只放在内存里，
+# 经环境变量名（不在命令行参数里）交给控制面，经标准输入交给 curl。
+# 登录名的规则（`packages/schema` 的 `LOGIN_NAME_PATTERN`）：小写字母、数字、下划线，
+# 不能含连字符；不合规矩控制面起不来。
+ADMIN_LOGIN = "aeval_admin"
+ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
+# 两台 Agent 的配置文件（install.sh 写的）：凭据换了要改这里的 SFLY_TOKEN。
+AGENT_ENV_FILE = "/root/.sfly/agent.env"
 # install.sh --dev 的默认名称是 dev-<用户名>-<主机名>：容器里是 root、主机名 dev。
 DEV_AGENT = "dev-root-dev"
 SERVICE_PORT = 9000
@@ -131,6 +141,8 @@ class Stack:
     assistant_model: str = "fake"
     # 控制面和助手服务共用的密钥：up 时随机生成，之后从助手容器读回来；不打印、不写文件。
     assistant_secret: str | None = field(default=None, repr=False)
+    # 初始管理员的密码：控制面每次建库（up、reset）时随机生成，只放在内存里。
+    admin_password: str | None = field(default=None, repr=False)
 
     def name(self, role: str) -> str:
         return f"sfly-aeval-{self.slot}-{role}"
@@ -379,7 +391,7 @@ class Stack:
         ports: list[str] | None = None,
         extra: list[str] | None = None,
     ) -> None:
-        """`secret_env`：保密的环境变量，参数里只写名字（`-e 名字`），
+        """`secret_env`：secret 环境变量，参数里只写名字（`-e 名字`），
         值经 docker 命令行进程的环境带进去。"""
         name = self.name(role)
         d.docker("rm", "-f", name, check=False)
@@ -426,7 +438,11 @@ class Stack:
             "SFLY_PYPI_MIRROR": self.pypi_mirror,
             "SFLY_GITHUB_RELEASE_MIRROR": self.github_mirror,
         }
-        secret_env: dict[str, str] = {}
+        # 初始管理员（库里还没有任何用户时由环境变量建出来）：给 Agent 签发凭据要登录；
+        # 密码每次建库都换一个新的，参数里只写变量名。
+        self.admin_password = secrets.token_hex(16)
+        env["SFLY_ADMIN_LOGIN"] = ADMIN_LOGIN
+        secret_env: dict[str, str] = {ADMIN_PASSWORD_ENV: self.admin_password}
         if self.assistant:
             # 控制面把会话交给助手服务，工作台是 dev 上的 Agent（竖切的桩，#549 换成项目上的设置）。
             env["SFLY_ASSISTANT_URL"] = self.assistant_url
@@ -595,10 +611,67 @@ class Stack:
         problems = "；".join(str(p.get("message")) for p in ready.get("problems") or [])
         raise d.DockerError(f"助手在 {timeout:.0f} 秒内没有就绪：{problems}")
 
+    def _admin_cookie(self, container: str) -> str:
+        """管理员登录，返回 `sfly_login=…`（Cookie 的内容）。
+        密码经标准输入给 curl，不在命令行参数里。"""
+        if not self.admin_password:
+            raise d.DockerError(
+                "不知道初始管理员的密码：控制面不是这一次进程起的（先 ./aeval.sh up）"
+            )
+        out = d.sh(
+            container,
+            "curl -fsS -D - -o /dev/null -X POST -H 'content-type: application/json' "
+            "--data-binary @- http://sfly.internal:8080/auth/login",
+            input_text=json.dumps({"login_name": ADMIN_LOGIN, "password": self.admin_password}),
+        )
+        match = re.search(r"(?im)^set-cookie:\s*(sfly_login=[^;\s]+)", out.stdout)
+        if not match:
+            raise d.DockerError("管理员登录没有拿到登录 Cookie")
+        return match.group(1)
+
+    def _agent_credential(self, container: str, name: str) -> str:
+        """向控制面为这台 Agent 签发 Agent 凭据（#492）：没有凭据的 Agent 只接受已登记过的名字，
+        全新的环境里谁都没登记过；签发要登录，用初始管理员。凭据只交给这台 Agent 的安装脚本
+        （环境变量 `SFLY_TOKEN`，写进它的 agent.env）。
+        Cookie 经标准输入给 curl（`-H @-`），不在命令行参数里。"""
+        cookie = self._admin_cookie(container)
+        out = d.sh(
+            container,
+            "curl -fsS -X POST -H 'content-type: application/json' -H @- -d '{}' "
+            f"http://sfly.internal:8080/agents/{name}/credentials",
+            input_text=f"cookie: {cookie}\nsec-fetch-site: same-origin\n",
+        )
+        return str(json.loads(out.stdout)["token"])
+
+    def _renew_agent_credentials(self) -> None:
+        """控制面的库重建之后（reset），登记和凭据都没了，两台 Agent 的 agent.env 里还是旧凭据：
+        重新签发、换掉 agent.env 里的 SFLY_TOKEN（经标准输入，不在命令行参数里）。"""
+        for container, name in ((self.dev, DEV_AGENT), (self.sut, SUT_AGENT)):
+            token = self._agent_credential(container, name)
+            d.sh(
+                container,
+                "IFS= read -r token; "
+                f'sed -i "s|^SFLY_TOKEN=.*|SFLY_TOKEN=$token|" {AGENT_ENV_FILE} '
+                f"&& grep -q '^SFLY_TOKEN=' {AGENT_ENV_FILE}",
+                input_text=token + "\n",
+            )
+
     def _install_agents(self) -> None:
         url = "http://sfly.internal:8080/install.sh"
-        d.sh(self.dev, f"curl -fsSL {url} | sh -s -- --dev --no-service", timeout=600)
-        d.sh(self.sut, f"curl -fsSL {url} | sh -s -- --name {SUT_AGENT} --no-service", timeout=600)
+        dev_token = self._agent_credential(self.dev, DEV_AGENT)
+        sut_token = self._agent_credential(self.sut, SUT_AGENT)
+        d.sh(
+            self.dev,
+            f"curl -fsSL {url} | sh -s -- --dev --no-service",
+            secret_env={"SFLY_TOKEN": dev_token},
+            timeout=600,
+        )
+        d.sh(
+            self.sut,
+            f"curl -fsSL {url} | sh -s -- --name {SUT_AGENT} --no-service",
+            secret_env={"SFLY_TOKEN": sut_token},
+            timeout=600,
+        )
         # 安装脚本提示 ~/.local/bin 不在 PATH 上时，按用户文档把它加进 shell 配置。
         d.sh(
             self.dev,
@@ -697,6 +770,9 @@ class Stack:
             # 助手服务也重建：上一次的会话、pi 进程和会话目录不留到下一次（库已经重建了）。
             self._start_assistant()
         self._start_control_plane()
+        # 库重建了：登记和 Agent 凭据都没了，两台 Agent 的配置里还是旧凭据，
+        # 重启后会被拒绝。重新签发并换上。
+        self._renew_agent_credentials()
         for container in (self.dev, self.sut):
             d.sh(
                 container,

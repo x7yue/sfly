@@ -1,6 +1,7 @@
 import {
 	compareRunLogKeys,
 	LogOrigin,
+	type RunLogFileProblem,
 	type RunLogLine,
 	type RunLogPage,
 	runLogKey,
@@ -39,6 +40,12 @@ export interface RunLogState {
 	loadingOlder: boolean;
 	truncatedTasks: LogOrigin[];
 	expired: boolean;
+	/**
+	 * 日志文件不在了、变短了的任务（#721）：控制面在页里和实时推送连上时说的，同一个任务只算一次，说过的不会因为后来的页没带而消失
+	 * （重新读最新一页时按新的页重算）。控制面每次最多列出一部分，总数是 `fileProblemsTotal`。
+	 */
+	fileProblems: RunLogFileProblem[];
+	fileProblemsTotal: number;
 	/** 最近一次读取失败的原因；开始新的读取时清掉。 */
 	error: string | null;
 }
@@ -46,6 +53,12 @@ export interface RunLogState {
 export interface RunLogReader extends Reader<RunLogState> {
 	/** 用游标往前翻一页；已经读到开头、或有一页还在读时不读。 */
 	loadOlder(): void;
+}
+
+/** 控制面说的有问题的任务：列出的（最多一部分）和总数。 */
+export interface FileProblems {
+	file_problems: RunLogFileProblem[];
+	file_problems_total: number;
 }
 
 /** 读取器向下依赖的两个口：读一页、订阅实时。每页行数、范围、级别由适配器带上。 */
@@ -58,7 +71,12 @@ export interface RunLogPorts {
 	 */
 	subscribeLive(
 		after: string,
-		handlers: { onLines: (lines: RunLogLine[]) => void; onReload: () => void },
+		handlers: {
+			onLines: (lines: RunLogLine[]) => void;
+			onReload: () => void;
+			/** 连上时控制面说有任务的日志文件有问题（#721）。 */
+			onFileProblems: (problems: FileProblems) => void;
+		},
 	): () => void;
 }
 
@@ -73,6 +91,8 @@ export const emptyRunLogs: RunLogState = {
 	loadingOlder: false,
 	truncatedTasks: [],
 	expired: false,
+	fileProblems: [],
+	fileProblemsTotal: 0,
 	error: null,
 };
 
@@ -98,6 +118,8 @@ export function createRunLogReader(
 			hasOlder: olderCursor(buffer) !== null,
 			truncatedTasks: buffer.truncatedTasks,
 			expired: buffer.expired,
+			fileProblems: buffer.fileProblems,
+			fileProblemsTotal: buffer.fileProblemsTotal,
 			...patch,
 		});
 
@@ -130,6 +152,10 @@ export function createRunLogReader(
 							settle();
 						},
 						onReload: loadLatest,
+						onFileProblems(problems) {
+							buffer = withFileProblems(buffer, problems);
+							publish();
+						},
 					});
 				}
 				settle();
@@ -194,6 +220,8 @@ interface RunLogBuffer {
 	loaded: boolean;
 	truncatedTasks: LogOrigin[];
 	expired: boolean;
+	fileProblems: RunLogFileProblem[];
+	fileProblemsTotal: number;
 }
 
 const emptyRunBuffer: RunLogBuffer = {
@@ -202,7 +230,24 @@ const emptyRunBuffer: RunLogBuffer = {
 	loaded: false,
 	truncatedTasks: [],
 	expired: false,
+	fileProblems: [],
+	fileProblemsTotal: 0,
 };
+
+/** 把控制面说的有问题的任务并进缓冲区：同一个任务只算一次（后说的覆盖），总数取大的。 */
+function withFileProblems(
+	buffer: RunLogBuffer,
+	{ file_problems, file_problems_total }: FileProblems,
+): RunLogBuffer {
+	if (file_problems.length === 0 && file_problems_total === 0) return buffer;
+	const byTask = new Map(buffer.fileProblems.map((p) => [p.task_id, p]));
+	for (const problem of file_problems) byTask.set(problem.task_id, problem);
+	return {
+		...buffer,
+		fileProblems: [...byTask.values()],
+		fileProblemsTotal: Math.max(buffer.fileProblemsTotal, file_problems_total, byTask.size),
+	};
+}
 
 export const runLineKey = (line: Pick<RunLogLine, "task_id" | "seq">) =>
 	`${line.task_id}:${line.seq}`;
@@ -291,19 +336,24 @@ function fromLatestPage(page: RunLogPage): RunLogBuffer {
 		loaded: true,
 		truncatedTasks: page.truncated_tasks,
 		expired: page.expired,
+		fileProblems: page.file_problems,
+		fileProblemsTotal: page.file_problems_total,
 	};
 }
 
 /** 往前翻的一页（`before = olderCursor(buffer)`）：按排序键插入，成为最早的一页。 */
 function withOlderPage(buffer: RunLogBuffer, page: RunLogPage): RunLogBuffer {
 	const { lines, added } = insert(buffer.lines, page.lines);
-	return {
-		...buffer,
-		lines,
-		pages: [pageOf(page, added), ...buffer.pages],
-		truncatedTasks: page.truncated_tasks,
-		expired: buffer.expired || page.expired,
-	};
+	return withFileProblems(
+		{
+			...buffer,
+			lines,
+			pages: [pageOf(page, added), ...buffer.pages],
+			truncatedTasks: page.truncated_tasks,
+			expired: buffer.expired || page.expired,
+		},
+		page,
+	);
 }
 
 /** 实时推送的一批行：按排序键插入，不属于任何一页。截断标记（来源 system）到了时把这个任务记为已截断。 */

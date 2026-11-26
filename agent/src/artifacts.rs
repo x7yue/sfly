@@ -32,6 +32,7 @@ use tokio_stream::Stream;
 use crate::clock;
 use crate::executor;
 use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
+use crate::secret::Secret;
 
 /// 网络错误、卡住、5xx、408 时的上传尝试次数。
 const ATTEMPTS: u32 = 3;
@@ -43,6 +44,9 @@ pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const CHUNK_BYTES: usize = 64 * 1024;
 /// 文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。
 const MODIFIED_MS_HEADER: &str = "x-sfly-agent-modified-ms";
+/// 上传被拒绝时，响应正文最多读这么多字节写进失败原因（其余不读）：正文是对面写的，没有上限；整段读进来既占内存，
+/// 又会让失败原因（和 Agent 写到标准错误的那一行）跟着变得很大。
+const MAX_RESPONSE_BODY_BYTES: usize = 8 * 1024;
 /// 超限时错误信息里最多列出多少个没上传的文件（最大的优先），其余写个数。
 const LISTED_FILES: usize = 10;
 
@@ -136,9 +140,39 @@ fn plan(files: Vec<Found>, limit: u64) -> (Vec<Found>, Option<OverLimit>) {
     (by_size, Some(over))
 }
 
+/// 失败的结果追加上传的说明：追加之后再过一次上界，原来的文字已经限过长，加上说明可以再超过一点。
+fn with_upload_reasons(mut result: TaskResult, message: &str) -> TaskResult {
+    if let Some(e) = result.error.as_mut() {
+        e.message = executor::bound_error_text(format!("{}\n\n{message}", e.message));
+    }
+    result
+}
+
+/// 响应正文的开头（最多 [`MAX_RESPONSE_BODY_BYTES`] 字节，去掉两端空白）；读不出来是空串，超过时末尾写明只留了开头。
+async fn response_body_head(mut response: reqwest::Response) -> String {
+    let mut body = Vec::new();
+    let mut cut = false;
+    while let Ok(Some(chunk)) = response.chunk().await {
+        let room = MAX_RESPONSE_BODY_BYTES - body.len();
+        if chunk.len() > room {
+            body.extend_from_slice(&chunk[..room]);
+            cut = true;
+            break;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let mut text = String::from_utf8_lossy(&body).trim().to_string();
+    if cut {
+        text.push_str(&format!(
+            "…（响应正文超过 {MAX_RESPONSE_BODY_BYTES} 字节，只留了开头）"
+        ));
+    }
+    text
+}
+
 pub struct Uploader {
     pub http: reqwest::Client,
-    pub token: Option<String>,
+    pub token: Option<Secret>,
     /// 一次上传请求没有进展多久算卡住（[`DEFAULT_IDLE_TIMEOUT`]）。
     pub idle_timeout: Duration,
 }
@@ -246,11 +280,7 @@ impl Uploader {
             };
             return executor::failure(task, kind, message);
         }
-        let mut result = result;
-        if let Some(e) = result.error.as_mut() {
-            e.message = format!("{}\n\n{message}", e.message);
-        }
-        result
+        with_upload_reasons(result, &message)
     }
 
     /// 上传产物目录：返回（超限时放不下的文件的说明, 实际上传成功的个数, 上传的结果）。
@@ -345,7 +375,7 @@ impl Uploader {
             request = request.header(MODIFIED_MS_HEADER, modified);
         }
         if let Some(token) = &self.token {
-            request = request.bearer_auth(token);
+            request = request.bearer_auth(token.expose());
         }
         let idle = self.idle_timeout;
         let response = tokio::select! {
@@ -366,15 +396,13 @@ impl Uploader {
         if status.is_success() {
             return Ok(());
         }
-        // 错误响应的内容也只等一个空闲超时：读不到就只写状态码。
-        let body = tokio::time::timeout(idle, response.text())
+        // 错误响应的内容也只等一个空闲超时：读不到就只写状态码；只读开头 8 KiB（`response_body_head`，#728）。
+        let body = tokio::time::timeout(idle, response_body_head(response))
             .await
-            .ok()
-            .and_then(Result::ok)
             .unwrap_or_default();
         // 5xx 和 408（控制面读请求体 60 秒没有数据时回的 `upload_idle_timeout`）值得重试，别的拒绝（413、403 等）重试没有用。
         let retry = status.is_server_error() || status == reqwest::StatusCode::REQUEST_TIMEOUT;
-        Err((retry, format!("控制面返回 {status} {}", body.trim())))
+        Err((retry, format!("控制面返回 {status} {body}")))
     }
 }
 
@@ -416,6 +444,76 @@ fn collect(dir: &Path) -> std::io::Result<Vec<Found>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 一个只回一次这段正文的本地服务，返回它的响应。
+    async fn response_with(body: Vec<u8>) -> reqwest::Response {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let head = format!(
+                "HTTP/1.1 400 X\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+            let _ = stream.shutdown().await;
+        });
+        reqwest::Client::new().get(url).send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_response_body_of_a_rejected_upload_is_read_only_up_to_the_cap() {
+        let head =
+            response_body_head(response_with(b"  {\"error\": \"too big\"}\n".to_vec()).await).await;
+        assert_eq!(
+            head, "{\"error\": \"too big\"}",
+            "没超过：去掉两端空白，别的不变"
+        );
+
+        let exactly = "b".repeat(MAX_RESPONSE_BODY_BYTES);
+        assert_eq!(
+            response_body_head(response_with(exactly.clone().into_bytes()).await).await,
+            exactly,
+            "正好等于上限：不算超过"
+        );
+
+        let head = response_body_head(response_with(vec![b'b'; 3 * 1024 * 1024]).await).await;
+        let kept = head.matches('b').count();
+        assert_eq!(kept, MAX_RESPONSE_BODY_BYTES, "只留开头");
+        assert!(
+            head.ends_with("只留了开头）"),
+            "{}",
+            &head[head.len() - 90..]
+        );
+        assert!(head.len() < MAX_RESPONSE_BODY_BYTES + 200);
+        assert!(
+            response_body_head(response_with(Vec::new()).await)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn upload_reasons_appended_to_a_failure_are_bounded_again() {
+        let task = AssignTask::default();
+        let failed = executor::failure(&task, ErrorKind::NodeError, "m".repeat(3 * 1024 * 1024));
+        let bounded = failed.error.as_ref().unwrap().message.len();
+        assert!(bounded < executor::MAX_ERROR_TEXT_BYTES + 300, "{bounded}");
+
+        // 追加的说明本身再大也不能把结果带过上界。
+        let result = with_upload_reasons(failed, &"x".repeat(2 * 1024 * 1024));
+        let message = &result.error.unwrap().message;
+        assert!(
+            message.len() < executor::MAX_ERROR_TEXT_BYTES + 300,
+            "{} 字节",
+            message.len()
+        );
+        assert!(message.starts_with("mmmm") && message.contains("失败的文字有"));
+    }
 
     fn found(name: &str, size: u64) -> Found {
         Found {

@@ -36,7 +36,7 @@ describe("入口参数表单", () => {
 		});
 	});
 
-	it("再次运行时沿用上次的参数，敏感参数不沿用", () => {
+	it("再次运行时沿用上次的参数，secret 参数不沿用", () => {
 		expect(
 			initialValues(decls, {
 				biz_date: "2026-11-05",
@@ -54,7 +54,7 @@ describe("入口参数表单", () => {
 		});
 	});
 
-	describe("敏感参数的默认值读不回来（控制面给的是占位符 ******）", () => {
+	describe("secret 参数的默认值读不回来（控制面给的是占位符 ******）", () => {
 		const secrets: ParamDeclView[] = [
 			{ name: "token", type: "string", secret: true, default: "******" },
 			{ name: "pin", type: "number", secret: true, default: "******" },
@@ -68,7 +68,7 @@ describe("入口参数表单", () => {
 			expect(defaultFieldValue(secrets[3] as ParamDeclView)).toBe("cn-east");
 		});
 
-		it("再次运行：敏感参数同样留空（上次运行的值是打码的，也不沿用）", () => {
+		it("再次运行：secret 参数同样留空（上次运行的值是打码的，也不沿用）", () => {
 			expect(initialValues(secrets, { token: "******", pin: "******", region: "us-west" })).toEqual(
 				{
 					token: "",
@@ -79,7 +79,7 @@ describe("入口参数表单", () => {
 			);
 		});
 
-		it("留空的敏感参数不进触发参数，由控制面按默认值填入；有默认值时必填的也能留空", () => {
+		it("留空的 secret 参数不进触发参数，由控制面按默认值填入；有默认值时必填的也能留空", () => {
 			const required = secrets.map((p) => ({ ...p, required: true }));
 			expect(paramsSchema(required).safeParse(initialValues(required)).success).toBe(true);
 			expect(toParams(secrets, initialValues(secrets))).toEqual({ region: "cn-east" });
@@ -90,11 +90,11 @@ describe("入口参数表单", () => {
 		});
 	});
 
-	describe("敏感的布尔参数：「使用默认值」和「选了关」是两回事", () => {
+	describe("secret 的布尔参数：「使用默认值」和「选了关」是两回事", () => {
 		const flag: ParamDeclView = { name: "flag", type: "boolean", secret: true, default: "******" };
 		const noDefault: ParamDeclView = { name: "quiet", type: "boolean", secret: true };
 
-		it("有默认值时初始是「没选」（空串），不是关；没有默认值的敏感布尔参数还是关", () => {
+		it("有默认值时初始是「没选」（空串），不是关；没有默认值的 secret 布尔参数还是关", () => {
 			expect(hasHiddenDefault(flag)).toBe(true);
 			expect(hasHiddenDefault({ ...flag, default: null })).toBe(false);
 			expect(hasHiddenDefault({ ...flag, secret: false })).toBe(false);
@@ -117,7 +117,7 @@ describe("入口参数表单", () => {
 		});
 	});
 
-	it("没动过的敏感参数不放进触发参数，不论类型：字符串、数字、json、布尔都由控制面按默认值填入", () => {
+	it("没动过的 secret 参数不放进触发参数，不论类型：字符串、数字、json、布尔都由控制面按默认值填入", () => {
 		const secrets: ParamDeclView[] = [
 			{ name: "token", type: "string", secret: true, default: "******" },
 			{ name: "pin", type: "number", secret: true, default: "******" },

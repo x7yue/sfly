@@ -1,4 +1,4 @@
-import type { LogChunk, LogLineView, LogLocate, LogPage } from "@sfly/schema";
+import type { LogChunk, LogFileProblem, LogLineView, LogLocate, LogPage } from "@sfly/schema";
 import { createStore, type Reader } from "#/lib/reader";
 
 /**
@@ -31,6 +31,11 @@ export interface LogBuffer {
 	loaded: boolean;
 	truncated: boolean;
 	expired: boolean;
+	/**
+	 * 日志文件的问题（#721）：写过日志但文件不在了、或者比记录的短；没有问题时为 null。页里和实时流连上时的事件都会说；
+	 * 说过的不会因为后来的页没带而消失（文件不会自己回来）。
+	 */
+	fileProblem: LogFileProblem | null;
 	/** 读最后一页时已写入的最大序号：实时流从它之后接上。 */
 	lastSeq: number;
 	/** 定位到某一刻读到的位置和正好对应的行；不是定位读到的为 null。 */
@@ -62,8 +67,17 @@ export interface TaskLogReader extends Reader<TaskLogState> {
 export interface TaskLogPorts {
 	/** 读一页：`at` 是定位的时刻，`before`、`after` 是往前、往后翻页的起点；都不给是最后一页。 */
 	readPage(position: { at?: string; before?: number; after?: number }): Promise<LogPage>;
-	/** 订阅实时流：从 `afterSeq` 之后接上；返回断开函数。 */
-	subscribeLive(afterSeq: number, onChunk: (chunk: LogChunk) => void): () => void;
+	/**
+	 * 订阅实时流：从 `afterSeq` 之后接上；返回断开函数。`onChunk` 是一批新写入的行，`onFileProblem` 是连上时控制面说
+	 * 日志文件有问题（#721）。
+	 */
+	subscribeLive(
+		afterSeq: number,
+		handlers: {
+			onChunk: (chunk: LogChunk) => void;
+			onFileProblem: (problem: LogFileProblem) => void;
+		},
+	): () => void;
 	/** 实时流的行符不符合筛选条件（实时流不在服务端筛选）。 */
 	accepts(line: LogLineView): boolean;
 }
@@ -83,6 +97,7 @@ export const emptyTaskLogs: TaskLogState = {
 	loaded: false,
 	truncated: false,
 	expired: false,
+	fileProblem: null,
 	lastSeq: 0,
 	located: null,
 	loadingOlder: false,
@@ -103,10 +118,13 @@ export function createTaskLogReader(
 	const connectIfCaughtUp = () => {
 		const { hasNewer, lastSeq } = store.get();
 		if (hasNewer) return;
-		closeLive = ports.subscribeLive(lastSeq, (chunk) => {
-			const state = store.get();
-			const next = withLive(state, chunk, ports.accepts, maxLines);
-			if (next !== state) store.set(next);
+		closeLive = ports.subscribeLive(lastSeq, {
+			onChunk: (chunk) => {
+				const state = store.get();
+				const next = withLive(state, chunk, ports.accepts, maxLines);
+				if (next !== state) store.set(next);
+			},
+			onFileProblem: (problem) => store.set({ fileProblem: problem }),
 		});
 	};
 
@@ -191,6 +209,7 @@ function fromLatestPage(page: LogPage): LogBuffer {
 		loaded: true,
 		truncated: page.truncated,
 		expired: page.expired,
+		fileProblem: page.file_problem,
 		lastSeq: page.last_seq,
 		located: null,
 	};
@@ -215,6 +234,7 @@ function withNewerPage(buffer: LogBuffer, page: LogPage): LogBuffer {
 		lines: mergeLines(buffer.lines, page.lines),
 		end: page.end,
 		hasNewer: !reachedEnd(page),
+		fileProblem: page.file_problem ?? buffer.fileProblem,
 		lastSeq: page.last_seq,
 	};
 }
@@ -226,6 +246,7 @@ function withOlderPage(buffer: LogBuffer, page: LogPage): LogBuffer {
 		lines: mergeLines(page.lines, buffer.lines),
 		start: page.start,
 		hasOlder: page.start > 0,
+		fileProblem: page.file_problem ?? buffer.fileProblem,
 	};
 }
 

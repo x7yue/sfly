@@ -68,7 +68,7 @@ export type SessionTool = z.infer<typeof SessionTool>;
  * - `stopped` 已停止：用户停止；
  * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，{@link TurnLimit}；默认 40 次模型调用、
  *   20 分钟，#540）；
- * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#640 起按下面 {@link ErrorClass} 的规则分）；
  * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
  * - `failed` 其他错误。
  * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
@@ -89,11 +89,20 @@ export const TurnLimit = z.enum(["model_calls", "duration"]);
 export type TurnLimit = z.infer<typeof TurnLimit>;
 
 /**
- * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
- * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
- * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
- * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
- * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
+ * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`）。#640 起助手服务按上游的错误分好再写（`turn_end`
+ * 模型不可用时、重试的 `notice`），上游的错误原文不进事件，只进助手服务的日志。落库之后改不了，所以宁可分到 `other`，
+ * 不能分错：
+ * - 状态码只从结构上取：pi 只给一句话，只认这句话开头的固定写法（`502: …`、`<提供方> API error (502): …`、SDK 的
+ *   `502 …`），不在全文里找；取不到就是没有状态码。
+ * - 有状态码时由它定类别，正文里的词只能在这个范围里细分：401、403 是 `auth`（正文说额度时是 `quota`）；402 是 `quota`；
+ *   429 是 `rate_limit`（正文说额度时是 `quota`）；408、504 是 `timeout`；其余 5xx 是 `upstream`；其余 4xx 是 `other`
+ *   （上游拒绝了这次请求；正文说上下文超长时是 `context_overflow`）。
+ * - 没有状态码时只按连接层的失败分：连不上、连接断开、证书验不过是 `unreachable`，超时是 `timeout`（认 Node 的错误码、
+ *   SDK 固定的那一句），别的都是 `other`；不看正文里的词。
+ * - 边界（按写法认，不看意思）：以登记过的状态码加空格开头的消息按 SDK 的写法取状态码，所以正文恰好以这样的数字开头的错误
+ *   （`404 packages were …`）会被认成那个状态码；没有状态码时，以括号里的连接层错误码结尾的消息（`… (ECONNRESET)`）算连不上。
+ * 各项：`unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝，`quota` 额度不足，`rate_limit` 限流，
+ * `upstream` 对方出错，`context_overflow` 上下文超长，`other` 其他。
  */
 export const ErrorClass = z.enum([
 	"unreachable",
@@ -174,9 +183,12 @@ export type ReadinessProblemKind = z.infer<typeof ReadinessProblemKind>;
  * - 503 `assistant_not_configured`：助手没有配置，写接口返回它（读接口照常，就绪状态里写明）；
  * - 503 `assistant_unavailable`：助手服务连不上；
  * - 503 `model_unavailable`：模型没有配置或连不上，新的一轮在开始之前被拒绝（#548）；
- * - 409 `turn_running`：这个会话有一轮在做时发话，409 `project_busy`：同一个项目另一个会话在做（竖切里有，
- *   #544 改成插话和排队，这两个码随之不再出现）；
- * - 409 `session_queued`：排队中再发话（#544）；409 `session_ended`：会话已结束；
+ * - 409 `turn_running`，两种来源：一是助手服务说这个会话还有一轮在做，而控制面看来已经结束了（例如控制面等了
+ *   `ASSISTANT_STOP_WAIT_MS` 没有等到结局、自己补了结局，助手服务那边那一轮其实还在做，这时再发话；在做时发话是插话，正在停止时发话
+ *   排在后面，都不是它）；二是会话的状态一直在变，控制面重试三次都没有做成（发话时每次读到的状态都变了；停止时同样；结束会话时
+ *   停止之后又开始了一轮，三次都停不完）；
+ * - 409 `project_busy`：竖切里同一个项目另一个会话在做时的拒绝，#544 起改成排队，不再出现（码留着，不影响生成的类型）；
+ * - 409 `session_queued`：排队中再发话（#544）；409 `session_ended`：会话已结束，或者正在结束（`end` 进行中，写下 `session_ended` 之前）；
  * - 409 `session_predates_login`：这个会话建于登录之前（没有发起人的用户），签发不了会话令牌，要新建一个会话（#547）。
  */
 export const SessionErrorCode = z.enum([
@@ -276,7 +288,7 @@ export type WaitingFor = z.infer<typeof WaitingFor>;
 
 /**
  * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
- * `waiting_for` 是正在做的那个会话。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
+ * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
  * （{@link SessionView}）和快照（{@link SnapshotEvent}）里，刷新页面后拿得回来。#544 起。
  */
 export const TurnQueuedEvent = z.object({
@@ -329,7 +341,8 @@ export const ToolOutputEvent = z.object({
  * 工具的结果（对应 pi 的 `tool_execution_end`）。`text` 是模型看到的那份结果；`exit_code` 只有命令才有
  * （拿不到退出码时不给）；`diff` 只有编辑才有，取 pi 结果里的 `details.diff`。`text` 和 `diff` 超过
  * {@link SESSION_EVENT_LIMITS} 的 `toolResultBytes` 只留头尾，`truncated` 标出（任何一段被截断都为 true；pi 自己截断过的
- * 结果也为 true：命令的输出只留了末尾、读文件只给了一部分，模型看到的就不是全部）。
+ * 结果也为 true：命令的输出只留了末尾、读文件只给了一部分，模型看到的就不是全部）。**命令超时这一种不标 pi 的截断**：pi 把超时
+ * 包成一个没有细节（`details`）的错误结果，助手服务看不出它截断过，只有 `text` 自己超过上限时才是 true（#618 审查，#544 收）。
  * 助手服务产生。持久。#540 起。
  */
 export const ToolResultEvent = z.object({
@@ -373,7 +386,7 @@ const noticeFields = {
 	max_attempts: z.int().min(1).optional(),
 	/** 多久（毫秒）之后重试；只有 `retry`。 */
 	retry_delay_ms: z.int().min(0).optional(),
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class: ErrorClass.optional(),
 	/**
 	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
@@ -425,7 +438,7 @@ export const AssistantNoticeEvent = z
  * `reason` 是一句话；`steps` 是工具调用次数，`model_calls` 是模型调用次数，`usage` 是这一轮合计：
  * 控制面补的 `interrupted`（助手服务重启了，#545）拿不到这三项，不给。`duration_ms` 是这一轮用的时间。
  * `limit_kind` 在 `outcome` 为 `limit` 时给出，是哪一种上限（{@link TurnLimit}），不靠 `reason` 的文字；
- * `error_class` 在模型不可用时给出（#540 起，先写 `other`，#548 分细）。助手服务产生（控制面也会写 `interrupted`、
+ * `error_class` 在模型不可用时给出（#640 起按类别分）。`reason` 不带「模型不可用」这几个字，页面按结局加。助手服务产生（控制面也会写 `interrupted`、
  * `failed` 的，#545），持久。#540 起。
  */
 export const TurnEndEvent = z.object({
@@ -673,8 +686,9 @@ export const SessionRef = z.object({ id: z.string(), title: z.string() });
 export type SessionRef = z.infer<typeof SessionRef>;
 
 /**
- * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 只在排队中（`status` 为 `queued`）时有值，
- * 从 1 起；`last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
+ * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
+ * 排在这一轮后面的在做的会话（`status` 为 `running`）也有，从 1 起，按说话的时刻排（和轮到谁开始的顺序一致）；
+ * `last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
  */
 export const SessionListItem = z.object({
 	id: SessionId,
@@ -690,7 +704,8 @@ export const SessionListItem = z.object({
 export type SessionListItem = z.infer<typeof SessionListItem>;
 
 /**
- * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；
+ * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；停止途中说了话的
+ * 在做的会话在等的是它自己正在停止的这一轮；
  * `turn_queued` 不持久，刷新页面后靠它拿回在等谁，#544）。
  */
 export const SessionView = SessionListItem.extend({

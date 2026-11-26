@@ -23,6 +23,7 @@ from action_nodes import (
     invalid_name,
     invalid_parent,
     leave_unfinished,
+    long_texts,
     many_names,
     nesting,
     outcomes,
@@ -33,6 +34,12 @@ from action_nodes import (
 )
 
 from sfly import Context, TaskInfo
+from sfly.actions import (
+    MAX_NAME_CHARS,
+    MAX_REASON_CHARS,
+    MAX_VALUE_CHARS,
+    TRANSPORT_MARGIN_CHARS,
+)
 from sfly.testing import ActionRecord, ActionSummary, Execution, run_node
 
 
@@ -480,13 +487,170 @@ def test_a_failure_event_has_the_exception_type_and_message(tmp_path: Path) -> N
     assert (end["result"], end["reason"]) == ("failed", "ValueError: 价格不能为负")
 
 
-def test_a_very_long_failure_reason_is_cut(tmp_path: Path) -> None:
+def test_a_very_long_failure_reason_is_cut_at_the_transport_limit(tmp_path: Path) -> None:
     ctx, events = make_context(tmp_path)
 
-    ctx.action.start("下单").fail("因" * 5000)
+    ctx.action.start("下单").fail("因" * 9000)
 
     [end] = only(events(), "action_end")
-    assert len(end["reason"]) == 4096 and end["reason"].endswith("…")
+    sent = MAX_REASON_CHARS + TRANSPORT_MARGIN_CHARS
+    assert len(end["reason"]) == sent and end["reason"].endswith("…")
+    assert end["reason"][:-1] == "因" * (sent - 1)
+
+
+# ---- 名称、字段值、失败原因的上限由控制面执行：
+# SDK 只在比上限多 TRANSPORT_MARGIN_CHARS 个字符处截断 ----
+
+SECRET = "ZEBRA-secret-token-0123456789"
+
+
+def fragments(secret: str, size: int = 4) -> list[str]:
+    """secret 值里每一段 `size` 个字符。"""
+    return [secret[i : i + size] for i in range(len(secret) - size + 1)]
+
+
+def test_names_values_and_reasons_are_sent_past_their_limits_up_to_the_transport_limit(
+    tmp_path: Path,
+) -> None:
+    ctx, events = make_context(tmp_path)
+    name = "名" * (MAX_NAME_CHARS + 30)
+    value = "值" * (MAX_VALUE_CHARS + 30)
+
+    ctx.action.start(name, 内容=value).fail("因" * (MAX_REASON_CHARS + 30))
+
+    [start] = only(events(), "action_start")
+    [end] = only(events(), "action_end")
+    # 超过上限的部分也发出去，由控制面先打码、再截到上限
+    assert start["name"] == name
+    assert start["fields"] == {"内容": value}
+    assert end["reason"] == "因" * (MAX_REASON_CHARS + 30)
+    # 比上限多出的余量用完才截断
+    longest = "名" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS + 50)
+    ctx.action.start(longest, 内容="值" * (MAX_VALUE_CHARS + TRANSPORT_MARGIN_CHARS + 50)).end()
+    [_, start2] = only(events(), "action_start")
+    assert len(start2["name"]) == MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS
+    assert len(start2["fields"]["内容"]) == MAX_VALUE_CHARS + TRANSPORT_MARGIN_CHARS
+
+
+def test_a_secret_across_the_documented_limit_is_sent_whole(tmp_path: Path) -> None:
+    """secret 值正好跨在名称、字段值、失败原因的上限处：整个值都在发出的文字里，
+    控制面才认得出来。"""
+    ctx, events = make_context(tmp_path)
+
+    ctx.action.start(
+        "n" * (MAX_NAME_CHARS - 10) + SECRET,
+        内容="v" * (MAX_VALUE_CHARS - 10) + SECRET,
+    ).fail("r" * (MAX_REASON_CHARS - 10) + SECRET)
+
+    [start] = only(events(), "action_start")
+    [end] = only(events(), "action_end")
+    assert SECRET in start["name"] and SECRET in start["fields"]["内容"] and SECRET in end["reason"]
+
+
+def test_names_that_differ_only_after_the_limit_are_counted_as_one_name(tmp_path: Path) -> None:
+    ctx, events = make_context(tmp_path)
+    head = "接口" * (MAX_NAME_CHARS // 2)
+
+    ctx.action.start(head + "A").end()
+    ctx.action.start(head + "B").end()
+
+    # 计数和每种名称的上限按名称的前 MAX_NAME_CHARS 个字符（和控制面一致）；
+    # 摘要里写第一次出现的完整名称
+    ctx.action.start("别的").end()
+    wait_for(lambda: only(events(), "action_summary")[-1]["total"] == 3)
+    names = only(events(), "action_summary")[-1]["names"]
+    assert [(n["name"], n["total"]) for n in names] == [(head + "A", 2), ("别的", 1)]
+    assert len(only(events(), "action_start")) == 3
+
+
+def test_warnings_never_quote_the_cut_text(tmp_path: Path) -> None:
+    """警告里不写名称、字段值被截断后的内容：截断会把里面的 secret 值切成两半，
+    前半截控制面认不出来。"""
+    ctx, events = make_context(tmp_path)
+    long_name = "n" * (MAX_NAME_CHARS - 10) + SECRET
+    long_value = "v" * (MAX_VALUE_CHARS - 10) + SECRET
+
+    long_key = "k" * (MAX_NAME_CHARS - 10) + SECRET
+    with ctx.action(long_name, **{long_key: long_value}):
+        pass
+    ctx.mark(long_name, 内容=long_value)
+    handle = ctx.action.start(long_name)
+    handle.end()
+    handle.end()  # 再结束一次：警告里引用动作的名称
+
+    warnings = [e["message"] for e in only(events(), "log") if e["level"] == "warn"]
+    assert any("名称" in w for w in warnings) and any("字段值" in w for w in warnings), warnings
+    assert any("已经结束" in w for w in warnings), warnings
+    for warning in warnings:
+        assert not any(piece in warning for piece in fragments(SECRET)), warning
+    # 写的是长度和上限
+    assert any(str(len(long_name)) in w and str(MAX_NAME_CHARS) in w for w in warnings), warnings
+    assert any(str(len(long_value)) in w and str(MAX_VALUE_CHARS) in w for w in warnings), warnings
+
+
+def test_the_summary_carries_the_full_name_not_the_one_used_for_counting(tmp_path: Path) -> None:
+    """摘要里正在做的、最近结束的、最近失败的动作，名称是发出去的完整的那个（控制面按它先打码再截到上限）；
+    计数用的前 MAX_NAME_CHARS 个字符只在 SDK 内部。"""
+    ctx, events = make_context(tmp_path)
+    name = "名" * (MAX_NAME_CHARS + 30)
+    running = ctx.action.start(name + "-进行中")
+    ctx.action.start(name + "-结束").end()
+    ctx.action.start(name + "-失败").fail("原因")
+    wait_for(lambda: bool(only(events(), "action_summary")))
+    running.end()
+    last = only(events(), "action_summary")[-1]
+    entries = [*last["running"], *last["recent"], *last["recent_failed"]]
+    assert entries, last
+    for entry in entries:
+        assert len(entry["name"]) == MAX_NAME_CHARS + 30 + len("-进行中"), entry["name"][-8:]
+    assert last["names"][0]["name"] == name + "-进行中"
+
+
+def test_a_field_key_is_cut_only_at_the_transport_limit_and_the_warning_does_not_quote_it(
+    tmp_path: Path,
+) -> None:
+    ctx, events = make_context(tmp_path)
+    key = "键" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS + 50)
+    secret_key = "k" * (MAX_NAME_CHARS - 10) + SECRET
+
+    # 字段的键是任意字符串：mypy 担心某个键恰好叫 parent，这里的键不是
+    ctx.action.start("动作", **{key: "值", secret_key: "值"}).end()  # type: ignore[arg-type]
+
+    [start] = only(events(), "action_start")
+    assert "键" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS) in start["fields"]
+    assert secret_key in start["fields"]  # 比上限长但没有到传输上限：整个发出去
+    warnings = [e["message"] for e in only(events(), "log") if e["level"] == "warn"]
+    assert len(warnings) == 1 and "字段名" in warnings[0], warnings  # 同一种原因只警告一次
+    assert not any(piece in warnings[0] for piece in fragments(SECRET)), warnings[0]
+    assert str(len(key)) in warnings[0] or str(len(secret_key)) in warnings[0], warnings[0]
+
+
+def test_local_execution_records_the_texts_cut_at_the_limits_like_the_control_plane() -> None:
+    result = run_node(long_texts)
+
+    assert result.status == "success", result.error
+    [action] = result.actions
+    assert action.name == "名" * MAX_NAME_CHARS
+    assert action.fields == {"键" * MAX_NAME_CHARS: "值" * MAX_VALUE_CHARS}
+    assert action.reason == "因" * (MAX_REASON_CHARS - 1) + "…"
+    summary = result.action_summary
+    assert summary is not None
+    for entry in [*summary.running, *summary.recent, *summary.recent_failed]:
+        assert len(entry.name) <= MAX_NAME_CHARS
+        assert all(len(k) <= MAX_NAME_CHARS for k in entry.fields)
+        assert all(len(v) <= MAX_VALUE_CHARS for v in entry.fields.values())
+        assert entry.reason is None or len(entry.reason) <= MAX_REASON_CHARS
+
+
+def test_a_warning_about_a_short_name_still_quotes_it(tmp_path: Path) -> None:
+    ctx, events = make_context(tmp_path)
+
+    handle = ctx.action.start("下单")
+    handle.end()
+    handle.end()
+
+    [warning] = [e["message"] for e in only(events(), "log") if e["level"] == "warn"]
+    assert "'下单'" in warning
 
 
 def test_a_handle_is_ended_once_even_when_called_again(tmp_path: Path) -> None:

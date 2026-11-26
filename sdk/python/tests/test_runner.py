@@ -950,6 +950,69 @@ def test_a_cancelled_raised_by_the_node_itself_is_also_quiet(
     assert (event["level"], event["message"]) == ("info", "下载被取消，执行到 giveup.stop 第 5 行")
 
 
+def test_a_cancelled_that_nobody_catches_in_a_background_thread_is_quiet_too(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """取消或超时进入收尾时，后台线程里正在进行的调用抛 `Cancelled`，节点没有接住：和主线程一样是
+    正常终止，只在事件管道里留一行 INFO，标准错误里没有 ERROR 级的堆栈（#678）。"""
+    write_module(
+        code_dir,
+        "bgcancel",
+        """
+        import threading
+        from sfly import Cancelled
+
+        def work() -> dict:
+            def waiting() -> None:
+                raise Cancelled("任务正在收尾，调用已放弃")
+
+            thread = threading.Thread(target=waiting, name="bg-wait")
+            thread.start()
+            thread.join()
+            return {"done": True}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "bgcancel:work")
+
+    assert run.returncode == 0
+    assert run.stderr == ""
+    infos = [e for e in events_of(tmp_path) if e.get("level") == "info"]
+    assert [e["message"] for e in infos] == [
+        "后台线程 bg-wait：任务正在收尾，调用已放弃，执行到 bgcancel.work.<locals>.waiting 第 7 行"
+    ]
+
+
+def test_any_other_exception_in_a_background_thread_still_writes_its_stack(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "bgerror",
+        """
+        import threading
+
+        def work() -> dict:
+            def broken() -> None:
+                raise ValueError("后台线程自己的错")
+
+            thread = threading.Thread(target=broken, name="bg-broken")
+            thread.start()
+            thread.join()
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "bgerror:work")
+
+    assert run.returncode == 0
+    assert "Exception in thread bg-broken" in run.stderr
+    assert "ValueError: 后台线程自己的错" in run.stderr
+    # 没有被当作正常终止：事件管道里没有 INFO（节点没有写过日志，事件文件可能都没有）。
+    events = tmp_path / "work" / "events.jsonl"
+    assert not events.exists() or [e for e in events_of(tmp_path) if e.get("level") == "info"] == []
+
+
 def test_cleanup_after_cancelled_and_the_nodes_own_logs_are_not_affected(
     tmp_path: Path, code_dir: Path
 ) -> None:
@@ -2457,3 +2520,194 @@ def test_context_outside_an_executor_has_local_task_info(
 
     assert ctx.task == TaskInfo(run_id="local", node_id="local", task_id="local", attempt=1)
     assert ctx.procs_dir == tmp_path / "procs" / "local"
+
+
+# ---- 失败结果里的文字有上界（#723）----
+
+
+def test_a_huge_exception_text_is_bounded_and_the_type_the_place_and_both_ends_survive(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """异常的文字有几 MiB：说明留首尾各一半、堆栈只留帧，不重复同一段文字；类型和出错的位置照旧在；
+    output.json 远小于 Agent 的读取上限（16 MiB），完整的文字在标准错误里。"""
+    write_module(
+        code_dir,
+        "huge",
+        f"""
+        def work(size: int) -> dict:
+            raise RuntimeError("起头" + "e" * size + "收尾")  {RAISED_HERE}
+        """,
+    )
+    size = 3 * 1024 * 1024
+
+    run, error = failed(tmp_path, code_dir, "huge:work", inputs={"size": size})
+
+    assert error["type"] == "RuntimeError"
+    assert error["location"] == f"huge.work 第 {raised_line(code_dir, 'huge')} 行"
+    message = error["message"]
+    assert message.startswith("RuntimeError: 起头eeee")
+    assert message.endswith("eeee收尾")
+    assert "异常的文字有" in message and "字节没有保留" in message
+    assert len(message.encode("utf-8")) < runner.MAX_FAILURE_MESSAGE_BYTES + 400
+    # 堆栈：看得到节点那一帧，末尾没有再存一份异常的文字
+    traceback_text = error["traceback"]
+    assert traceback_text.startswith("Traceback (most recent call last):")
+    assert frame_files(traceback_text) == [str(code_dir / "huge.py")]
+    assert "e" * 1000 not in traceback_text
+    assert "这条异常的文字就是上面的说明" in traceback_text
+    assert len(traceback_text.encode("utf-8")) < 4096
+    assert run.output is not None
+    assert len(json.dumps(run.output)) < 200 * 1024
+    # 完整的文字写进了标准错误（任务日志里有全文）
+    assert len(run.stderr) > size
+
+
+def test_a_multibyte_exception_text_is_bounded_by_bytes_and_cut_on_character_boundaries(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "wide",
+        """
+        def work(count: int) -> dict:
+            raise ValueError("中" * count)
+        """,
+    )
+
+    # 4 万个字符、12 万字节：字符数在 64 KiB 之下，字节数超过
+    _, error = failed(tmp_path, code_dir, "wide:work", inputs={"count": 40_000})
+
+    message = error["message"]
+    assert len(message.encode("utf-8")) < runner.MAX_FAILURE_MESSAGE_BYTES + 400
+    assert message.startswith("ValueError: 中中")
+    assert message.endswith("中中")
+    assert "异常的文字有 120" in message  # 异常的类型加文字共 12 万多字节
+    message.encode("utf-8")  # 整段都是合法的 UTF-8：没有切在字符中间
+
+
+def test_a_failure_within_the_limits_is_unchanged(tmp_path: Path, code_dir: Path) -> None:
+    """没超过上限的失败一个字不变：说明还在堆栈的末尾（和以前一样）。
+    说明正好等于上限时不动，多 1 个字节才省。"""
+    write_module(
+        code_dir,
+        "modest",
+        """
+        def work(size: int) -> dict:
+            raise ValueError("x" * size)
+        """,
+    )
+
+    _, error = failed(tmp_path, code_dir, "modest:work", inputs={"size": 10_000})
+    assert error["message"] == "ValueError: " + "x" * 10_000
+    assert error["traceback"].endswith(error["message"] + "\n")
+    assert "没有保留" not in error["traceback"]
+
+    exactly = runner.MAX_FAILURE_MESSAGE_BYTES - len("ValueError: ")
+    _, error = failed(tmp_path, code_dir, "modest:work", inputs={"size": exactly})
+    assert error["message"] == "ValueError: " + "x" * exactly
+
+    _, error = failed(tmp_path, code_dir, "modest:work", inputs={"size": exactly + 1})
+    assert "异常的文字有" in error["message"]
+
+
+def test_a_bound_text_keeps_both_ends_and_says_how_much_was_left_out() -> None:
+    limit = 100
+    assert runner._bound_text("a" * limit, limit, "说明") == "a" * limit
+    assert runner._bound_text("", limit, "说明") == ""
+    text = "头" + "m" * 500 + "尾"  # 506 字节，头和尾各 3 个字节
+    bounded = runner._bound_text(text, limit, "说明")
+    # 首尾各留 50 字节，中间 406 字节没有保留
+    assert bounded.startswith(
+        "头" + "m" * 47 + "\n\n…（说明有 506 字节，超过 100 字节：中间 406 字节没有保留"
+    )
+    assert bounded.endswith("\n\n" + "m" * 47 + "尾")
+    # 切点落在一个多字节字符中间时，那个字符整个不留，不出现乱码
+    cut = runner._bound_text("中" * 40, 100, "说明")
+    assert "�" not in cut
+    assert cut.startswith("中" * 16 + "\n\n") and cut.endswith("\n\n" + "中" * 16)
+    assert "中间 24 字节没有保留" in cut
+
+
+def test_a_bound_traceback_keeps_the_last_frames_from_the_start_of_a_frame() -> None:
+    frames = "".join(
+        f'  File "/code/m.py", line {i}, in f{i}\n    call_{i}()\n' for i in range(1, 2001)
+    )
+    text = "Traceback (most recent call last):\n" + frames + "ValueError: boom\n"
+    limit = 4096
+
+    bounded = runner._bound_traceback(text, limit)
+
+    assert bounded.startswith("…（堆栈有 ")
+    body = bounded.split("…\n", 1)[1]
+    assert len(body.encode("utf-8")) <= limit
+    assert body.startswith('  File "/code/m.py"'), "从一帧的开头起"
+    assert body.endswith(
+        "call_2000()\n    ValueError: boom\n".replace("    ValueError", "ValueError")
+    )
+    assert runner._bound_traceback(text, 10 * len(text)) == text
+
+
+def test_the_exception_text_is_not_stored_twice_when_the_message_is_cut(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """说明被截短了，堆栈末尾那份（同一段文字）不留；说明没截短时堆栈末尾还是它。"""
+    message, traceback_text = runner._bound_failure(
+        "E: " + "z" * 200_000,
+        'Traceback (most recent call last):\n  File "a.py", line 1, in f\n    g()\nE: '
+        + "z" * 200_000
+        + "\n",
+        "E: " + "z" * 200_000 + "\n",
+    )
+    assert "z" * 200_000 not in traceback_text
+    assert len(message.encode("utf-8")) < runner.MAX_FAILURE_MESSAGE_BYTES + 400
+    assert traceback_text.startswith("Traceback")
+    short_message, short_tb = runner._bound_failure(
+        "E: boom", "Traceback\n  File 'a'\nE: boom\n", "E: boom\n"
+    )
+    assert short_message == "E: boom"
+    assert short_tb.endswith("E: boom\n")
+
+
+def test_a_huge_chained_exception_bounds_the_traceback_and_keeps_the_last_frames(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """说明很短、堆栈很长（异常链里前一条异常的文字有 1 MiB，在堆栈中间）：
+    堆栈限到 64 KiB，只留最后的几帧，说明一个字不变；省掉的东西前面写明了多少。"""
+    write_module(
+        code_dir,
+        "chained",
+        f"""
+        def work(size: int) -> dict:
+            try:
+                raise ValueError("a" * size)
+            except ValueError as error:
+                raise RuntimeError("最后的") from error  {RAISED_HERE}
+        """,
+    )
+
+    _, error = failed(tmp_path, code_dir, "chained:work", inputs={"size": 1024 * 1024})
+
+    assert error["message"] == "RuntimeError: 最后的"
+    traceback_text = error["traceback"]
+    assert len(traceback_text.encode("utf-8")) < runner.MAX_FAILURE_TRACEBACK_BYTES + 400
+    assert traceback_text.startswith("…（堆栈有 ")
+    assert "没有保留，只留最后的几帧" in traceback_text
+    # 最后的一帧（节点里 raise 的那一行）还在
+    assert 'raise RuntimeError("最后的") from error' in traceback_text
+    assert error["location"] == f"chained.work 第 {raised_line(code_dir, 'chained')} 行"
+
+
+def test_a_traceback_over_the_limit_is_cut_in_failure_results_too() -> None:
+    """限长在 `_bound_failure` 里生效：堆栈超过上限时只留最后几帧，说明不动。"""
+    frames = "".join(
+        f'  File "/code/m.py", line {i}, in f{i}\n    call_{i}()\n' for i in range(1, 3001)
+    )
+    own = "ValueError: boom\n"
+    tb = "Traceback (most recent call last):\n" + frames + own
+
+    message, bounded = runner._bound_failure("ValueError: boom", tb, own)
+
+    assert message == "ValueError: boom"
+    assert len(bounded.encode("utf-8")) < runner.MAX_FAILURE_TRACEBACK_BYTES + 400
+    assert bounded.startswith("…（堆栈有 ")
+    assert "call_3000()" in bounded and "call_1()" not in bounded

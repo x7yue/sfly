@@ -57,6 +57,7 @@ import type {
 	RunListItem,
 	RunListQuery,
 	RunLogChunk,
+	RunLogFileProblemsEvent,
 	RunLogNodesParam,
 	RunLogPage,
 	RunLogPageQuery,
@@ -81,6 +82,8 @@ import type {
 	SnapshotEvent,
 	SteerQueueEvent,
 	StoredOrchestrationDocument,
+	TaskIoView,
+	TaskLogFileProblemEvent,
 	ThinkingEvent,
 	Timestamp,
 	TokenUsage,
@@ -346,7 +349,9 @@ export interface Api {
 		 * `GET /tasks/:id/logs/events`
 		 *
 		 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
-		 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。
+		 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。连上时如果这个任务的日志文件有问题
+		 * （`LogFileProblem`），先发一条事件 `file_problem`（内容同分页的字段），之后不再发（连着期间文件才出问题的不报）；
+		 * 不认识这个事件的客户端忽略它即可（#721）。
 		 */
 		events: Stream<
 			{
@@ -360,12 +365,17 @@ export interface Api {
 			},
 			{
 				logs: LogChunk;
+				file_problem: TaskLogFileProblemEvent;
 			}
 		>;
 		/**
 		 * `GET /tasks/:id/logs/download`
 		 *
-		 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。
+		 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`（说明是「保留期清理」）；有行写入过的任务日志文件
+		 * 不见了或者比数据库记的短（被删除、截短，主机掉电，数据库和数据目录分开恢复）时同样 410 `expired`，错误的 `details` 是
+		 * `{ tasks: [{ task_id, node_id, attempt, reason: "missing" | "short" }], total }`（#669）；下载进行中文件被截短时响应已经开始，
+		 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时传输层看不出来（见 README「反向代理」），
+		 * 所以 200 的响应带头 `LOG_EXPECT_HEADER`，客户端读完核对。
 		 */
 		download: Download<
 			{
@@ -392,7 +402,9 @@ export interface Api {
 		 * `GET /runs/:id/logs/download`
 		 *
 		 * 下载一次运行（范围内）合并后的日志：JSONL，每行是 `RunLogDownloadRow`，顺序与合并视图相同，
-		 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`，运行不存在时 404。
+		 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`（说明是「保留期清理」），运行不存在时 404；范围内有任务的
+		 * 日志文件不见了或者比数据库记的短时同样 410 `expired`，错误的 `details` 同上（列出是哪几个任务）；下载进行中出现这种情况时响应
+		 * 已经开始，连接被断开（#669；看不看得出没下完同上）。
 		 */
 		runDownload: Download<
 			{
@@ -411,6 +423,9 @@ export interface Api {
 		 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），断线重连时经 `Last-Event-ID` 请求头带回
 		 *   （API 客户端的订阅自动带上），控制面只补发之后的行，不重复也不遗漏。
 		 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
+		 *
+		 * 连上时如果范围内有任务的日志文件有问题（`LogFileProblem`），先发一条事件 `file_problems`（内容同分页的字段），之后不再发；
+		 * 不认识这个事件的客户端忽略它即可（#721）。
 		 *
 		 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
 		 */
@@ -431,6 +446,7 @@ export interface Api {
 			{
 				logs: RunLogChunk;
 				reload: Record<string, never>;
+				file_problems: RunLogFileProblemsEvent;
 			}
 		>;
 	};
@@ -1036,7 +1052,7 @@ export interface Api {
 		 *
 		 * 一次运行的摘要：状态、耗时、最终失败的节点、每个失败的任务的错误（类型、失败原因一行、完整信息）和日志尾部、
 		 * 失败的动作、有异常的关注项。判断一次运行「成功且结果对」先读它。读取走运行的统一读取（`readRuns`），
-		 * 错误信息、参数里保密参数的值都已打码。运行不存在时 404。
+		 * 错误信息、参数里 secret 参数的值都已打码。运行不存在时 404。
 		 */
 		summary: Endpoint<
 			{
@@ -1118,6 +1134,20 @@ export interface Api {
 			RunView
 		>;
 		/**
+		 * `GET /tasks/:id/io`
+		 *
+		 * 一次尝试的输入和输出的全文（打码之后）：运行视图里被省略的那些在这里取（每一次尝试的，不只是最后一次；节点层被省略的
+		 * 输出取最后一次尝试的）。单个输入、输出本来就不超过 1 MiB，响应不超过 2 MiB 多一点。任务不存在、不在自己的项目里是 404。
+		 */
+		taskIo: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			TaskIoView
+		>;
+		/**
 		 * `GET /runs/:id`
 		 *
 		 * 运行视图；实时更新见 `runs.events`。
@@ -1182,8 +1212,9 @@ export interface Api {
 		 * `POST /projects/:project/sessions`
 		 *
 		 * 新建一个会话，`text` 是它的第一句话，作为第一轮：写 `user_message` 和 `turn_started`，把这一轮交给助手服务。
-		 * 返回 201 和新会话。助手没有配置时 503 `assistant_not_configured`；这个项目已有一个会话在做 409 `project_busy`；
-		 * 助手服务连不上 503 `assistant_unavailable`，不留下会话。
+		 * 返回 201 和新会话。助手没有配置时 503 `assistant_not_configured`；这个项目里已有别的会话在做（或在排队）时，新会话
+		 * 排队（`status` 是 `queued`，`queue_position` 是排第几，`waiting_for` 是在等谁），这句话照常写 `user_message`，
+		 * 轮到它时才交给助手服务；助手服务连不上 503 `assistant_unavailable`，不留下会话。
 		 */
 		create: Endpoint<
 			{
@@ -1282,7 +1313,7 @@ export interface Api {
 					max_attempts?: number;
 					/** 多久（毫秒）之后重试；只有 `retry`。 */
 					retry_delay_ms?: number;
-					/** 重试的原因按什么分；#548 起有值。 */
+					/** 重试的原因按什么分（#640 起有值）。 */
 					error_class?: ErrorClass;
 					/**
 					 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
@@ -1347,8 +1378,11 @@ export interface Api {
 		/**
 		 * `POST /sessions/:id/messages`
 		 *
-		 * 对会话说一句话：空闲时开始新的一轮，返回这句话的 `user_message` 的序号。在做时 409 `turn_running`
-		 * （#544 起改成插话）；已结束 409 `session_ended`。
+		 * 对会话说一句话，返回这句话的 `user_message` 的序号：空闲时开始新的一轮（这个项目里别的会话在做时，这个会话排队，
+		 * 这句话轮到它时才交给助手服务）；**在做时是插话**（`user_message` 的 `steer` 为 true，交给助手服务的 `steer`，在当前这一步
+		 * 的工具调用做完之后、下一次调用模型之前送到；响应类型不变）；**但控制面已经发出了中止、这一轮的结局还没有写下时（正在停止）
+		 * 不是插话**：这句话是新的一轮的开头（`steer` 为 false），按说话的时刻排进项目里已有的队列、不插队，会话仍是在做、
+		 * `queue_position` 有值，这一轮的结局写下之后开始它；排队中（包括这种）再说话 409 `session_queued`；已结束或者正在结束 409 `session_ended`。
 		 */
 		message: Endpoint<
 			{
@@ -1362,9 +1396,31 @@ export interface Api {
 		/**
 		 * `POST /sessions/:id/stop`
 		 *
-		 * 停止会话正在做的这一轮（把中止发给助手服务，这一轮的 `turn_end` 由助手服务的事件带回来）；不在做时什么也不做。
+		 * 停止会话正在做的这一轮：把中止发给助手服务，这一轮的 `turn_end` 由助手服务的事件带回来；中止有没有得到确认都等到同一个期限
+		 * （23 秒，从发出中止起算），到期还没有结局才由控制面补一条 `stopped`；这期间用户又说的话是新的一轮的开头，排在这一轮后面。
+		 * **停止 = 这个会话在做的一轮停掉、排着的话移出队列**（`queue_cancelled` 的提示，带那句话的 `message_id`）：排队中的会话移出队列、
+		 * 回到空闲；在做、而且停止途中又说了话排在后面的会话，再点一次停止就是撤掉那句话（只撤这次停止之前就排着的，这次停止的等待期间
+		 * 说的话照旧排在后面）；空闲的会话不改（向助手服务补发一次带最近那一轮轮次的中止，兜底「`prompt` 超时之后补发的中止没送到」），
+		 * 已结束的什么也不做。会话的状态一直在变、重试三次都没有做成时 409 `turn_running`。
 		 */
 		stop: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			SessionView
+		>;
+		/**
+		 * `POST /sessions/:id/end`
+		 *
+		 * 结束会话：在做的一轮先停止、等到这一轮的结局，排队的移出队列；然后会话变成已结束并写 `session_ended`，**写下之后**才把 `end` 发给
+		 * 助手服务（它结束这个会话的进程；助手服务不记得会话结束了，所以先写下结束，之后控制面不再为这个会话发命令）。之后发话 409 `session_ended`。工作区、提交、场景版本、运行都留着，不删除任何东西。
+		 * 已经结束的会话再调用无害（返回会话，不再写事件）。助手没有配置时 503 `assistant_not_configured`。停止之后又开始了一轮（说话和
+		 * 结束同时到）会再停一次，重试三次还不行时 409 `turn_running`。**结束一开始就记成「正在结束」**：写下 `session_ended` 之前对它说话回
+		 * 409 `session_ended`，也不会为它开始新的一轮。
+		 */
+		end: Endpoint<
 			{
 				params: {
 					id: string;
@@ -1470,6 +1526,7 @@ export const routes = {
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },
 		listForOrchestration: { method: "GET", path: "/orchestrations/:id/runs", kind: "endpoint" },
 		trigger: { method: "POST", path: "/orchestrations/:id/runs", kind: "endpoint" },
+		taskIo: { method: "GET", path: "/tasks/:id/io", kind: "endpoint" },
 		get: { method: "GET", path: "/runs/:id", kind: "endpoint" },
 		cancel: { method: "POST", path: "/runs/:id/cancel", kind: "endpoint" },
 		events: { method: "GET", path: "/runs/:id/events", kind: "stream" },
@@ -1481,6 +1538,7 @@ export const routes = {
 		events: { method: "GET", path: "/sessions/:id/events", kind: "stream" },
 		message: { method: "POST", path: "/sessions/:id/messages", kind: "endpoint" },
 		stop: { method: "POST", path: "/sessions/:id/stop", kind: "endpoint" },
+		end: { method: "POST", path: "/sessions/:id/end", kind: "endpoint" },
 	},
 	system: {
 		health: { method: "GET", path: "/health", kind: "endpoint" },

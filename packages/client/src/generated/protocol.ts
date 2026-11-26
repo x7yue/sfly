@@ -24,7 +24,8 @@ export const NICKNAME_HEADER = "x-sfly-nickname";
 
 /**
  * 客户端标识请求头：API 客户端是 `sfly-client/<版本>`，命令行是 `sfly-cli/<版本>`，命令行检测到自己运行在
- * AI 编程助手里时再追加 ` agent/<AI 编程助手名称>`。和昵称一样不做校验，只用于标注。
+ * AI 编程助手里时再追加 ` agent/<AI 编程助手名称>`。只用于标注，不是鉴权；名称只收字母、数字和 `. _ + -`、最多 64 个字符
+ * （`VIA_NAME_PATTERN`），有 `agent/` 但名称都不合格时存固定的占位值（`VIA_UNKNOWN`，不可能是合格的名称），显示成「未知」。
  */
 export const CLIENT_HEADER = "x-sfly-client";
 

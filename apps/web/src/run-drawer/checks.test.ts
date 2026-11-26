@@ -125,6 +125,24 @@ describe("触发前检查清单", () => {
 		]);
 	});
 
+	it("节点派发到的 Agent 被停用时归到 Agent 一行，不能触发", () => {
+		const p: Preflight = {
+			...passed,
+			problems: [
+				{
+					code: "agent_disabled",
+					message: "节点 b 派发到的 Agent agent-b 已被停用：让项目管理员恢复它",
+					node_id: "b",
+				},
+			],
+		};
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows.find((r) => r.key === "agents")?.problems.map((x) => x.node_id)).toEqual([
+			"b",
+		]);
+	});
+
 	it("控制面版本（即 Agent 执行时的版本）不满足节点包需要的 SDK 版本时归到 Agent 一行，不能触发", () => {
 		const p: Preflight = {
 			...passed,
@@ -251,5 +269,112 @@ describe("触发前检查清单", () => {
 		const checks = preflightChecks(p);
 		expect(checks.blocked).toBe(true);
 		expect(checks.rows.map((r) => r.key)).toEqual(["structure", "packages", "agents", "warnings"]);
+	});
+
+	describe("secret 参数的值合计太大（secret_params_too_large）：单独一行，按当前的选择显示", () => {
+		const defaults = {
+			code: "secret_params_too_large",
+			message: "场景里 secret 参数的默认值太多或太长，照默认值触发会被拒绝",
+			origin: { kind: "defaults" as const, preset_ids: ["p2"] },
+		};
+		const forPreset = (id: string) => ({
+			code: "secret_params_too_large",
+			message: `运行预设 ${id} 的值太多或太长，用它触发会被拒绝`,
+			origin: { kind: "preset" as const, preset_id: id },
+		});
+		const preset = (id: string, name: string): Preflight["presets"][number] =>
+			({
+				id,
+				name,
+				status: "ok",
+				problems: [],
+				params: [],
+			}) as unknown as Preflight["presets"][number];
+		const withWarnings = (warnings: Preflight["warnings"]): Preflight => ({
+			...passed,
+			warnings,
+			presets: [preset("p1", "大的"), preset("p2", "同默认值"), preset("p3", "小的")],
+		});
+
+		it("没选预设：只显示默认值的那一条，单独一行，标题写明后果；不在「不阻止触发」那一组里，也不阻止提交", () => {
+			const p = withWarnings([defaults, forPreset("p1")]);
+			const checks = preflightChecks(p, {}, { presetId: null });
+			expect(checks.blocked).toBe(false);
+			expect(checks.rows.map((r) => [r.key, r.state, r.title])).toEqual([
+				["structure", "ok", "结构与引用检查通过"],
+				["packages", "ok", "节点包版本已锁定"],
+				["agents", "ok", "引用的 Agent 都在线"],
+				["secret-size", "warn", "照默认值触发会被拒绝：secret 参数的默认值太多或太长"],
+			]);
+			expect(checks.rows.at(-1)?.problems).toEqual([defaults]);
+		});
+
+		it("选了超限的预设：显示这个预设的那一条（带预设的名称），默认值的和别的预设的都不显示", () => {
+			const p = withWarnings([defaults, forPreset("p1")]);
+			const checks = preflightChecks(p, {}, { presetId: "p1" });
+			expect(checks.rows.at(-1)).toMatchObject({
+				key: "secret-size",
+				state: "warn",
+				title: "用运行预设「大的」触发会被拒绝：secret 参数的值太多或太长",
+				problems: [forPreset("p1")],
+			});
+			expect(checks.rows.filter((r) => r.key === "secret-size")).toHaveLength(1);
+		});
+
+		it("选了不超限的预设（它把 secret 值改成了小的）：没有这一行（默认值超限也不显示：用的不是默认值）；没有别的警告时也没有「值得留意」那一行", () => {
+			const p = withWarnings([defaults, forPreset("p1")]);
+			const checks = preflightChecks(p, {}, { presetId: "p3" });
+			expect(checks.rows.map((r) => r.key)).toEqual(["structure", "packages", "agents"]);
+		});
+
+		it("选了没有改 secret 值的预设（默认值那条的 preset_ids 里有它）：用的也是默认值，显示默认值的那一条，标题写明这一点", () => {
+			const p = withWarnings([defaults, forPreset("p1")]);
+			const checks = preflightChecks(p, {}, { presetId: "p2" });
+			expect(checks.rows.at(-1)).toMatchObject({
+				key: "secret-size",
+				state: "warn",
+				title: "用运行预设「同默认值」触发会被拒绝：它没有改 secret 参数，用的是太多或太长的默认值",
+				problems: [defaults],
+			});
+		});
+
+		it("别的警告照旧在「值得留意」那一组，不把这一条算进去", () => {
+			const other = { code: "subflow_param_not_passed", message: "x", node_id: "spawn" };
+			const checks = preflightChecks(withWarnings([defaults, other]), {}, { presetId: null });
+			expect(checks.rows.map((r) => r.key)).toEqual([
+				"structure",
+				"packages",
+				"agents",
+				"secret-size",
+				"warnings",
+			]);
+			expect(checks.rows.at(-1)).toMatchObject({
+				title: "有 1 处配置值得留意，不阻止触发",
+				problems: [other],
+			});
+		});
+
+		it("触发时改不了的值超限（阻断项，带节点，要改场景）：单独一行，不通过，阻止提交，选什么都一样；这时不再另列默认值、预设的警告", () => {
+			const fixed = {
+				code: "secret_params_too_large",
+				message: "场景里写死的 secret 值太多或太长，触发时给什么都改不了",
+				node_id: "sub",
+			};
+			const p: Preflight = { ...withWarnings([defaults, forPreset("p1")]), problems: [fixed] };
+			for (const presetId of [null, "p1", "p2"]) {
+				const checks = preflightChecks(p, {}, { presetId });
+				expect(checks.blocked).toBe(true);
+				expect(checks.rows.map((r) => [r.key, r.state])).toEqual([
+					["structure", "ok"],
+					["packages", "ok"],
+					["agents", "ok"],
+					["secret-size", "blocked"],
+				]);
+				expect(checks.rows.at(-1)).toMatchObject({
+					title: "secret 参数的值太多或太长，怎么触发都会被拒绝（要改场景）",
+					problems: [fixed],
+				});
+			}
+		});
 	});
 });

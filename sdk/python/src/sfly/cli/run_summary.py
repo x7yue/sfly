@@ -135,6 +135,8 @@ def summary_of(client: Client, report: Mapping[str, Any]) -> dict[str, Any]:
             failed_action_entry(action, labels) for action in report["failed_actions"]
         ],
         "attention_items": [attention_entry(item) for item in report["attention_items"]],
+        # 只在 secret 值太多时才有这个键：正常的摘要和以前一字不差。
+        **({"secrets_oversize": True} if report.get("secrets_oversize") else {}),
     }
 
 
@@ -248,6 +250,14 @@ def attention_entry(item: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+#: secret 参数的值太多的运行：为什么看到的内容全是掩码（#657）。不含任何值。
+SECRETS_OVERSIZE_NOTE = (
+    "提示：这次运行的 secret 参数的值太多或太长，控制面认不出每一处出现，"
+    "这次运行里日志、动作、输入输出、错误信息的内容整段显示为 ******；"
+    "缩短或减少 secret 参数的值之后重新运行"
+)
+
+
 def render_summary(summary: Mapping[str, Any]) -> str:
     """摘要的文本形式。"""
     lines = [f"运行 {summary['id']}：{run_status_label(summary['status'])}"]
@@ -281,11 +291,14 @@ def render_summary(summary: Mapping[str, Any]) -> str:
 
 
 def render_extra_sections(summary: Mapping[str, Any]) -> list[str]:
-    """「失败的动作」「有异常的关注项」两段，没有内容的不写；每段前空一行。
+    """「提示」（secret 参数的值太多、内容全是掩码时）「失败的动作」「有异常的关注项」三段，
+    没有内容的不写；每段前空一行。
 
-    `sfly run show` 在自己的输出末尾也带上这两段。
+    `sfly run show` 在自己的输出末尾也带上这三段。
     """
     lines: list[str] = []
+    if summary.get("secrets_oversize"):
+        lines.extend(["", SECRETS_OVERSIZE_NOTE])
     actions = summary.get("failed_actions") or []
     if actions:
         lines.extend(["", f"失败的动作（{len(actions)} 个，最近结束的在前）："])

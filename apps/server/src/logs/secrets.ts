@@ -1,4 +1,5 @@
 import { SECRET_MASK, type StoredOrchestrationDocument, TOKEN_VALUE_PATTERN } from "@sfly/schema";
+import { clipChars, indexAfterChars } from "../util/text.js";
 import {
 	type Automaton,
 	automatonBytes,
@@ -6,7 +7,11 @@ import {
 	MAX_AUTOMATON_CHARS,
 	MAX_SPANS,
 	maskedByAutomaton,
+	maskedRegion,
+	mergeSpans,
+	overAutomatonLimit,
 	scanSpans,
+	totalChars,
 } from "./aho-corasick.js";
 
 /**
@@ -26,22 +31,43 @@ export { SECRET_MASK };
  * 它是 {@link SecretSet.mask} 的一部分，读取和写入走的是同一处，不另有一套。
  */
 export function maskTokens(text: string): string {
-	return text.includes("sfly_") ? text.replace(TOKEN_VALUE_PATTERN, SECRET_MASK) : text;
+	const tokens = tokenSpans(text);
+	if (!tokens) return text;
+	return maskedByAutomaton(text, mergeSpans(0, tokens.starts, tokens.ends), SECRET_MASK);
+}
+
+/**
+ * 认令牌用的正则：自己的一份（从 {@link TOKEN_VALUE_PATTERN} 复制，不导出）。`TOKEN_VALUE_PATTERN` 是 `@sfly/schema` 导出的带 `g` 标志的
+ * 共享对象，`matchAll` 从它当时的 `lastIndex` 开始找：别处只要对它调过一次 `test()`、`exec()`，打码就会漏掉文字开头的令牌。
+ * 打码不能靠「别人不碰」，所以这里用不对外的一份，`lastIndex` 永远是 0。
+ */
+const TOKEN_SCAN = new RegExp(TOKEN_VALUE_PATTERN.source, TOKEN_VALUE_PATTERN.flags);
+
+/** 文字里令牌原值的出现（{@link TOKEN_VALUE_PATTERN}）：起止位置，按开头排好、互相不重叠；没有时为 undefined。只在文字里有 `sfly_` 时才扫。 */
+function tokenSpans(text: string): { starts: number[]; ends: number[] } | undefined {
+	if (!text.includes("sfly_")) return undefined;
+	const starts: number[] = [];
+	const ends: number[] = [];
+	for (const match of text.matchAll(TOKEN_SCAN)) {
+		starts.push(match.index);
+		ends.push(match.index + match[0].length);
+	}
+	return starts.length > 0 ? { starts, ends } : undefined;
 }
 
 /**
  * 值是对象或数组的 secret 参数，它里面的字符串、数字叶子按值打码的最短长度（字符数；数字按它的 JSON 文本算）。
  * 更短的叶子（`a`、`1`、`on`）多是配置里的标签和开关，不是凭据：按子串打码会把日志、错误、输出整片换掉，读不了
  * （#479 的决定）；它们只在整个对象被原样写出时随整段一起盖住，另给一条警告（`secret_short_leaf`）。
- * 值本身是字符串、数字、布尔的 secret 参数不受这个下限限制：使用者对这一个值明确说了保密，再短也打码。
+ * 值本身是字符串、数字、布尔的 secret 参数不受这个下限限制：使用者明确把这个参数标成了 secret，再短也打码。
  */
 export const MIN_LEAF_CHARS = 4;
 
 /**
  * 一次读取（一页、一个下载块、流上的一批、一次运行的读取）里所有打码共用的预算（{@link SecretSet.withBudget}）。
  * 预算只记一样东西：**完整的出现的次数**（`masks`，合并重叠之后的段数）。每段输出多一个掩码，限住它，输出才不会被撑大
- * （一个字符的保密值，文字里每个位置都是它，每个位置换成六个字符的掩码）；用完之后，这次读取里还有完整的出现的文字整段盖住
- * （宁可多盖，不漏），没有完整的出现的文字原样。它和保密值的内容无关（完整的出现本身除外），所以 docs/SEMANTICS.md §2.1 的规矩没有例外。
+ * （一个字符的 secret 值，文字里每个位置都是它，每个位置换成六个字符的掩码）；用完之后，这次读取里还有完整的出现的文字整段盖住
+ * （宁可多盖，不漏），没有完整的出现的文字原样。它和 secret 值的内容无关（完整的出现本身除外），所以 docs/SEMANTICS.md §2.1 的规矩没有例外。
  *
  * 没有「扫过的字符数」的预算：扫描的耗时和读到的文字成正比，每个字符最坏是总长上限（{@link MAX_AUTOMATON_CHARS}）处最刁钻的形状下
  * 的耗时，每个读取出口读多少由它自己的上限管（一页日志的字节上限、单个输入输出的 1 MiB）；再设一个会把正常的内容整段盖住的数，
@@ -84,6 +110,12 @@ export class WorkBudget {
  * 这个运行里所有要打码的文字都整段盖住，这一行是用户知道为什么的地方：打码时只有它自己原样放行（{@link SecretSet.mask}）。
  */
 export const OVERSIZE_NOTICE = `这次运行的 secret 参数的值太多或太长（所有写法合计超过 ${MAX_AUTOMATON_CHARS} 个字符），无法逐个认出，这次运行里日志、动作、运行视图里的文字全部显示为 ${SECRET_MASK}。缩短或减少 secret 参数的值之后重新运行。`;
+
+/**
+ * 被拆开的超长行的每一段带的上下文（`LogLine.before` / `after`）最多这么多个字符：Agent 一端最多 16 KiB 字节
+ * （agent/src/logs.rs 的 `SPLIT_CONTEXT_BYTES`），字符数不会比字节数多。超过的（不是正常的 Agent 发的）按没带处理，不报错。
+ */
+export const SPLIT_CONTEXT_MAX_CHARS = 16 * 1024;
 
 /** 值的 JSON 文本（`JSON.stringify` 返回不了文本的值，例如 undefined，退回 `String`）。 */
 export const jsonText = (value: unknown): string => JSON.stringify(value) ?? String(value);
@@ -395,7 +427,7 @@ export class SecretSet {
 	readonly #lazy: Lazy;
 	/** 这个视图的预算；没有时只受单次的上限（{@link READ_MASKS}）约束（写入、测试）。 */
 	readonly #budget: WorkBudget | undefined;
-	/** 保密对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
+	/** secret 对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
 	readonly #arraySizes: Set<number>;
 	readonly #objectSizes: Set<number>;
 	readonly #containerLengths: Set<number>;
@@ -488,7 +520,10 @@ export class SecretSet {
 	 */
 	#automaton(): Automaton | undefined {
 		if (!this.#lazy.built) {
-			this.#lazy.automaton = buildAutomaton(this.texts, secretLimits.automatonChars);
+			// 总长超过上限的不建（{@link oversize} 按当时的上限定下来的，建自动机用的是同一个判断）。
+			this.#lazy.automaton = this.oversize
+				? undefined
+				: buildAutomaton(this.texts, secretLimits.automatonChars);
 			this.#lazy.built = true;
 			this.#lazy.watch?.(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
 		}
@@ -507,23 +542,141 @@ export class SecretSet {
 		return this.#lazy.noticeIsValue;
 	}
 
-	/** 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。 */
+	/**
+	 * 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。
+	 * 只比总长（{@link overAutomatonLimit}，建自动机时用的就是它），**不建自动机**：预检、触发时的检查问它，
+	 * 不能为了回答「太不太大」去建一个十几 MB 的自动机。
+	 */
 	get oversize(): boolean {
-		return this.texts.length > 0 && this.#automaton() === undefined;
+		// 第一次问（或第一次要自动机）时按当时的上限定下来，之后不变：和自动机建一次是同一个说法
+		// （上限只有测试会改，改之前要清缓存，{@link clearSecretSetCache}）。
+		this.#lazy.oversize ??=
+			this.texts.length > 0 && overAutomatonLimit(this.chars, secretLimits.automatonChars);
+		return this.#lazy.oversize;
+	}
+
+	/** 所有写法的总长（UTF-16 码元个数，每种写法只算一次）；每份值集合只算一次。 */
+	get chars(): number {
+		this.#lazy.chars ??= totalChars(this.texts);
+		return this.#lazy.chars;
 	}
 
 	/**
-	 * 把文本中出现的 secret 值替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入（尤其是写日志）不能因为打码
-	 * 失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；错误本身不往外带，它的消息里可能有值。
+	 * 把文本中出现的 secret 值和令牌原值（{@link maskTokens}）替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入
+	 * （尤其是写日志）不能因为打码失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；
+	 * 错误本身不往外带，它的消息里可能有值。
 	 *
-	 * 输出是「所有完整的出现，重叠的合成一段，每段一个掩码（相邻但不重叠的各是一段）」。打不打码只取决于文字里有没有某个
-	 * secret 值的某种写法的**完整**出现；任何「部分匹配」（文字的结尾是某个值的前缀、开头是某个值的后缀）都不影响输出，
-	 * 也不影响用掉的预算、走的步数：输出里有没有掩码不能成为猜 secret 值的依据（docs/SEMANTICS.md §2.1）。
-	 * 带预算的视图（{@link withBudget}）上，完整的出现的段数计入预算，不够时整段盖住。
+	 * 输出是「所有完整的出现，重叠的合成一段，每段一个掩码（相邻但不重叠的各是一段）」。两种出现（secret 值的各种写法、令牌原值）
+	 * 都在**原文**上找，合成一组、一次换掉：不分先后，一种的结果不会成为另一种的输入（先换一种再换另一种，前一遍留下的掩码
+	 * 会让后一遍认不出挨着、重叠的那一半）。打不打码只取决于文字里有没有完整的出现；任何「部分匹配」（文字的结尾是某个值的前缀、
+	 * 开头是某个值的后缀）都不影响输出，也不影响用掉的预算、走的步数：输出里有没有掩码不能成为猜 secret 值的依据
+	 * （docs/SEMANTICS.md §2.1）。带预算的视图（{@link withBudget}）上，合并之后的段数（两种出现一起）计入预算，不够时整段盖住。
 	 * 值集合太大（{@link oversize}）时每段文字整段盖住，只有一行平台写的说明（{@link OVERSIZE_NOTICE}，不含值）原样放行。
 	 */
 	mask(text: string): string {
-		return maskTokens(this.#maskValues(text));
+		if (text === "") return text;
+		if (this.texts.length === 0) return maskTokens(text);
+		try {
+			const automaton = this.#automaton();
+			if (!automaton)
+				return text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK;
+			const budget = this.#budget;
+			let count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
+			if (count < 0) {
+				if (budget) budget.masks = 0;
+				return SECRET_MASK;
+			}
+			const tokens = tokenSpans(text);
+			if (tokens) count = mergeSpans(count, tokens.starts, tokens.ends);
+			if (count === 0) return text;
+			if (budget) {
+				if (count > budget.masks) {
+					budget.masks = 0;
+					return SECRET_MASK;
+				}
+				budget.masks -= count;
+			}
+			return maskedByAutomaton(text, count, SECRET_MASK);
+		} catch {
+			return SECRET_MASK;
+		}
+	}
+
+	/**
+	 * {@link mask}，输出只取原文的前 `limit` 个字符（Unicode 码点）的那一部分，再截到 `limit` 个字符：**上限说的是原文的位置，
+	 * 不是打码之后的长度**。打码会让文字变短（一个很长的 secret 值换成六个字符的掩码），按打码之后的长度截的话，
+	 * 原文里排在上限之后的内容（SDK 在传输上限处截断时留下的、另一个值的前半截）会被拉进上限以内。
+	 * 所以：起点在原文第 `limit` 个字符之前的完整出现照常换成掩码；跨在上限上的（起点在前、终点在后）整个换成一个掩码；
+	 * 原文上限之后的一律不输出。再把输出截到 `limit` 个字符（secret 值比掩码短时打码会让文字变长；掩码被切成半截无妨）。
+	 * 和 {@link mask} 一样只认完整的出现，打不打码、输出什么只取决于完整的出现和 `limit`，不做任何部分匹配的判断；
+	 * 一次扫描完成，不先整段打码再回头算位置。**不抛错**。没有 secret 值和令牌时和 {@link clipChars} 一样。
+	 */
+	maskClipped(text: string, limit: number): string {
+		if (text === "") return text;
+		try {
+			const cut = indexAfterChars(text, limit);
+			if (this.texts.length === 0) {
+				const tokens = tokenSpans(text);
+				if (!tokens) return clipChars(text, limit);
+				const count = mergeSpans(0, tokens.starts, tokens.ends);
+				return clipChars(maskedRegion(text, count, 0, cut, SECRET_MASK), limit);
+			}
+			const automaton = this.#automaton();
+			if (!automaton) {
+				return clipChars(
+					text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK,
+					limit,
+				);
+			}
+			const budget = this.#budget;
+			let count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
+			if (count < 0) {
+				if (budget) budget.masks = 0;
+				return clipChars(SECRET_MASK, limit);
+			}
+			const tokens = tokenSpans(text);
+			if (tokens) count = mergeSpans(count, tokens.starts, tokens.ends);
+			if (count === 0) return clipChars(text, limit);
+			if (budget) {
+				if (count > budget.masks) {
+					budget.masks = 0;
+					return clipChars(SECRET_MASK, limit);
+				}
+				budget.masks -= count;
+			}
+			return clipChars(maskedRegion(text, count, 0, cut, SECRET_MASK), limit);
+		} catch {
+			return clipChars(SECRET_MASK, limit);
+		}
+	}
+
+	/**
+	 * 被 Agent 拆开的超长行的一段（`LogLine.before` / `after`，docs/SEMANTICS.md §2.1）：`text` 是这一段，`before`、`after` 是同一行里
+	 * 前一段的结尾和后一段的开头，只用来打码，不显示。在 `before + text + after` 上认完整的出现（secret 值和令牌原值，规则同 {@link mask}），
+	 * 只输出 `text` 那一段：开头落在 `text` 里的出现整个换成一个掩码（超出 `text` 末尾的部分不输出），开头在 `before` 里的出现落在 `text`
+	 * 里的部分去掉（前一段已经盖住了）。一个跨在拆分处的值因此只出现一个掩码，几段接起来和不拆时一样。结果只取决于这三段文字，
+	 * 不取决于别的段有没有到、先后、重发。每种写法的长度都不超过上下文的值保证认得出；更长的不保证（不论跨几段：拆分处附近可能露出一部分，也可能只去掉而不留掩码），但不出错，每一段露出的位置不比不带上下文时多。
+	 * 只用在写入（不带预算）；两段上下文都是空串时就是 {@link mask}。值集合太大时同 {@link mask}：整段盖住。
+	 */
+	maskInContext(text: string, before: string, after: string): string {
+		if (before === "" && after === "") return this.mask(text);
+		if (text === "") return text;
+		try {
+			const window = before + text + after;
+			let count = 0;
+			if (this.texts.length > 0) {
+				const automaton = this.#automaton();
+				if (!automaton) return this.mask(text);
+				count = scanSpans(automaton, window, MAX_SPANS);
+				if (count < 0) return SECRET_MASK;
+			}
+			const tokens = tokenSpans(window);
+			if (tokens) count = mergeSpans(count, tokens.starts, tokens.ends);
+			if (count === 0) return text;
+			return maskedRegion(window, count, before.length, before.length + text.length, SECRET_MASK);
+		} catch {
+			return SECRET_MASK;
+		}
 	}
 
 	/**
@@ -531,7 +684,7 @@ export class SecretSet {
 	 * 用来在没有要盖的时候省掉后面的处理（日志下载的一行里没有要盖的就原样返回）。值集合太大时总是会（整段盖住）。
 	 */
 	wouldChange(text: string): boolean {
-		if (maskTokens(text) !== text) return true;
+		if (tokenSpans(text) !== undefined) return true;
 		if (this.texts.length === 0 || text === "") return false;
 		try {
 			const automaton = this.#automaton();
@@ -539,27 +692,6 @@ export class SecretSet {
 			return scanSpans(automaton, text, 1) !== 0;
 		} catch {
 			return true;
-		}
-	}
-
-	/** 按值打码（不含令牌原值）。 */
-	#maskValues(text: string): string {
-		if (this.texts.length === 0 || text === "") return text;
-		try {
-			const automaton = this.#automaton();
-			if (!automaton)
-				return text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK;
-			const budget = this.#budget;
-			const count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
-			if (count < 0) {
-				if (budget) budget.masks = 0;
-				return SECRET_MASK;
-			}
-			if (count === 0) return text;
-			if (budget) budget.masks -= count;
-			return maskedByAutomaton(text, count, SECRET_MASK);
-		} catch {
-			return SECRET_MASK;
 		}
 	}
 }
@@ -570,6 +702,10 @@ interface Lazy {
 	built?: boolean;
 	/** 建好时通知（{@link SecretSet.watchBuild}）。 */
 	watch?: (bytes: number) => void;
+	/** 所有写法的总长（{@link SecretSet.chars}，算一次）。 */
+	chars?: number;
+	/** 总长超过上限（{@link SecretSet.oversize}，第一次问的时候按当时的上限定下来）。 */
+	oversize?: boolean;
 	/** 值集合的某个写法恰好就是 {@link OVERSIZE_NOTICE}（算一次：说明那一行每出现一次都要问，不能每次扫一遍所有的值）。 */
 	noticeIsValue?: boolean;
 }
@@ -589,7 +725,7 @@ export const NO_SECRETS: SecretSet = new SecretSet();
 /**
  * 值集合的缓存：键是这些值本身（JSON），所以运行里多了一个子流程实例带来的 secret 值，键就变了，另算一份；值一样就是同一份。
  * 写日志的每一批、读取运行的每一次都要问「这次运行此刻的 secret 值」，值没变时不用把每个值的各种写法再写一遍
- * （保密对象有几千个键时，一批要多花十几毫秒），建好的自动机也跟着复用。
+ * （secret 对象有几千个键时，一批要多花十几毫秒），建好的自动机也跟着复用。
  *
  * 按占用的字节数限大小（{@link SET_CACHE_MAX_BYTES}）：一份值集合占它的文本（每个字符按 2 字节算），加上建好的自动机
  * （{@link automatonBytes}，建好之后才计入）。自动机每个节点约 11 字节，另有最多 4 MB 的转移表和 256 KB 的字符类表，和总长无关，
@@ -613,10 +749,24 @@ function trimSetCache(): void {
 	}
 }
 
+/** 值集合的缓存里现在有几份、占多少字节（只给测试用：预检不能往运行共用的缓存里放东西，#632）。 */
+export function secretSetCacheStats(): { entries: number; bytes: number } {
+	return { entries: setCache.size, bytes: setCacheBytes };
+}
+
 /** 清掉值集合的缓存（只给测试用：改了 {@link secretLimits} 之后，缓存里按旧的上限建的值集合不能再用）。 */
 export function clearSecretSetCache(): void {
 	setCache.clear();
 	setCacheBytes = 0;
+}
+
+/**
+ * 同 {@link secretSetOf}，但**不进值集合的缓存**：预检按场景里的默认值、运行预设算大小用（`runs/secret-size*.ts`）。
+ * 它们不是哪个运行用的值集合，进了缓存会把正在跑的运行的值集合（和它的自动机）挤掉；只用来数总长（{@link SecretSet.chars}），
+ * 不要拿它打码。
+ */
+export function secretSetUncached(values: Iterable<unknown>): SecretSet {
+	return new SecretSet([...values].map(secretPartsOf));
 }
 
 /** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）；值相同的是同一个对象（不可变，可以共用）。 */
@@ -644,6 +794,16 @@ export function secretSetOf(values: Iterable<unknown>): SecretSet {
 	});
 	trimSetCache();
 	return set;
+}
+
+/**
+ * 一个 secret 参数的值单独算，所有写法的总长（{@link SecretSet.chars} 里这个值占的那部分；
+ * 几个参数里有相同的写法时，值集合里只算一次，所以各参数的和可以比值集合的总长大）。预检写明哪个参数占得多时用。
+ */
+export function secretValueChars(value: unknown): number {
+	let total = 0;
+	for (const text of secretPartsOf(value).texts) total += text.length;
+	return total;
 }
 
 /** 一个链实例起点声明为 secret 的参数的值（有值的）。 */

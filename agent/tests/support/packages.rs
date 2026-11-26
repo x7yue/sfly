@@ -41,8 +41,15 @@ pub struct Upload {
     pub at: tokio::time::Instant,
 }
 
-/// 收到的 GET 请求：(路径, User-Agent)。
-type Requests = Arc<Mutex<Vec<(String, Option<String>)>>>;
+/// 收到的一次 GET 请求。
+#[derive(Debug, Clone)]
+struct Request {
+    path: String,
+    user_agent: Option<String>,
+    authorization: Option<String>,
+}
+
+type Requests = Arc<Mutex<Vec<Request>>>;
 
 #[derive(Default)]
 struct Files {
@@ -53,6 +60,8 @@ struct Files {
     upload_script: Vec<u16>,
     /// 读完请求体之后一直不回应（连接留着）。
     upload_hang: bool,
+    /// PUT 失败时响应的正文；None 为 `{}`。
+    upload_body: Option<String>,
     by_path: HashMap<String, File>,
     /// 镜像中的项目（规范化名）→ wheel 文件名。
     projects: HashMap<String, Vec<String>>,
@@ -176,7 +185,7 @@ impl HttpFixture {
     /// 收到的请求路径（按到达顺序）。
     pub fn requests(&self) -> Vec<String> {
         let requests = self.requests.lock().unwrap();
-        requests.iter().map(|(path, _)| path.clone()).collect()
+        requests.iter().map(|r| r.path.clone()).collect()
     }
 
     /// 对 `path` 的每次请求带的 User-Agent（没有这个头时为 None）。
@@ -184,8 +193,18 @@ impl HttpFixture {
         let requests = self.requests.lock().unwrap();
         requests
             .iter()
-            .filter(|(p, _)| p == path)
-            .map(|(_, ua)| ua.clone())
+            .filter(|r| r.path == path)
+            .map(|r| r.user_agent.clone())
+            .collect()
+    }
+
+    /// 对 `path` 的每次请求带的 `Authorization`（没有这个头时为 None）。
+    pub fn authorizations(&self, path: &str) -> Vec<Option<String>> {
+        let requests = self.requests.lock().unwrap();
+        requests
+            .iter()
+            .filter(|r| r.path == path)
+            .map(|r| r.authorization.clone())
             .collect()
     }
 
@@ -211,6 +230,13 @@ impl HttpFixture {
     /// 之后的 PUT 读完请求体就不再回应：接了连接、收下内容，只是一直不说话（控制面卡住的样子）。
     pub fn hang_uploads(&self) {
         self.files.lock().unwrap().upload_hang = true;
+    }
+
+    /// 之后的 PUT 都回这个状态码和这段正文。
+    pub fn reject_uploads_with_body(&self, status: u16, body: &str) {
+        let mut files = self.files.lock().unwrap();
+        files.upload_status = Some(status);
+        files.upload_body = Some(body.to_string());
     }
 }
 
@@ -256,7 +282,7 @@ async fn serve(
             }
             body.extend_from_slice(&chunk[..n]);
         }
-        let status = {
+        let status_and_body = {
             let mut files = files.lock().unwrap();
             files.uploads.push(Upload {
                 path: head.split_whitespace().nth(1).unwrap_or("/").to_string(),
@@ -265,20 +291,22 @@ async fn serve(
                 body,
                 at: tokio::time::Instant::now(),
             });
+            let response_body = files.upload_body.clone().unwrap_or_else(|| "{}".into());
             if files.upload_hang {
                 None
             } else if files.upload_script.is_empty() {
-                Some(files.upload_status.unwrap_or(201))
+                Some((files.upload_status.unwrap_or(201), response_body))
             } else {
-                Some(files.upload_script.remove(0))
+                Some((files.upload_script.remove(0), response_body))
             }
         };
-        let Some(status) = status else {
+        let Some((status, response_body)) = status_and_body else {
             // 不回应：连接留着，直到测试结束、运行时关掉。
             return std::future::pending().await;
         };
         let reply = format!(
-            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{response_body}",
+            response_body.len()
         );
         stream.write_all(reply.as_bytes()).await?;
         return stream.shutdown().await;
@@ -291,10 +319,11 @@ async fn serve(
         .next()
         .unwrap_or("/")
         .to_string();
-    requests.lock().unwrap().push((
-        path.clone(),
-        header(&head, "user-agent").map(str::to_string),
-    ));
+    requests.lock().unwrap().push(Request {
+        path: path.clone(),
+        user_agent: header(&head, "user-agent").map(str::to_string),
+        authorization: header(&head, "authorization").map(str::to_string),
+    });
     let redirect = files.lock().unwrap().redirects.get(&path).cloned();
     if let Some(location) = redirect {
         let reply = format!(
@@ -378,18 +407,28 @@ pub fn build_node_package(name: &str, version: &str, dependencies: &[&str]) -> V
 
 /// 一个只含空模块的纯 Python wheel（第三方依赖的桩），返回 (文件名, 内容)。
 pub fn dependency_wheel(name: &str, version: &str) -> (String, Vec<u8>) {
+    dependency_wheel_requiring(name, version, &[])
+}
+
+/// 同 [`dependency_wheel`]，METADATA 里再写上 `Requires-Dist`（这个第三方库自己的依赖）。
+pub fn dependency_wheel_requiring(
+    name: &str,
+    version: &str,
+    requires: &[&str],
+) -> (String, Vec<u8>) {
     let dist = name.replace('-', "_");
     let filename = format!("{dist}-{version}-py3-none-any.whl");
     let info = format!("{dist}-{version}.dist-info");
+    let mut metadata = format!("Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n");
+    for requirement in requires {
+        metadata.push_str(&format!("Requires-Dist: {requirement}\n"));
+    }
     let files = [
         (
             format!("{dist}/__init__.py"),
             format!("VERSION = {version:?}\n"),
         ),
-        (
-            format!("{info}/METADATA"),
-            format!("Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"),
-        ),
+        (format!("{info}/METADATA"), metadata),
         (
             format!("{info}/WHEEL"),
             "Wheel-Version: 1.0\nGenerator: sfly-tests\nRoot-Is-Purelib: true\nTag: py3-none-any\n"

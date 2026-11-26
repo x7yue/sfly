@@ -4,6 +4,7 @@ import { ChevronRightIcon, PanelLeftCloseIcon, SearchIcon } from "lucide-react";
 import { useState } from "react";
 import { idParts, KIND_META } from "#/components/canvas/node-display";
 import { MESSAGE, TERM } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Truncate } from "@/components/ui/truncate";
@@ -175,6 +176,7 @@ function NodeList({
 			{nodes.map((n) => {
 				const Icon = KIND_META[n.kind as keyof typeof KIND_META]?.icon;
 				const isSelected = selected.includes(n.id);
+				const title = untrustedPlain(n.title);
 				return (
 					<li key={n.id}>
 						{/* 按钮本身弹出全文（名称和节点 ID）；节点 ID 和卡片上一样保留结尾（idParts），省略号落在中间。 */}
@@ -190,10 +192,12 @@ function NodeList({
 									)}
 								/>
 							}
-							label={n.title === n.id ? n.title : `${n.title}\n${n.id}`}
+							label={n.title === n.id ? title : `${title}\n${n.id}`}
 						>
 							{Icon && <Icon aria-hidden className="size-3.5 flex-none text-fg-3" />}
-							<Truncate className="flex-1">{n.title}</Truncate>
+							<Truncate untrusted className="flex-1">
+								{n.title}
+							</Truncate>
 							{n.title !== n.id && (
 								<Truncate
 									keepEnd={idParts(n.id).tail.length}

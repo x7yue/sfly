@@ -13,7 +13,7 @@ import { createRunPreset } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
 // 入口参数的说明（#305）：搭场景的人在参数编辑器里给入口参数和子流程入口的参数写一行说明，
-// 保存后触发表单、异步任务节点的映射表单显示它；敏感参数的说明照常显示，只有值打码。
+// 保存后触发表单、异步任务节点的映射表单显示它；secret 参数的说明照常显示，只有值打码。
 
 const entryParams = [
 	{ name: "biz_date", type: "string", required: true },
@@ -44,7 +44,7 @@ async function openScenario(
 const paramGroup = (panel: ReturnType<typeof inspector>, name: string) =>
 	panel.getByRole("group", { name: `参数 ${name}` });
 
-test("在参数编辑器里写说明：撤销、重做；保存后触发表单和映射表单都显示它，说明在默认值前面，敏感参数的值仍然打码", async ({
+test("在参数编辑器里写说明：撤销、重做；保存后触发表单和映射表单都显示它，说明在默认值前面，secret 参数的值仍然打码", async ({
 	page,
 	controlPlane,
 }) => {
@@ -111,7 +111,7 @@ test("在参数编辑器里写说明：撤销、重做；保存后触发表单�
 	await expect(panel.getByText("要处理的业务日期")).toBeVisible();
 	await expect(mapped).toHaveAccessibleDescription("要处理的业务日期");
 
-	// 触发表单：说明作为帮助文字，放在默认值前面；敏感参数的说明照常显示，值打码。
+	// 触发表单：说明作为帮助文字，放在默认值前面；secret 参数的说明照常显示，值打码。
 	await page.getByRole("button", { name: "运行", exact: true }).click();
 	const drawer = page.getByRole("dialog", { name: DRAWER });
 	await expect(drawer.getByRole("list", { name: "触发前检查" })).toBeVisible();

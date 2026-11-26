@@ -244,6 +244,13 @@ export interface AgentView {
 	/** 支持的 Agent 能力及版本，按上报的顺序；不上报能力的旧版本 Agent 为空。 */
 	capabilities: CapabilityView[];
 	endpoint: AgentEndpointView;
+	/**
+	 * 最近一次连接用的凭据（ADR 0029「迁移与过渡」，#492）：`agent` 是这台 Agent 自己的凭据，`shared` 是共享令牌
+	 * （`SFLY_AGENT_TOKEN`，控制台提示换成 Agent 凭据），`none` 没带凭据（只在过渡版本里被接受）；还没有记过（升级之前连接的）为 null。
+	 */
+	auth_kind: "agent" | "shared" | "none" | null;
+	/** 停用这台 Agent 的时间；没有停用为 null。停用的 Agent 不能连接、不参与派发。 */
+	disabled_at: Timestamp | null;
 }
 
 /**
@@ -338,9 +345,20 @@ export interface AttemptView {
 	attempt: number;
 	status: TaskStatus;
 	agent: string | null;
-	/** 已解析的输入；派发前为 null。 */
+	/**
+	 * 已解析的输入；派发前为 null。**内容被省略时也是 null**（单个大于 `RUN_VIEW_IO_VALUE_LIMIT_BYTES`，或者整份视图合计已经用完
+	 * `RUN_VIEW_IO_TOTAL_LIMIT_BYTES`）：判断是不是被省略了只看 `inputs_omitted_bytes`，不要假定「小的一定内联」。
+	 */
 	inputs: Record<string, unknown> | null;
+	/**
+	 * 输入被省略时，存着的大小（打码之前的字节数）**向上取整到 KiB（1024 的倍数）**，不给精确值：读取时要打码，精确的大小和打码之后的内容
+	 * 一减就露出 secret 值的长度。取整只是让大小变粗，不能完全藏住长度。**只在内容被省略时不是 null**（内容内联着、或者本来就没有输入时都是 null）。全文用 `GET /tasks/:id/io` 取。
+	 */
+	inputs_omitted_bytes: number | null;
+	/** 输出；没有输出（还没结束、失败、被跳过）为 null，**内容被省略时也是 null**，规矩同 `inputs`。 */
 	outputs: Record<string, unknown> | null;
+	/** 输出被省略时存着的大小，向上取整到 KiB；只在内容被省略时不是 null，规矩同 `inputs_omitted_bytes`。 */
+	outputs_omitted_bytes: number | null;
 	error: ErrorView | null;
 	queued_at: Timestamp;
 	/** 执行器启动的时间；排队、准备中为 null。 */
@@ -899,11 +917,20 @@ export interface EntryNodeInput {
 }
 
 /**
- * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
- * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
- * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
- * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
- * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
+ * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`）。#640 起助手服务按上游的错误分好再写（`turn_end`
+ * 模型不可用时、重试的 `notice`），上游的错误原文不进事件，只进助手服务的日志。落库之后改不了，所以宁可分到 `other`，
+ * 不能分错：
+ * - 状态码只从结构上取：pi 只给一句话，只认这句话开头的固定写法（`502: …`、`<提供方> API error (502): …`、SDK 的
+ *   `502 …`），不在全文里找；取不到就是没有状态码。
+ * - 有状态码时由它定类别，正文里的词只能在这个范围里细分：401、403 是 `auth`（正文说额度时是 `quota`）；402 是 `quota`；
+ *   429 是 `rate_limit`（正文说额度时是 `quota`）；408、504 是 `timeout`；其余 5xx 是 `upstream`；其余 4xx 是 `other`
+ *   （上游拒绝了这次请求；正文说上下文超长时是 `context_overflow`）。
+ * - 没有状态码时只按连接层的失败分：连不上、连接断开、证书验不过是 `unreachable`，超时是 `timeout`（认 Node 的错误码、
+ *   SDK 固定的那一句），别的都是 `other`；不看正文里的词。
+ * - 边界（按写法认，不看意思）：以登记过的状态码加空格开头的消息按 SDK 的写法取状态码，所以正文恰好以这样的数字开头的错误
+ *   （`404 packages were …`）会被认成那个状态码；没有状态码时，以括号里的连接层错误码结尾的消息（`… (ECONNRESET)`）算连不上。
+ * 各项：`unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝，`quota` 额度不足，`rate_limit` 限流，
+ * `upstream` 对方出错，`context_overflow` 上下文超长，`other` 其他。
  */
 export type ErrorClass = "unreachable" | "timeout" | "auth" | "quota" | "rate_limit" | "upstream" | "context_overflow" | "other";
 
@@ -1193,6 +1220,13 @@ export interface LogChunk {
 }
 
 /**
+ * 任务的日志文件和数据库记的对不上（#669、#721）：只对有行写入过的任务——`missing` 文件不见了，`short` 文件比数据库记的短
+ * （被删除、截短，主机掉电——追加文件不 fsync、数据库提交了——数据库和数据目录分开恢复，保留期清理删到一半）。
+ * 文件比记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）、从没有日志的任务都不是问题。
+ */
+export type LogFileProblem = "missing" | "short";
+
+/**
  * 一行日志，带两种时间（ADR 0018）。日志文件是 JSONL，每行就是这个对象（字段顺序也相同：页面按它算字节偏移）；
  * 升级之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
  */
@@ -1262,6 +1296,11 @@ export interface LogPage {
 	truncated: boolean;
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: boolean;
+	/**
+	 * 这个任务的日志文件的问题（`LogFileProblem`）：写过日志但文件不在了（页是空的）或者比记录的短（页里只有剩下的行）；
+	 * 没有问题时、运行已过保留期（`expired` 已经说了）时为 null。每次读页都按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problem: LogFileProblem | null;
 	/** 请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。 */
 	locate: LogLocate | null;
 }
@@ -1446,7 +1485,16 @@ export interface NodeRunView {
 	status: NodeStatus;
 	/** 包节点派发到的 Agent；内置节点为 null。 */
 	agent: string | null;
+	/**
+	 * 节点的输出：最后一次尝试的输出（同那次尝试的 `outputs`）；没有输出时为 null，**被省略时也是 null**（这一份也算整份视图的合计），
+	 * 判断只看 `outputs_omitted_bytes`。
+	 */
 	outputs: Record<string, unknown> | null;
+	/**
+	 * 节点的输出被省略时，存着的大小（最后一次尝试输出的大小，打码之前）向上取整到 KiB；只在被省略时不是 null。
+	 * 全文用 `GET /tasks/:id/io` 取，任务是 `attempts` 里最后一次尝试（`task_id`）。
+	 */
+	outputs_omitted_bytes: number | null;
 	error: ErrorView | null;
 	attempts: AttemptView[];
 }
@@ -1697,7 +1745,7 @@ export interface ParamDeclView {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
-	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	/** 搭场景的人写的一行说明；secret 参数的说明照常给出，只有值打码。 */
 	description?: string;
 }
 
@@ -1736,11 +1784,6 @@ export type ParamType = "string" | "number" | "boolean" | "json";
 /** 一个持久的会话事件：`PERSISTED_SESSION_EVENT_TYPES` 里的类型，带 `seq` 和 `at`（历史接口返回它）。 */
 export type PersistedSessionEvent = {
 	type: "user_message";
-	/**
-	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
-	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
-	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
-	 */
 	message_id: string;
 	text: string;
 	steer: boolean;
@@ -1788,7 +1831,7 @@ export type PersistedSessionEvent = {
 	max_attempts?: number;
 	/** 多久（毫秒）之后重试；只有 `retry`。 */
 	retry_delay_ms?: number;
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	/**
 	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
@@ -1808,7 +1851,6 @@ export type PersistedSessionEvent = {
 	duration_ms: number;
 	usage?: TokenUsage;
 	limit_kind?: TurnLimit;
-	/** 重试的原因按什么分；#548 起有值。 */
 	error_class?: ErrorClass;
 	seq: number;
 	at: Timestamp;
@@ -1912,6 +1954,19 @@ export interface PreflightProblem {
 	code: string;
 	message: string;
 	node_id?: string;
+	/**
+	 * `secret_params_too_large` 的警告说的是哪一组值：场景里的默认值（`defaults`），或某个运行预设（`preset`，`preset_id` 是它的 ID）。
+	 * 触发表单据此只显示和当前选择有关的那一条（没选预设是默认值的，选了预设是这个预设的）。别的问题没有这个字段。
+	 * 默认值的这一条的 `preset_ids` 是 secret 值和只用默认值时完全相同的运行预设（它们没有改变 secret 值）：
+	 * 选了其中一个预设触发，用的也是这些默认值，这一条对它们同样适用。
+	 */
+	origin?: {
+		kind: "defaults";
+		preset_ids: string[];
+	} | {
+		kind: "preset";
+		preset_id: string;
+	};
 }
 
 /**
@@ -2306,6 +2361,23 @@ export interface RunLogChunk {
 	lines: RunLogLine[];
 }
 
+/** 日志文件有问题的任务（运行页、实时流）：来源 + 是什么问题（`LogFileProblem`）。 */
+export interface RunLogFileProblem {
+	task_id: string;
+	chain_instance_id: string;
+	/** 所在子流程的名称（与运行视图里链的 name 相同）；主链为 null。 */
+	subflow: string | null;
+	node_id: string;
+	attempt: number;
+	problem: LogFileProblem;
+}
+
+/** 运行实时流连上时说有任务的日志文件有问题（#721）：内容同运行分页的 `file_problems`、`file_problems_total`。 */
+export interface RunLogFileProblemsEvent {
+	file_problems: RunLogFileProblem[];
+	file_problems_total: number;
+}
+
 /** 按运行合并的一行：任务日志里的一行，加上它的来源和排序要用的信息。 */
 export interface RunLogLine {
 	/** 任务内从 1 开始递增的序号，用来排序和去重。 */
@@ -2373,6 +2445,14 @@ export interface RunLogPage {
 	truncated_tasks: LogOrigin[];
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: boolean;
+	/**
+	 * 范围（`nodes`）内日志文件有问题的任务（写过日志但文件不在了，或者比记录的短），按运行视图里的顺序，最多 `LOG_FILE_PROBLEMS_LIMIT`
+	 * 个；总数在 `file_problems_total`。有问题的任务页里读不到（或只读到剩下的）它的行：页面和命令行据此说明，不要当成「没有日志」。
+	 * 运行已过保留期时为空（`expired` 已经说了）。每个页都带，按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problems: RunLogFileProblem[];
+	/** 范围内日志文件有问题的任务的总数（可能大于 `file_problems` 列出的个数）。 */
+	file_problems_total: number;
 }
 
 export interface RunLogPageQuery {
@@ -2553,6 +2633,12 @@ export interface RunReport {
 	 * 摘要只给最新值，要曲线用 `GET /runs/:id/focus`。
 	 */
 	attention_items: RunReportAttentionItem[];
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，
+	 * 所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；
+	 * 旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 }
 
 /** 有异常的关注项：关注项读数（`GET /runs/:id/focus`）里的一项，只留下认出它是哪一项、最新值和异常的字段。 */
@@ -2629,7 +2715,7 @@ export interface RunReportFailedTask {
 		kind: string;
 		/** 失败原因的一行（同 `RunStateError` 的 `headline`）。 */
 		headline: string;
-		/** 完整的错误信息：异常信息加堆栈，原文（已按保密参数的值打码）。 */
+		/** 完整的错误信息：异常信息加堆栈，原文（已按 secret 参数的值打码）。 */
 		detail: string;
 		/** 节点代码里出错的位置，同 `RunStateError` 的 `location`；没有时为 null。 */
 		location: string | null;
@@ -2673,7 +2759,7 @@ export interface RunStateChain {
 	nodes: RunStateNode[];
 }
 
-/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的保密参数的值打码，和运行视图里看到的一样。 */
+/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的 secret 参数的值打码，和运行视图里看到的一样。 */
 export interface RunStateError {
 	/** 错误类型：node_error（节点代码抛出异常）、timeout、agent_lost、env_error、config_error。 */
 	kind: string;
@@ -2774,6 +2860,12 @@ export interface RunView {
 	 * 或者投递记录已过保留期被清理时为 null。
 	 */
 	run_notification: RunNotificationState | null;
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、
+	 * 输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，
+	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 	/** 按深度、开始时间排序。 */
 	chains: ChainRunView[];
 }
@@ -2896,8 +2988,9 @@ export interface SessionEventsQuery {
 export type SessionId = string;
 
 /**
- * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 只在排队中（`status` 为 `queued`）时有值，
- * 从 1 起；`last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
+ * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
+ * 排在这一轮后面的在做的会话（`status` 为 `running`）也有，从 1 起，按说话的时刻排（和轮到谁开始的顺序一致）；
+ * `last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
  */
 export interface SessionListItem {
 	id: SessionId;
@@ -2948,7 +3041,8 @@ export type SessionStatus = "idle" | "running" | "queued" | "ended";
 export type SessionTool = "read" | "write" | "edit" | "command";
 
 /**
- * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；
+ * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；停止途中说了话的
+ * 在做的会话在等的是它自己正在停止的这一轮；
  * `turn_queued` 不持久，刷新页面后靠它拿回在等谁，#544）。
  */
 export interface SessionView {
@@ -3115,6 +3209,18 @@ export interface SubflowEntryNodeInput {
 	params?: ParamDeclarationInput[];
 }
 
+/** 一次尝试的输入和输出的全文（`GET /tasks/:id/io`）：同运行视图里的 `inputs`、`outputs`，不省略；没有的为 null。 */
+export interface TaskIoView {
+	task_id: string;
+	inputs: Record<string, unknown> | null;
+	outputs: Record<string, unknown> | null;
+}
+
+/** 任务实时流连上时说日志文件有问题（#721）：内容同分页的 `file_problem`。 */
+export interface TaskLogFileProblemEvent {
+	file_problem: LogFileProblem;
+}
+
 /** 一个任务（一次尝试）的指标摘要。 */
 export interface TaskMetricSummary {
 	task_id: string;
@@ -3185,7 +3291,7 @@ export type TurnLimit = "model_calls" | "duration";
  * - `stopped` 已停止：用户停止；
  * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，`TurnLimit`；默认 40 次模型调用、
  *   20 分钟，#540）；
- * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#640 起按下面 `ErrorClass` 的规则分）；
  * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
  * - `failed` 其他错误。
  * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
@@ -3195,7 +3301,7 @@ export type TurnOutcome = "completed" | "stopped" | "limit" | "model_unavailable
 
 /**
  * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
- * `waiting_for` 是正在做的那个会话。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
+ * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
  * （`SessionView`）和快照（`SnapshotEvent`）里，刷新页面后拿得回来。#544 起。
  */
 export interface TurnQueuedEvent {

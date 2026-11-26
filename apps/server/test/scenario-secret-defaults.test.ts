@@ -184,7 +184,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 	const headVersionOf = async (id: string) =>
 		(await api.getJson<{ head_version: number }>(`/orchestrations/${id}`)).head_version;
 	/** 一个场景：入口参数 PARAMS。 */
-	const scenario = (params: Array<Record<string, unknown>> = PARAMS(), name = "保密默认值") =>
+	const scenario = (params: Array<Record<string, unknown>> = PARAMS(), name = "secret 默认值") =>
 		api.orchestrationWith(presetScenario(params), name);
 
 	describe("读取：secret 参数的默认值是占位符", () => {
@@ -631,7 +631,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		}, 90_000);
 
 		/**
-		 * 保密值要等后面的子流程创建时才带进来（#517）：user 不是 secret，x2 把它传给 subB 的 secret 参数 k，subB 创建之后它才是
+		 * secret 值要等后面的子流程创建时才带进来（#517）：user 不是 secret，x2 把它传给 subB 的 secret 参数 k，subB 创建之后它才是
 		 * secret 值。`write` 在子流程创建之前往 sa 里写东西（日志、动作），返回之后等子流程创建，再让 b 结束。
 		 */
 		const lateRun = async (
@@ -764,6 +764,14 @@ describe("场景版本里 secret 参数的默认值", () => {
 		 */
 		const NOT_EXERCISED: Record<string, string> = {
 			"POST /agents/:name/update-now": "只让 Agent 自更新，响应是被终止的任务数",
+			"POST /agents/:name/credentials":
+				"签发 Agent 凭据：原值只在响应里出现一次，另见 agent-credentials-http.test.ts",
+			"DELETE /agents/:name/credentials/:id": "同上",
+			"POST /agents/:name/disable": "停用 Agent，不带场景和参数",
+			"POST /agents/:name/enable": "同上",
+			"POST /projects/:project/dev-agents":
+				"注册开发 Agent：名字由控制面生成，凭据另见 agent-credentials-http.test.ts",
+			"DELETE /projects/:project/dev-agents/:name": "同上",
 			"PUT /tasks/:id/artifacts/*": "上传产物的字节，不带场景和参数",
 			"POST /feishu-bots": "登记 Webhook 地址（地址里的令牌另有打码，ADR 0020）",
 			"PATCH /feishu-bots/:name": "同上",
@@ -959,6 +967,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 			await record("会话：新建", tracked.post("/projects/default/sessions", { text: "你好" }));
 			await record("会话：发话", tracked.post(`/sessions/${sessionId}/messages`, { text: "你好" }));
 			await record("会话：停止", tracked.postEmpty(`/sessions/${sessionId}/stop`));
+			await record("会话：结束", tracked.postEmpty(`/sessions/${sessionId}/end`));
 
 			const statuses = new Set<number>();
 			for (const [what, res] of responses) {

@@ -6,6 +6,7 @@
     "task": "任务",
     "package": "节点包",
     "agent": "Agent",
+    "dev_agent": "开发 Agent",
     "feishu_bot": "飞书机器人",
     "session": "会话",
     "system": "系统",
@@ -2061,6 +2062,33 @@
                     "port",
                     "unavailable_reason"
                   ]
+                },
+                "auth_kind": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "agent",
+                        "shared",
+                        "none"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "disabled_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2079,7 +2107,9 @@
                 "clock_offset",
                 "referencing_orchestrations",
                 "capabilities",
-                "endpoint"
+                "endpoint",
+                "auth_kind",
+                "disabled_at"
               ]
             }
           },
@@ -2287,6 +2317,314 @@
         },
         "required": [
           "terminated_tasks"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/agents/:name/credentials",
+      "key": [
+        "agents",
+        "credentials"
+      ],
+      "kind": "endpoint",
+      "summary": "列出一台 Agent 的凭据（前缀、状态、最后使用时间，不含原值）",
+      "effect": "read",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "prefix": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "last_used_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revoked_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "user": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "prefix",
+                "created_at",
+                "last_used_at",
+                "revoked_at",
+                "user"
+              ]
+            }
+          }
+        },
+        "required": [
+          "credentials"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/agents/:name/credentials",
+      "key": [
+        "agents",
+        "issue-credential"
+      ],
+      "kind": "endpoint",
+      "summary": "为一台 Agent 签发凭据（原值只在这次响应里出现一次）",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "last_used_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "prefix",
+              "created_at",
+              "last_used_at",
+              "revoked_at",
+              "user"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential",
+          "token"
+        ]
+      },
+      "notes": [
+        {
+          "part": "params",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
+        },
+        {
+          "part": "params",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称不能超过 64 个字符"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/agents/:name/credentials/:id",
+      "key": [
+        "agents",
+        "revoke-credential"
+      ],
+      "kind": "endpoint",
+      "summary": "吊销一台 Agent 的凭据（连着的连接断开）",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "removes": true,
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "name",
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/agents/:name/disable",
+      "key": [
+        "agents",
+        "disable"
+      ],
+      "kind": "endpoint",
+      "summary": "停用一台 Agent（断开连接，不再派发）",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/agents/:name/enable",
+      "key": [
+        "agents",
+        "enable"
+      ],
+      "kind": "endpoint",
+      "summary": "恢复一台停用的 Agent",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "notes": []
@@ -2606,7 +2944,13 @@
           "is_platform_admin"
         ]
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "display_name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：显示名里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
+        }
+      ]
     },
     {
       "method": "POST",
@@ -3979,6 +4323,158 @@
       "notes": []
     },
     {
+      "method": "POST",
+      "path": "/projects/:project/dev-agents",
+      "key": [
+        "dev-agents",
+        "create"
+      ],
+      "kind": "endpoint",
+      "summary": "在开发机上注册我的开发 Agent（名字由控制面生成）",
+      "effect": "write",
+      "resource": {
+        "kind": "dev_agent",
+        "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "description": "主机那一段：小写字母、数字、连字符。"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "credential": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "last_used_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "prefix",
+              "created_at",
+              "last_used_at",
+              "revoked_at",
+              "user"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "credential",
+          "token"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/projects/:project/dev-agents/:name",
+      "key": [
+        "dev-agents",
+        "revoke"
+      ],
+      "kind": "endpoint",
+      "summary": "吊销我的开发 Agent 的凭据",
+      "effect": "write",
+      "resource": {
+        "kind": "dev_agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "removes": true,
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project",
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
       "method": "GET",
       "path": "/docs",
       "key": [
@@ -4802,6 +5298,21 @@
             "type": "boolean",
             "description": "运行已超过保留期、日志已被清理（此时是空页）。"
           },
+          "file_problem": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "missing",
+                  "short"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "这个任务的日志文件的问题（`LogFileProblem`）：写过日志但文件不在了（页是空的）或者比记录的短（页里只有剩下的行）；\n没有问题时、运行已过保留期（`expired` 已经说了）时为 null。每次读页都按读那一刻的文件判断，和下载同一个标准。"
+          },
           "locate": {
             "anyOf": [
               {
@@ -4846,6 +5357,7 @@
           "last_seq",
           "truncated",
           "expired",
+          "file_problem",
           "locate"
         ]
       },
@@ -5004,6 +5516,21 @@
             "task_id",
             "lines",
             "offset"
+          ]
+        },
+        "file_problem": {
+          "type": "object",
+          "properties": {
+            "file_problem": {
+              "type": "string",
+              "enum": [
+                "missing",
+                "short"
+              ]
+            }
+          },
+          "required": [
+            "file_problem"
           ]
         }
       },
@@ -5273,6 +5800,56 @@
           "expired": {
             "type": "boolean",
             "description": "运行已超过保留期、日志已被清理（此时是空页）。"
+          },
+          "file_problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string"
+                },
+                "chain_instance_id": {
+                  "type": "string"
+                },
+                "subflow": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "problem": {
+                  "type": "string",
+                  "enum": [
+                    "missing",
+                    "short"
+                  ]
+                }
+              },
+              "required": [
+                "task_id",
+                "chain_instance_id",
+                "subflow",
+                "node_id",
+                "attempt",
+                "problem"
+              ]
+            },
+            "description": "范围（`nodes`）内日志文件有问题的任务（写过日志但文件不在了，或者比记录的短），按运行视图里的顺序，最多 `LOG_FILE_PROBLEMS_LIMIT`\n个；总数在 `file_problems_total`。有问题的任务页里读不到（或只读到剩下的）它的行：页面和命令行据此说明，不要当成「没有日志」。\n运行已过保留期时为空（`expired` 已经说了）。每个页都带，按读那一刻的文件判断，和下载同一个标准。"
+          },
+          "file_problems_total": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "范围内日志文件有问题的任务的总数（可能大于 `file_problems` 列出的个数）。"
           }
         },
         "required": [
@@ -5284,7 +5861,9 @@
           "reached_end",
           "live_after",
           "truncated_tasks",
-          "expired"
+          "expired",
+          "file_problems",
+          "file_problems_total"
         ]
       },
       "notes": [
@@ -5526,6 +6105,63 @@
         "reload": {
           "type": "object",
           "properties": {}
+        },
+        "file_problems": {
+          "type": "object",
+          "properties": {
+            "file_problems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "task_id": {
+                    "type": "string"
+                  },
+                  "chain_instance_id": {
+                    "type": "string"
+                  },
+                  "subflow": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "attempt": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "problem": {
+                    "type": "string",
+                    "enum": [
+                      "missing",
+                      "short"
+                    ]
+                  }
+                },
+                "required": [
+                  "task_id",
+                  "chain_instance_id",
+                  "subflow",
+                  "node_id",
+                  "attempt",
+                  "problem"
+                ]
+              }
+            },
+            "file_problems_total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "file_problems",
+            "file_problems_total"
+          ]
         }
       },
       "notes": [
@@ -17770,6 +18406,10 @@
               ]
             },
             "description": "有异常的关注项（场景设了关注项时才有；没设时为空，不用执行中节点的主指标代替），按作者设定的顺序。\n摘要只给最新值，要曲线用 `GET /runs/:id/focus`。"
+          },
+          "secrets_oversize": {
+            "type": "boolean",
+            "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，\n所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；\n旧版本的控制面没有这个字段，读不到时当作 false。"
           }
         },
         "required": [
@@ -17879,6 +18519,45 @@
                 },
                 "node_id": {
                   "type": "string"
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "defaults"
+                        },
+                        "preset_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_ids"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "preset"
+                        },
+                        "preset_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_id"
+                      ]
+                    }
+                  ]
                 }
               },
               "required": [
@@ -17901,6 +18580,45 @@
                 },
                 "node_id": {
                   "type": "string"
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "defaults"
+                        },
+                        "preset_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_ids"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "preset"
+                        },
+                        "preset_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_id"
+                      ]
+                    }
+                  ]
                 }
               },
               "required": [
@@ -18441,6 +19159,10 @@
             ],
             "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
           },
+          "secrets_oversize": {
+            "type": "boolean",
+            "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
           "chains": {
             "type": "array",
             "items": {
@@ -18567,6 +19289,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -18643,6 +19377,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -18651,6 +19397,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -19005,7 +19763,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -19025,6 +19785,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -19062,6 +19823,76 @@
           "cancel",
           "run_notification",
           "chains"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/io",
+      "key": [
+        "runs",
+        "taskIo"
+      ],
+      "kind": "endpoint",
+      "summary": "读一次尝试的输入和输出的全文（运行视图里被省略的大输入、输出在这里取）",
+      "effect": "read",
+      "resource": {
+        "kind": "task",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outputs": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "task_id",
+          "inputs",
+          "outputs"
         ]
       },
       "notes": []
@@ -19279,6 +20110,10 @@
             ],
             "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
           },
+          "secrets_oversize": {
+            "type": "boolean",
+            "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
           "chains": {
             "type": "array",
             "items": {
@@ -19405,6 +20240,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -19481,6 +20328,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -19489,6 +20348,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -19843,7 +20714,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -19863,6 +20736,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -20117,6 +20991,10 @@
             ],
             "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
           },
+          "secrets_oversize": {
+            "type": "boolean",
+            "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
           "chains": {
             "type": "array",
             "items": {
@@ -20243,6 +21121,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -20319,6 +21209,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -20327,6 +21229,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -20681,7 +21595,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -20701,6 +21617,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -20953,6 +21870,10 @@
               ],
               "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
             },
+            "secrets_oversize": {
+              "type": "boolean",
+              "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+            },
             "chains": {
               "type": "array",
               "items": {
@@ -21079,6 +22000,18 @@
                             }
                           ]
                         },
+                        "outputs_omitted_bytes": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "error": {
                           "anyOf": [
                             {
@@ -21155,6 +22088,18 @@
                                   }
                                 ]
                               },
+                              "inputs_omitted_bytes": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "outputs": {
                                 "anyOf": [
                                   {
@@ -21163,6 +22108,18 @@
                                       "type": "string"
                                     },
                                     "additionalProperties": {}
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "outputs_omitted_bytes": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
                                   },
                                   {
                                     "type": "null"
@@ -21517,7 +22474,9 @@
                               "status",
                               "agent",
                               "inputs",
+                              "inputs_omitted_bytes",
                               "outputs",
+                              "outputs_omitted_bytes",
                               "error",
                               "queued_at",
                               "started_at",
@@ -21537,6 +22496,7 @@
                         "status",
                         "agent",
                         "outputs",
+                        "outputs_omitted_bytes",
                         "error",
                         "attempts"
                       ]
@@ -23604,7 +24564,7 @@
                 "context_overflow",
                 "other"
               ],
-              "description": "重试的原因按什么分；#548 起有值。"
+              "description": "重试的原因按什么分（#640 起有值）。"
             },
             "message_id": {
               "type": "string",
@@ -24340,6 +25300,190 @@
       "notes": []
     },
     {
+      "method": "POST",
+      "path": "/sessions/:id/end",
+      "key": [
+        "sessions",
+        "end"
+      ],
+      "kind": "endpoint",
+      "summary": "结束会话：之后不再接受消息，工作区和运行都留着",
+      "effect": "write",
+      "resource": {
+        "kind": "session",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "running",
+              "queued",
+              "ended"
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "最近一次活动（新建、发话、事件落库）的时间。"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_turn_outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "stopped",
+                  "limit",
+                  "model_unavailable",
+                  "interrupted",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "type": "string"
+          },
+          "readiness": {
+            "type": "object",
+            "properties": {
+              "ready": {
+                "type": "boolean"
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_not_configured",
+                        "assistant_unreachable",
+                        "workbench_not_set",
+                        "workbench_offline",
+                        "model_not_configured",
+                        "model_unreachable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "message"
+                  ]
+                }
+              },
+              "workbench": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "ready",
+              "problems",
+              "workbench"
+            ]
+          },
+          "waiting_for": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "created_by": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "title",
+                  "created_by"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "created_by",
+          "created_at",
+          "last_activity_at",
+          "queue_position",
+          "last_turn_outcome",
+          "project",
+          "readiness",
+          "waiting_for"
+        ]
+      },
+      "notes": []
+    },
+    {
       "method": "GET",
       "path": "/health",
       "key": [
@@ -24714,7 +25858,7 @@
         {
           "part": "body",
           "path": "name",
-          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）"
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
         }
       ]
     },
@@ -25063,7 +26207,7 @@
         {
           "part": "body",
           "path": "name",
-          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）"
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
         }
       ]
     },
@@ -25258,7 +26402,13 @@
           "created_at"
         ]
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "display_name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：显示名里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
+        }
+      ]
     },
     {
       "method": "POST",

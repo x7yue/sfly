@@ -1,7 +1,7 @@
-// 保密环境变量的值按值打码（src/redact.ts 写着规则和做不到的）。
+// secret 环境变量的值按值打码（src/redact.ts 写着规则和做不到的）。
 import { SECRET_MASK } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { Redactor } from "../src/redact.js";
+import { forLog, LOG_TEXT_LIMIT, Redactor } from "../src/redact.js";
 
 const redactor = (...values: string[]) => {
 	const r = new Redactor();
@@ -56,5 +56,36 @@ describe("跨两条增量", () => {
 		const stream = new Redactor().stream();
 		expect(stream.push("abc")).toBe("abc");
 		expect(stream.flush()).toBe("");
+	});
+});
+
+describe("写进助手服务日志的原文（#640）", () => {
+	it.each([
+		["Authorization 头", "Authorization: Bearer abc.def-123", "Authorization: ******"],
+		[
+			"JSON 里的 authorization",
+			'{"authorization":"Basic dXNlcjpwdw=="}',
+			'{"authorization":"******"}',
+		],
+		["只有 Bearer", "token was Bearer abc.def-123 then", "token was Bearer ****** then"],
+		["x-api-key 头", "x-api-key: sk-123456", "x-api-key: ******"],
+		[
+			"地址里的用户名和密码",
+			"via https://user:pw@proxy.example/v1",
+			"via https://******@proxy.example/v1",
+		],
+		["没有凭据", "502: upstream boom", "502: upstream boom"],
+	])("按形状打码：%s", (_name, raw, logged) => {
+		expect(forLog(raw, [])).toBe(logged.replaceAll("******", SECRET_MASK));
+	});
+
+	it("先按值打码（每个打码器），再截到上限：截断不会切出值的半截", () => {
+		const value = "v".repeat(20);
+		const raw = `${"a".repeat(LOG_TEXT_LIMIT - 10)}${value}${"b".repeat(100)}`;
+		const logged = forLog(raw, [redactor("other"), redactor(value)]);
+		expect(logged).not.toContain("vvvvv");
+		expect(logged.startsWith(`${"a".repeat(LOG_TEXT_LIMIT - 10)}${SECRET_MASK}`)).toBe(true);
+		expect(logged).toMatch(/…（后面截掉了 \d+ 个字符）$/);
+		expect(forLog("short", [])).toBe("short");
 	});
 });

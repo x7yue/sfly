@@ -1,6 +1,14 @@
 // 在测试进程里起一个助手服务：真的 SessionManager 和 HTTP 服务，pi 用真的（或假的，`piArgv`），
 // 模型是 FakeModel，工作台是 FakeWorkbench。事件流由 {@link EventsClient} 收着。
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,8 +22,9 @@ import {
 } from "@sfly/schema";
 import type { z } from "zod";
 import { buildExtension } from "../../scripts/build-extension.js";
-import { type AgentDeadlines, connectAgent } from "../../src/agent.js";
+import { type AgentClient, type AgentOptions, connectAgent } from "../../src/agent.js";
 import { EventBus } from "../../src/bus.js";
+import type { Clock } from "../../src/clock.js";
 import { piPackage } from "../../src/launch.js";
 import { createAssistantServer } from "../../src/server.js";
 import { SessionManager, type SessionManagerOptions } from "../../src/sessions.js";
@@ -41,10 +50,17 @@ export interface HarnessOptions {
 	limits?: SessionManagerOptions["limits"];
 	maxProcesses?: number;
 	killGraceMs?: number;
+	/** 停止一轮时等 `agent_settled` 的时间、硬上限（测试里改短）。 */
+	abortSettleMs?: number;
+	stopWaitMs?: number;
+	/** 计时（手动推进的时钟，见 manual-clock.ts）。 */
+	clock?: Clock;
 	hostEnv?: NodeJS.ProcessEnv;
 	heartbeatMs?: number;
 	/** 助手服务连工作台时的期限（测试里改短）。 */
-	agentDeadlines?: AgentDeadlines;
+	agentDeadlines?: AgentOptions;
+	/** 换掉助手服务拿到的工作台客户端的某几样（造工作台连接之外的错误）。 */
+	wrapAgent?: (client: AgentClient) => AgentClient;
 }
 
 export class Harness {
@@ -93,8 +109,9 @@ export class Harness {
 				UNRELATED: "not-for-pi",
 			},
 			bus,
-			connect: (address) => {
-				const client = connectAgent(address, options.agentDeadlines);
+			connect: (address, log) => {
+				const connected = connectAgent(address, { ...options.agentDeadlines, log });
+				const client = options.wrapAgent ? options.wrapAgent(connected) : connected;
 				counts.opened += 1;
 				return {
 					...client,
@@ -108,6 +125,9 @@ export class Harness {
 			limits: options.limits,
 			maxProcesses: options.maxProcesses,
 			killGraceMs: options.killGraceMs,
+			abortSettleMs: options.abortSettleMs,
+			stopWaitMs: options.stopWaitMs,
+			clock: options.clock,
 			tmpRoot: join(root, "tmp"),
 		});
 		const server = createAssistantServer({
@@ -168,6 +188,45 @@ export class Harness {
 			headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },
 			body: JSON.stringify({ turn }),
 		});
+	}
+
+	/** 插话：对第 `turn` 轮说 `text`（`message_id` 不给时新生成一个）。 */
+	steer(
+		sessionId: string,
+		text: string,
+		turn = 1,
+		messageId: string = crypto.randomUUID(),
+	): Promise<Response> {
+		return fetch(`${this.url}/sessions/${sessionId}/steer`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },
+			body: JSON.stringify({ turn, message_id: messageId, text }),
+		});
+	}
+
+	/** 结束会话（没有请求体）。 */
+	end(sessionId: string): Promise<Response> {
+		return fetch(`${this.url}/sessions/${sessionId}/end`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${SECRET}` },
+		});
+	}
+
+	/**
+	 * 等这个会话的 pi 原始事件（`events.jsonl`）写到这一轮的 `agent_settled`：它是异步写的，`turn_end` 不等它落盘（#684），
+	 * 一轮结束的那一刻文件里可能还缺最后几条。只用于以 `agent_settled` 结束的一轮（真的 pi 在它之后不再写这一轮的东西）。
+	 */
+	async rawSettled(sessionId: string, timeoutMs = 10_000): Promise<string> {
+		const path = join(this.dataDir, "sessions", sessionId, "events.jsonl");
+		let text = "";
+		await eventually(() => {
+			text = existsSync(path) ? readFileSync(path, "utf8") : "";
+			const last = text.trimEnd().split("\n").at(-1) ?? "";
+			if (!text.endsWith("\n") || !last.includes('"type":"agent_settled"')) {
+				throw new Error("events.jsonl 还没写到 agent_settled");
+			}
+		}, timeoutMs);
+		return text;
 	}
 
 	/** 等这个会话的第 `turn` 轮结束，返回 `turn_end`。 */

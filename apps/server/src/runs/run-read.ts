@@ -5,13 +5,26 @@ import {
 	failuresInOrder,
 	isActiveStatus,
 	type NodeStatus,
+	RUN_VIEW_IO_TOTAL_LIMIT_BYTES,
+	RUN_VIEW_IO_VALUE_LIMIT_BYTES,
 	type RunListActiveNode,
 	type RunView,
 	type SessionRef,
 	type StoredNode,
 	type StoredOrchestrationDocument,
+	type TaskIoView,
 } from "@sfly/schema";
-import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	getTableColumns,
+	inArray,
+	isNotNull,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
 import { clockOffsetView } from "../agents/agent-clock.js";
 import type { AgentWait } from "../agents/queue-wait.js";
@@ -85,8 +98,15 @@ export interface RunAttemptState extends RunAttempt {
 
 /** `full` 读出的一次尝试：多了输入、输出、错误信息和日志里的 WARN / ERROR 等。 */
 export interface RunAttemptDetail extends RunAttemptState {
+	/**
+	 * 输入、输出（已打码）：大于 {@link RUN_VIEW_IO_VALUE_LIMIT_BYTES} 的不从数据库读出来（SQL 里判），这里是 null，大小在 `inputsBytes`、
+	 * `outputsBytes`；没有输入、输出（数据库里是 NULL）时两个都是 null。
+	 */
 	inputs: Record<string, unknown> | null;
 	outputs: Record<string, unknown> | null;
+	/** 数据库里存着的输入、输出的大小（JSON 文本的字节数，打码之前）；没有时为 null。 */
+	inputsBytes: number | null;
+	outputsBytes: number | null;
 	/** 打码后的错误信息（关注项按它判断失败和重试的原因）。 */
 	errorMessage: string | null;
 	logIssues: TaskLogIssues | null;
@@ -200,6 +220,27 @@ export async function readRuns(
 	);
 }
 
+/** 一个 jsonb 列存着的 JSON 文本的字节数（打码之前）；列是 NULL 时为 NULL。 */
+const bytesOf = (column: typeof tasks.inputs | typeof tasks.outputs) =>
+	sql<number | null>`octet_length(${column}::text)`;
+
+/**
+ * 每个任务的输入、输出存着的大小，在一个 `lateral` 子查询里只算一次：大小要把 jsonb 转成文本才量得出（量过：60 个任务各 2 个 1 MB 的值，
+ * 一次转换 61 毫秒），判大小和带回大小各算一遍就是四次（164 毫秒）。`limit 1` 挡住数据库把子查询拉平回外面的表达式
+ * （拉平之后又是各算各的）。`tasks` 必须是外面查询的表。
+ */
+const TASK_IO_SIZES = sql.identifier("task_io_sizes");
+const taskIoSizesJoin = sql`(select ${bytesOf(tasks.inputs)} as inputs_bytes, ${bytesOf(tasks.outputs)} as outputs_bytes limit 1) as ${TASK_IO_SIZES}`;
+const inputsBytesOf = sql<number | null>`${TASK_IO_SIZES}.inputs_bytes`;
+const outputsBytesOf = sql<number | null>`${TASK_IO_SIZES}.outputs_bytes`;
+
+/** 这个 jsonb 列的内容：大小（{@link taskIoSizesJoin} 里算好的）不超过 {@link RUN_VIEW_IO_VALUE_LIMIT_BYTES} 才读出来，更大的读成 NULL。 */
+const smallOnly = (column: typeof tasks.inputs | typeof tasks.outputs, bytes: SQL<number | null>) =>
+	sql<Record<
+		string,
+		unknown
+	> | null>`case when ${bytes} <= ${RUN_VIEW_IO_VALUE_LIMIT_BYTES} then ${column} end`;
+
 /** {@link readRuns} 的读取：`ids` 是小写、去重后的 UUID，结果按数据库里的运行 ID 作键。 */
 async function readByIds(
 	db: Db | Tx,
@@ -268,10 +309,23 @@ async function readByIds(
 		return assemble(rows, refs, chains, taskRows, attemptStateOf, (read) => read);
 	}
 
+	// 大的输入、输出不从数据库读出来：大小在 SQL 里判（`octet_length` 是数据库里存着的 JSON 文本的字节数），超过
+	// {@link RUN_VIEW_IO_VALUE_LIMIT_BYTES} 的内容这里读成 NULL，只带回大小——不进 pg 的解析、不进打码、不进序列化。
+	const { inputs: _inputs, outputs: _outputs, ...taskColumns } = getTableColumns(tasks);
 	const taskRows = (
 		await db
-			.select({ task: tasks, currentAction: taskActionSummaries.currentAction })
+			.select({
+				task: {
+					...taskColumns,
+					inputs: smallOnly(tasks.inputs, inputsBytesOf),
+					outputs: smallOnly(tasks.outputs, outputsBytesOf),
+					inputsBytes: inputsBytesOf,
+					outputsBytes: outputsBytesOf,
+				},
+				currentAction: taskActionSummaries.currentAction,
+			})
 			.from(tasks)
+			.crossJoinLateral(taskIoSizesJoin)
 			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
 			.where(inArray(tasks.runId, found))
 			.orderBy(asc(tasks.attempt))
@@ -284,6 +338,31 @@ async function readByIds(
 		...read,
 		runNotification: notifications.get(read.run.id) ?? null,
 	}));
+}
+
+/**
+ * 一次尝试的输入和输出的全文（`GET /tasks/:id/io`，运行视图里被省略的在这里取）：打码走和运行视图同一条路（这次运行此刻的 secret
+ * 值，{@link masker}）；任务不存在时为 undefined。单个输入、输出本来就不超过 1 MiB（engine/output-limit.ts）。
+ */
+export async function readTaskIo(db: Db | Tx, taskId: string): Promise<TaskIoView | undefined> {
+	if (!isUuid(taskId)) return undefined;
+	const [row] = await db
+		.select({ id: tasks.id, runId: tasks.runId, inputs: tasks.inputs, outputs: tasks.outputs })
+		.from(tasks)
+		.where(eq(tasks.id, taskId.toLowerCase()));
+	if (!row) return undefined;
+	const [version] = await db
+		.select({ document: orchestrationVersions.document })
+		.from(runs)
+		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
+		.where(eq(runs.id, row.runId));
+	if (!version) return undefined;
+	const chains = await db
+		.select({ chainId: chainInstances.chainId, params: chainInstances.params })
+		.from(chainInstances)
+		.where(eq(chainInstances.runId, row.runId));
+	const mask = masker(version.document, secretValues(version.document, chains).withBudget());
+	return { task_id: row.id, inputs: mask.record(row.inputs), outputs: mask.record(row.outputs) };
 }
 
 /**
@@ -402,7 +481,13 @@ type BoardTaskRow = TaskRowBase & {
 };
 type StateTaskRow = BoardTaskRow &
 	Pick<typeof tasks.$inferSelect, "errorKind" | "errorMessage" | "errorLocation">;
-type FullTaskRow = typeof tasks.$inferSelect & { currentAction: CurrentAction | null };
+type FullTaskRow = Omit<typeof tasks.$inferSelect, "inputs" | "outputs"> & {
+	inputs: Record<string, unknown> | null;
+	outputs: Record<string, unknown> | null;
+	inputsBytes: number | null;
+	outputsBytes: number | null;
+	currentAction: CurrentAction | null;
+};
 
 /**
  * 打码：只打用户内容。`record` 打码一个「名字到值」的映射（参数、输入、输出）：映射本身不会被换成掩码，
@@ -460,6 +545,8 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 		...attemptStateOf(row, mask),
 		inputs: mask.record(row.inputs),
 		outputs: mask.record(row.outputs),
+		inputsBytes: row.inputsBytes,
+		outputsBytes: row.outputsBytes,
 		errorMessage: row.errorMessage === null ? null : mask.text(row.errorMessage),
 		// 最近一条 WARN / ERROR 的正文写入时按那一刻的 secret 值打过码；读取时再按此刻的打一遍（后来才成为 secret 的值，#517）。
 		logIssues: row.logIssues && {
@@ -635,9 +722,44 @@ async function runNotificationStates(
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
+const roundUpKib = (bytes: number): number => Math.ceil(bytes / 1024) * 1024;
+
+/** 一份输入或输出放进运行视图的结果：内联的内容，或者被省略时的大小。 */
+type IoPlaced = { value: Record<string, unknown> | null; omittedBytes: number | null };
+
+/**
+ * 整份运行视图里内联的输入、输出合计的预算（{@link RUN_VIEW_IO_TOTAL_LIMIT_BYTES}）：每份按顺序放，按实际写进响应的字节
+ * （打码之后的 JSON）算；某一份放不下，它和之后的一律只给大小（不再量、不再往后找放得下的）：量的开销有上界（合计到顶就停），
+ * 响应的大小和任务数无关。顺序是固定的（契约里写明）：调用方按链、节点、尝试的顺序放，每次尝试先输入、后输出，节点层的输出最后。
+ */
+class IoBudget {
+	#remaining = RUN_VIEW_IO_TOTAL_LIMIT_BYTES;
+	#exhausted = false;
+
+	/**
+	 * 放一份内容：`bytes` 是数据库里存着的大小（打码之前，没有内容时为 null）。没有内容：null、没有大小；单个太大
+	 * （SQL 里就没有读出来，`value` 是 null）：只给大小；合计放不下：只给大小；否则内联。大小向上取整到 KiB：精确的值和打码之后的
+	 * 内容一减，就露出 secret 值的长度。
+	 */
+	place(value: Record<string, unknown> | null, bytes: number | null): IoPlaced {
+		if (bytes === null) return { value: null, omittedBytes: null };
+		if (bytes > RUN_VIEW_IO_VALUE_LIMIT_BYTES || this.#exhausted) {
+			return { value: null, omittedBytes: roundUpKib(bytes) };
+		}
+		const size = Buffer.byteLength(JSON.stringify(value));
+		if (size > this.#remaining) {
+			this.#exhausted = true;
+			return { value: null, omittedBytes: roundUpKib(bytes) };
+		}
+		this.#remaining -= size;
+		return { value, omittedBytes: null };
+	}
+}
+
 /** 运行视图：`full` 读取的投影；`waits` 是排队中的尝试等的那些 Agent 此刻的状态。 */
 function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunView {
 	const { run, version } = read;
+	const budget = new IoBudget();
 	return {
 		id: run.id,
 		orchestration_id: run.orchestrationId,
@@ -651,6 +773,7 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 		run_notification: read.runNotification,
+		secrets_oversize: read.secrets.oversize,
 		cancel: run.cancelRequestedAt
 			? {
 					requested_by: run.cancelRequestedBy ?? "",
@@ -671,15 +794,25 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 			started_at: chain.startedAt.toISOString(),
 			ended_at: iso(chain.endedAt),
 			nodes: chain.nodes.map((node) => {
-				const attempts = node.attempts.map((a) => attemptView(a, waits));
+				const attempts = node.attempts.map((a) => attemptView(a, waits, budget));
 				const last = attempts.at(-1);
+				const lastDetail = node.attempts.at(-1);
+				// 节点层的输出是最后一次尝试输出的又一份：那次尝试的输出被省略时它也被省略（同样的大小）；内联着时，
+				// 这一份也要放进合计（放不下就只给大小）。
+				const output: IoPlaced =
+					last && lastDetail
+						? last.outputs_omitted_bytes !== null
+							? { value: null, omittedBytes: last.outputs_omitted_bytes }
+							: budget.place(last.outputs, lastDetail.outputsBytes)
+						: { value: null, omittedBytes: null };
 				return {
 					node_id: node.node_id,
 					display_name: node.display_name,
 					kind: node.kind,
 					status: node.status,
 					agent: node.agent,
-					outputs: last?.outputs ?? null,
+					outputs: output.value,
+					outputs_omitted_bytes: output.omittedBytes,
 					error: last?.error ?? null,
 					attempts,
 				};
@@ -688,15 +821,23 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 	};
 }
 
-function attemptView(a: RunAttemptDetail, waits: ReadonlyMap<string, AgentWait>): AttemptView {
+function attemptView(
+	a: RunAttemptDetail,
+	waits: ReadonlyMap<string, AgentWait>,
+	budget: IoBudget,
+): AttemptView {
 	const wait = a.status === "queued" && a.agent ? waits.get(a.agent) : undefined;
+	const inputs = budget.place(a.inputs, a.inputsBytes);
+	const outputs = budget.place(a.outputs, a.outputsBytes);
 	return {
 		task_id: a.taskId,
 		attempt: a.attempt,
 		status: a.status,
 		agent: a.agent,
-		inputs: a.inputs,
-		outputs: a.outputs,
+		inputs: inputs.value,
+		inputs_omitted_bytes: inputs.omittedBytes,
+		outputs: outputs.value,
+		outputs_omitted_bytes: outputs.omittedBytes,
 		error: a.error,
 		queued_at: a.queuedAt.toISOString(),
 		started_at: iso(a.startedAt),

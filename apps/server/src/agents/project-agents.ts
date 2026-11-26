@@ -8,6 +8,8 @@ export interface AgentRecord {
 	name: string;
 	status: AgentStatus;
 	info: AgentInfo;
+	/** 被停用的时间（没停用为 null）：停用的 Agent 连不上、不参与派发，预检要说清楚。 */
+	disabledAt: Date | null;
 }
 
 /**
@@ -23,7 +25,12 @@ export async function agentsInProject(
 ): Promise<AgentRecord[]> {
 	if (names !== undefined && names.length === 0) return [];
 	return db
-		.select({ name: agents.name, status: agents.status, info: agents.info })
+		.select({
+			name: agents.name,
+			status: agents.status,
+			info: agents.info,
+			disabledAt: agents.disabledAt,
+		})
 		.from(agents)
 		.where(
 			and(

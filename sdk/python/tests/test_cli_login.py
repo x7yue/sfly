@@ -41,6 +41,10 @@ class FakeServer:
         self.issue_errors: list[tuple[int, dict[str, Any]]] = []
         # POST /packages 的回答状态码（201 是成功）。
         self.publish_status = 201
+        # 失败时的错误信息、成功时回的包名和版本（服务端的文字，什么都可能有）。
+        self.publish_message = "需要登录或令牌"
+        self.publish_name = "demo"
+        self.publish_version = "1.0.0"
         # 非空时 GET /redirect 返回 302 跳到这个地址。
         self.redirect_to: str | None = None
         self.revoke_status = 204
@@ -84,9 +88,16 @@ class FakeServer:
                     if outer.publish_status != 201:
                         return self._send(
                             outer.publish_status,
-                            {"error": {"code": "unauthorized", "message": "需要登录或令牌"}},
+                            {"error": {"code": "unauthorized", "message": outer.publish_message}},
                         )
-                    return self._send(201, {"name": "demo", "version": "1.0.0", "sha256": "0" * 64})
+                    return self._send(
+                        201,
+                        {
+                            "name": outer.publish_name,
+                            "version": outer.publish_version,
+                            "sha256": "0" * 64,
+                        },
+                    )
                 body = self._read()
                 self._record(body)
                 if self.path == "/account/tokens":
@@ -629,13 +640,15 @@ class TestLogout:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         assert login(capsys, monkeypatch)[0] == 0
-        server.revoke_status = 401  # 令牌失效了，或者账号被停用了：控制面都只说 401
+        # 令牌已经失效了（账号被停用时令牌照样能吊销它自己，不是这个原因）
+        server.revoke_status = 401
         code, out, err = run(capsys, monkeypatch, "logout")
         assert code == 0, err
         assert credentials.load(server.url) is None
-        # 如实说：这次登出没有吊销令牌；账号被停用时令牌还在，启用之后又能用；去哪里吊销。
+        # 如实说：这次登出没有吊销令牌；去哪里核对。
         assert "本机的凭据已删除" in out and "令牌已吊销" not in out
-        assert "401" in out and "账号被停用" in out and "没有被吊销" in out and "令牌」页" in out
+        assert "401" in out and "没有吊销" in out and "令牌」页" in out
+        assert "账号被停用" not in out
         assert TOKEN not in out + err
         # --json 里分得清：没有吊销，被控制面拒绝了。
         assert login(capsys, monkeypatch)[0] == 0
@@ -662,6 +675,8 @@ class TestLogout:
         code, _, err = run(capsys, monkeypatch, "logout")
         assert code == 2
         assert "sfly logout --local" in err
+        # 说明令牌没有被吊销、本机的凭据保留着（和连不上时一样），不只是给下一步。
+        assert "令牌没有被吊销" in err and "本机的凭据保留着" in err
         # 令牌没有被吊销，本机的凭据保留着：不能让本机以为登出了、令牌还有效。
         stored = credentials.load(server.url)
         assert stored and stored.token == TOKEN
@@ -872,6 +887,81 @@ class TestPlainHttpNote:
             assert "明文" not in err.getvalue(), (server, token)
 
 
+class TestPlainHttpPasswordNote:
+    """第一次 `sfly login`（还没有令牌）往不是本机的 `http://` 地址发密码：发之前也提示。"""
+
+    def test_login_over_non_local_http_notes_that_the_password_is_sent_in_the_clear(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, out, err = login(capsys, monkeypatch, "--server", "http://cp.example.test:1")
+        assert code == 2  # 连不上：提示在发之前
+        assert err.count("明文") == 1 and "密码" in err and "https" in err
+        assert PASSWORD not in out + err
+
+    def test_no_note_for_localhost_or_https(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, _, err = login(capsys, monkeypatch)  # 本机的假控制面
+        assert code == 0 and "明文" not in err
+        for url in (
+            "http://localhost:1",
+            "http://127.0.0.1:1",
+            "http://127.0.0.2:1",
+            "http://127.255.255.254:1",
+            "http://[::1]:1",
+            "https://cp.example.test:1",
+        ):
+            _, _, err = login(capsys, monkeypatch, "--server", url)
+            assert "明文" not in err, url
+
+    def test_zero_address_and_non_loopback_addresses_are_still_noted(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for url in ("http://0.0.0.0:1", "http://192.168.1.2:1", "http://10.0.0.5:1"):
+            _, _, err = login(capsys, monkeypatch, "--server", url)
+            assert err.count("明文") == 1, url
+
+    def test_interactive_login_shows_the_note_before_asking_for_the_password(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """在终端里运行：先提示、再问密码（想放弃的人不用输完密码才看到）；发请求时不再重复。"""
+        import getpass
+
+        asked: list[str] = []
+
+        def fake_getpass(prompt: str = "") -> str:
+            asked.append(capsys.readouterr().err)  # 问密码的这一刻，标准错误里已经有什么
+            return PASSWORD
+
+        monkeypatch.setattr("sfly.cli.login._interactive", lambda: True)
+        monkeypatch.setattr(getpass, "getpass", fake_getpass)
+        code, _, err = run(
+            capsys,
+            monkeypatch,
+            "login",
+            "--server",
+            "http://cp.example.test:1",
+            "--login-name",
+            "alice",
+        )
+        assert code == 2  # 连不上
+        assert len(asked) == 1 and asked[0].count("明文") == 1 and "密码" in asked[0]
+        assert "明文" not in err  # 问完密码之后发请求，不再重复提示
+
+
 class TestCredentialsFilePermissions:
     def test_a_world_readable_file_is_noted(
         self,
@@ -927,6 +1017,34 @@ class TestPublishUsesTheToken:
         assert request["headers"]["content-type"] == "application/octet-stream"
         assert request["body"] == b"archive-bytes"
         assert TOKEN not in out + err
+
+    def test_publish_prints_the_servers_text_through_the_filter(
+        self,
+        server: FakeServer,
+        home: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """发布失败的错误信息、发布成功回的包名和版本是服务端的文字：CSI 这类转义序列去掉，
+        别的控制字符（含串序列的开头和结尾）写成 `\\uXXXX`（#670）。"""
+        archive = tmp_path / "demo-1.0.0.sflypkg"
+        archive.write_bytes(b"archive-bytes")
+        server.publish_status = 409
+        server.publish_message = "冲突\x1b[2J\x1b]0;标题\x07\u202e结尾"
+        code, out, err = run(capsys, monkeypatch, "publish", str(archive))
+        assert code == 1
+        assert "\x1b" not in out + err and "\x07" not in out + err
+        # CSI 整段去掉，串序列（OSC）的开头和结尾写成转义、正文留着。
+        assert "（HTTP 409 unauthorized）：冲突\\u001b]0;标题\\u0007\\u202e结尾" in err
+
+        server.publish_status = 201
+        server.publish_name = "demo\x1b[31m\u200b"
+        server.publish_version = "1.0.0\x1b]0;t\x07\x85"
+        code, out, err = run(capsys, monkeypatch, "publish", str(archive))
+        assert code == 0, err
+        assert "\x1b" not in out + err and "\x07" not in out + err
+        assert out.startswith("已发布 demo\\u200b@1.0.0\\u001b]0;t\\u0007\\u0085（sha256 ")
 
     def test_publish_without_a_token_still_works_and_a_401_says_to_log_in(
         self,

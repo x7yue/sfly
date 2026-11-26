@@ -140,6 +140,63 @@ async fn artifacts_of_a_failed_task_are_uploaded_too_and_the_failure_is_kept() {
     );
 }
 
+/// 控制面拒绝上传时返回的响应体没有上限：写进失败信息之后，失败的文字仍有上界（#723：结果太大会被控制面拒绝）。
+/// 任务本来就失败的：原来的文字已经限过长，追加上传失败的原因之后再限一次，开头（节点的失败原因）还在。
+#[tokio::test]
+async fn a_huge_upload_rejection_does_not_make_the_failure_text_unbounded() {
+    const MIB: usize = 1024 * 1024;
+    let fixture = HttpFixture::start().await;
+    // 对面回的正文有 3 MiB：Agent 只读开头的 8 KiB 写进失败原因，也不把整段写到自己的标准错误
+    // （CI 的 runner 收到一行 3 MiB 的输出会卡住，这条测试曾让 CI 的 rust 任务跑满 30 分钟）。
+    fixture.reject_uploads_with_body(400, &"b".repeat(3 * MIB));
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-huge-body"));
+    cp.hello(0).await;
+
+    cp.assign(artifact_task(
+        "task-huge-failed",
+        &fixture,
+        json!({ "files": { "debug.txt": "现场" }, "fail": true }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-huge-failed").await;
+    let error = result.error.unwrap();
+    assert_eq!(error.kind(), ErrorKind::NodeError);
+    assert!(
+        error.message.len() < 64 * 1024,
+        "{} 字节",
+        error.message.len()
+    );
+    assert!(
+        error.message.starts_with("RuntimeError: 保存产物后失败"),
+        "{}",
+        &error.message[..80]
+    );
+    assert!(error.message.contains("上传产物失败：debug.txt"));
+    assert!(error.message.ends_with("只留了开头）"), "写明只留了开头");
+    // 正文只留了开头 8 KiB（消息里别处的 b 不算：这里数连续的 b）。
+    assert!(error.message.contains(&"b".repeat(8 * 1024)));
+    assert!(!error.message.contains(&"b".repeat(8 * 1024 + 1)));
+
+    // 任务本来成功、上传被拒绝：失败的原因就是上传失败的原因，同样只有开头
+    cp.assign(artifact_task(
+        "task-huge-ok",
+        &fixture,
+        json!({ "files": { "debug.txt": "现场" } }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-huge-ok").await;
+    assert_eq!(result.status(), TaskStatus::Failed);
+    let error = result.error.unwrap();
+    assert!(
+        error.message.len() < 64 * 1024,
+        "{} 字节",
+        error.message.len()
+    );
+    assert!(error.message.starts_with("上传产物失败：debug.txt"));
+    assert!(error.message.ends_with("只留了开头）"));
+}
+
 #[tokio::test]
 async fn without_an_upload_url_nothing_is_uploaded_and_refs_are_local_paths() {
     let fixture = HttpFixture::start().await;

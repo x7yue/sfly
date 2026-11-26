@@ -3,7 +3,7 @@
 // （日志文件里没有原值），读取时也打码。
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { logsApi, SECRET_MASK, TOKEN_PREFIXES } from "@sfly/schema";
+import { logsApi, SECRET_MASK, TOKEN_PREFIXES, TOKEN_VALUE_PATTERN } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	maskParams,
@@ -52,6 +52,38 @@ describe("打码规则认得令牌的前缀", () => {
 		expect(NO_SECRETS.mask(`t=${TOKENS[0]}`)).toBe(`t=${SECRET_MASK}`);
 		const set = secretSetOf(["hunter2"]);
 		expect(set.mask(`s=hunter2 t=${TOKENS[0]}`)).toBe(`s=${SECRET_MASK} t=${SECRET_MASK}`);
+	});
+
+	it("@sfly/schema 导出的那个带 g 标志的正则被别处用脏（lastIndex 不是 0）：mask、maskTokens、wouldChange 的结果不变，文字开头的令牌照样认", () => {
+		const text = `${TOKENS[0]} 之后的文字 ${TOKENS[1]}`;
+		const masked = `${SECRET_MASK} 之后的文字 ${SECRET_MASK}`;
+		const set = secretSetOf(["hunter2"]);
+		const dirty = [
+			() => {
+				TOKEN_VALUE_PATTERN.lastIndex = 5;
+			},
+			() => {
+				// 别处对它调一次 test()：lastIndex 留在匹配的结尾
+				TOKEN_VALUE_PATTERN.lastIndex = 0;
+				TOKEN_VALUE_PATTERN.test(`xx ${TOKENS[2]}`);
+			},
+		];
+		try {
+			for (const spoil of dirty) {
+				spoil();
+				expect(maskTokens(text)).toBe(masked);
+				spoil();
+				expect(NO_SECRETS.mask(text)).toBe(masked);
+				spoil();
+				expect(set.mask(`${text} hunter2`)).toBe(`${masked} ${SECRET_MASK}`);
+				spoil();
+				expect(NO_SECRETS.wouldChange(text)).toBe(true);
+				spoil();
+				expect(set.wouldChange(text)).toBe(true);
+			}
+		} finally {
+			TOKEN_VALUE_PATTERN.lastIndex = 0;
+		}
 	});
 
 	it("maskValue、maskRecord、maskParams：对象、数组里的字符串都打码；没有变化的部分原样返回（不复制）", () => {
@@ -129,5 +161,35 @@ describe("任务日志里的令牌原值", () => {
 		const download = await cp.fetch(`/tasks/${task.taskId}/logs/download`);
 		expect(await download.text()).not.toContain(HEX);
 		expect(await dataDirContains(cp.dataDir, HEX)).toBe(false);
+	});
+	it("任务凭据本身（AssignTask 带来的 sfly_tsk_ 原值，执行器里的 SFLY_TASK_TOKEN）：节点把它打印出来，日志文件、分页读取、下载里都只有掩码（按前缀认，不用先知道是哪个令牌）", async () => {
+		const api = new ApiClient(cp);
+		const scenario = await api.orchestrationWith({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "a", kind: "package", package: "stub", node: "echo" },
+			],
+			edges: [{ from: "entry", to: "a", kind: "chain" }],
+			packages: { stub: "1.0.0" },
+		});
+		await api.triggerOk(scenario);
+		const task = await agent.nextAssign();
+		expect(task.taskToken).toMatch(/^sfly_tsk_[0-9a-f]{48}$/);
+		agent.logs(task, [
+			[1, `env SFLY_TASK_TOKEN=${task.taskToken}`],
+			[2, "这一行没有令牌"],
+		]);
+		await eventually(async () => {
+			const res = await cp.fetch(`/tasks/${task.taskId}/logs?limit=100`);
+			const page = logsApi.page.response.parse(await res.json());
+			expect(page.lines.map((l) => l.text)).toEqual([
+				`env SFLY_TASK_TOKEN=${SECRET_MASK}`,
+				"这一行没有令牌",
+			]);
+		});
+		const download = await cp.fetch(`/tasks/${task.taskId}/logs/download`);
+		expect(await download.text()).not.toContain(task.taskToken.slice(TOKEN_PREFIXES.task.length));
+		expect(await dataDirContains(cp.dataDir, task.taskToken)).toBe(false);
 	});
 });

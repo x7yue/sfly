@@ -1,7 +1,7 @@
 import { isSecretDefaultPlaceholder, type StoredNode } from "@sfly/schema";
 
 /**
- * 画布里的文档带着「已设置」的敏感默认值时，它们是读取接口给的占位符（SECRET_MASK），原值读不回来。
+ * 画布里的文档带着「已设置」的 secret 默认值时，它们是读取接口给的占位符（SECRET_MASK），原值读不回来。
  * 保存到同一个场景时控制面按「沿用上一个版本的值」换回原值；存到另一个场景（另存为新场景）没有可以沿用的值，
  * 所以这里把它们去掉，需要的话到新场景里重新填写。
  */
@@ -16,7 +16,7 @@ interface Doc {
 const isEntry = (node: StoredNode): node is Entry =>
 	node.kind === "entry" || node.kind === "subflow_entry";
 
-/** 文档里「已设置」的敏感默认值有几个。 */
+/** 文档里「已设置」的 secret 默认值有几个。 */
 export const countSecretPlaceholders = (doc: Doc): number =>
 	doc.nodes.reduce(
 		(sum, node) =>
@@ -24,7 +24,7 @@ export const countSecretPlaceholders = (doc: Doc): number =>
 		0,
 	);
 
-/** 去掉文档里「已设置」的敏感默认值（参数本身和别的默认值不动）。 */
+/** 去掉文档里「已设置」的 secret 默认值（参数本身和别的默认值不动）。 */
 export const withoutSecretPlaceholders = <D extends Doc>(doc: D): D =>
 	({
 		...doc,

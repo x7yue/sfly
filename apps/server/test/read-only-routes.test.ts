@@ -23,9 +23,11 @@ import { strToU8 } from "fflate";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
+import { requiresCredential } from "../src/auth/access-rules.js";
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { ArrayCoverage } from "./support/array-coverage.js";
+import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { putFocusItemsOk } from "./support/focus-items.js";
@@ -119,6 +121,13 @@ const UNVERIFIED_ARRAYS: Record<string, string> = {
 		"控制台汇总只要关注项的最新值：读数用 points=0，序列按设计就是空的（序列的元素由 GET /runs/:id/focus 对照）",
 	"GET /dashboard response recent_ended[].focus[].series[].points[]":
 		"同上：控制台汇总的关注项读数不带序列",
+	"GET /runs/:id/logs response file_problems[]":
+		"seed 里没有日志文件不在了、变短了的任务：只读接口里读日志文件的（下载）在这样的任务上是 410、不是成功的路径，所以不造它；" +
+		"元素由 log-page-file-problems.test.ts 用契约的 schema 对照",
+	"GET /orchestrations/:id/preflight response warnings[].origin.preset_ids[]":
+		"secret 参数的值合计超过上限（真实的上限是 100 多万个字符）的默认值才有这一项，这里的 seed 用真实的上限，不会出现；元素的 schema 由 secret-params-too-large.test.ts 用调小的上限对过（响应按契约解析，列出了没有改 secret 值的预设）",
+	"GET /orchestrations/:id/preflight response problems[].origin.preset_ids[]":
+		"同一个问题的结构：`origin` 只有警告里的默认值那一条带它，阻断项里没有；schema 同上",
 };
 
 /** 接口用哪些数据调用：定位到场景、运行、任务的，每种状态各一遍；其余（列表、系统）一遍。 */
@@ -416,7 +425,7 @@ describe("声明为只读的接口真的不写库", () => {
 		const body = sampleBody(def);
 		// 账号类的只读接口只认登录 Cookie（同源的请求）；项目的管理面（项目令牌的列表）要「管理」，管理员的登录有。
 		const credentials =
-			def.resource.kind === "account" || def.resource.kind === "project"
+			def.resource.kind === "account" || requiresCredential(def)
 				? { cookie: `sfly_login=${adminCookie}`, "sec-fetch-site": "same-origin" }
 				: undefined;
 		const res = await cp.fetch(url, {
@@ -768,6 +777,14 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	await api.saveVersion(rich, richDocument("stage"));
 	const diffed = await api.orchestrationWith(diffedDocument(1), "增删改");
 	await api.saveVersion(diffed, diffedDocument(2));
+
+	// Agent 的凭据：列出凭据的接口（只读）响应里的数组要对过数据。
+	const accounts = new TestAccounts(cp.database.url);
+	try {
+		await accounts.agentCredential("default", "agent-a");
+	} finally {
+		await accounts.close();
+	}
 
 	// Agent：一个槽位（还在跑的运行占着它，下一次运行就排队）、有能力、装了节点包、加载了开发版本
 	const agent = await FakeAgent.connect(

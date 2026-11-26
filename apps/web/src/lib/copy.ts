@@ -12,6 +12,7 @@ import {
 	type RunStatus,
 	SCOPE_LABELS,
 	type Scope,
+	VIA_NAME_PATTERN,
 } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
@@ -52,6 +53,8 @@ export const TERM = {
 	lastEdited: "最后修改",
 	action: "动作",
 	mark: "标记",
+	/** 照契约的字段名原样写的英文（GLOSSARY.md「secret 参数」）：参数面板的开关、各处标出一个参数是 secret 的字。 */
+	secret: "secret",
 } as const;
 
 /**
@@ -258,8 +261,6 @@ export const SESSION = {
 		workbench === null ? "可以用" : `可以用 · 工作台 ${workbench} 在线`,
 	notReady: "现在不能用：",
 	workbenchOffline: (workbench: string) => `工作台 ${workbench} 不在线`,
-	/** 「开始」不可用时按钮旁边写的原因的开头。 */
-	cannotStart: "助手现在不能用，不能开始会话",
 	input: {
 		label: "要做什么？",
 		placeholder: "要做什么？例如：给 http_check 加一个超时参数",
@@ -278,6 +279,8 @@ export const SESSION = {
 		activity: "最近活动",
 		/** 会话多于接口一次给的个数（`truncated`）时，列表上面的一句提示。 */
 		truncated: (limit: number) => `只显示了最近活动的 ${limit} 个会话`,
+		/** 排队中的会话（和停止途中说了话、排在这一轮后面的在做的会话）在状态后面写排第几。 */
+		queuePosition: (position: number) => `排在第 ${position} 位`,
 	},
 	status: {
 		idle: "空闲",
@@ -286,8 +289,6 @@ export const SESSION = {
 		ended: "已结束",
 	},
 	/** 新建会话失败。 */
-	busy: "同一个项目里另一个会话正在做，等它做完，或者到那个会话里停止它",
-	busyLink: "打开正在做的会话",
 	createFailed: "无法开始会话",
 	/** 会话页。 */
 	page: {
@@ -298,18 +299,84 @@ export const SESSION = {
 		loadOlderFailed: "无法加载更早的内容",
 		stop: "停止",
 		stopTitle: "停止这一轮",
+		/** 排队中点「停止」是移出队列。 */
+		stopQueuedTitle: "移出队列：这句话不会交给助手",
+		stopping: "正在停止…",
+		/** 有话排在这一轮后面（停止途中说的）时，停止按钮的字：这时它做的是撤掉那句话。只由时间线的状态定。 */
+		cancelBehind: "撤掉排着的话",
+		cancelBehindTitle: "撤掉排在这一轮后面的话，不开始新的一轮",
 		stopFailed: "无法停止这一轮",
+		/** 撤掉排着的话没有成功（这一轮其实还在停止）。 */
+		cancelFailed: "没能撤掉排着的话",
 		thinking: "思考中",
 		sendLabel: "接着说",
 		sendPlaceholder: "接着说",
 		send: "发送",
 		sending: "正在发送…",
-		running: "助手正在做这一轮；要改方向先停止",
-		queued: "这个会话在排队，轮到它之后才能接着说",
+		/** 在做时输入框发出去的是插话。 */
+		steerLabel: "插话",
+		steerPlaceholder: "插话：助手在当前这一步做完后会看到",
+		sendSteer: "发送插话",
+		steerHint: "插话在当前这一步做完后送到；要马上停下用停止",
+		/** 输入框不可用时，原因也写在输入框里（不可用的输入框看起来和可用的差不多）。 */
+		queuedPlaceholder: "排队中，轮到它之后才能说话",
+		behindPlaceholder: "这一轮正在停止，暂时不能说话",
+		endingPlaceholder: "正在结束…",
+		/** 排队中：排在第几位、在等谁（会话的标题和发起人是别人写的文字）。 */
+		queuedBefore: (position: number) => `排在第 ${position} 位：`,
+		/** 「（<发起人>）正在做」：发起人是别人写的文字，夹在两段控制台的文案中间，只有它自己进隔离。 */
+		queuedWaitingFor: { prefix: "（", suffix: "）正在做" },
+		queuedNobody: "等助手空出来",
+		queuedOpen: "打开它",
+		/** 停止途中说了话：这句话排在这一轮后面。 */
+		behind: (position: number | null) =>
+			position === null
+				? "这一轮正在停止，有话排在它后面；不想让它开始，点「撤掉排着的话」"
+				: `这一轮正在停止，有话排在它后面（第 ${position} 位）；不想让它开始，点「撤掉排着的话」`,
 		sendFailed: "无法发送",
 		turnRunning: "助手正在做这一轮；要改方向先停止",
+		sessionQueued: "这个会话在排队，等它开始之后再说，或者先停止",
+		sessionEnded: "这个会话已经结束或者正在结束，不能再说话",
 		ended: "这个会话已经结束，不能再说话",
+		/** 会话被结束时输入框里还有没发出去的话：留在页面上，只读，可以复制。 */
+		endedDraft: "没有发出去的话还在这里，可以复制：",
+		draftLabel: "没有发出去的话",
+		/** 说话的请求没有得到回应（503、断网），可是这句话已经记在时间线上：指向那一条，输入框清空，免得再点一次成了第二句。 */
+		recorded: "这句话已经记在时间线上，没有确认送到：看时间线上那一条",
+		/** 读屏的播报（页面里的 `output aria-live` 区）：状态变了、屏幕上别处看得到、听不到的几件事。一轮结束读结局那一句（`turnEnd`）。 */
+		announce: {
+			started: "轮到这个会话了，助手开始做",
+			steerDropped: "有一句插话没有送到，看时间线",
+			ended: (by: string) => `这个会话已经结束（${by}）`,
+		},
+		/** 结束请求在路上：输入框下的说明。 */
+		endingNote: "正在结束这个会话…",
+		/** 会话被删了（新建会话等第一轮结局期间点了停止，没有被碰过的会话会被删掉）：回到列表。 */
+		gone: "这个会话已经没有了",
+		end: "结束会话",
+		endTitle: "结束这个会话：之后不能再说话",
+		endDialogTitle: "结束这个会话？",
+		endDialogLead: "结束会话之后：",
+		/** 结束会话的三件后果，一件一行。 */
+		endDialogEffects: ["在做的一轮会停下", "排着的话会撤掉", "结束之后不能再说话"] as const,
+		endDialogKept: "工作区、提交、场景版本和运行都留着，不删除任何东西。",
+		endCancel: "取消",
+		endConfirm: "结束会话",
+		/** 结束请求在路上：「结束会话」按钮（顶栏的和确认框里的）的字。 */
+		endingButton: "正在结束…",
+		endFailed: "无法结束会话",
 	},
+	/** 时间线上的话的标记。 */
+	message: {
+		steer: "插话",
+		behind: "排在这一轮后面",
+		cancelled: "已撤掉",
+		waiting: "等待送达",
+		delivered: "已送到",
+		dropped: "没有送到",
+	},
+	/** 会话已结束的一行：「会话已结束（<谁>）」，谁是别人写的昵称，夹在两段文案中间。 */
+	sessionEnded: { prefix: "会话已结束（", suffix: "）" },
 	tool: {
 		read: "读",
 		write: "写",
@@ -369,9 +436,16 @@ export const TOKEN_EXPIRY_OPTIONS = [
 ] as const;
 export const TOKEN_DEFAULT_EXPIRY = "90";
 
+/** 范围之间的分隔：顿号。 */
+export const SCOPE_SEPARATOR = "、";
+
+/** 每个范围的中文名，按给的顺序（令牌列表的范围列按范围分段排，换行只在顿号处）。 */
+export const scopeLabels = (scopes: readonly string[]): string[] =>
+	scopes.map((scope) => SCOPE_LABELS[scope as Scope] ?? scope);
+
 /** 列表里范围的写法：「读、运行、编辑」。 */
 export const scopesText = (scopes: readonly string[]): string =>
-	scopes.map((scope) => SCOPE_LABELS[scope as Scope] ?? scope).join("、");
+	scopeLabels(scopes).join(SCOPE_SEPARATOR);
 
 /** 开发文档里被界面引用的页：slug → 页名（docs/guide/pages.json 里的标题，有单测对着它检查）。 */
 export const DOC_PAGE = {
@@ -464,7 +538,8 @@ const ASSISTANT_NAME = new Map([
 ]);
 
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
-export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
+export const viaLabel = (via: string) =>
+	`经 ${ASSISTANT_NAME.get(via) ?? (VIA_NAME_PATTERN.test(via) ? via : "未知")}`;
 
 /** 「已新建场景「巡检」」：新建弹窗成功后的提示，控制台「开始使用」里做完的那一步也写这一句。 */
 export const scenarioCreatedLabel = (name: string) => `已新建场景「${name}」`;
@@ -691,6 +766,9 @@ export const LIST_LABEL = {
 } as const;
 
 /** 通用的加载 / 错误 / 空状态文字。 */
+/** 合并视图的日志面板里最多列出几个日志文件有问题的任务（控制面给 20 个：长名字折成好几行会把日志往下挤）。 */
+export const LOG_FILE_PROBLEMS_SHOWN = 5;
+
 export const MESSAGE = {
 	loading: "加载中",
 	/** 「无法加载日志」「无法加载 Agent 列表」：名称以字母或数字开头时和前面的汉字隔一个空格。 */
@@ -707,6 +785,9 @@ export const MESSAGE = {
 	noPrimaryMetric: `${NODE_STATUS.running.label}的${TERM.node}都没有声明${TERM.primaryMetric}。`,
 	/** 运行中但没有进行中的节点：运行抽屉的摘要。 */
 	noActiveNodes: `没有${ACTIVE_LABEL}的${TERM.node}。`,
+	/** secret 参数的值太多的运行（`RunView.secrets_oversize`）：为什么这次运行里看到的内容全是掩码（#657）。运行抽屉的摘要和运行监控页都写它。不含任何值。 */
+	secretsOversize:
+		"这次运行的 secret 参数的值太多或太长，控制面认不出每一处出现，这次运行里日志、动作、输入输出、错误信息的内容整段显示为 ******。缩短或减少 secret 参数的值之后重新运行。",
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
 	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
 	/** 运行监控的日志页签和概览的「其他警告与错误」：运行的日志已过保留期。 */
@@ -726,6 +807,24 @@ export const MESSAGE = {
 	logOutputPending: "还没有日志输出。",
 	/** 监控页日志页签：单个任务的日志写满上限后，控制面丢掉之后的输出。 */
 	logTruncated: "日志超过单个任务的大小上限，之后的输出已被截断。",
+	/**
+	 * 监控页日志页签：写过日志的任务，日志文件不在了、或者比数据库记的短（#721，下载同样会说，#669）。除了被删除、被截短，
+	 * 主机掉电（追加的文件不落盘、数据库落盘）、数据库和数据目录分开恢复也会这样。
+	 */
+	logFileMissing:
+		"这次尝试写过日志，但日志文件不在了：这里没有可显示的内容，下载这份日志也会失败。可能被删除、主机掉电，或数据库和数据目录分开恢复；要找回只能从备份恢复数据目录。",
+	logFileShort:
+		"日志文件比记录的短：下面只有剩下的内容，下载这份日志会失败。可能被截短、被删除、主机掉电，或数据库和数据目录分开恢复；缺的部分只能从备份恢复数据目录。",
+	/**
+	 * 合并视图：`items` 是列出的任务（控制面最多给 20 个，这里只写前 {@link LOG_FILE_PROBLEMS_SHOWN} 个：节点和尝试，各是不在了还是变短了），
+	 * `total` 是总数（超过列出的写「等共 N 个」，和下载的 410 说明一致）。
+	 */
+	logFilesProblem: (items: readonly string[], total: number) =>
+		`${total} 个任务的日志文件有问题：${items.join("、")}${total > items.length ? `，等共 ${total} 个` : ""}。这些任务这里只有剩下的日志，下载整个运行的日志也会失败；可能被删除、截短、主机掉电，或数据库和数据目录分开恢复，要找回只能从备份恢复数据目录。`,
+	/** 合并视图里每个有问题的任务后面的括号。 */
+	logFileProblemKind: { missing: "不在了", short: "比记录的短" },
+	/** 日志文件有问题、又没有行可显示时的空态：中性的一句（上面那一行已经说了是什么问题）；筛选、范围先判断。 */
+	logFileGoneEmpty: "没有可显示的日志。",
 	archived: "已归档",
 	copied: "已复制到剪贴板",
 	copyFailed: "复制失败",

@@ -28,6 +28,21 @@
  */
 export const MAX_AUTOMATON_CHARS = 1 << 20;
 
+/** 所有文本的总长（UTF-16 码元个数）。 */
+export function totalChars(texts: readonly string[]): number {
+	let total = 0;
+	for (const text of texts) total += text.length;
+	return total;
+}
+
+/**
+ * 总长超过上限，建不了自动机（打码时整段盖住）：**这一个判断**，{@link buildAutomaton} 和 `SecretSet.oversize` 共用，
+ * 预检、触发时的检查也只用它（总长算出来就够了，不建自动机，也不进值集合的缓存）。
+ */
+export function overAutomatonLimit(total: number, maxChars: number = MAX_AUTOMATON_CHARS): boolean {
+	return total > maxChars;
+}
+
 /** 完整转移表最多这么多项（每项 4 字节）：每个字符类一项，一行一个节点。 */
 const DENSE_ENTRIES = 1 << 20;
 
@@ -79,9 +94,8 @@ export function buildAutomaton(
 	maxChars: number = MAX_AUTOMATON_CHARS,
 	denseEntries: number = DENSE_ENTRIES,
 ): Automaton | undefined {
-	let total = 0;
-	for (const text of texts) total += text.length;
-	if (total > maxChars) return undefined;
+	const total = totalChars(texts);
+	if (overAutomatonLimit(total, maxChars)) return undefined;
 
 	// ---- 1. 字典树，节点按插入的顺序编号（0 是根）；文本新建的节点连续编号 ----
 	const chO = new Uint16Array(total + 2);
@@ -395,6 +409,92 @@ export function scanSpans(a: Automaton, text: string, limit: number): number {
 		}
 	}
 	return top;
+}
+
+/**
+ * 把 {@link scanSpans} 刚找到的 `count` 段和另一组段（`extraStarts` / `extraEnds`：按开头排好、互相不重叠，例如令牌原值的出现）
+ * 合并成一组：重叠的合成一段，相邻但不重叠的各是一段（和 {@link scanSpans} 同一个规则）。合并之后的段放回模块里的数组
+ * （用 {@link maskedByAutomaton} 取），返回段数。`count` 为 0 时只有另一组段（不需要先扫描）。线性，一遍。
+ */
+export function mergeSpans(
+	count: number,
+	extraStarts: readonly number[],
+	extraEnds: readonly number[],
+): number {
+	const total = count + extraStarts.length;
+	const starts = new Int32Array(total);
+	const ends = new Int32Array(total);
+	let out = 0;
+	let i = 0;
+	let j = 0;
+	let open = false;
+	let curStart = 0;
+	let curEnd = 0;
+	while (i < count || j < extraStarts.length) {
+		let start: number;
+		let end: number;
+		if (
+			j >= extraStarts.length ||
+			(i < count && (spanStarts[i] as number) <= (extraStarts[j] as number))
+		) {
+			start = spanStarts[i] as number;
+			end = spanEnds[i] as number;
+			i += 1;
+		} else {
+			start = extraStarts[j] as number;
+			end = extraEnds[j] as number;
+			j += 1;
+		}
+		if (open && start < curEnd) {
+			if (end > curEnd) curEnd = end;
+			continue;
+		}
+		if (open) {
+			starts[out] = curStart;
+			ends[out] = curEnd;
+			out += 1;
+		}
+		curStart = start;
+		curEnd = end;
+		open = true;
+	}
+	if (open) {
+		starts[out] = curStart;
+		ends[out] = curEnd;
+		out += 1;
+	}
+	while (spanStarts.length < out) growSpans();
+	spanStarts.set(starts.subarray(0, out));
+	spanEnds.set(ends.subarray(0, out));
+	return out;
+}
+
+/**
+ * 只输出 `text` 的 `[from, to)` 这一块（一段超长行加上前后的上下文之后，只显示中间那一段）：{@link scanSpans}（或 {@link mergeSpans}）
+ * 刚找到的 `count` 段里，开头落在这一块里的整个换成一个 `mask`（超出 `to` 的部分不输出），开头在 `from` 之前的，落在这一块里的部分去掉
+ * （前一段已经用一个掩码盖住了）。一个跨在拆分处的值因此只出现一个掩码，读的人拼起来看到的和不拆时一样。
+ *
+ * `from` 是 0 时就是「只输出原文 `[0, to)`，起点在 `to` 之前的出现整个换成掩码（跨在 `to` 上的也是一个掩码），`to` 及之后的一律不输出」：
+ * 上限说的是原文的位置时（{@link SecretSet.maskClipped}）这样用，不另有一份。
+ */
+export function maskedRegion(
+	text: string,
+	count: number,
+	from: number,
+	to: number,
+	mask: string,
+): string {
+	let out = "";
+	let cursor = from;
+	for (let k = 0; k < count; k++) {
+		const start = spanStarts[k] as number;
+		const end = spanEnds[k] as number;
+		if (end <= from) continue;
+		if (start >= to) break;
+		if (start >= from) out += text.slice(cursor, start) + mask;
+		cursor = Math.min(end, to);
+	}
+	return out + text.slice(cursor, to);
 }
 
 /** 把 {@link scanSpans} 刚找到的 `count` 段换成 `mask`（同步，紧接着扫描用）。 */

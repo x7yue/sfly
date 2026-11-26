@@ -11,6 +11,8 @@ import {
 	agentBinaryUrl,
 } from "./agent-binaries/agent-binaries.js";
 import { loadInstallScript } from "./agent-binaries/install-script.js";
+import { AgentAuthenticator } from "./agents/agent-auth.js";
+import { AgentCredentialService } from "./agents/agent-credentials.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
@@ -29,6 +31,7 @@ import { SetupCode } from "./auth/setup-code.js";
 import { TokenService } from "./auth/tokens.js";
 import { type Clock, systemClock } from "./clock.js";
 import { EnvSettingsError, numericOptionProblems } from "./config/env-settings.js";
+import { gatewayUrlFrom } from "./config/url-setting.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { loadClientTarballs } from "./downloads/client-tarballs.js";
@@ -60,7 +63,9 @@ import { AssistantClient } from "./sessions/assistant-client.js";
 import { assistantSetup } from "./sessions/assistant-config.js";
 import { AssistantConnection } from "./sessions/assistant-connection.js";
 import { SessionService } from "./sessions/session-service.js";
+import type { SessionRow } from "./sessions/session-store.js";
 import { SessionStore } from "./sessions/session-store.js";
+import { listening } from "./util/listen-error.js";
 import { Mutex } from "./util/mutex.js";
 import { printError, printInfo } from "./util/output.js";
 import { periodic } from "./util/periodic.js";
@@ -115,6 +120,8 @@ export interface ControlPlaneOptions {
 	artifactUploadIdleMs?: number;
 	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
 	retentionDays?: number;
+	/** 读日志的请求认出文件有问题后，最多等多久看保留期清理有没有在删（毫秒），默认 3 秒（#734）：不是部署者的配置，只有测试和嵌入时给。 */
+	purgeWaitMs?: number;
 	/** 指标的保留天数，默认 30 天，与日志和产物分开配置；整天超过保留期的分区被删除（#32）。 */
 	metricRetentionDays?: number;
 	/** 保留期清理（含指标分区维护）的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
@@ -157,6 +164,12 @@ export interface ControlPlaneOptions {
 	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
 	migrationsDir?: string;
 	/**
+	 * 借出去的数据库连接（事务里）出错时调用（#563，docs/ARCHITECTURE.md §6.10）：`main.ts` 给的是有序退出进程。
+	 * 这样的连接上的错误以前是没人接的 `error` 事件、进程当场退出；之后的状态不可信（任务结果没写进去、提交之后的派发没人补），
+	 * 靠重启恢复。调用之前连接池已经结束：之后新的拿连接的请求立刻以错误结束，不再碰数据库（已经借出去的连接不受影响，有序关闭等它们做完）。不给：只记日志（测试里的控制面）。
+	 */
+	onFatalDatabaseError?: (error: Error) => void;
+	/**
 	 * 助手服务的地址（`SFLY_ASSISTANT_URL`，ADR 0027）。助手默认关闭：地址和共享密钥（`assistantSecret`）都配好了才开，
 	 * 没配时会话的写接口返回 503 `assistant_not_configured`，读接口照常。
 	 */
@@ -168,8 +181,14 @@ export interface ControlPlaneOptions {
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
 	/**
-	 * 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 `STOP_GRACE_MS`（13 秒：助手服务强制结束
-	 * 进程的宽限 10 秒加 3 秒余量，不能短于它）；超过由控制面结束这一轮。测试里调小。
+	 * 会话结束之后调用（会话令牌合入之后在这里吊销这个会话的令牌，#544 留好的接口）：抛的错只进日志，不影响结束。
+	 * 主要给测试用；生产里由令牌那条任务接上。
+	 */
+	onSessionEnded?: (session: SessionRow) => Promise<void>;
+	/**
+	 * 停止会话时，从发出中止的那一刻起最多等多久助手服务把这一轮的结局带回来（毫秒），默认 `STOP_GRACE_MS`（协议里的
+	 * `ASSISTANT_STOP_WAIT_MS`，23 秒：等 `agent_settled` 10 秒、结束进程的宽限 10 秒、加 3 秒余量，不能短于它）；超过由控制面
+	 * 结束这一轮（并为没有确认送到的插话补 `steer_dropped`）。测试里调小。
 	 */
 	sessionStopGraceMs?: number;
 	/** 发给助手服务的命令（不含事件流和 `/health`）最多等多久（毫秒），默认 10 秒；测试里调小。 */
@@ -211,6 +230,15 @@ export interface ControlPlane {
 	readonly grpcUrl: string;
 	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
 	readonly sessions: SessionStore;
+	/** 会话的写和后台（测试用：`idle()` 等排队中的会话开始完）。 */
+	readonly sessionService: SessionService;
+	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts）：测试用它给假 Agent 签发凭据。 */
+	readonly agentCredentials: AgentCredentialService;
+	/**
+	 * 关闭控制面。**可以重复调用，第二次起拿到的是同一个 promise**（和第一次同时落定，不会比它先完成）：只关一次，不再去关已经关了的东西
+	 * （第二次关连接池会拒绝）。调用方不止一个（停止信号、致命错误之后的有序退出），谁先谁后都是同一个结果，不会有一方在另一方还没关完时
+	 * 就当作「关完了」去退出进程。
+	 */
 	close(): Promise<void>;
 }
 
@@ -235,15 +263,20 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const logger = options.logger ?? false;
 	/**
 	 * 控制面自己往标准错误写错误日志的唯一出口：错误先过 `safeError`，数据库错误里的参数（密码的哈希、令牌的哈希、
-	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
+	 * secret 参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
 	 */
 	const logError = (what: string, error?: unknown): void => {
 		if (logger) printError(what, error);
 	};
 	const database = openDatabase(
 		options.databaseUrl,
-		(error) => logError("postgres pool error:", error),
+		(error) => logError("postgres connection error:", error),
 		options.migrationsDir,
+		{
+			...(options.onFatalDatabaseError ? { onInUseError: options.onFatalDatabaseError } : {}),
+			// 连接池没有关完不是又断了一条连接：自己的前缀。
+			onCloseTimeout: (error) => logError("database pool shutdown:", error),
+		},
 	);
 
 	try {
@@ -396,11 +429,19 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		limitBytes: options.artifactLimitBytes,
 		uploadIdleMs: options.artifactUploadIdleMs,
 	});
+	// 上次进程被杀、断电时留下的上传临时文件：开始监听之前清掉（这时没有上传在做）；清不掉不挡住启动。
+	await artifacts
+		.sweepUploadTemp()
+		.then((count) => {
+			if (count > 0 && logger) printInfo(`sfly: 清掉了上次留下的 ${count} 个上传临时文件`);
+		})
+		.catch((error) => logError("sfly: 清理上次留下的上传临时文件失败：", error));
 	const retention = new Retention({
 		db: database.db,
 		clock,
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
+		purgeWaitMs: options.purgeWaitMs,
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);
@@ -420,6 +461,20 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 假哈希提前算好（不等第一个不存在的登录名）；算不出来不挡启动，用到时再算。
 	void accounts.warmUp().catch(() => {});
 	const tokens = new TokenService({ db: database.db, clock, revocations });
+	// Agent 凭据吊销时，用它连着的 Agent 连接断开（#492）。
+	const agentCredentials = new AgentCredentialService({
+		db: database.db,
+		clock,
+		onRevoked: (ids) => hub.closeByCredentials(ids),
+	});
+	// 用户被停用：他名下的开发 Agent 的凭据停止有效（Hello 拒绝，见 agent-auth.ts），已连着的连接断开。凭据不吊销：启用之后恢复。
+	const stopClosingDevAgents = accounts.onRevoked((revocation) => {
+		if (revocation.type !== "user") return;
+		agentCredentials
+			.liveIdsOfUser(revocation.userId)
+			.then((ids) => hub.closeByCredentials(ids))
+			.catch((error) => logError("sfly: 用户停用时断开他的开发 Agent 失败", error));
+	});
 	try {
 		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({
@@ -457,6 +512,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		client: assistantClient,
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
+		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
 		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
 	const api = buildHttpApi({
@@ -503,6 +559,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		corsOrigins: options.corsOrigins,
 		accounts,
 		tokens,
+		agentCredentials,
 		loginIdleMs: options.loginIdleMs,
 		// 登录 Cookie 的跨站检查：配置的公开地址（反向代理后面是浏览器看到的地址），加上开发时 vite 的地址；
 		// 没有配置公开地址时用请求的 Host 兜底。
@@ -519,7 +576,14 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		streamRecheckMs: options.streamRecheckMs,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
-	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
+	// 先让路由和插件登记完：Fastify 的 `listen` 里面会先做 `ready`，登记出错（重复的路由、schema 写错……）也从 `listen` 抛出来，
+	// 下面把 `listen` 的错误都换成「监听失败」会盖掉真正的原因（哪条路由、哪里不对），还把人指到 SFLY_HTTP_HOST。`ready` 在监听之前做，
+	// 登记的错误照原样出来；之后 `listen` 抛出的才都是监听失败。
+	await api.ready();
+	// 监听不了时的说明只有变量名、端口和错误码（util/listen-error.ts）：Node 的报错会把监听地址原样带出来。
+	await listening("http", options.http?.port ?? 0, () =>
+		api.listen({ host: httpHost, port: options.http?.port ?? 0 }),
+	);
 	const httpPort = (api.server.address() as AddressInfo).port;
 	const httpUrl = `http://${formatHost(httpHost)}:${httpPort}`;
 	publicHttpUrl = (
@@ -552,7 +616,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 					return engine.onMessage(conn, limitOutputs(message));
 				},
 			},
-			agentToken: options.agentToken,
+			authenticator: new AgentAuthenticator({ db: database.db, clock }),
 			onError: sessionError,
 		});
 	} catch (error) {
@@ -563,7 +627,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		throw error;
 	}
 	publicGrpcUrl = (
-		options.publicGrpcUrl ?? withPort(publicHttpUrl, new URL(gateway.url).port)
+		options.publicGrpcUrl ?? gatewayUrlFrom(publicHttpUrl, new URL(gateway.url).port)
 	).replace(/\/+$/, "");
 
 	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
@@ -583,13 +647,21 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	await sessionService
 		.expireStale()
 		.catch((error) => logError("sfly: 收拾一直在做的会话失败：", error));
+	// 重启前有会话在排队、项目里却没有会话在做的：开始排队最早的那个（#544）。
+	await sessionService
+		.startWaiting()
+		.catch((error) => logError("sfly: 开始排队中的会话失败：", error));
 
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
 	const fail = (what: string) => (error: unknown) => logError(`${what} failed:`, error);
 	const sweeps = [
 		periodic(
 			options.sessionSweepIntervalMs ?? 60_000,
-			() => sessionService.expireStale(),
+			async () => {
+				await sessionService.expireStale();
+				// 兜底：有会话排队、却没有会话在做的项目，开始排队最早的那个（开始它的那一次没做完时）。
+				await sessionService.startWaiting();
+			},
 			fail("session sweep"),
 		),
 		// 任务租约过期与排队超时（#15）。
@@ -615,35 +687,42 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 重启前还在排队的消息接着投递。
 	feishuDelivery.wake();
 
+	/** 关闭只做一次：重复调用（收到几个停止信号）拿到同一个结果，不再去关已经关了的东西（第二次关连接池会拒绝）。 */
+	let closing: Promise<void> | undefined;
+	const close = async (): Promise<void> => {
+		stopClosingDevAgents();
+		await assistantConnection?.close();
+		await Promise.all(sweeps.map((s) => s.stop()));
+		// 后台「补发中止、等结局」「开始排队中的会话」：放弃等待（不为它们延长关闭的上限，也不在关闭时自己补结局）；重启之后这些会话
+		// 还是在做的：中止已经发出，助手服务带回结局就照常收下，带不回来由兜底结束（#545）。
+		await sessionService.close();
+		await retention.idle();
+		await metricRetention.idle();
+		hub.closeAll();
+		await gateway.close();
+		// 正常关闭时写入内存里尚未写库的指标。
+		await metrics.close().catch(fail("metric flush"));
+		// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
+		await mutex.run(async () => {});
+		// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
+		feishuDelivery.close();
+		await feishu.close();
+		await feishuDelivery.idle();
+		await api.close();
+		await database.close();
+	};
+
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
 		sessions,
-		async close() {
-			await assistantConnection?.close();
-			await Promise.all(sweeps.map((s) => s.stop()));
-			await retention.idle();
-			await metricRetention.idle();
-			hub.closeAll();
-			await gateway.close();
-			// 正常关闭时写入内存里尚未写库的指标。
-			await metrics.close().catch(fail("metric flush"));
-			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
-			await mutex.run(async () => {});
-			// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
-			feishuDelivery.close();
-			await feishu.close();
-			await feishuDelivery.idle();
-			await api.close();
-			await database.close();
+		sessionService,
+		agentCredentials,
+		close: () => {
+			closing ??= close();
+			return closing;
 		},
 	};
-}
-
-/** 同一主机、另一个端口的 http 地址。 */
-function withPort(url: string, port: string): string {
-	const parsed = new URL(url);
-	return `http://${parsed.hostname}:${port}`;
 }
 
 function formatHost(host: string): string {

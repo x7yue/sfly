@@ -137,6 +137,15 @@ export type ServerMessageCase = NonNullable<ServerMessage["body"]["case"]>;
 export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
 
 /**
+ * 等控制面的消息（Welcome、派发、Ack……）默认等多久：**一条该到的消息**的上限，不是预期的耗时，所以放得宽。
+ * 机器忙（CI 的 runner、本机同时跑着别的重活）时控制面处理一条消息可以慢到好几秒，旧的 5 秒在加了人造负载的 e2e 里
+ * 三遍有三条因此失败（「no welcome」「no ack」），和被测的东西无关。宽的上限只在失败时才会等满；
+ * 比 e2e 的用例时限（30 秒）短：等不到时先报「等的是什么、等了多久」，不是被用例的超时掐断。
+ * 断言「没有收到」的写法（{@link FakeAgent.expectNoAssign}、{@link FakeAgent.expectNoCancel}）自己给短的时限，不受它影响。
+ */
+export const AGENT_WAIT_MS = 20_000;
+
+/**
  * 可编程的假 Agent：用真实的 gRPC 协议（HTTP/2）连上控制面的 Agent 网关。
  *
  * - `FakeAgent.connect()` 建立双向流、发送 Hello、等待 Welcome，再像准备好环境的 Agent 一样立即发一次心跳
@@ -150,6 +159,37 @@ export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
  *
  * 后续票据在这里继续加可编程行为（延迟、断线重连等）。
  */
+/** 给一个控制面（按 gRPC 地址）按名字签发 Agent 凭据的办法：`startTestControlPlane` 登记，`FakeAgent.connect` 用。 */
+const credentialIssuers = new Map<string, (name: string) => Promise<string>>();
+const issuedCredentials = new Map<string, Promise<string>>();
+
+/** 登记一个控制面的签发办法；同一个名字只签发一次，之后的连接复用它。 */
+export function registerCredentialIssuer(
+	grpcUrl: string,
+	issue: (name: string) => Promise<string>,
+): () => void {
+	credentialIssuers.set(grpcUrl, issue);
+	return () => {
+		credentialIssuers.delete(grpcUrl);
+		for (const key of issuedCredentials.keys()) {
+			if (key.startsWith(`${grpcUrl}\n`)) issuedCredentials.delete(key);
+		}
+	};
+}
+
+/** 这个控制面给这个名字签发的 Agent 凭据（没有登记签发办法的控制面，例如打包的控制面子进程，返回 undefined）。 */
+export function credentialFor(grpcUrl: string, name: string): Promise<string> | undefined {
+	const issue = credentialIssuers.get(grpcUrl);
+	if (issue === undefined) return undefined;
+	const key = `${grpcUrl}\n${name}`;
+	let token = issuedCredentials.get(key);
+	if (token === undefined) {
+		token = issue(name);
+		issuedCredentials.set(key, token);
+	}
+	return token;
+}
+
 export class FakeAgent {
 	/** 控制面推送的全部消息，含 {@link sync} 自己用的 Ack。 */
 	#received: ServerMessage[] = [];
@@ -197,6 +237,12 @@ export class FakeAgent {
 		options: { timeoutMs?: number; clock?: { now(): Date }; preparing?: boolean } = {},
 	): Promise<FakeAgent> {
 		const now = options.clock?.now().getTime();
+		// 没写 token 时用 Agent 凭据连接（和真实的部署一样，#492）：向这个控制面按名字签发一个并缓存。
+		// 要测「没有凭据」的旧方式，Hello 里写 `token: ""`。
+		const issued =
+			hello.token === undefined && hello.name !== undefined
+				? await credentialFor(grpcUrl, hello.name)
+				: undefined;
 		const agent = await FakeAgent.connectRaw(
 			grpcUrl,
 			(agent) =>
@@ -206,6 +252,8 @@ export class FakeAgent {
 						agentVersion: DEFAULT_AGENT_VERSION,
 						...(now === undefined ? {} : agentClock(now, SYNCED_MONOTONIC_MS)),
 						...hello,
+						// Hello 里写了 `token: undefined` 的也算没写：签发的凭据放在最后，不被它盖掉。
+						...(issued === undefined ? {} : { token: issued }),
 					},
 				}),
 			{ ...options, name: hello.name },
@@ -272,7 +320,11 @@ export class FakeAgent {
 	/** 等待下一条（尚未被 next 消费过的）指定类型的消息。 */
 	next(kind?: ServerMessageCase, options: { timeoutMs?: number } = {}): Promise<ServerMessage> {
 		const predicate = (m: ServerMessage) => kind === undefined || m.body.case === kind;
-		return this.#nextMatching(predicate, `'${kind ?? "any"}' message`, options.timeoutMs ?? 5000);
+		return this.#nextMatching(
+			predicate,
+			`'${kind ?? "any"}' message`,
+			options.timeoutMs ?? AGENT_WAIT_MS,
+		);
 	}
 
 	#nextMatching(
@@ -644,7 +696,7 @@ export class FakeAgent {
 		};
 	}
 
-	/** 上报任意 TaskResult，等待对应的 Ack（task_id + attempt 相同）；`timeoutMs` 是等 Ack 的上限，默认 5 秒。 */
+	/** 上报任意 TaskResult，等待对应的 Ack（task_id + attempt 相同）；`timeoutMs` 是等 Ack 的上限，默认 {@link AGENT_WAIT_MS}。 */
 	async report(result: TaskResultInit, options: { timeoutMs?: number } = {}): Promise<Ack> {
 		this.send({ case: "result", value: result });
 		const ackFor = (m: ServerMessage) =>
@@ -654,7 +706,7 @@ export class FakeAgent {
 		const message = await this.#nextMatching(
 			ackFor,
 			`ack for ${result.taskId}`,
-			options.timeoutMs ?? 5000,
+			options.timeoutMs ?? AGENT_WAIT_MS,
 		);
 		this.#held.delete(keyOf({ taskId: result.taskId ?? "", attempt: result.attempt ?? 0 }));
 		return message.body.value as Ack;

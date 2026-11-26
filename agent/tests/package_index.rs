@@ -383,7 +383,9 @@ async fn contradicting_sfly_std_requirements_name_both_packages_and_what_each_re
         error.message
     );
     assert!(
-        error.message.contains("sfly-new@1.0.0 要求 sfly-std>=0.4"),
+        error
+            .message
+            .contains("sfly-new@1.0.0（正在装） 要求 sfly-std>=0.4"),
         "{}",
         error.message
     );

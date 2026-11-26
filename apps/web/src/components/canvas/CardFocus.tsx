@@ -3,6 +3,7 @@ import { cn } from "cn";
 import { EyeIcon } from "lucide-react";
 import { attentionSummary, focusItemTitle } from "#/focus/focus-format";
 import { FOCUS } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import type { CardFocus } from "./context";
 import { LOD_HIDDEN, ZOOM_TEXT_11 } from "./zoom-text";
 
@@ -20,8 +21,9 @@ export function cardFocusLabel(
 	const attention = attentionSummary(items, generatedAt, (item) =>
 		mode === "primary" ? focusItemTitle(item, mode) : item.chart,
 	);
+	// 图表标题来自节点包（别人写的）；名称是纯文字，先写出看不见的字符。
 	const missing = items.flatMap((item) =>
-		item.unavailable ? [FOCUS.chartMissing(item.chart)] : [],
+		item.unavailable ? [FOCUS.chartMissing(untrustedPlain(item.chart))] : [],
 	);
 	return [
 		...(mode === "primary" ? [] : [FOCUS.itemCount(items.length)]),

@@ -245,6 +245,21 @@ AgentSendResult ==
         /\ toCP' = Append(toCP, [type |-> "result", a |-> r[1], ok |-> r[2]])
     /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, ag, stopSig, abandoned, hello, welcome, okFinished>>
 
+\* lib.rs run()：serve() 以「消息超过上限」（resource_exhausted）结束之后、重连之前，调用 Ledger::replace_results_over：结果待发（Handed）
+\* 或待 Ack（Unacked）里整条消息超过控制面一条消息上限的结果，换成 node_error 失败（#723）。台账里同一次尝试的结果因此可以和
+\* 第一次发出的不一样：成功换成失败。模型里没有大小，任何一条成功的结果都可能超限；只在断线之后换（serve 已经结束），
+\* 换的是控制面没处理过的结果（超限的消息在网关读到长度前缀就被拒绝，没有解码）。失败的结果换成失败不改变模型里的东西，
+\* 反过来把失败换成成功是错的（mutants.sh 的 replace-fail-to-success）。控制面一侧已经收下原结果、只是 Ack 丢了的，之后到的
+\* 失败结果由 engine.ts #resultTask 忽略（任务已不在 ON_AGENT），和别的重发的结果一样（CPRecv 的 result）。
+AgentReplaceResult ==
+    /\ conn = "down"
+    /\ \E r \in chan \cup unacked :
+        /\ r[2]
+        /\ LET new == <<r[1], FALSE>>
+           IN /\ chan' = IF r \in chan THEN (chan \ {r}) \cup {new} ELSE chan
+              /\ unacked' = IF r \in unacked THEN (unacked \ {r}) \cup {new} ELSE unacked
+    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, toAgent, ag, stopSig, abandoned, hello, welcome, okFinished>>
+
 \* lib.rs serve() 的 heartbeat.tick 分支：running_tasks = Ledger::held，即 Hand：台账里的全部，
 \* 包括结果已交出、还没发出的。进入 serve() 时立即发的那一次在 AgentWelcome 里。
 AgentHeartbeat ==
@@ -261,7 +276,7 @@ Next ==
     \/ \E a \in Attempts : Dispatch(a) \/ LeaseExpire(a) \/ AgentStart(a)
     \/ \E a \in Attempts, ok \in BOOLEAN : AgentFinish(a, ok)
     \/ CPRecv \/ CPOnline \/ Disconnect
-    \/ AgentConnect \/ AgentWelcome \/ AgentRecv \/ AgentSendResult \/ AgentHeartbeat
+    \/ AgentConnect \/ AgentWelcome \/ AgentRecv \/ AgentSendResult \/ AgentReplaceResult \/ AgentHeartbeat
 
 Spec == Init /\ [][Next]_vars
 

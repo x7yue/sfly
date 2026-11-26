@@ -34,9 +34,9 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 | 配置 | 时序假设 | 期望 |
 |---|---|---|
-| `Safe` | 心跳不迟到，投递及时 | 无违例，约 32.8 万个不同状态 |
-| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 541 万个不同状态 |
-| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 660 万个不同状态 |
+| `Safe` | 心跳不迟到，投递及时 | 无违例，约 36.6 万个不同状态 |
+| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 560 万个不同状态 |
+| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 684 万个不同状态 |
 
 两个时序假设的具体含义：
 - **心跳不迟到**（`LateHeartbeats = FALSE`）：连接正常时，心跳总能在 30 秒租约内被控制面处理，租约只在断线期间过期。Agent 准备环境期间不发心跳，所以这也假设了重连时手上有任务的 Agent 准备环境不超过租约（这时环境早已就绪，只做几项检查；见 #294「不专门处理的边界」）。
@@ -57,7 +57,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 - 多个节点或多个运行共享槽位。只有一个节点时同一时刻最多一个尝试在排队，所以 **`#dispatch` 里按 `slots` 计数这一处没有被验证**，`SlotBound` 守护的是「Hello 要上报安装中的任务」和「放弃的任务要杀掉」。
 - 运行取消（`cancel`、`#cancelChain`、`#resendCancels`）、停止子流程节点（docs/SEMANTICS.md §4.1）、立即更新（UpdateNow）和自更新排空、版本不一致时不派发。`agent_lost` 时的强制取消在模型里，但取消只建模成「被告知停止」，不区分优雅取消和强制取消。
-- 控制面重启（`extendForRecovery`）、多个控制面连接同一个 Agent、令牌。
+- 控制面重启（`extendForRecovery`）、多个控制面连接同一个 Agent、令牌本身（谁能连、项目从哪来）。认身份的结果只通过「连不连得上」影响协议，见下面「#492 的核对」。
 - 失败类型的区别：模型里所有失败都按 `retries` 重试；`env_error` 和 `config_error` 不重试，这一点没有建模。结果写不进数据库时按 `node_error` 失败（#207）也没有建模，模型里成功的结果总被记为成功。
 - 「结果已交出、还没发出」的任务有没有被漏报（#132）：Hello 或心跳少列了这样一个任务，只会让控制面多一次 `agent_lost`、多重试一次（旧尝试已经结束），不会破坏上面五条性质，所以模型里没有对应的性质。漏报还在安装或执行中的任务不一样：`SlotBound` 会抓到（`mutants.sh` 的 `hello-omits-installing`）。这一条由 `agent/src/ledger.rs` 的单元测试守着（`hello_lists_a_task_that_finished_before_it_was_listed` 等）。
 - 动作摘要和明细（`ActionSummary`、`ActionBatch`，#345）：和日志一样走遥测通道，由 `apps/server/src/actions/task-actions.ts` 处理（`engine.ts` `onMessage` 不碰），不回 Ack、不续租约、不改任务状态，对派发协议没有影响。
@@ -84,6 +84,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 | `AgentStart` | `lib.rs` `Runtime::run_task` → `start_task` → `Ledger::started`；`agent/src/executor.rs` 发 `TaskStarted` |
 | `AgentFinish` | `lib.rs` `Runtime::run_task` 末尾 `Ledger::finish`（一次持锁把执行中换成结果待发并记下结束时执行器有没有启动过，被放弃的任务的结果在这里丢弃，`Ledger::discarded` 叫醒 `serve`，只影响自更新的排空）；`Ledger::cancel` |
 | `AgentSendResult` / `AgentHeartbeat` | `lib.rs` `serve()` 的 `ledger.next_result`（`Ledger::next_result`）与 `heartbeat.tick` 分支（`Ledger::held`） |
+| `AgentReplaceResult` | `lib.rs` `run()` 里 `serve()` 以「消息超过上限」（`resource_exhausted`）结束之后、重连之前调用 `Ledger::replace_results_over`（#723）：结果待发（Handed）或待 Ack 里整条消息超过控制面一条消息上限的结果换成 `node_error` 失败。模型里没有大小，断线之后任何一条成功的结果都可能被换成失败；反过来（失败换成成功）是错的，`mutants.sh` 的 `replace-fail-to-success` 守着。台账里的阶段不变，不增减任务 |
 | 消息定义 | `proto/sfly/agent/v1/agent.proto` 的 Hello、Welcome、TaskAction、AssignTask、CancelTask、TaskResult、Heartbeat、Ack |
 
 Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里的全部，不论阶段），模型里是 `Hand` 和 `HandStarted`；Hello 和每次心跳都按它列出，每个任务的 `started` 是真实的值：执行中的看执行器现在启动了没有，结果待发和待 Ack 的看结束时启动过没有。
@@ -93,13 +94,52 @@ Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里
 ```sh
 git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
   apps/server/src/engine/engine.ts apps/server/src/engine/leases.ts apps/server/src/engine/failures.ts \
-  apps/server/src/agents/agent-hub.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/ledger.rs agent/src/executor.rs \
+  apps/server/src/agents/agent-hub.ts apps/server/src/agents/agent-auth.ts apps/server/src/gateway/agent-gateway.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/ledger.rs agent/src/executor.rs \
   proto/sfly/agent/v1/agent.proto
 ```
 
 有输出时，打开上表里对应的函数读一遍 diff：
 - 改动落在表里的函数上，就要重新核对模型。
 - 只改了这些文件里的其它部分（日志、指标、安装、UI 字段），可以不动模型，但仍要跑一次 `check.sh`。
+
+## #492 的核对（Agent 凭据、停用 Agent、任务凭据）
+
+改了 Hello 的处理、`AssignTask` 加字段、停用 Agent 让任务按 `agent_lost` 处理。逐项对照模型，**没有改模型，也没有移动上面的同步提交**（同步提交之后别的改动还没有逐个核对）。`check.sh` 三个配置的结果和上面一致（Safe 327,997、LateHeartbeats 5,410,113、SlowDelivery 6,596,137 个不同状态，都无违例），`mutants.sh` 七个变异体都被抓到。核对的结论：
+
+- **Hello 被拒绝**（凭据无效、吊销、名字和凭据不一致、所属用户或这台 Agent 被停用、登记工作台之后只认 Agent 凭据、同名顶掉规则不允许：`agents/agent-auth.ts` `AgentAuthenticator`、`agents/agent-hub.ts` `attach`、`gateway/agent-gateway.ts`）：没有连接登记进连接表，没有 Welcome，Agent 一侧是连接失败后重连。模型里 `Disconnect` 之后 Agent 离线多久都可以（重连次数不限），被拒绝的 Hello 就是一次没有发生的 `AgentConnect`，不引入新的状态。拒绝发生在 `attach` 登记之前，没有碰任务和租约。
+- **认身份和登记之间的空档**：`attach` 在引擎的锁里先再确认一遍（`verify`：凭据没吊销、所属用户没停用、Agent 没停用、登记工作台之后不是以旧方式连接），吊销、用户停用、停用 Agent 断开连接也在同一把锁里（`closeByCredentials`、`setDisabled`），不会有已经没有资格的连接留在连接表里。这个锁就是引擎的锁，和 `CPOnline`、`Disconnect` 共用，不会让连接的登记和已有的状态迁移交错。
+- **停用或吊销时断开连接**（`AgentConnection.close`）：就是模型的 `Disconnect`。它手上的任务没有新的处理：控制面照旧等租约过期，走 `LeaseExpire` → `agentLost` 的强制取消和 `retries` 重试；停用期间 Agent 连不上，所以第 2 次尝试留在队列里，恢复后重连才派发。同一条路径有测试：`apps/server/test/agent-disable-dispatch.test.ts`。重连被拒绝所以 Welcome 里的放弃不会发生，旧尝试只由租约过期结束。
+- **`AssignTask.task_token`**：`engine.ts` `#prepareAssign` 在「记为 dispatched 并设租约」的同一个事务里签发任务凭据（`agents/task-credentials.ts`），加在消息里；没有新的状态转移，派发的条件（`AssignOnlyWhenReady`、槽位）没有动。任务凭据是否有效由任务当前的状态得出（还在 Agent 手上），不另有吊销动作，所以不会有哪条路径漏掉。
+
+### #638 审查之后的再核对（连接的项目、旧方式只认凭据、任务凭据随 Agent 状态）
+
+审查之后又改了三处，逐项对照模型，**没有改模型，也没有移动同步提交**：
+
+- **连接的项目**（`AgentConnection.project`，`attach` 在引擎的锁里核对「已登记的项目等于连接的项目」，`#prepareAssign` 比较连接的项目和运行的项目）：派发前多了一次**只读的比较**，比较的两边（连接的项目、运行的项目）在连接建立、运行创建之后都不再变；比不上时任务以 `config_error` 失败，这条路径在 #629 之前就有（比较的对象从登记记录的项目换成连接的项目），**没有新的状态转移，没有新的同步点，没有动派发的先后条件**（`AssignOnlyWhenReady`、槽位）。`attach` 多了一次读库和一次拒绝，都在登记之前、引擎的锁里，和上面「认身份和登记之间的空档」同一把锁；被拒绝的 Hello 仍然是一次没有发生的 `AgentConnect`。
+- **名字有没被吊销的 Agent 凭据就只认凭据**、Hello 三种情况同一句话、先比项目后看停用：都只改「这次 Hello 连不连得上」，同上，不碰任务和租约。
+- **停用、吊销之后任务凭据立刻不认**（`taskIsActive` 多看这台 Agent 的停用和**派发时连接用的那一个 Agent 凭据**有没有被吊销；任务凭据记着它，`api_tokens.agent_credential_id`，不看这个名字有没有别的有效凭据）：任务凭据只用于下载产物的 HTTP 请求，不在派发、结果、心跳、租约的任何一步里；它不改变任务的状态，所以和模型无关（任务照旧等租约过期走 `agent_lost`）。
+
+`check.sh`、`mutants.sh` 重新跑过，结果和上面一致。
+
+### #492 的 Agent 一侧（被控制面拒绝之后不退出）的核对
+
+`agent/src/lib.rs` `run()` 循环里 `connect` 失败的分支改了：握手被明确拒绝（`Unauthenticated`、`PermissionDenied`）以前直接退出进程（systemd 5 秒后拉起，台账随进程丢失，手上的任务到控制面那边按 `agent_lost` 处理），现在不退出，按 30 秒起、5 分钟封顶的退避重试（`Rejections`），台账留在内存里。逐项对照模型，**没有改模型，也没有移动同步提交**：
+
+- 被拒绝的连接在模型里就是「没有连上」：`AgentConnect` 之前，没有 Hello 被处理，控制面一侧没有任何状态变化（`attach` 在认身份时就拒绝了）。Agent 一侧在连不上之后无限次重连、台账跨断线保留，正是模型里 `Disconnect` 之后的状态；少的是一条「进程退出、台账清空」的路径，它在模型外，结果是下一次 Hello 里没有这些任务，由 `AgentConnect` 如实列出覆盖。
+- 试用中的新版本被拒绝：和连上了却握手失败一样（`Attempt::Failed`，不是 `Unreachable`）计一次失败，连续 3 次后回滚到旧版本；回滚之后的旧版本被拒绝时照旧不退出、退避重试。这只影响自更新的回滚计数，不在模型里，也不碰任务和租约（回滚用的 `execve` 发生在连接之前、手上没有任务的时候：升级只在任务排空之后开始）。
+- 被拒绝期间手上的任务照常跑完：Agent 没有退出，台账留在内存里，执行器照常执行，和模型里 `Disconnect` 之后一样；恢复之后 Hello 列出它们，`AgentConnect` 如实覆盖。重试的等待加了随机抖动（一半到全部），只改 `sleep` 的长度，不在模型里。
+- 执行器、装依赖和准备环境的进程的环境里去掉 `SFLY_TOKEN`：只改子进程的环境，不碰派发、结果、心跳、租约、重试。
+- 环境变量 `SFLY_TASK_TOKEN`、下载归档带 Agent 凭据：不碰派发、结果、心跳、租约、重试。
+
+`check.sh`、`mutants.sh` 重新跑过（审查之后试用中被拒绝改成算失败，又跑了一次），结果和上面一致（Safe 327997、LateHeartbeats 5410113、SlowDelivery 6596137 个不同状态，七个变异体都被抓到）。
+
+## #723 的核对（Agent 发出的结果有上界、被拒绝的结果换成失败、握手成功不马上重置重连的等待）
+
+这个改动让协议多了一种行为：**同一次尝试重发的结果可以和第一次发的不一样**（成功换成失败），所以**改了模型**：加了 `AgentReplaceResult`（只在连接断开之后、重连之前，结果待发或待 Ack 里的一条成功结果换成失败），`Next` 里加上这一项，覆盖表加一行，`mutants.sh` 加了 `replace-fail-to-success`（反过来把失败换成成功，被 `SuccessWasRun` 抓到）。三个配置的状态数从 327,997 / 5,410,113 / 6,596,137 变成 365,921 / 5,602,537 / 6,842,713，都无违例；`mutants.sh` 八个变异体都被抓到。**没有移动同步提交**（同步提交之后别的改动还没有逐个核对）。逐项对照：
+
+- **结果的内容有上界**（`executor.rs` `result_with_error`、`success`、`read_output`；SDK 的 `runner.py`）：只改任务结束时那条结果的内容。任务结束这件事（执行器结束、`Ledger::finish` 把执行中换成结果待发）没有变；`AgentFinish` 本来就可以得出成功或失败，「成功换成失败」是它已有的取值。
+- **重连之前把超过控制面单条消息上限的结果换成失败**（`lib.rs` `run()`、`Ledger::replace_results_over`）：就是上面加进模型的那一步。换的是控制面没处理过的结果（网关读到长度前缀就拒绝，没解码，没有状态迁移），只改这一条结果的状态，不改它在台账里的阶段，不增减任务；它的执行器早已结束，所以「新尝试派发之前旧尝试已结束」不受影响。控制面一侧 `engine.ts` `#resultTask` 对不在 Agent 手上的任务、尝试序号不一致的结果不处理，所以即使有一条已被记成成功的结果没收到 Ack、之后被换成失败重发，也会被忽略（`result-accepts-stale` 变异体守着这一点）。换成的失败是 `node_error`，会照 `retries` 重试，模型里所有失败本来就按 `retries` 重试。
+- **握手成功不马上重置重连的等待**（`run()` 里的 `delay`，连得稳 30 秒才重置）：只调整真实时间；模型里重连次数不限、不带时间。
 
 ## 读结果
 

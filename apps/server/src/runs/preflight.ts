@@ -19,15 +19,17 @@ import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { asStoredJson } from "../util/jsonb.js";
 import { checkDevPackagesLoaded } from "./dev-package-loaded.js";
 import { knownParams, resolved, secretTexts } from "./known-params.js";
 import { type ParamOrigins, paramInputTypeProblems } from "./param-input-type.js";
+import { fixedSecretSizeProblem, secretSizeProblem } from "./secret-size.js";
 import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
 
 /**
  * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
  * `agent_input_not_registered`，「飞书机器人」类型的输入选的机器人没有登记的
- * `feishu_bot_not_registered`，场景里还有已移除种类的节点的 `node_kind_removed`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
+ * `feishu_bot_not_registered`，场景里还有已移除种类的节点的 `node_kind_removed`），另有 `agent_not_registered`、节点派发到的 Agent 已被停用的 `agent_disabled`、`not_supported`、`sdk_version_unsatisfied`、
  * `agent_version_unsatisfied`、开发版本没有在节点派发到的在线 Agent 上加载的 `dev_package_not_loaded`
  * （dev-package-loaded.ts），以及触发时入口参数的值接到类型不符的输入的 `param_input_type_mismatch`（param-input-type.ts）。
  * 预检的警告（不阻断触发，{@link preflightWarnings}）也是这个结构。
@@ -36,6 +38,8 @@ export interface PreflightProblem {
 	code: string;
 	message: string;
 	node_id?: string;
+	/** `secret_params_too_large` 的警告说的是哪一组值：默认值，或某个运行预设（触发表单只显示和当前选择有关的那一条）。 */
+	origin?: { kind: "defaults"; preset_ids: string[] } | { kind: "preset"; preset_id: string };
 }
 
 /**
@@ -80,7 +84,7 @@ async function withDevNodeTypes(
 /**
  * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用、输入的静态检查全部通过
  * （「Agent」类型的输入的常量是已注册的 Agent，「飞书机器人」类型的输入的常量是已登记的机器人），
- * 包节点派发到的 Agent 都已注册（不要求在线），
+ * 包节点派发到的 Agent 都已注册、没有被停用（不要求在线），
  * 锁定开发版本的节点派发到的在线 Agent 已经加载了它（{@link checkDevPackagesLoaded}，不在线的 Agent 不知道它加载了什么，不阻断），
  * 且控制面版本满足节点包需要的 SDK 版本（#79），节点所在的 Agent 和「Agent」类型的输入引用的 Agent 满足
  * 节点包需要的 Agent 版本（ADR 0019，见 requires-agent.ts）。
@@ -107,16 +111,30 @@ export function createPreflight(deps: { version: string }): Preflight {
 			if (agent) wanted.set(node.id, agent);
 		}
 		const names = [...new Set(wanted.values())];
-		const registered = new Set((await agentsInProject(db, project, names)).map((r) => r.name));
+		// 已登记的（含停用的）：停用的 Agent 连不上、不参与派发，预检要说清楚；别的项目的 Agent 和不存在一样（ADR 0029）。
+		const known = new Map(
+			(await agentsInProject(db, project, names)).map((r) => [r.name, r.disabledAt !== null]),
+		);
 		const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
 		for (const [nodeId, agent] of wanted) {
-			if (registered.has(agent)) continue;
+			const disabled = known.get(agent);
+			if (disabled === false) continue;
 			const node = nodeById.get(nodeId);
-			problems.push({
-				code: "agent_not_registered",
-				message: nodeAgentNotRegistered(node ? nodeNameWithId(node) : nodeId, agent),
-				node_id: nodeId,
-			});
+			const shown = node ? nodeNameWithId(node) : nodeId;
+			// 停用的 Agent 连不上、不参与派发（ADR 0029「迁移与过渡」）：触发了任务也只会排到超时，不如在这里说清楚。
+			problems.push(
+				disabled === undefined
+					? {
+							code: "agent_not_registered",
+							message: nodeAgentNotRegistered(shown, agent),
+							node_id: nodeId,
+						}
+					: {
+							code: "agent_disabled",
+							message: `节点 ${shown} 派发到的 Agent ${agent} 已被停用：让项目管理员恢复它，或把节点换到别的 Agent`,
+							node_id: nodeId,
+						},
+			);
 		}
 		problems.push(...(await checkDevPackagesLoaded(db, project, doc)));
 
@@ -205,7 +223,9 @@ export function createParamsCheck(): ParamsCheck {
 		const locked = await lockedPackages(db, project, doc);
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
-		const chains = knownParams(plan, params);
+		// 触发时请求体里的值是请求体的样子，运行里从库里读回来的是 jsonb 的样子（对象的键重新排过）：算大小之前先变成库里读回来的样子，
+		// 触发时算的和运行里算的才是同一份值（#632）。预设、默认值、常量本来就是从库里读的。
+		const chains = knownParams(plan, asStoredJson(params) as Record<string, unknown>);
 		// 问题的说明里写出的值取自 secret 参数时打码（调用方给的值同样）：触发时的报错不回显 secret 的值。
 		const secrets = secretTexts(chains);
 		const shownOf = (value: string) => secrets.mask(value);
@@ -250,15 +270,20 @@ export function createParamsCheck(): ParamsCheck {
 				}
 			}
 		}
+		// 触发时改不了的值（子流程里的常量、子流程自己的默认值）自己就超限：怎么触发都被拒，说明里指出要改场景；
+		// 否则看这次触发的全部值。
+		const tooLarge =
+			fixedSecretSizeProblem(plan) ?? secretSizeProblem(chains, { kind: "trigger" }, secrets);
 		return [
 			...(await checkReferencedAgents(db, project, wanted)).problems,
-			...(await checkFeishuBots(db, bots)),
+			...(await checkFeishuBots(db, project, bots)),
 			...paramInputTypeProblems(
 				plan.main,
 				chains,
 				await withDevNodeTypes(db, project, doc, locked),
 				origins,
 			),
+			...(tooLarge ? [tooLarge] : []),
 		];
 	};
 }

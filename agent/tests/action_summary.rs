@@ -1,6 +1,6 @@
 //! 切入点 B（Agent 一侧）：节点写进事件管道的动作摘要（`action_summary`，规格 #345，格式见 sdk/python/src/sfly/context.py）
 //! 由 Agent 以 ActionSummary 消息原样转发：和进度一样只保留最新一份，每个任务每秒最多发一次，任务结束前把最后一份
-//! 发完再发结果；断线期间每个任务只排队最新的一份。一行事件不限长度，最长的摘要也整行到达。
+//! 发完再发结果；断线期间每个任务只排队最新的一份。一份摘要整行到达，只要事件管道的一行不超过 4 MiB（超过的整份丢弃，见 tests/logs.rs）。
 //!
 //! 时间的断言只用摘要里 SDK 写的单调时钟读数（节点实际写了多久），不用测试自己量的间隔。
 
@@ -50,7 +50,8 @@ async fn only_the_latest_summary_is_forwarded_at_most_once_per_second_and_the_la
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
     let summaries = summaries_of(&cp.received_with_session(), "task-summary-rate");
     let totals: Vec<&Value> = summaries.iter().map(|(_, _, s)| &s["total"]).collect();
-    assert_eq!(totals[0], &json!(1), "第一份立即转发：{totals:?}");
+    // 第一份转发的不一定是第 1 份：转发只在 Agent 每 100 毫秒的检查点上发生，节点也是每 0.1 秒写一份，机器忙时第一次转发之前
+    // 节点已经写了第 2 份，转发的就是第 2 份（#706）。「第一份不等间隔」在 src/logs.rs 的 latest_tests 里按状态断言。
     // 节点从写第 1 份到写第 30 份用了 written 毫秒（SDK 写的单调时钟读数）。Agent 两次转发至少隔 1 秒，
     // 只有任务结束时补发的最后一份不受限制：最多 ceil(written / 1000) + 2 份。不合并的话会转发 30 份。
     let mono = |s: &Value| s["mono"].as_i64().unwrap();

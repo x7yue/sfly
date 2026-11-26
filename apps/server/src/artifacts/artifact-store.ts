@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { and, eq, ne, sum } from "drizzle-orm";
 import type { Clock } from "../clock.js";
@@ -61,6 +61,21 @@ export function artifactLimitForWire(limit: number): bigint {
 
 /** 名称（产物目录内的相对路径）的最大长度。 */
 const MAX_NAME_LENGTH = 1024;
+
+/**
+ * 上传的临时文件放在 `<数据目录>/artifacts/.uploading/`（#649）：产物在 `artifacts/<运行 ID>/…` 下，运行 ID 是 UUID，
+ * 不会和这个名字重名；和产物在同一个文件系统里，写完用 `rename` 挪过去。临时文件不放在任务的产物目录里：产物的名字可以是
+ * 任何合规矩的相对路径，包括 `.upload-…`，启动时清理临时文件不能把它们当成临时文件删掉。
+ */
+const UPLOAD_TEMP_DIR = ".uploading";
+
+/** 写入流关闭了（文件描述符已经还给系统，文件如果要建已经建出来了）；已经关闭的立即返回。 */
+function closed(stream: Writable): Promise<void> {
+	// destroy 可以重复调用；管道出错时已经销毁了它，这里是没有销毁的情况（出错不在管道里）也保证能关上。
+	stream.destroy();
+	if (stream.closed) return Promise.resolve();
+	return new Promise((resolve) => stream.once("close", () => resolve()));
+}
 
 /**
  * 上传读请求体时，这么久没有收到任何数据就以明确的错误结束（408 `upload_idle_timeout`，不存、不留临时文件、放开这个任务的队列）：
@@ -137,6 +152,21 @@ export class ArtifactStore {
 	/** 现在有几个任务的上传在做或者排队（队列用完就删，空闲时是 0）：给测试看队列的条目有没有删干净。 */
 	get pendingTasks(): number {
 		return this.#queues.size;
+	}
+
+	/**
+	 * 清掉上次进程留下的上传临时文件（被杀、断电时来不及删），返回清掉了几个。只在控制面开始监听之前调用：这时没有上传在做，
+	 * 目录里的都是上一次留下的（构造函数里不做：测试里几个 `ArtifactStore` 共用一个数据目录）。
+	 * 在升级之前留在任务产物目录里的（`artifacts/<运行>/<任务>/.upload-…`）不在这里找：那要走遍每个任务的目录，而且产物的名字
+	 * 也可以是 `.upload-…`；它们随所属运行的保留期清理一起删除。
+	 */
+	async sweepUploadTemp(): Promise<number> {
+		const dir = join(this.deps.dataDir, "artifacts", UPLOAD_TEMP_DIR);
+		// 数个数只是为了写日志：读不了（不存在、这个位置上是个文件、没有权限……）就当作 0 个，**照样删这个路径**：这个位置上不是目录的话，
+		// 留着它，之后每次上传都在建临时目录时失败（500）。`rm` 不跟着符号链接走：目录里的符号链接只删链接本身。
+		const names = await readdir(dir).catch(() => [] as string[]);
+		await rm(dir, { recursive: true, force: true });
+		return names.length;
 	}
 
 	/** 校验产物名称；合法时返回 undefined，否则返回原因。 */
@@ -248,7 +278,14 @@ export class ArtifactStore {
 
 		const relative = join("artifacts", task.runId, taskId, ...name.split("/"));
 		const file = join(this.deps.dataDir, relative);
-		const tmp = join(this.deps.dataDir, "artifacts", task.runId, taskId, `.upload-${randomUUID()}`);
+		const tmp = join(this.deps.dataDir, "artifacts", UPLOAD_TEMP_DIR, `.upload-${randomUUID()}`);
+		let out: Writable | undefined;
+		/** 改名（临时文件换成产物）做过了、事务里的记账还没成：出错时要把已经放到产物位置的文件删掉。 */
+		let renamed = false;
+		/** 这个产物名以前上传过：改名是覆盖。覆盖过的文件出错时删不得（旧的已经没了，删掉等于什么都没有）。 */
+		let replaced = false;
+		/** 事务里核对到这个运行已经被保留期清理了：不改名、不记账。 */
+		let purged = false;
 		const hash = createHash("sha256");
 		let size = 0;
 		let tooLarge = false;
@@ -256,15 +293,14 @@ export class ArtifactStore {
 		const idleMs = this.deps.uploadIdleMs ?? UPLOAD_IDLE_TIMEOUT_MS;
 		try {
 			await mkdir(dirname(tmp), { recursive: true });
+			out = createWriteStream(tmp);
 			await pipeline(
 				body,
 				async function* (source: AsyncIterable<Buffer>) {
 					// 每读一块之前起一个计时器：idleMs 毫秒还没有数据就以空闲超时结束；写盘的时间不算（计时器只在等客户端发数据时开着）。
-					// `source` 可以是流（异步可迭代），也可以是 Fastify 的文本解析器（Content-Type: text/plain）读成的字符串（同步可迭代）：
-					// 包一层异步生成器，两种都能按同一个办法一块一块读。
-					const iterator = (async function* () {
-						yield* source;
-					})();
+					// 请求体只能是字节流（上传的路由只按原始字节收，#665）：记的大小、哈希、写进磁盘的是同一份字节；
+					// 不是字节的块（字符串）按字符数记会和写盘的字节数不一致，守不住上限，所以拒绝，不悄悄接受。
+					const iterator = source[Symbol.asyncIterator]();
 					let timer: NodeJS.Timeout | undefined;
 					try {
 						for (;;) {
@@ -278,7 +314,10 @@ export class ArtifactStore {
 								throw new Error("upload idle timeout");
 							}
 							if (next.done) return;
-							const chunk = next.value as Buffer;
+							const chunk = next.value as unknown;
+							if (!(chunk instanceof Uint8Array)) {
+								throw new TypeError("artifact body must be a byte stream");
+							}
 							size += chunk.length;
 							if (size > allowed) {
 								tooLarge = true;
@@ -291,12 +330,77 @@ export class ArtifactStore {
 						clearTimeout(timer);
 					}
 				},
-				createWriteStream(tmp),
+				out,
 			);
-			await mkdir(dirname(file), { recursive: true });
-			await rename(tmp, file);
+			// 改名和记账在同一个事务里，事务先锁住运行这一行（`FOR KEY SHARE`）并核对它没有被保留期清理（#649 的审查）：
+			// 保留期清理（`Retention`）在 `FOR UPDATE` 的锁下删文件、删产物行、标记已清理，所以两边不会交错——要么上传先拿到锁、
+			// 改名和记账提交之后清理才删（文件和行一起没了），要么清理先拿到锁、提交之后这里读到「已清理」、不改名也不记账。
+			// 不然上传进行中运行被清理时，文件会落进已经清理过的运行目录、库里多一行，之后没有人再删。
+			// `KEY SHARE` 只和 `FOR UPDATE` 冲突：引擎对运行行的普通更新（`UPDATE`、`FOR NO KEY UPDATE`）不等它，插产物行的外键本来就要
+			// 在运行行和任务行上拿这把锁，所以没有新增的等待关系。
+			const row = {
+				id: randomUUID(),
+				taskId,
+				runId: task.runId,
+				name,
+				path: relative,
+				size,
+				sha256: hash.digest("hex"),
+				createdAt: this.deps.clock.now(),
+				agentModifiedAt,
+			};
+			await this.deps.db.transaction(async (tx) => {
+				const [run] = await tx
+					.select({ purgedAt: runs.purgedAt })
+					.from(runs)
+					.where(eq(runs.id, task.runId))
+					.for("key share");
+				if (!run || run.purgedAt !== null) {
+					purged = true;
+					return;
+				}
+				const [previous] = await tx
+					.select({ id: artifacts.id })
+					.from(artifacts)
+					.where(and(eq(artifacts.taskId, taskId), eq(artifacts.name, name)));
+				replaced = previous !== undefined;
+				await mkdir(dirname(file), { recursive: true });
+				await rename(tmp, file);
+				renamed = true;
+				await tx
+					.insert(artifacts)
+					.values(row)
+					.onConflictDoUpdate({
+						target: [artifacts.taskId, artifacts.name],
+						set: {
+							path: row.path,
+							size: row.size,
+							sha256: row.sha256,
+							createdAt: row.createdAt,
+							agentModifiedAt: row.agentModifiedAt,
+						},
+					});
+			});
+			if (purged) {
+				await rm(tmp, { force: true });
+				return {
+					ok: false,
+					status: 409,
+					code: "task_not_running",
+					message:
+						"artifacts can only be uploaded while the task is running (or after it was cancelled)",
+				};
+			}
+			return { ok: true, artifact: { ...row, file } };
 		} catch (error) {
+			// 先等写入流关闭、再删临时文件（#649）：文件是写入流异步 open 出来的，出错得早（第一块就超限、空闲超时）时流被销毁了它
+			// 还没建出文件，这时先删就删了个不存在的文件，open 随后完成、文件才出现，留下一个零字节的临时文件。
+			// 等关闭要等 open 返回：open 慢（文件系统慢）时被拒绝的请求也跟着慢，排在它后面的同一个任务的上传更慢；open 一直不返回时这个任务
+			// 的上传队列一直卡着，但那时文件系统已经不能用了，成功的路径同样卡在它上面，所以不另设时限。
+			if (out) await closed(out);
 			await rm(tmp, { force: true });
+			// 改名之后事务没成（记账失败、提交失败）：已经放到产物位置的文件没有行，删掉；覆盖的不删（见 replaced）。
+			if (renamed && !replaced) await rm(file, { force: true });
 			if (idle) {
 				return {
 					ok: false,
@@ -325,31 +429,6 @@ export class ArtifactStore {
 			}
 			throw error;
 		}
-		const row = {
-			id: randomUUID(),
-			taskId,
-			runId: task.runId,
-			name,
-			path: relative,
-			size,
-			sha256: hash.digest("hex"),
-			createdAt: this.deps.clock.now(),
-			agentModifiedAt,
-		};
-		await this.deps.db
-			.insert(artifacts)
-			.values(row)
-			.onConflictDoUpdate({
-				target: [artifacts.taskId, artifacts.name],
-				set: {
-					path: row.path,
-					size: row.size,
-					sha256: row.sha256,
-					createdAt: row.createdAt,
-					agentModifiedAt: row.agentModifiedAt,
-				},
-			});
-		return { ok: true, artifact: { ...row, file } };
 	}
 
 	/** 任务的产物（按名称排序）；任务不存在时为 undefined。 */

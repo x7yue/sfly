@@ -10,7 +10,9 @@ use sfly_agent::proto::{ErrorKind, InstallState, InstalledPackage, TaskResult, T
 use support::packages::{
     HttpFixture, dependency_wheel, fresh_venv, package_task, publish, venv_of,
 };
-use support::{AgentOptions, AgentProcess, FakeControlPlane, spawn_agent, stub_task};
+use support::{
+    AgentOptions, AgentProcess, FakeControlPlane, credential_logging_uv, spawn_agent, stub_task,
+};
 
 fn outputs(result: &TaskResult) -> Value {
     serde_json::from_str(&result.outputs_json).expect("outputs_json is JSON")
@@ -45,6 +47,165 @@ fn add_dependency(fixture: &HttpFixture, version: &str, delay: Duration) -> Stri
     let (filename, wheel) = dependency_wheel("sfly-dep", version);
     fixture.add_to_index("sfly-dep", &filename, wheel, delay);
     format!("/files/{filename}")
+}
+
+/// 同 [`agent`]，另外配了 Agent 凭据（经环境变量 `SFLY_TOKEN`，和 `agent.env` 里写的一样）。
+fn agent_with_credential(
+    cp: &FakeControlPlane,
+    name: &str,
+    venv: &tempfile::TempDir,
+    fixture: &HttpFixture,
+    credential: &str,
+) -> AgentProcess {
+    let cache = venv.path().join("uv-cache").to_string_lossy().into_owned();
+    let venv = venv_of(venv);
+    let mut options = AgentOptions::new(&cp.url, name);
+    options.venv = &venv;
+    options.args = vec!["--index-url".into(), fixture.index_url()];
+    options.env = vec![("UV_CACHE_DIR", &cache), ("SFLY_TOKEN", credential)];
+    spawn_agent(options)
+}
+
+const ARCHIVE_PATH: &str = "/packages/sfly-demo/versions/1.0.0/archive";
+
+/// Agent 凭据经环境变量 `SFLY_TOKEN` 交给 Agent 时（#492），安装节点包依赖的 uv 进程的环境里没有它：
+/// 安装依赖会运行第三方包的构建脚本。
+#[tokio::test]
+async fn the_agent_credential_is_not_in_the_environment_of_the_uv_that_installs_dependencies() {
+    let fixture = HttpFixture::start().await;
+    let demo = publish(&fixture, "sfly-demo", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let log = venv.path().join("uv-calls.log");
+    let uv = credential_logging_uv(venv.path(), &log);
+    let cache = venv.path().join("uv-cache").to_string_lossy().into_owned();
+    let venv_path = venv_of(&venv);
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-uv-env");
+    options.venv = &venv_path;
+    options.args = vec![
+        "--index-url".into(),
+        fixture.index_url(),
+        "--uv".into(),
+        uv.to_string_lossy().into_owned(),
+    ];
+    options.env = vec![
+        ("UV_CACHE_DIR", &cache),
+        ("SFLY_TOKEN", "sfly_agt_0123456789abcdef0123456789abcdef"),
+    ];
+    let _agent = spawn_agent(options);
+    cp.hello(0).await;
+
+    cp.assign(package_task(
+        "task-uv-env",
+        "sfly-demo",
+        "1.0.0",
+        "about",
+        json!({}),
+        demo.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-uv-env").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    let log = std::fs::read_to_string(&log).unwrap();
+    assert!(log.lines().any(|l| l.contains(" pip install ")), "{log}");
+    assert!(log.lines().all(|l| l.starts_with("unset ")), "{log}");
+}
+
+/// 下载节点包归档带 Agent 凭据（#492）：控制面按它检查归档属于这台 Agent 的项目或公共项目。
+#[tokio::test]
+async fn the_archive_download_carries_the_agent_credential_when_one_is_configured() {
+    let fixture = HttpFixture::start().await;
+    let demo = publish(&fixture, "sfly-demo", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent_with_credential(&cp, "agent-cred", &venv, &fixture, "sfly_agt_c0ffee");
+    cp.hello(0).await;
+
+    cp.assign(package_task(
+        "task-cred",
+        "sfly-demo",
+        "1.0.0",
+        "about",
+        json!({}),
+        demo.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-cred").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    assert_eq!(
+        fixture.authorizations(ARCHIVE_PATH),
+        vec![Some("Bearer sfly_agt_c0ffee".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn without_a_credential_the_archive_is_downloaded_without_authorization() {
+    let fixture = HttpFixture::start().await;
+    let demo = publish(&fixture, "sfly-demo", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-nocred", &venv, &fixture);
+    cp.hello(0).await;
+
+    cp.assign(package_task(
+        "task-nocred",
+        "sfly-demo",
+        "1.0.0",
+        "about",
+        json!({}),
+        demo.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-nocred").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    assert_eq!(fixture.authorizations(ARCHIVE_PATH), vec![None]);
+}
+
+/// 控制面的归档地址重定向到别的主机（这里是同一台机器上的另一个端口）时，跟着去的请求里没有凭据：
+/// reqwest 的重定向策略在换了主机或端口时去掉 `Authorization`，这条用例钉住它（换版本升级 reqwest 时不会悄悄变）。
+#[tokio::test]
+async fn a_redirect_to_another_host_does_not_carry_the_agent_credential() {
+    let control_plane = HttpFixture::start().await;
+    let elsewhere = HttpFixture::start().await;
+    let demo = publish(&elsewhere, "sfly-demo", "1.0.0", &[]);
+    control_plane.redirect(ARCHIVE_PATH, &demo.url);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent_with_credential(
+        &cp,
+        "agent-redirect",
+        &venv,
+        &control_plane,
+        "sfly_agt_c0ffee",
+    );
+    cp.hello(0).await;
+
+    let archive_url = format!("{}{ARCHIVE_PATH}", control_plane.url);
+    cp.assign(package_task(
+        "task-redirect",
+        "sfly-demo",
+        "1.0.0",
+        "about",
+        json!({}),
+        (&archive_url, &demo.sha256),
+    ))
+    .await;
+    let (result, _) = cp.result("task-redirect").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    assert_eq!(
+        control_plane.authorizations(ARCHIVE_PATH),
+        vec![Some("Bearer sfly_agt_c0ffee".to_string())],
+        "控制面自己的地址带凭据"
+    );
+    assert_eq!(
+        elsewhere.authorizations(ARCHIVE_PATH),
+        vec![None],
+        "重定向到别的地方的请求里不带凭据"
+    );
 }
 
 #[tokio::test]
@@ -257,6 +418,71 @@ async fn dependency_conflict_fails_with_env_error_and_full_uv_output_leaving_the
     .await;
     let (result, _) = cp.result("task-a2").await;
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+}
+
+#[tokio::test]
+async fn a_conflict_with_the_package_being_installed_names_the_package_that_requires_the_other_version()
+ {
+    // #637、#653：另一个节点包依赖 sfly-base>=2，共享环境里已经是 2.0；现在要装 sfly-base 自己的 1.0.0
+    // （锁定旧版本的场景，和标准节点包 sfly-std 0.3.0 遇到依赖 sfly-std>=0.4 的节点包是同一种情形）。
+    // uv 只写「你要求 sfly-base==1.0.0 和 sfly-base>=2」，不知道后者是哪个包要的：Agent 补的说明写出来。
+    let fixture = HttpFixture::start().await;
+    let (filename, wheel) = dependency_wheel("sfly-base", "2.0");
+    fixture.add_to_index("sfly-base", &filename, wheel, Duration::ZERO);
+    let user = publish(&fixture, "sfly-user", "1.0.0", &["sfly-base>=2"]);
+    let base = publish(&fixture, "sfly-base", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-self-conflict", &venv, &fixture);
+    cp.hello(0).await;
+
+    cp.assign(package_task(
+        "task-user",
+        "sfly-user",
+        "1.0.0",
+        "about",
+        json!({}),
+        user.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-user").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+
+    cp.assign(package_task(
+        "task-base",
+        "sfly-base",
+        "1.0.0",
+        "about",
+        json!({}),
+        base.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-base").await;
+
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    let error = result.error.expect("error");
+    assert_eq!(error.kind(), ErrorKind::EnvError);
+    assert!(
+        error.message.contains("No solution found"),
+        "{}",
+        error.message
+    );
+    assert!(error.message.contains("依赖冲突："), "{}", error.message);
+    assert!(
+        error
+            .message
+            .contains("sfly-base@1.0.0（正在装） 要求 sfly-base==1.0.0"),
+        "{}",
+        error.message
+    );
+    assert!(
+        error
+            .message
+            .contains("sfly-user（已安装） 要求 sfly-base>=2"),
+        "{}",
+        error.message
+    );
+    assert!(error.message.contains("怎么办"), "{}", error.message);
 }
 
 #[tokio::test]

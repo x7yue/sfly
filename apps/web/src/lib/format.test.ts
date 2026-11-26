@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	errorText,
 	formatClockOffset,
+	formatDateTimeWithYear,
 	formatDuration,
 	formatElapsed,
 	formatFullDateTime,
@@ -84,6 +85,13 @@ describe("formatClockOffset", () => {
 /** 本地时区的时刻（测试不依赖运行环境的时区）。 */
 const local = (...parts: [number, number, number, number, number, number, number?]) =>
 	new Date(...parts).toISOString();
+
+describe("formatDateTimeWithYear", () => {
+	it("总是带年份、不带秒：今年的和明年的写法一样", () => {
+		expect(formatDateTimeWithYear(local(2026, 10, 23, 9, 5, 59))).toBe("2026-11-23 09:05");
+		expect(formatDateTimeWithYear(local(2027, 0, 3, 18, 30, 0))).toBe("2027-01-03 18:30");
+	});
+});
 
 describe("formatFullDateTimeMs", () => {
 	it("带年份、秒和毫秒，比 formatFullDateTime 多出三位毫秒", () => {

@@ -10,6 +10,7 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { Elapsed } from "#/components/elapsed";
 import { SectionHeading } from "#/components/page";
 import { StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { attemptLabel, moreLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
 import {
 	formatClock,
@@ -68,8 +69,14 @@ function NameAndFields({
 	return (
 		<span data-testid="action-name" className="flex min-w-0 items-baseline gap-1.5">
 			{prefix && <span className="sr-only">{prefix}</span>}
-			<Truncate className="max-w-[65%] flex-none text-fg-1">{name}</Truncate>
-			{text && <Truncate className="font-mono text-fg-3">{text}</Truncate>}
+			<Truncate untrusted className="max-w-[65%] flex-none text-fg-1">
+				{name}
+			</Truncate>
+			{text && (
+				<Truncate untrusted className="font-mono text-fg-3">
+					{text}
+				</Truncate>
+			)}
 		</span>
 	);
 }
@@ -161,7 +168,7 @@ export function ActionArea({
 								scope="row"
 								className={cn(COLUMN_WIDTH.grow, "px-0 py-0.5 text-left font-normal text-fg-1")}
 							>
-								<Truncate>{n.name}</Truncate>
+								<Truncate untrusted>{n.name}</Truncate>
 							</th>
 							<TableCell width="fit" className="py-0.5 pr-0 pl-3.5 text-right font-mono text-fg-1">
 								{formatInteger(n.total)}
@@ -220,7 +227,9 @@ function Failure({ failure, otherDay }: { failure: EndedActionView; otherDay: bo
 				className="m-0 mt-0.5 flex min-w-0 items-start gap-1.5 text-danger-fg"
 			>
 				<StatusDot kind="failed" className="mt-1.25" />
-				<span className="min-w-0 whitespace-pre-wrap wrap-anywhere">{reason}</span>
+				<span className="min-w-0 whitespace-pre-wrap wrap-anywhere">
+					<UntrustedText text={reason} mode="text" />
+				</span>
 			</p>
 		</li>
 	);
@@ -261,8 +270,8 @@ function CapNote({
 					<ul className="m-0 my-1 list-none p-0 text-fg-1">
 						{countOnly.map((c) => (
 							<li key={c.name} className="min-w-0 wrap-anywhere">
-								「{c.name}」从 <span className="font-mono">{clock(c.from)}</span> 起
-								{NODE_ACTIONS.countOnly}
+								「<UntrustedText text={c.name} />
+								」从 <span className="font-mono">{clock(c.from)}</span> 起{NODE_ACTIONS.countOnly}
 								{hasNameLimit && hasTotalLimit && c.reason === "name_limit" && EXCEPT_FAILED}
 							</li>
 						))}

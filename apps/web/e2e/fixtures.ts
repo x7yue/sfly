@@ -18,8 +18,11 @@ const DOCS_DIR = fileURLToPath(new URL("../../../docs/guide", import.meta.url));
 
 /**
  * `controlPlane` 夹具建立和拆除各自的时限（毫秒），不占用例自己的 30 秒（playwright.config.ts 的 `timeout`）：
- * 建立要建库、跑迁移、起控制面，拆除要关控制面、删库；机器忙的时候（整份跑 e2e，同时还有别的构建和测试）这些会变慢，
- * 碰巧落在这两步里的用例就因「夹具超过 30 秒」失败，而用例本身没有问题（#613）。
+ * 建立要从模板复制出库（迁移在整个运行开始前就做完了，控制面启动时的迁移什么也不做）、起控制面，拆除要关控制面、删库；
+ * 机器忙的时候（整份跑 e2e，同时还有别的构建和测试）这些会变慢，以前碰巧落在这两步里的用例就因「夹具超过 30 秒」失败，
+ * 而用例本身没有问题（#613）。`fixture-timeout.spec.ts` 守着这个时限。
+ * 注意：`baseURL` 依赖 `controlPlane`，Playwright 给每个用例、每个 `beforeAll` / `afterAll` 钩子都建一遍控制面，不管用不用得到；
+ * 钩子里赋的变量在那时还没有值。夹具建立超时之后，建到一半的测试库和控制面没人收拾（120 秒的时限让它很少见）。
  */
 export const CONTROL_PLANE_FIXTURE_TIMEOUT_MS = 120_000;
 
@@ -67,6 +70,8 @@ export interface E2eFixtures {
 		assistantSecret?: string;
 		workbenchAgent?: string;
 		assistantReconnectMs?: { min: number; max: number };
+		/** 停止一轮时控制面等助手服务带回结局最多多久（毫秒，默认 300）：测试里让假助手服务的停止慢一点（`stopSettleMs`）时放长。 */
+		sessionStopGraceMs?: number;
 		initialAdmin?: { loginName: string; password: string; displayName?: string };
 		/** 打开着的事件流多久重新检查一次凭据（毫秒，默认 30 秒）：登录失效之后流多久被关掉。 */
 		streamRecheckMs?: number;

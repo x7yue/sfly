@@ -11,9 +11,11 @@ import type { PresetStore } from "../presets/preset-store.js";
 import { entryParams } from "../presets/preset-validity.js";
 import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { type Preflight, preflightWarnings } from "../runs/preflight.js";
+import { rawScenario } from "../runs/raw-scenario.js";
 import { listRuns } from "../runs/run-list.js";
-import { getRunView } from "../runs/run-read.js";
+import { getRunView, readTaskIo } from "../runs/run-read.js";
 import { secretLeafWarnings } from "../runs/secret-leaf-warnings.js";
+import { secretSizePreflight } from "../runs/secret-size-preflight.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
@@ -41,6 +43,13 @@ export function registerRunRoutes(
 	/** 输出给客户端的运行视图：排队中的尝试带上它在等什么（Agent 此刻的状态来自注册表）。 */
 	const viewOf = (runId: string) =>
 		getRunView(deps.db, runId, (names, project) => agentWaits(deps.db, deps.hub, names, project));
+
+	// 一次尝试的输入和输出的全文（运行视图里大的只给大小，在这里取）：访问检查按任务所在的项目，和任务的日志、产物是同一套。
+	contractRoute(app, runsApi.taskIo, async ({ params }, reply) => {
+		return (
+			(await readTaskIo(deps.db, params.id)) ?? sendError(reply, 404, "not_found", "task not found")
+		);
+	});
 
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent，
 	// 以及场景的运行预设（对照这次检查用的最新版本）。
@@ -74,13 +83,20 @@ export function registerRunRoutes(
 				presets,
 			};
 		}
+		// 默认值和运行预设的原始值，一次预检只读一次，传给要看它们的几项检查。
+		const raw = await rawScenario(deps.db, params.id);
+		const secretSize = raw ? await secretSizePreflight(raw) : { problems: [], warnings: [] };
 		return {
 			version: head.number,
 			params: declarations,
-			problems: await deps.preflight(deps.db, project, head.document),
+			problems: [
+				...(await deps.preflight(deps.db, project, head.document)),
+				...secretSize.problems,
+			],
 			warnings: [
 				...preflightWarnings(head.document),
-				...(await secretLeafWarnings(deps.db, params.id)),
+				...(raw ? secretLeafWarnings(raw) : []),
+				...secretSize.warnings,
 			],
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, project, head.document)).map((agent) => ({

@@ -24,7 +24,7 @@ import { LogLineView, NodeStatus, RunStatus } from "./runs.js";
  */
 
 /**
- * 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的保密参数的值打码，和运行视图里看到的一样。
+ * 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的 secret 参数的值打码，和运行视图里看到的一样。
  */
 export const RunStateError = z.object({
 	/** 错误类型：node_error（节点代码抛出异常）、timeout、agent_lost、env_error、config_error。 */
@@ -192,7 +192,7 @@ export const RunReportFailedTask = z.object({
 			kind: z.string(),
 			/** 失败原因的一行（同 {@link RunStateError} 的 `headline`）。 */
 			headline: z.string(),
-			/** 完整的错误信息：异常信息加堆栈，原文（已按保密参数的值打码）。 */
+			/** 完整的错误信息：异常信息加堆栈，原文（已按 secret 参数的值打码）。 */
 			detail: z.string(),
 			/** 节点代码里出错的位置，同 {@link RunStateError} 的 `location`；没有时为 null。 */
 			location: z.string().nullable(),
@@ -267,13 +267,19 @@ export const RunReport = RunState.extend({
 	 * 摘要只给最新值，要曲线用 `GET /runs/:id/focus`。
 	 */
 	attention_items: z.array(RunReportAttentionItem),
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，
+	 * 所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；
+	 * 旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize: z.boolean().optional(),
 });
 
 export const runSummaryApi = {
 	/**
 	 * 一次运行的摘要：状态、耗时、最终失败的节点、每个失败的任务的错误（类型、失败原因一行、完整信息）和日志尾部、
 	 * 失败的动作、有异常的关注项。判断一次运行「成功且结果对」先读它。读取走运行的统一读取（`readRuns`），
-	 * 错误信息、参数里保密参数的值都已打码。运行不存在时 404。
+	 * 错误信息、参数里 secret 参数的值都已打码。运行不存在时 404。
 	 */
 	summary: endpoint({
 		method: "GET",

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { agentBinary, repoRoot } from "./agent-binary.js";
+import { credentialFor } from "./fake-agent.js";
 
 /** 以子进程运行的真实 Rust Agent。标准输出是 JSON 事件流，标准错误直接透传。 */
 export interface RealAgent {
@@ -13,6 +14,8 @@ export interface RealAgent {
 	readonly workDir: string;
 	/** 已收到的标准输出事件。 */
 	readonly events: Array<Record<string, unknown>>;
+	/** Agent 写到标准错误的全部内容（原样，没有经过控制面的打码）；只有 `captureStderr` 时才收集。 */
+	stderr(): string;
 	close(): Promise<void>;
 }
 
@@ -24,12 +27,25 @@ export async function startRealAgent(options: {
 	venv?: string;
 	args?: string[];
 	bin?: string;
+	/**
+	 * Agent 凭据（`SFLY_TOKEN`）。不传时向这个控制面按名字签发一个（`startTestControlPlane` 登记了签发办法，和假 Agent 一样，#492）；
+	 * 控制面是另一个进程（打包的控制面）时自己签发了传进来。`args` 里有 `--token`、`env` 里有 `SFLY_TOKEN` 的不再加。
+	 */
+	credential?: string;
 	/** 追加的环境变量（例如独立的 UV_CACHE_DIR）。 */
 	env?: Record<string, string>;
+	/** 收集 Agent 的标准错误（[`RealAgent.stderr`]），同时照常透传到测试进程的标准错误。默认不收集。 */
+	captureStderr?: boolean;
 	/** 等 welcome 的时间，默认 15 秒；包括创建 venv 和安装 SDK 运行时（它们在连上控制面之后、welcome 事件之前完成）。 */
 	welcomeTimeoutMs?: number;
 }): Promise<RealAgent> {
 	const bin = options.bin ?? agentBinary();
+	const explicitToken =
+		(options.args ?? []).some((arg) => arg === "--token" || arg.startsWith("--token=")) ||
+		options.env?.SFLY_TOKEN !== undefined;
+	const credential = explicitToken
+		? undefined
+		: (options.credential ?? (await credentialFor(options.grpcUrl, options.name)));
 	const workDir = await mkdtemp(join(tmpdir(), "sfly-agent-work-"));
 	const child = spawn(
 		bin,
@@ -48,18 +64,24 @@ export async function startRealAgent(options: {
 			...(options.args ?? []),
 		],
 		{
-			stdio: ["ignore", "pipe", "inherit"],
+			stdio: ["ignore", "pipe", options.captureStderr ? "pipe" : "inherit"],
 			// 独立的 SFLY_HOME：不读开发者自己的 ~/.sfly/agent.env。供其它 Agent 连接的端口由系统分配，
 			// 并行的测试不抢默认端口 50052（不认识这个变量的旧版本 Agent 忽略它）。
 			env: {
 				...process.env,
 				SFLY_HOME: join(workDir, "sfly-home"),
 				SFLY_LISTEN_PORT: "0",
+				...(credential === undefined ? {} : { SFLY_TOKEN: credential }),
 				...options.env,
 			},
 		},
 	);
 	const events: Array<Record<string, unknown>> = [];
+	let stderr = "";
+	child.stderr?.on("data", (chunk: Buffer) => {
+		stderr += chunk.toString();
+		process.stderr.write(chunk);
+	});
 	const lines = createInterface({ input: child.stdout as NodeJS.ReadableStream });
 	const close = async () => {
 		if (child.exitCode === null && child.signalCode === null) {
@@ -89,7 +111,7 @@ export async function startRealAgent(options: {
 		await close();
 		throw error;
 	}
-	return { child, workDir, events, close };
+	return { child, workDir, events, stderr: () => stderr, close };
 }
 
 /**

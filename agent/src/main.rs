@@ -10,8 +10,12 @@ use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
 use sfly_agent::peer;
 use sfly_agent::retention;
+use sfly_agent::secret::Secret;
 use sfly_agent::update::{self, SelfUpdate, Trial, TrialFailed};
-use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
+use sfly_agent::{
+    AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, REJECTED_RETRY_MAX,
+    REJECTED_RETRY_MIN, run,
+};
 
 /// sfly Agent。
 ///
@@ -28,14 +32,31 @@ use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, 
 #[command(version, args_override_self = true)]
 struct Args {
     /// 控制面 Agent 网关地址。
-    #[arg(long, env = "SFLY_SERVER", default_value = "http://127.0.0.1:50051")]
+    #[arg(
+        long,
+        env = "SFLY_SERVER",
+        default_value = "http://127.0.0.1:50051",
+        hide_env_values = true
+    )]
     server: String,
     /// Agent 名称，全局唯一。
     #[arg(long, env = "SFLY_AGENT_NAME")]
     name: String,
-    /// 共享注册令牌。
-    #[arg(long, env = "SFLY_TOKEN")]
-    token: Option<String>,
+    /// Agent 凭据（`sfly_agt_` 开头，管理员在控制台或用 `sfly agent credentials issue` 为这台 Agent 签发；
+    /// 安装脚本写进 `agent.env` 的 `SFLY_TOKEN`）。过渡期里控制面还接受共享注册令牌，或不带凭据的已登记的 Agent。
+    /// 用环境变量或 `agent.env` 传，不要写在命令行参数里（进程列表看得到）。
+    #[arg(long, env = "SFLY_TOKEN", hide_env_values = true)]
+    token: Option<Secret>,
+    /// 被控制面拒绝（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）之后的重试等待：起点，毫秒（翻倍）。
+    #[arg(long, env = "SFLY_REJECTED_RETRY_MIN_MS", default_value_t = REJECTED_RETRY_MIN.as_millis() as u64, hide = true)]
+    rejected_retry_min_ms: u64,
+    /// 被控制面拒绝之后的重试等待：封顶，毫秒。
+    #[arg(long, env = "SFLY_REJECTED_RETRY_MAX_MS", default_value_t = REJECTED_RETRY_MAX.as_millis() as u64, hide = true)]
+    rejected_retry_max_ms: u64,
+    /// 只在测试中使用：被控制面拒绝之后的重试等待加不加抖动（默认加：每次等待取算出来的时长的一半到全部，
+    /// 很多台 Agent 同时被拒绝时不按同一个节奏一起重试）。
+    #[arg(long, env = "SFLY_REJECTED_RETRY_JITTER", default_value_t = true, value_parser = clap::builder::BoolishValueParser::new(), hide = true)]
+    rejected_retry_jitter: bool,
     /// 供其它 Agent 连接的端口（ADR 0019，在所有网卡上监听）；0 由系统分配。被占用时 Agent 照常执行任务，
     /// 只是它的能力不能被其它 Agent 调用。没有认证，只应在内网使用。
     #[arg(long, env = "SFLY_LISTEN_PORT", default_value_t = peer::DEFAULT_LISTEN_PORT)]
@@ -67,16 +88,16 @@ struct Args {
     task_dir_sweep_interval: u64,
     /// PyPI 镜像地址（简单索引），覆盖控制面下发的 PyPI 镜像：Agent 所有访问 PyPI 的 uv 调用
     /// （安装节点包依赖）都用它。
-    #[arg(long, env = "SFLY_INDEX_URL")]
+    #[arg(long, env = "SFLY_INDEX_URL", hide_env_values = true)]
     index_url: Option<String>,
     /// GitHub Release 镜像地址（例如 https://mirrors.ustc.edu.cn/github-release），覆盖控制面下发的：
     /// 安装和更新 uv 用它；没有 `--python-install-mirror` 时 Python 也从它下载。
-    #[arg(long, env = "SFLY_GITHUB_RELEASE_MIRROR")]
+    #[arg(long, env = "SFLY_GITHUB_RELEASE_MIRROR", hide_env_values = true)]
     github_release_mirror: Option<String>,
     /// Python 下载镜像（直接作为 `UV_PYTHON_INSTALL_MIRROR`，
     /// 例如 https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/），
     /// 优先于从 GitHub Release 镜像推导的地址。
-    #[arg(long, env = "SFLY_PYTHON_INSTALL_MIRROR")]
+    #[arg(long, env = "SFLY_PYTHON_INSTALL_MIRROR", hide_env_values = true)]
     python_install_mirror: Option<String>,
     /// 下载和运行 uv 安装脚本时 curl、wget 带的 User-Agent；默认 `sfly-agent/<版本>`。
     /// 镜像站可能封禁 curl、wget 的默认 User-Agent，可以换成能看出机构或用途的值（例如 `acme-lab-sfly/1.0`）。
@@ -106,6 +127,9 @@ struct Args {
     /// 只在测试中使用：转发器每秒最多处理这么多字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制），模拟转发跟不上节点的输出。
     #[arg(long, env = "SFLY_LOG_FORWARD_RATE", default_value_t = 0, hide = true)]
     log_forward_rate: u64,
+    /// 只在测试中使用：连上之后撑过这么多毫秒才算连得稳、重连的等待才回到最短。
+    #[arg(long, env = "SFLY_STABLE_CONNECTION_MS", default_value_t = sfly_agent::STABLE_CONNECTION.as_millis() as u64, hide = true)]
+    stable_connection_ms: u64,
     /// 自更新下载新二进制时，连接建立后等待数据的超时秒数（每次读取）；超时算「更新失败」，下一次握手后重试。
     #[arg(long, env = "SFLY_UPDATE_READ_TIMEOUT", default_value_t = sfly_agent::update::DEFAULT_READ_TIMEOUT.as_secs(), hide = true)]
     update_read_timeout: u64,
@@ -219,6 +243,13 @@ async fn main() -> anyhow::Result<()> {
         server: args.server,
         name: args.name,
         token: args.token,
+        rejected_retry_min: Duration::from_millis(args.rejected_retry_min_ms.max(1)),
+        rejected_retry_max: Duration::from_millis(
+            args.rejected_retry_max_ms
+                .max(args.rejected_retry_min_ms)
+                .max(1),
+        ),
+        rejected_retry_jitter: args.rejected_retry_jitter,
         slots: args.slots,
         venv,
         work_dir,
@@ -241,6 +272,7 @@ async fn main() -> anyhow::Result<()> {
         telemetry_queue_bytes: args.log_queue_bytes,
         metric_queue_points: args.metric_queue_points,
         log_forward_rate: args.log_forward_rate,
+        stable_connection: Duration::from_millis(args.stable_connection_ms),
         update_read_timeout: Duration::from_secs(args.update_read_timeout),
         upload_idle_timeout: Duration::from_secs(args.upload_idle_timeout),
         version: args

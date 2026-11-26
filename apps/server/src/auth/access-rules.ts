@@ -54,6 +54,7 @@ export function locatorOf(
 		case "session":
 		case "package":
 		case "agent":
+		case "dev_agent":
 		case "feishu_bot":
 			return locatorOfScoped(def, kind, target);
 		default:
@@ -64,7 +65,7 @@ export function locatorOf(
 /** 属于项目的资源类别（场景、运行、任务、会话、节点包、Agent、飞书机器人）：路径带项目、列表与新建、按名字或按 ID 定位。 */
 function locatorOfScoped(
 	def: Pick<RouteDef, "path"> & { query?: z.ZodType | undefined },
-	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "feishu_bot",
+	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "dev_agent" | "feishu_bot",
 	target: ResourceTarget,
 ): ProjectLocator | undefined {
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
@@ -74,7 +75,7 @@ function locatorOfScoped(
 	}
 	if (target === "collection" || target === "upload") return { from: "path", param: null };
 	if (typeof target === "object" && "params" in target) {
-		if (kind === "agent" || kind === "package" || kind === "feishu_bot") {
+		if (kind === "agent" || kind === "dev_agent" || kind === "package" || kind === "feishu_bot") {
 			return { from: "path", param: null };
 		}
 		return { from: kind, param: target.params };
@@ -132,6 +133,19 @@ export const ACCOUNT_ROUTES = {
 } as const satisfies Record<string, AccountCredential>;
 
 /**
+ * 被停用的用户仍然可以用自己的凭据做的事：吊销自己的凭据（#578）。停用是可撤回的暂停，不是作废：停用期间他的登录和个人令牌对
+ * 别的接口都拒绝；要是连吊销也拒绝，想登出的人（脚本里的 `sfly logout`、停用之前开着的页面）吊销不了，启用之后这些凭据又能用了。
+ * 所以这几个接口在停用期间也认他自己的登录 Cookie 和个人令牌（别的凭据——会话令牌、项目令牌……——不认，所有者被停用的照旧 401）：
+ * 注销全部登录、吊销个人令牌（登录可以吊销自己名下的任何一个，个人令牌只能吊销它自己，处理函数核对，停用期间也一样）；
+ * `POST /auth/logout` 本来就认任何 Cookie（上面 `logout`），停用的用户的登录同样在内。这是账号类接口表之外的一条例外，放在同一处检查。
+ * 不续期（不顺延登录的空闲期限、不写令牌的最后使用时间）：停用期间的凭据是只出不进的。
+ */
+export const REVOKE_OWN_ROUTES: ReadonlySet<string> = new Set([
+	"POST /auth/logout-all",
+	"DELETE /account/tokens/:id",
+]);
+
+/**
  * 只认人的登录 Cookie 的项目内接口（令牌不能签发令牌）：签发项目令牌要「管理」范围，并且只认登录；带了令牌（含带「管理」范围的
  * 个人令牌）是 403。列出和吊销项目令牌不在其中：令牌可以吊销令牌，那只会收窄权限。
  * 这是范围表之外的一条凭据种类的限制，和范围表放在同一处检查里（./access-guard.ts）。
@@ -147,6 +161,23 @@ export const LOGIN_ONLY_ROUTES = {
  * 到时这张表删掉。
  */
 export const REQUIRES_CREDENTIAL: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["project"]);
+
+/**
+ * 现在就要求凭据的接口（在上面按资源类别要求的之外，按接口）：签发、列出、吊销 Agent 凭据，停用、恢复 Agent（#492）。
+ * Agent 凭据是新这一套信任的根——不带任何凭据的请求能给任意名字签发 Agent 凭据，再用它连上来顶掉用共享令牌连着的那一台——所以
+ * 这几个不走「不带凭据照旧放行」的过渡，不能匿名；范围照常要「管理」。Agent 的别的接口（列表、更新……）在 #494 之前照旧。
+ */
+export const REQUIRES_CREDENTIAL_ROUTES: ReadonlySet<string> = new Set([
+	"GET /agents/:name/credentials",
+	"POST /agents/:name/credentials",
+	"DELETE /agents/:name/credentials/:id",
+	"POST /agents/:name/disable",
+	"POST /agents/:name/enable",
+]);
+
+/** 这个接口现在就要求凭据（按资源类别，或者按接口）。 */
+export const requiresCredential = (def: Pick<RouteDef, "method" | "path" | "resource">): boolean =>
+	REQUIRES_CREDENTIAL.has(def.resource.kind) || REQUIRES_CREDENTIAL_ROUTES.has(routeKey(def));
 
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
@@ -172,7 +203,7 @@ export const TASK_CREDENTIAL_ROUTES = {
 	"GET /tasks/:id/artifacts/*": "project_task",
 } as const satisfies Record<string, "project_task">;
 
-/** 访问检查要求的契约性质，启动时检查（`guardHttpContract`）：每个接口的项目都认得出来。返回问题列表，空表示没有问题。 */
+/** 访问检查要求的契约性质，启动时检查（`guardHttpContract`）：每个接口的项目都认得出来，吊销自己的凭据的例外清单里只有账号类接口。返回问题列表，空表示没有问题。 */
 export function checkAccessRules(contract: readonly RouteDef[]): string[] {
 	return contract.flatMap((def) => {
 		// 没有写 resource 的接口由声明检查（checkRouteDeclarations）报，这里不重复。
@@ -188,6 +219,18 @@ export function checkAccessRules(contract: readonly RouteDef[]): string[] {
 			problems.push(
 				`${routeKey(def)}：账号类接口要在 ACCOUNT_ROUTES（src/auth/access-rules.ts）里写明认哪种凭据：没有写明的账号类接口不能上线`,
 			);
+		}
+		// 吊销自己的凭据的例外清单（REVOKE_OWN_ROUTES）只能放账号类、认登录或个人令牌的接口（启动时检查，#606）：写进不是账号类的接口
+		// （不生效）、认别的凭据的账号类接口（例如平台管理员的 `POST /users`，会悄悄放宽它）都让控制面起不来。**写进别的只认登录或个人令牌的
+		// 账号接口（当前用户、改密码、列出令牌）这里不报**：它们满足上面的条件，由行为测试拦住（停用的用户在这些接口上仍然是 401，
+		// `test/disabled-revoke.test.ts`、`test/access-guard.test.ts`）。
+		if (REVOKE_OWN_ROUTES.has(routeKey(def))) {
+			const rule = (ACCOUNT_ROUTES as Record<string, string>)[routeKey(def)];
+			if (def.resource.kind !== "account" || (rule !== "login" && rule !== "login_or_personal")) {
+				problems.push(
+					`${routeKey(def)}：REVOKE_OWN_ROUTES（停用的用户也认自己的凭据）只能放账号类、认登录或个人令牌的接口（ACCOUNT_ROUTES 里是 login、login_or_personal）`,
+				);
+			}
 		}
 		if (def.resource.kind === "system" && def.effect !== "read") {
 			problems.push(
@@ -206,6 +249,11 @@ export function checkCredentialRoutes(contract: readonly RouteDef[]): string[] {
 		["TASK_CREDENTIAL_ROUTES", TASK_CREDENTIAL_ROUTES],
 		["ACCOUNT_ROUTES", ACCOUNT_ROUTES],
 		["LOGIN_ONLY_ROUTES", LOGIN_ONLY_ROUTES],
+		[
+			"REQUIRES_CREDENTIAL_ROUTES",
+			Object.fromEntries([...REQUIRES_CREDENTIAL_ROUTES].map((k) => [k, true])),
+		],
+		["REVOKE_OWN_ROUTES", Object.fromEntries([...REVOKE_OWN_ROUTES].map((key) => [key, true]))],
 	].flatMap(([name, list]) =>
 		Object.keys(list as object)
 			.filter((key) => !known.has(key))

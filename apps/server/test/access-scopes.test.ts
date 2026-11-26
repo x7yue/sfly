@@ -1,12 +1,14 @@
 // 范围表（ADR 0029「一处检查」）：范围由「接口作用在哪类资源上 × 只读或写」查表得出，对着 ADR 里逐个接口的那张表，
 // 每一行一条；契约里的每个接口都要有一个期望的范围，新加的写接口不在表里就失败，不会悄悄没人管。
 import { httpContract, ID_LOCATED_KINDS, RESOURCE_KINDS, type RouteDef } from "@sfly/schema";
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import {
 	ACCOUNT_ROUTES,
 	checkAccessRules,
 	checkCredentialRoutes,
 	locatorOf,
+	REVOKE_OWN_ROUTES,
 	routeKey,
 } from "../src/auth/access-rules.js";
 import {
@@ -19,6 +21,7 @@ import {
 	type Scope,
 	writeNeedsPerson,
 } from "../src/auth/scopes.js";
+import { guardHttpContract } from "../src/http/contract-route.js";
 
 /**
  * ADR 0029 范围表里每一行对应的接口和它要的范围。只读接口都是「读」，不在这里列：
@@ -50,6 +53,14 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"POST /packages": "publish",
 	// Agent 立即更新、飞书机器人的增删改与测试消息（写）→ 管理
 	"POST /agents/:name/update-now": "manage",
+	// Agent 凭据的签发、吊销，停用和恢复（Agent，写）→ 管理
+	"POST /agents/:name/credentials": "manage",
+	"DELETE /agents/:name/credentials/:id": "manage",
+	"POST /agents/:name/disable": "manage",
+	"POST /agents/:name/enable": "manage",
+	// 我的开发 Agent 的注册、吊销（开发 Agent，写）→ 编辑（只认有用户的人的凭据）
+	"POST /projects/:project/dev-agents": "edit",
+	"DELETE /projects/:project/dev-agents/:name": "edit",
 	"POST /feishu-bots": "manage",
 	"PATCH /feishu-bots/:name": "manage",
 	"DELETE /feishu-bots/:name": "manage",
@@ -59,10 +70,11 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"DELETE /projects/:project/tokens/:id": "manage",
 	// 上传产物（任务，写）→ 不给人和程序：只有 Agent 凭据，限派给这台 Agent 的任务
 	"PUT /tasks/:id/artifacts/*": null,
-	// 建会话、对它说话、停止它（会话，写）→ 编辑：都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）
+	// 建会话、对它说话、停止它、结束它（会话，写）→ 编辑：都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）
 	"POST /projects/:project/sessions": "edit",
 	"POST /sessions/:id/messages": "edit",
 	"POST /sessions/:id/stop": "edit",
+	"POST /sessions/:id/end": "edit",
 };
 
 /**
@@ -157,26 +169,31 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		...(creates === undefined ? {} : { creates }),
 	});
 
-	it("会话的写（建、发话、停止）只有人能做：范围表里 session 是 humanOnly，别的类别不是", () => {
+	it("会话的写（建、发话、停止、结束）、项目令牌的签发和开发 Agent 的注册只有人能做：范围表里 session、project、dev_agent 是 humanOnly，别的类别不是", () => {
 		expect(writeNeedsPerson(writeOf("session"))).toBe(true);
 		expect(writeNeedsPerson(writeOf("project"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("dev_agent"))).toBe(true);
 		// 看新建出来的是什么（和范围同一个取法）：新建会话的接口声明 creates 时也算。
 		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
-		for (const kind of RESOURCE_KINDS.filter((k) => k !== "session" && k !== "project")) {
+		const humanOnlyKinds = ["session", "project", "dev_agent"];
+		for (const kind of RESOURCE_KINDS.filter((k) => !humanOnlyKinds.includes(k))) {
 			expect(writeNeedsPerson(writeOf(kind)), kind).toBe(false);
 		}
 		// 只读不受影响。
 		expect(writeNeedsPerson({ effect: "read", resource: { kind: "session" } })).toBe(false);
-		// 契约里恰好是会话的三个写接口。
+		// 契约里恰好是会话的三个写接口、项目令牌的签发和吊销、开发 Agent 的注册和吊销。
 		expect(
 			httpContract
 				.filter((def) => def.effect === "write" && writeNeedsPerson(def))
 				.map(routeKey)
 				.sort(),
 		).toEqual([
+			"DELETE /projects/:project/dev-agents/:name",
 			"DELETE /projects/:project/tokens/:id",
+			"POST /projects/:project/dev-agents",
 			"POST /projects/:project/sessions",
 			"POST /projects/:project/tokens",
+			"POST /sessions/:id/end",
 			"POST /sessions/:id/messages",
 			"POST /sessions/:id/stop",
 		]);
@@ -187,6 +204,7 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 			expect(typeof SCOPE_TABLE[kind].humanOnly, kind).toBe("boolean");
 		}
 		expect(RESOURCE_KINDS.filter((kind) => SCOPE_TABLE[kind].humanOnly)).toEqual([
+			"dev_agent",
 			"session",
 			"project",
 		]);
@@ -289,6 +307,7 @@ describe("契约和访问检查的规则对得上", () => {
 				"GET /sessions/:id/events",
 				"POST /sessions/:id/messages",
 				"POST /sessions/:id/stop",
+				"POST /sessions/:id/end",
 			]),
 		);
 		expect(classes.get("none")).toEqual(expect.arrayContaining(["GET /health", "GET /install.sh"]));
@@ -327,6 +346,55 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 		for (const def of accountRoutes) {
 			expect(def.path, routeKey(def)).not.toContain(":project");
 			expect(locatorOf(def), routeKey(def)).toEqual({ from: "account" });
+		}
+	});
+
+	it("吊销自己的凭据的例外清单（REVOKE_OWN_ROUTES）：契约里没有清单里的接口，契约测试报出它；清单里写进不是账号类的接口、或认别的凭据的账号类接口，启动检查报错", () => {
+		const without = httpContract.filter((def) => routeKey(def) !== "POST /auth/logout-all");
+		expect(
+			checkCredentialRoutes(without).filter((p) => p.includes("REVOKE_OWN_ROUTES")),
+		).toHaveLength(1);
+		const list = REVOKE_OWN_ROUTES as Set<string>;
+		const mentions = (problems: string[]) =>
+			problems.filter((p) => p.includes("REVOKE_OWN_ROUTES"));
+		try {
+			// 不是账号类的接口。
+			list.add("GET /orchestrations");
+			expect(mentions(checkAccessRules(httpContract))).toEqual([
+				expect.stringContaining("GET /orchestrations"),
+			]);
+			list.delete("GET /orchestrations");
+			// 账号类，但认的是平台管理员（写进去会悄悄放宽管理账号的接口）。
+			list.add("POST /users");
+			expect(mentions(checkAccessRules(httpContract))).toEqual([
+				expect.stringContaining("POST /users"),
+			]);
+		} finally {
+			list.delete("GET /orchestrations");
+			list.delete("POST /users");
+		}
+		// 现在的清单没有问题。
+		expect(mentions(checkAccessRules(httpContract))).toEqual([]);
+	});
+
+	it("启动时真的做了访问规则的检查（`guardHttpContract` 调用 `checkAccessRules`）：契约有问题，控制面起不来；去掉这次调用这条就红", () => {
+		const readOnly = httpContract.find(
+			(def) => def.resource.kind === "system",
+		) as (typeof httpContract)[number];
+		const write = {
+			...readOnly,
+			method: "POST",
+			effect: "write",
+		} as unknown as (typeof httpContract)[number];
+		// 声明本身（summary、effect、resource……）站得住，只有访问规则那一项不合格：报的一定是 checkAccessRules 的问题。
+		expect(() => guardHttpContract(Fastify(), [write])).toThrow(/只能是只读的/);
+		// 例外清单里写进不是账号类的接口：同样让控制面起不来。
+		const list = REVOKE_OWN_ROUTES as Set<string>;
+		try {
+			list.add("GET /orchestrations");
+			expect(() => guardHttpContract(Fastify(), httpContract)).toThrow(/REVOKE_OWN_ROUTES/);
+		} finally {
+			list.delete("GET /orchestrations");
 		}
 	});
 

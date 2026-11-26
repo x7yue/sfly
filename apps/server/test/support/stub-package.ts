@@ -10,13 +10,13 @@ import type { TestControlPlane } from "./test-control-plane.js";
 const run = promisify(execFile);
 
 /** 用真实的 sfly CLI 构建桩节点包（testdata/stub-package，sfly-stub@0.1.0），经 HTTP API 发布。 */
-export async function publishStubPackage(cp: TestControlPlane): Promise<void> {
+export async function publishStubPackage(cp: Pick<TestControlPlane, "fetch">): Promise<void> {
 	await publishTestPackage(cp, "testdata/stub-package", "sfly-stub-0.1.0.sflypkg");
 }
 
 /** 用真实的 sfly CLI 构建仓库里的一个测试节点包（`project` 相对仓库根目录，`file` 是构建出的归档名），经 HTTP API 发布。 */
 export async function publishTestPackage(
-	cp: TestControlPlane,
+	cp: Pick<TestControlPlane, "fetch">,
 	project: string,
 	file: string,
 ): Promise<void> {
@@ -73,7 +73,10 @@ export async function buildStubPackage(
 }
 
 /** 经 HTTP API 发布一个节点包归档。 */
-export async function publishArchive(cp: TestControlPlane, archive: Uint8Array): Promise<void> {
+export async function publishArchive(
+	cp: Pick<TestControlPlane, "fetch">,
+	archive: Uint8Array,
+): Promise<void> {
 	const res = await cp.fetch("/packages", {
 		method: "POST",
 		headers: { "content-type": "application/octet-stream" },

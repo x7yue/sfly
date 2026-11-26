@@ -65,9 +65,10 @@ impl SharedVenv {
 
     /// 在共享 venv 中运行 Python 的命令：
     /// `-I`（隔离模式，忽略 PYTHON* 环境变量和用户 site-packages），
-    /// 去掉 Agent 环境中的 PYTHON* 变量，`VIRTUAL_ENV` 指向共享 venv，`PATH` 以 venv 的 bin 目录开头。
+    /// 去掉 Agent 环境中的 PYTHON* 变量；Agent 凭据也不在里面（经 [`crate::subprocess::command`] 起），
+    /// `VIRTUAL_ENV` 指向共享 venv，`PATH` 以 venv 的 bin 目录开头。
     pub fn python_command(&self) -> Command {
-        let mut command = Command::new(self.python());
+        let mut command = crate::subprocess::command(self.python());
         command.arg("-I");
         for (key, _) in std::env::vars_os() {
             if key

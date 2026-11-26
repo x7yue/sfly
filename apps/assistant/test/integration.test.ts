@@ -191,6 +191,52 @@ describe("真的 pi：只加载给的扩展，系统提示里只有给的东西"
 	}, 120_000);
 });
 
+describe("真的 pi：上游的错误原文不外传（#640）", () => {
+	// 上游返回的错误体里可能有供应商的名字、账户、请求 ID、内部主机名：事件（控制面存下、页面显示的就是它们）里
+	// 只有助手服务自己的说法，原文只在助手服务的日志里。
+	const MARKER = "UPSTREAM-ERROR-BODY-7f3c provider-acme account-42 host-internal-9";
+	const body = JSON.stringify({ error: { message: MARKER, type: "x", code: "y" } });
+
+	it("上游出错一次、重试后成了：重试提示是自己的说法，带类别和状态码；原文在日志里", async () => {
+		const h = await Harness.start();
+		try {
+			h.model.failures = [{ status: 502, body }];
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "说一句话" });
+			expect(await h.turnEnd(id, 1, 60_000)).toMatchObject({ outcome: "completed" });
+			const events = h.events.of(id).map((r) => r.event);
+			expect(events.find((e) => e.type === "notice" && e.kind === "retry")).toMatchObject({
+				message: "上游出错（上游返回 502），正在重试第 1 次",
+				error_class: "upstream",
+			});
+			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
+			expect(h.events.lines.join("\n")).not.toContain("provider-acme");
+			expect(h.logs.join("\n")).toContain(MARKER);
+		} finally {
+			await h.close();
+		}
+	}, 90_000);
+
+	it("上游拒绝了密钥：model_unavailable，原因是自己的说法、不带「模型不可用」前缀；原文在日志里", async () => {
+		const h = await Harness.start();
+		try {
+			h.model.failures = Array.from({ length: 5 }, () => ({ status: 401, body }));
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "说一句话" });
+			const end = await h.turnEnd(id, 1, 60_000);
+			expect(end).toMatchObject({
+				outcome: "model_unavailable",
+				error_class: "auth",
+				reason: "上游拒绝了密钥（上游返回 401）",
+			});
+			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
+			expect(h.logs.join("\n")).toContain(MARKER);
+		} finally {
+			await h.close();
+		}
+	}, 90_000);
+});
+
 describe("真的 pi：工作台不回话、输出很大", () => {
 	it("命令进行中工作台不回话（之后连 describe 也不回）：这一轮在期限内以「工作台连不上」失败，不等到用时上限", async () => {
 		const h = await Harness.start();
@@ -208,6 +254,9 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			expect(end.reason).toContain("工作台连不上");
 			// 原因是助手服务自己的说法（工具结果里那一行可能是命令的输出），写明是它又探了一次。
 			expect(end.reason).toContain("助手服务又探了一次");
+			// 写工作台的名字，不写它的地址（#640）；工具结果里也没有地址。
+			expect(end.reason).toContain("fake-workbench");
+			expect(h.events.lines.join("\n")).not.toContain(h.workbench.address);
 			// 命令的超时 1 秒 + 余量 20 秒 + 探测 5 秒，远小于 20 分钟的上限。
 			expect(Date.now() - started).toBeLessThan(40_000);
 		} finally {
@@ -257,7 +306,7 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 				// 页面靠它写明只显示了一部分。
 				truncated: true,
 			});
-			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
+			const raw = await h.rawSettled(id);
 			expect(raw).not.toContain('"tool_execution_update"');
 			expect(raw.length).toBeLessThan(2 * 1024 * 1024);
 			const tmp = join(h.root, "tmp");
@@ -341,6 +390,8 @@ describe("真的 pi：工作台返回的内容带不偏扩展（要求 2）", ()
 			const other = crypto.randomUUID();
 			await h.prompt(other, { text: "你好" });
 			await h.turnEnd(other);
+			// events.jsonl 是异步写的，turn_end 不等它落盘（#684）：等它写完再拍「之前」的快照，不然它自己会在两张快照之间变。
+			await h.rawSettled(other);
 			const id = crypto.randomUUID();
 			const targets = [
 				join(h.dataDir, "sessions", other, "events.jsonl"),
@@ -434,19 +485,23 @@ describe("真的 pi：一轮进行中被结束，工作台上的命令不留下�
 		expect(empty).toEqual([]);
 	};
 
-	it("停止（先关 stdin，再 SIGTERM）：命令结束之前在跑、之后不在了；下一轮发给模型的请求里没有空的助手消息", async () => {
+	it("停止（先 clear_queue、abort，pi 停下，进程留着）：命令结束之前在跑、之后不在了；下一轮用同一个 pi 进程，发给模型的请求里没有空的助手消息", async () => {
 		const h = await Harness.start();
 		try {
 			longCommand(h, "剧本：长命令");
 			const id = crypto.randomUUID();
 			await h.prompt(id, { text: "剧本：长命令" });
 			const pid = await running(h);
+			const pi = h.sessions.pid(id);
+			expect(pi).toBeDefined();
 			expect((await h.abort(id)).status).toBe(202);
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "stopped" });
 			await eventually(() => expect(alive(pid)).toBe(false), 10_000);
+			expect(h.sessions.pid(id)).toBe(pi);
 			const before = h.model.requests.length;
 			await h.prompt(id, { turn: 2, text: "接着说" });
 			expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+			expect(h.sessions.pid(id)).toBe(pi);
 			expectResumed(h, "剧本：长命令", before);
 		} finally {
 			await h.close();
@@ -480,7 +535,7 @@ describe("真的 pi：一轮进行中被结束，工作台上的命令不留下�
 	}, 120_000);
 });
 
-describe("真的 pi：保密环境变量不出助手服务", () => {
+describe("真的 pi：secret 环境变量不出助手服务", () => {
 	it("工作台上的命令打印出 secret_env 的值：发出的所有事件、pi 原始事件、助手服务的日志里都没有它", async () => {
 		const h = await Harness.start();
 		try {
@@ -501,7 +556,7 @@ describe("真的 pi：保密环境变量不出助手服务", () => {
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed" });
 			// 命令确实拿到了它（在工作台上），模型也看到了（工具结果原样交给模型）。
 			expect(h.workbench.runs.some((r) => r.env.SFLY_API_TOKEN === value)).toBe(true);
-			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
+			const raw = await h.rawSettled(id);
 			// 扩展在源头打码：pi 自己的会话文件里也是打过码的。
 			const sessionDir = join(h.dataDir, "sessions", id, "pi-session");
 			const piSession = readdirSync(sessionDir)

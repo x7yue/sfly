@@ -50,6 +50,9 @@ export const SCOPE_TABLE = {
 	task: { write: null, humanOnly: false },
 	package: { write: "publish", humanOnly: false },
 	agent: { write: "manage", humanOnly: false },
+	// 我的开发 Agent（ADR 0029「凭据」）：编辑者在自己的开发机上注册；只认有用户的人的凭据（登录、个人令牌）：
+	// 开发 Agent 的凭据记在这个用户名下，名字里带着他的登录名，没有用户的凭据（项目令牌）和代用户干活的会话令牌不能替他注册。
+	dev_agent: { write: "edit", humanOnly: true },
 	feishu_bot: { write: "manage", humanOnly: false },
 	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）；
 	// 而且只有人能做（ADR 0032）：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。

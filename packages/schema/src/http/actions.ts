@@ -9,8 +9,10 @@ import { endpoint, stream, Timestamp } from "./contract.js";
  */
 
 /**
- * 动作的上限（规格 #345）：SDK 先执行（sdk/python/src/sfly/actions.py 里的同名常量），控制面按同一组兜底，
- * 界面上的说明和接口的注释写的也是这几个数。和 SDK 一致由 packages/schema/test/action-limits.test.ts 检查。
+ * 动作的上限（规格 #345）：名称、字段值、失败原因的长度由控制面执行：先把 secret 值打码、再截到上限（SDK 不知道哪些值是 secret，
+ * 在源头截断会把一个跨在截断处的 secret 值切成两半，#583），个数的上限 SDK 和控制面各执行一遍。
+ * sdk/python/src/sfly/actions.py 里有同名的常量，界面上的说明和接口的注释写的也是这几个数。
+ * 和 SDK 一致由 packages/schema/test/action-limits.test.ts 检查。
  */
 export const ACTION_LIMITS = {
 	/** 名称最长的字符数（控制面兜底时字段的键也按它截断）。 */
@@ -19,6 +21,12 @@ export const ACTION_LIMITS = {
 	valueChars: 256,
 	/** 失败原因最长的字符数。 */
 	reasonChars: 4096,
+	/**
+	 * SDK 发出的名称、字段值、失败原因最多比各自的上限多这么多个字符（更长的才由 SDK 截断，是传输的保护）：
+	 * 控制面按原文的位置截到上限（先打码），所以每种写法（原文、JSON 转义等，转义的写法可以比值本身长）的长度不超过它的 secret 值，
+	 * 不论落在名称、字段的键和值、失败原因的哪里都能整个认出来；某种写法比它还长的值，跨在传输上限处时可能留下一段开头。
+	 */
+	transportMargin: 4096,
 	/** 一个动作或标记最多的字段数（开始时给的和 `note()` 补充的合计）。 */
 	fields: 8,
 	/** 每种名称最多记录的明细个数。 */

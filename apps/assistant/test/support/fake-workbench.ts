@@ -39,6 +39,8 @@ export class FakeWorkbench {
 	 */
 	hang: { marker: string; thenSilent: boolean } | undefined;
 	silent = false;
+	/** 命令、读、写、查文件属性都回这个状态（`describe` 照常回：工作台连得上）。 */
+	fail: { code: Code; message: string } | undefined;
 	/** 照真的 Agent 的时序：命令超时之后先等这么久（SIGTERM 的宽限 + 等管道）才回复超时。 */
 	timeoutReplyDelayMs = 0;
 
@@ -68,6 +70,11 @@ export class FakeWorkbench {
 		return self;
 	}
 
+	/** 此刻开着的 HTTP/2 连接数（助手服务用完关掉之后回到 0）。 */
+	get openConnections(): number {
+		return this.sessions.size;
+	}
+
 	async close(): Promise<void> {
 		const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
 		for (const session of this.sessions) session.destroy();
@@ -94,6 +101,7 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 			const wb = workbench();
 			const env = Object.fromEntries(Object.entries(req.env));
 			wb.runs.push({ argv: [...req.argv], cwd: req.cwd, env, timeoutMs: Number(req.timeoutMs) });
+			failIfAsked(wb);
 			if (wb.silent) await never(ctx.signal);
 			if (wb.hang && req.argv.join(" ").includes(wb.hang.marker)) {
 				if (wb.hang.thenSilent) wb.silent = true;
@@ -160,6 +168,7 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 		async *read(req, ctx) {
 			const wb = workbench();
 			wb.reads.push(req.path);
+			failIfAsked(wb);
 			if (wb.silent) await never(ctx.signal);
 			if (wb.hostile) {
 				yield { data: Buffer.from(wb.hostile.content) };
@@ -177,6 +186,7 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 	});
 	router.service(AgentFileWrite, {
 		async write(requests, ctx) {
+			failIfAsked(workbench());
 			if (workbench().silent) await never(ctx.signal);
 			let path = "";
 			const parts: Buffer[] = [];
@@ -199,6 +209,7 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 		async *list() {},
 		async stat(req, ctx) {
 			const wb = workbench();
+			failIfAsked(wb);
 			if (wb.silent) await never(ctx.signal);
 			if (wb.hostile) return { file: { path: req.path, size: 1n } };
 			try {
@@ -209,6 +220,10 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 			}
 		},
 	});
+}
+
+function failIfAsked(wb: FakeWorkbench): void {
+	if (wb.fail) throw new ConnectError(wb.fail.message, wb.fail.code);
 }
 
 function output(data: Buffer, stream: OutputStream = OutputStream.STDOUT) {
@@ -230,6 +245,37 @@ export async function silentPort(): Promise<{ address: string; close: () => Prom
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		},
 	};
+}
+
+/** 一个接了连接就重置的端口（RST）：返回地址和关掉它的函数。 */
+export async function resettingPort(): Promise<{ address: string; close: () => Promise<void> }> {
+	const server = createServer((socket) => socket.resetAndDestroy());
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	return {
+		address: `127.0.0.1:${(server.address() as AddressInfo).port}`,
+		close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+	};
+}
+
+/**
+ * 建连接时报的错（{@link AgentOptions.http2} 的 `createConnection`）：真的 TCP 套接字，在查地址这一步报给定的错，
+ * 之后和真的连不上走同一条路。错误照 Node 的系统错误的样子（{@link systemError}），消息里有对端和本端的 IP 和端口
+ * （macOS 上主机不可达就是这样：`connect EHOSTUNREACH 0.0.0.1:50052 - Local (192.168.31.169:53118)`）。
+ * 主机不可达、网络不可达在各个系统上能造出来的地址不一样，测试里在建连接这一步造。
+ */
+export function failingConnection(error: Error): () => Socket {
+	return () =>
+		connect({
+			host: "workbench.invalid",
+			port: 50052,
+			lookup: (_host, _options, callback) => setTimeout(() => callback(error, ""), 5),
+		});
+}
+
+/** Node 的系统错误：`<调用> <错误码> <对端>[ - Local (<本端>)]`。 */
+export function systemError(code: string, remote: string, local?: string): Error {
+	const message = `connect ${code} ${remote}${local ? ` - Local (${local})` : ""}`;
+	return Object.assign(new Error(message), { code, syscall: "connect" });
 }
 
 /**

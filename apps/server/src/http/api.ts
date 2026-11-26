@@ -1,4 +1,5 @@
 import {
+	AGENT_NAME_MAX_LENGTH,
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
 	httpContract,
@@ -11,6 +12,7 @@ import Fastify, {
 } from "fastify";
 import type { TaskActions } from "../actions/task-actions.js";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
+import type { AgentCredentialService } from "../agents/agent-credentials.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import { AccessGuard } from "../auth/access-guard.js";
@@ -118,6 +120,8 @@ export interface HttpApiDeps {
 	accounts: AccountService;
 	/** 个人令牌和项目令牌（src/auth/tokens.ts）。 */
 	tokens: TokenService;
+	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts，#492）。 */
+	agentCredentials: AgentCredentialService;
 	/** 登录的空闲期限（毫秒）；默认 12 小时，要和 `accounts` 里的一致（下发和续期 Cookie 用它）。 */
 	loginIdleMs?: number;
 	/** 哪些来源算同源（登录 Cookie 的跨站检查，src/auth/cross-site.ts）。 */
@@ -138,6 +142,20 @@ export interface HttpApiDeps {
 	/** 按运行合并读取日志时一次请求最多扫描的字节数（src/logs/run-log-pages.ts）。 */
 	logScanBytes?: number;
 }
+
+/** 流式下载的路由在读文件之前为这个文件设好的头：出错时要去掉（见错误处理）。 */
+/**
+ * 路径参数（解码之后，UTF-16 码元数）的长度上限：Agent 名称最长 {@link AGENT_NAME_MAX_LENGTH} 个字符，补充平面的字符
+ * （emoji）一个算两个码元，所以是它的两倍；Fastify 默认的 100 放不下 64 个 emoji 的名称。
+ */
+const MAX_PATH_PARAM_LENGTH = AGENT_NAME_MAX_LENGTH * 2;
+
+const FILE_RESPONSE_HEADERS = [
+	"content-type",
+	"content-length",
+	"content-disposition",
+	"x-sfly-sha256",
+] as const;
 
 const errorCode = (status: number): string =>
 	({
@@ -180,6 +198,7 @@ export function buildHttpApi({
 	corsOrigins,
 	accounts,
 	tokens,
+	agentCredentials,
 	loginIdleMs,
 	origins,
 	publicHttps,
@@ -208,6 +227,10 @@ export function buildHttpApi({
 					},
 		rewriteUrl: (req) => stripApiPrefix(req.url ?? "/"),
 		trustProxy: trustProxy ?? false,
+		// 路径参数的长度上限，比的是**解码之后**的长度（UTF-16 码元数，补充平面的字符算两个）：默认的 100 放不下 64 个补充平面的
+		// 字符（128 个码元）的 Agent 名称，而 `/agents/:name/…`（签发凭据、停用……）用名称做路径参数；再长的在进访问检查之前
+		// 就是 414。
+		routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
 	});
 	// app.close() 只在开始时关掉当时空闲的 keep-alive 连接。当时还没发完的响应（例如产物下载）发完后，连接留在
 	// keep-alive 里，要等客户端或服务端的 keep-alive 超时（约 70 秒）才断开，app.close() 一直等它。
@@ -233,6 +256,9 @@ export function buildHttpApi({
 	app.addHook("onSend", async (_request, reply) => {
 		reply.header(CONTROL_PLANE_TIME_HEADER, clock.now().toISOString());
 		reply.header(CONTROL_PLANE_VERSION_HEADER, publicConfig.version);
+		// 出错的响应一律不缓存：路由在出错之前可能已经为文件设了缓存头（前端带哈希的静态文件读不了时，路由已经设了一年的 `immutable`），
+		// 浏览器和代理不能把一次 500 当成那个文件缓存下来。
+		if (reply.statusCode >= 400) reply.header("cache-control", "no-store");
 	});
 	if (webApp) registerWebApp(app, webApp);
 	registerCors(app, { origins: corsOrigins });
@@ -273,6 +299,12 @@ export function buildHttpApi({
 		sendError(reply, 404, "not_found", `route ${request.method} ${request.url} not found`),
 	);
 	app.setErrorHandler((error: FastifyError, request, reply) => {
+		// 路由在出错之前为文件设好的头不属于错误响应（流式下载时文件打开或读到一半出错：路由已经按那个文件设了头）：内容类型、长度、
+		// 下载文件名，和节点包归档的哈希（`x-sfly-sha256`，那个读不出来的文件的哈希）。错误是 JSON，不是那个文件；内容类型留着的话错误体
+		// 发不出去（不是 JSON 时 Fastify 拒绝序列化），退成 Fastify 自己的错误体。**只去这几个**：跨域头、`vary`、`set-cookie`（登录续期）
+		// 这些和文件无关、错误响应也要带的头不动（`test/error-response-headers.test.ts` 钉着边界）。缓存头由 `onSend` 对所有出错的响应统一设成
+		// `no-store`。
+		for (const name of FILE_RESPONSE_HEADERS) reply.removeHeader(name);
 		// 同时验证密码的请求太多（src/auth/password-gate.ts）：没有去算哈希，让对方稍后再试。
 		if (error instanceof PasswordGateBusy) {
 			reply.header("retry-after", Math.max(1, Math.ceil(error.retryAfterMs / 1000)));
@@ -310,7 +342,13 @@ export function buildHttpApi({
 
 	registerAccountRoutes(app, { accounts, publicHttps, publicUrl });
 	registerTokenRoutes(app, { tokens, accounts });
-	registerAgentRoutes(app, { hub, engine, orchestrations });
+	registerAgentRoutes(app, {
+		hub,
+		engine,
+		orchestrations,
+		credentials: agentCredentials,
+		accounts,
+	});
 	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations });
@@ -334,6 +372,7 @@ export function buildHttpApi({
 		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),
 		sse,
 		isPurged: (runId) => retention.isPurged(runId),
+		isPurgedAfterWait: (runId) => retention.isPurgedAfterWait(runId),
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerActionRoutes(app, { actions, sse });

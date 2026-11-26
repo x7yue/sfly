@@ -25,6 +25,9 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 const ADMIN = { loginName: "root", password: "admin-password-1" };
 const JSON_HEADERS = { "content-type": "application/json" };
 
+/** 「断开之后不再占着闸」那两条比的是墙上的时间：一次不满足时最多重来这么多次（见 gateReleasedAfterAbort）。 */
+const GATE_ATTEMPTS = 5;
+
 let cp: TestControlPlane | undefined;
 afterEach(async () => {
 	await cp?.close();
@@ -327,67 +330,73 @@ describe("密码验证的并发闸：满过一次之后、客户端断开之后"
 		expect(computed).toBe(1);
 	});
 
-	it("排队的改密码请求（验证旧密码）客户端断开之后也不再占着闸：断开前后正常登录要等的时间差一个数量级", async () => {
-		cp = await startTestControlPlane({
-			initialAdmin: ADMIN,
-			scrypt: { logN: 15, r: 8, p: 1 },
-			passwordGate: { concurrency: 1, maxQueue: 16 },
-			loginThrottle: { freeAttempts: 1_000_000, addressFreeAttempts: 1_000_000 },
-		});
-		const c = cp;
-		const good = { login_name: ADMIN.loginName, password: ADMIN.password };
-		const cookie = cookieOf(await post(c, "/auth/login", good));
-		await timed(c, good);
-		const quiet = Math.min((await timed(c, good)).ms, (await timed(c, good)).ms);
+	/**
+	 * 排着队的请求客户端断开之后不再占着闸：断开之后马上来一个正常的登录，只用等已经在算的那一个算完、再算自己的（约 2 倍
+	 * 没有排队时的耗时），没有这个修复时要等 12 个都算完（约 13 倍）。比的是墙上的时间，机器忙（负载 20 以上）时 CPU 的抢占会把
+	 * 一次的测量拉长（#652：偶发失败过）：一次不满足就换一个全新的控制面重量（不能在原来的上面重来：没有修复时上一次留下的
+	 * 排队还没算完，会同时拉长这一次没有排队时的耗时和断开之后的耗时，把比值拉回来），**任何一次满足就算过**。没有这个修复时每一次都在 13 倍上下，
+	 * 没有一次会满足；有修复时只有连着几次都被拉长才会失败。
+	 */
+	async function gateReleasedAfterAbort(
+		flood: (c: TestControlPlane, cookie: string) => Array<{ abort(): void; done: Promise<void> }>,
+	): Promise<void> {
+		const attempts: string[] = [];
+		for (let attempt = 1; attempt <= GATE_ATTEMPTS; attempt++) {
+			cp = await startTestControlPlane({
+				initialAdmin: ADMIN,
+				scrypt: { logN: 15, r: 8, p: 1 },
+				passwordGate: { concurrency: 1, maxQueue: 16 },
+				loginThrottle: { freeAttempts: 1_000_000, addressFreeAttempts: 1_000_000 },
+			});
+			const c = cp;
+			const good = { login_name: ADMIN.loginName, password: ADMIN.password };
+			const cookie = cookieOf(await post(c, "/auth/login", good));
+			await timed(c, good);
+			const quiet = Math.min((await timed(c, good)).ms, (await timed(c, good)).ms);
 
-		// 12 个改密码请求（旧密码是错的）进闸，30 毫秒后客户端全部断开。
-		const sockets = Array.from({ length: 12 }, () =>
-			startRequest(
-				c,
-				"/auth/password",
-				{ old_password: "wrong-old-password", new_password: "new-password-123" },
-				cookie,
+			// 12 个请求进闸（1 个在算，其余排队），30 毫秒后客户端全部断开，马上来一个正常的登录。
+			const sockets = flood(c, cookie);
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			for (const socket of sockets) socket.abort();
+			const after = await timed(c, good);
+			expect(after.status).toBe(200);
+			await Promise.allSettled(sockets.map((socket) => socket.done));
+			await cp.close();
+			cp = undefined;
+
+			attempts.push(
+				`第 ${attempt} 次：断开之后正常登录用了 ${Math.round(after.ms)} 毫秒（没有排队时 ${Math.round(quiet)} 毫秒）`,
+			);
+			if (after.ms < quiet * 5 + 150) {
+				console.log(attempts.join("；"));
+				return;
+			}
+		}
+		throw new Error(
+			`每一次断开之后正常登录都等了很久（闸还被断开的请求占着：没有修复时要等 12 个都算完，约 13 倍）：${attempts.join("；")}`,
+		);
+	}
+
+	it("排队的改密码请求（验证旧密码）客户端断开之后也不再占着闸：断开前后正常登录要等的时间差一个数量级", async () => {
+		await gateReleasedAfterAbort((c, cookie) =>
+			Array.from({ length: 12 }, () =>
+				startRequest(
+					c,
+					"/auth/password",
+					{ old_password: "wrong-old-password", new_password: "new-password-123" },
+					cookie,
+				),
 			),
 		);
-		await new Promise((resolve) => setTimeout(resolve, 30));
-		for (const socket of sockets) socket.abort();
-		const after = await timed(c, good);
-		expect(after.status).toBe(200);
-		console.log(
-			`断开之后正常登录用了 ${Math.round(after.ms)} 毫秒（没有排队时 ${Math.round(quiet)} 毫秒）`,
-		);
-		expect(after.ms, `没有排队时 ${Math.round(quiet)} 毫秒`).toBeLessThan(quiet * 5 + 150);
-		await Promise.allSettled(sockets.map((socket) => socket.done));
-	}, 60_000);
+	}, 120_000);
 
 	it("排队的请求客户端断开之后不再占着闸：断开前后正常登录要等的时间差一个数量级（不断开要等完所有排着的）", async () => {
-		cp = await startTestControlPlane({
-			initialAdmin: ADMIN,
-			scrypt: { logN: 15, r: 8, p: 1 },
-			passwordGate: { concurrency: 1, maxQueue: 16 },
-			loginThrottle: { freeAttempts: 1_000_000, addressFreeAttempts: 1_000_000 },
-		});
-		const c = cp;
-		const good = { login_name: ADMIN.loginName, password: ADMIN.password };
-		await timed(c, good);
-		const quiet = Math.min((await timed(c, good)).ms, (await timed(c, good)).ms);
-
-		// 12 个请求进闸（1 个在算，其余排队），30 毫秒后客户端全部断开。
-		const sockets = Array.from({ length: 12 }, (_, i) =>
-			startLogin(c, { login_name: `ghost${i}`, password: "wrong-password-0" }),
+		await gateReleasedAfterAbort((c) =>
+			Array.from({ length: 12 }, (_, i) =>
+				startLogin(c, { login_name: `ghost${i}`, password: "wrong-password-0" }),
+			),
 		);
-		await new Promise((resolve) => setTimeout(resolve, 30));
-		for (const socket of sockets) socket.abort();
-		// 断开之后马上来一个正常的登录：它只用等已经在算的那一个算完，再算自己的。
-		const after = await timed(c, good);
-		expect(after.status).toBe(200);
-		console.log(
-			`断开之后正常登录用了 ${Math.round(after.ms)} 毫秒（没有排队时 ${Math.round(quiet)} 毫秒）`,
-		);
-		// 没有这个修复时要等 12 个都算完（约 13 倍）；这里留足余量。
-		expect(after.ms, `没有排队时 ${Math.round(quiet)} 毫秒`).toBeLessThan(quiet * 5 + 150);
-		await Promise.allSettled(sockets.map((socket) => socket.done));
-	}, 60_000);
+	}, 120_000);
 });
 
 /** 发一个 POST 请求但不等响应：可以随时断开（模拟发了就走的客户端）；`cookie` 是登录 Cookie（可选）。 */

@@ -1,13 +1,13 @@
 import { SECRET_MASK } from "@sfly/schema";
 
 /**
- * 保密环境变量（`PromptCommandBody.secret_env`）的值按值打码（#540 的要求）：助手服务发出的每一条事件、写下的
+ * secret 环境变量（`PromptCommandBody.secret_env`）的值按值打码（#540 的要求）：助手服务发出的每一条事件、写下的
  * pi 原始事件（`events.jsonl`）和自己的日志，在出去之前过一遍。
  *
  * 规则（和控制面给 secret 参数打码的 `apps/server/src/logs/secrets.ts` 一致）：
  * - 认的写法：原文；放进 JSON 之后的转义写法（引号、反斜杠、换行转义）；非 ASCII 字符写成 `\uXXXX` 的写法；
  *   值有几行时，每一行（去掉两头空白后不少于 4 个字符的）单独也认（值被换行拆开、分几次打出来）。
- * - 值本身再短也打码（使用者明确说了它保密）；空串不算。
+ * - 值本身再短也打码（使用者明确说了它是 secret）；空串不算。
  * - 替换成 {@link SECRET_MASK}；长的写法先换，免得短的写法把长的拆坏。
  * - 一个值跨两条增量（`assistant_delta`、`tool_output`）时：每条流留下末尾「最长的写法减一个字符」不发，
  *   和下一段拼起来再认（{@link StreamRedactor}）；这条流结束时（这条消息完整了、这个工具结束了）发出剩下的。
@@ -204,4 +204,30 @@ function walk(value: unknown, fn: (s: string) => string): unknown {
 		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, fn)]));
 	}
 	return value;
+}
+
+/** 写进助手服务日志的一段原文（上游的错误、工作台连接上的报错）最多这么多个字符（UTF-16 码元）。 */
+export const LOG_TEXT_LIMIT = 500;
+
+/**
+ * 不靠值、靠形状认出的凭据：`Authorization` 头（含 JSON 里的写法）、`Bearer` 后面的串、`x-api-key` 一类的头、
+ * 地址里的用户名和密码。上游的错误体可能把请求头、带凭据的地址回显出来。
+ */
+const CREDENTIAL_SHAPES: Array<[RegExp, string]> = [
+	[/(authorization["']?\s*[:=]\s*["']?)[^"'\r\n,}]+/gi, `$1${SECRET_MASK}`],
+	[/((?:x-)?api[-_]?key["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, `$1${SECRET_MASK}`],
+	[/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${SECRET_MASK}`],
+	[/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi, `$1${SECRET_MASK}@`],
+];
+
+/**
+ * 一段原文写进助手服务的日志之前：按值打码（每个 `redactor`），再按形状打码，最后截到 {@link LOG_TEXT_LIMIT}
+ * （先打码再截：截断不会把一个值切成认不出的半截）。
+ */
+export function forLog(text: string, redactors: Iterable<Redactor>): string {
+	let out = text;
+	for (const redactor of redactors) out = redactor.redact(out);
+	for (const [shape, replacement] of CREDENTIAL_SHAPES) out = out.replace(shape, replacement);
+	if (out.length <= LOG_TEXT_LIMIT) return out;
+	return `${out.slice(0, LOG_TEXT_LIMIT)}…（后面截掉了 ${out.length - LOG_TEXT_LIMIT} 个字符）`;
 }

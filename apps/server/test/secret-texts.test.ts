@@ -2,7 +2,7 @@
 // 读取运行（运行视图、列表、事件流）、写日志和动作、触发时的报错用的都是这一份（logs/secrets.ts 的 SecretSet），
 // 对象和数组、JSON 转义的写法、短叶子的取舍只在那里处理，这里直接测它。规则的编号见 docs/SEMANTICS.md §2.1。
 // 值都是明显的假值。
-import { ACTION_LIMITS } from "@sfly/schema";
+import { ACTION_LIMITS, TOKEN_VALUE_PATTERN } from "@sfly/schema";
 import { describe, expect, it, vi } from "vitest";
 import {
 	actionField,
@@ -17,6 +17,7 @@ import {
 	MAX_AUTOMATON_CHARS,
 	MAX_SPANS,
 	maskedByAutomaton,
+	mergeSpans,
 	scanSpans,
 	scanSteps,
 } from "../src/logs/aho-corasick.js";
@@ -29,6 +30,7 @@ import {
 	maskParams,
 	maskRecord,
 	maskSecrets,
+	maskTokens,
 	maskValue,
 	NO_SECRETS,
 	OVERSIZE_NOTICE,
@@ -1689,7 +1691,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 	const word = (n: number) =>
 		Array.from({ length: n }, () => alphabet[random(alphabet.length)]).join("");
 	const rep = (c: string, n: number) => c.repeat(n);
-	/** 几千个键的保密对象：一个值 20 个字符（假值）；`prefix` 是共同的开头（空串是互不相干的随机串）。 */
+	/** 几千个键的 secret 对象：一个值 20 个字符（假值）；`prefix` 是共同的开头（空串是互不相干的随机串）。 */
 	const bigObject = (keys: number, prefix: string) =>
 		Object.fromEntries(
 			Array.from({ length: keys }, (_, i) => [`key_${i}`, `${prefix}${word(20)}`]),
@@ -1854,7 +1856,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 		for (const [kind, prefix] of secretKinds) {
 			const object = bigObject(5000, prefix);
 
-			it(`${kind}的 5000 个键的保密对象：不超过总长上限；日志一页 300 行各 4000 个字符、一页 1000 行各 2000 个字符、一页 1000 行各 4000 个字符，一行不盖`, () => {
+			it(`${kind}的 5000 个键的 secret 对象：不超过总长上限；日志一页 300 行各 4000 个字符、一页 1000 行各 2000 个字符、一页 1000 行各 4000 个字符，一行不盖`, () => {
 				const set = secretSetOf([object]);
 				expect(set.oversize).toBe(false);
 				expect(set.texts.reduce((n, t) => n + t.length, 0)).toBeLessThanOrEqual(
@@ -1875,7 +1877,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 				}
 			});
 
-			it(`${kind}的 5000 个键的保密对象：动作一页 500 条、失败原因各 4000 个字符（名称、字段也都在），一条不盖`, () => {
+			it(`${kind}的 5000 个键的 secret 对象：动作一页 500 条、失败原因各 4000 个字符（名称、字段也都在），一条不盖`, () => {
 				const view = secretSetOf([object]).withBudget();
 				const reason = word(4000);
 				let masked = 0;
@@ -1886,7 +1888,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 				expect(masked).toBe(0);
 			});
 
-			it(`${kind}的 5000 个键的保密对象：一个运行 200 个任务、每个输出一段 5000 个字符的报告，一个不盖；24 个任务各输出 1 MiB 也一个不盖`, () => {
+			it(`${kind}的 5000 个键的 secret 对象：一个运行 200 个任务、每个输出一段 5000 个字符的报告，一个不盖；24 个任务各输出 1 MiB 也一个不盖`, () => {
 				const view = secretSetOf([object]).withBudget();
 				let masked = 0;
 				for (let i = 0; i < 200; i++) {
@@ -1968,7 +1970,7 @@ describe("预算只取决于完整的出现：部分匹配不改变输出，也�
 		Array.from({ length: n }, () => alphabet[random(alphabet.length)]).join("");
 	const rep = (c: string, n: number) => c.repeat(n);
 
-	/** 两组形状、长度都不同的保密值（都是假值）：一组有很长的值和周期性的值，一组都是随机串。 */
+	/** 两组形状、长度都不同的 secret 值（都是假值）：一组有很长的值和周期性的值，一组都是随机串。 */
 	const first = [
 		`FAKE-${word(30)}`,
 		rep("a", 1500) + word(10),
@@ -2041,5 +2043,365 @@ describe("预算只取决于完整的出现：部分匹配不改变输出，也�
 			);
 			expect(budget.masks).toBe(100 - 3);
 		}
+	});
+});
+
+describe("secret 值和令牌原值一次打码：两种出现都在原文上找，合成一组，一次换掉，不分先后（#631）", () => {
+	const TOKEN = "sfly_pat_0123456789abcdef0123456789abcdef";
+	const TOKEN_B = "sfly_prj_fedcba9876543210fedcba9876543210";
+	/** 独立的参照：secret 值每个写法的每个出现位置（indexOf）加上令牌的出现位置（正则），重叠的合成一段，每段一个掩码。 */
+	const unionMask = (text: string, values: readonly string[]): string => {
+		const spans: Array<[number, number]> = [];
+		for (const v of values) {
+			for (let at = text.indexOf(v); at >= 0; at = text.indexOf(v, at + 1))
+				spans.push([at, at + v.length]);
+		}
+		for (const m of text.matchAll(new RegExp(TOKEN_VALUE_PATTERN.source, "g")))
+			spans.push([m.index, m.index + m[0].length]);
+		spans.sort((x, y) => x[0] - y[0] || y[1] - x[1]);
+		let out = "";
+		let cursor = 0;
+		let current: [number, number] | undefined;
+		for (const span of spans) {
+			if (current && span[0] < current[1]) {
+				current[1] = Math.max(current[1], span[1]);
+				continue;
+			}
+			if (current) {
+				out += text.slice(cursor, current[0]) + MASK;
+				cursor = current[1];
+			}
+			current = [span[0], span[1]];
+		}
+		return current ? out + text.slice(cursor, current[0]) + MASK + text.slice(current[1]) : text;
+	};
+
+	it("secret 值落在令牌里面：整个令牌和那个值是一段、一个掩码（先换值的话令牌认不出，前缀和一半留着）", () => {
+		const set = setOf("hunter2-secret-xyz");
+		const text = `x sfly_pat_aaaaaaaa${"hunter2-secret-xyz"}bbbbbbbb y`;
+		expect(set.mask(text)).toBe(`x ${MASK} y`);
+		expect(set.mask(text)).toBe(unionMask(text, set.texts));
+	});
+
+	it("令牌落在 secret 值里面（值本身带着一个令牌）：一段、一个掩码", () => {
+		const value = `Authorization: Bearer ${TOKEN} end`;
+		const set = setOf(value);
+		expect(set.mask(`log: ${value}.`)).toBe(`log: ${MASK}.`);
+	});
+
+	it("互相重叠（secret 值的开头在令牌里、结尾在令牌外，反过来也一样）：合成一段，并集", () => {
+		const tail = "tail-abcdefgh";
+		const set = setOf(`${tail} and more`, "zz-head and more");
+		// 令牌一直到空格；值从令牌的尾巴开始、延伸到令牌外
+		expect(set.mask(`a sfly_pat_aaaaaaaaaaaaaaaa${tail} and more z`)).toBe(`a ${MASK} z`);
+		// 值的结尾落在令牌的开头：值 `zz-head and more` 的后半段和令牌的前缀不会重叠（空格隔开），各是一段
+		expect(set.mask(`${tail} and more ${TOKEN}`)).toBe(`${MASK} ${MASK}`);
+		const overlap = setOf("key=sfly_pat_0123");
+		const text = `k key=${TOKEN} z`;
+		expect(overlap.mask(text)).toBe(`k ${MASK} z`);
+		expect(overlap.mask(text)).toBe(unionMask(text, overlap.texts));
+	});
+
+	it("相邻但不重叠：各是一个掩码（令牌后面紧跟值、值后面紧跟令牌）", () => {
+		const set = setOf(" secret-after", "key=");
+		expect(set.mask(`${TOKEN} secret-after`)).toBe(`${MASK}${MASK}`);
+		expect(set.mask(`key=${TOKEN}`)).toBe(`${MASK}${MASK}`);
+		// 两边都挨着：三段、三个掩码
+		expect(set.mask(`a key=${TOKEN} secret-after b`)).toBe(`a ${MASK}${MASK}${MASK} b`);
+	});
+
+	it("没有 secret 值时只认令牌；令牌的前缀、后面太短的、别的以 sfly_ 开头的名字不动；多个令牌各是一段", () => {
+		expect(NO_SECRETS.mask(`a ${TOKEN} b ${TOKEN_B} c`)).toBe(`a ${MASK} b ${MASK} c`);
+		expect(maskTokens(`a ${TOKEN} b ${TOKEN_B} c`)).toBe(`a ${MASK} b ${MASK} c`);
+		const set = setOf("hunter2-secret-xyz");
+		for (const text of ["sfly_pat_", "sfly_pat_abc hunter2", "sfly_stub.nodes", "plain"]) {
+			expect(set.mask(text)).toBe(unionMask(text, set.texts));
+			expect(NO_SECRETS.mask(text)).toBe(text);
+		}
+		expect(set.mask("sfly_pat_abc hunter2-secret-xyz")).toBe(`sfly_pat_abc ${MASK}`);
+	});
+
+	it("随机的组合（值、令牌、带尾巴的令牌、值的半截、令牌的前缀、各种分隔）：和独立的参照实现逐字相同；令牌和值各自的出现都不留下", () => {
+		let seed = 631;
+		const random = (n: number): number => {
+			seed = (seed * 1664525 + 1013904223) % 4294967296;
+			return Math.floor((seed / 4294967296) * n);
+		};
+		const pick = <T>(items: readonly T[]): T => items[random(items.length)] as T;
+		const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789_-";
+		const word = (n: number) => Array.from({ length: n }, () => pick([...alphabet])).join("");
+		let touched = 0;
+		let both = 0;
+		for (let round = 0; round < 4000; round++) {
+			const values = Array.from({ length: 1 + random(3) }, () =>
+				pick([
+					`hunter2-${word(6)}`,
+					word(4 + random(10)),
+					`${word(3)}=`,
+					` ${word(5)}`,
+					`tok ${TOKEN}`,
+					`sfly_pat_${word(5 + random(8))}`,
+					`${word(8)} and ${word(8)}`,
+				]),
+			);
+			const set = setOf(...values);
+			const pieces = [
+				...set.texts,
+				...set.texts.map((t) => t.slice(1)),
+				...set.texts.map((t) => t.slice(0, -1)),
+				TOKEN,
+				TOKEN_B,
+				`sfly_pat_${word(16 + random(8))}`,
+				`sfly_prj_${word(4)}`,
+				"sfly_pat_",
+				" ",
+				"=",
+				'"',
+				word(3),
+				word(20),
+			];
+			for (let k = 0; k < 3; k++) {
+				const text = Array.from({ length: 1 + random(8) }, () => pick(pieces)).join("");
+				const got = set.mask(text);
+				const where = `${JSON.stringify(set.texts)} / ${JSON.stringify(text)}`;
+				expect(got, where).toBe(unionMask(text, set.texts));
+				// 令牌原值（完整的）、secret 值（完整的）都不留下：原文里的每个完整的出现，输出里没有它的任何一个完整的样子
+				for (const m of text.matchAll(new RegExp(TOKEN_VALUE_PATTERN.source, "g")))
+					expect(got, where).not.toContain(m[0]);
+				for (const v of set.texts) {
+					if (text.includes(v)) expect(got, where).not.toContain(v);
+				}
+				if (got !== text) touched += 1;
+				if (got !== text && text.includes("sfly_") && set.texts.some((v) => text.includes(v)))
+					both += 1;
+			}
+		}
+		expect(touched).toBeGreaterThan(3000);
+		expect(both).toBeGreaterThan(300);
+	});
+
+	it("段数预算：令牌和 secret 值的段一起计入（合并之后的段数）；超过剩下的整段盖住，预算归零", () => {
+		const set = setOf("hunter2-secret-xyz");
+		const budget = new WorkBudget(3);
+		const view = set.withBudget(budget);
+		// 一个值、两个令牌：3 段
+		expect(view.mask(`a hunter2-secret-xyz b ${TOKEN} c ${TOKEN_B}`)).toBe(
+			`a ${MASK} b ${MASK} c ${MASK}`,
+		);
+		expect(budget.masks).toBe(0);
+		// 用完之后：有令牌的整段盖住，没有任何出现的原样
+		expect(view.mask(`t ${TOKEN}`)).toBe(MASK);
+		expect(view.mask("clean")).toBe("clean");
+		// 值在令牌里面：合并成一段，只记一段
+		const merged = new WorkBudget(1);
+		const text = `sfly_pat_aaaaaaaa${"hunter2-secret-xyz"}bbbbbbbb`;
+		expect(set.withBudget(merged).mask(text)).toBe(MASK);
+		expect(merged.masks).toBe(0);
+		// 两段、预算一段：整段盖住
+		const short = new WorkBudget(1);
+		expect(set.withBudget(short).mask(`a hunter2-secret-xyz b ${TOKEN}`)).toBe(MASK);
+		expect(short.masks).toBe(0);
+	});
+
+	it("wouldChange：有令牌或有完整的值出现就是真，什么都没有是假；不计预算", () => {
+		const budget = new WorkBudget(1);
+		const view = setOf("hunter2-secret-xyz").withBudget(budget);
+		expect(view.wouldChange(`t ${TOKEN}`)).toBe(true);
+		expect(view.wouldChange("a hunter2-secret-xyz b")).toBe(true);
+		expect(view.wouldChange("sfly_pat_abc hunter2")).toBe(false);
+		expect(budget.masks).toBe(1);
+		expect(NO_SECRETS.wouldChange(`t ${TOKEN}`)).toBe(true);
+		expect(NO_SECRETS.wouldChange("plain")).toBe(false);
+	});
+
+	it("mergeSpans：只有令牌那一组（没有扫描）、两组交错、重叠合并、相邻各自一段、一组包含另一组", () => {
+		const automaton = buildAutomaton(["bb", "dddd"]) as NonNullable<
+			ReturnType<typeof buildAutomaton>
+		>;
+		const text = "aabbccddddee";
+		const count = scanSpans(automaton, text, MAX_SPANS); // [2,4) [6,10)
+		expect(count).toBe(2);
+		// 令牌 [4,6)：和两边都相邻、不重叠，三段
+		let n = mergeSpans(count, [4], [6]);
+		expect(maskedByAutomaton(text, n, "#")).toBe("aa###ee"); // 三段各一个掩码
+		expect(n).toBe(3);
+		// 令牌 [3,7)：和两边都重叠，合成一段
+		scanSpans(automaton, text, MAX_SPANS);
+		n = mergeSpans(2, [3], [7]);
+		expect(n).toBe(1);
+		expect(maskedByAutomaton(text, n, "#")).toBe("aa#ee");
+		// 只有令牌
+		n = mergeSpans(0, [1, 8], [3, 9]);
+		expect(n).toBe(2);
+		expect(maskedByAutomaton(text, n, "#")).toBe("a#bccdd#dee");
+	});
+});
+
+describe("被 Agent 拆开的超长行：每一段带上下文，跨在拆分处的值只出现一个掩码，几段接起来和不拆时一样（#622）", () => {
+	const TOKEN = "sfly_pat_0123456789abcdef0123456789abcdef";
+	type Piece = { text: string; before: string; after: string };
+	/** 和 Agent（agent/src/logs.rs 的 `LineSplitter`）同样的拆法：每段不超过 `max` 个字符，带前一段结尾和后一段开头各最多 `ctx` 个字符。 */
+	const splitLikeAgent = (line: string, max: number, ctx: number): Piece[] => {
+		const pieces: Piece[] = [];
+		let pos = 0;
+		let before = "";
+		while (line.length - pos > max) {
+			const text = line.slice(pos, pos + max);
+			pieces.push({ text, before, after: line.slice(pos + max, pos + max + ctx) });
+			before = text.slice(-ctx);
+			pos += max;
+		}
+		pieces.push({ text: line.slice(pos), before, after: "" });
+		return pieces;
+	};
+	const joinMasked = (set: SecretSet, pieces: Piece[]) =>
+		pieces.map((p) => set.maskInContext(p.text, p.before, p.after)).join("");
+
+	it("一个值正好跨在拆分处：前一段里是一个掩码，后一段里它的剩余部分去掉；几段接起来和不拆时一样", () => {
+		const set = setOf("SECRET-VALUE-XYZ");
+		const pieces: Piece[] = [
+			{ text: "head SECRET-VA", before: "", after: "LUE-XYZ tail and more" },
+			{ text: "LUE-XYZ tail and more", before: "head SECRET-VA", after: "" },
+		];
+		expect(set.maskInContext(pieces[0]?.text ?? "", "", pieces[0]?.after ?? "")).toBe(
+			`head ${MASK}`,
+		);
+		expect(set.maskInContext(pieces[1]?.text ?? "", pieces[1]?.before ?? "", "")).toBe(
+			" tail and more",
+		);
+		expect(joinMasked(set, pieces)).toBe(set.mask("head SECRET-VALUE-XYZ tail and more"));
+		// 单独看任何一段（旧版本的 Agent 不带上下文）认不出：两半都留着，和现在一样
+		expect(set.mask("head SECRET-VA")).toBe("head SECRET-VA");
+		expect(set.mask("LUE-XYZ tail and more")).toBe("LUE-XYZ tail and more");
+	});
+
+	it("两段上下文都是空串：就是 mask（没有拆开的行、事件管道里的行、旧版本的 Agent 发的行）", () => {
+		const set = setOf("SECRET-VALUE-XYZ");
+		for (const text of ["", "plain", "a SECRET-VALUE-XYZ b", `t ${TOKEN}`]) {
+			expect(set.maskInContext(text, "", ""), text).toBe(set.mask(text));
+			expect(NO_SECRETS.maskInContext(text, "", ""), text).toBe(NO_SECRETS.mask(text));
+		}
+	});
+
+	it("令牌原值跨在拆分处：同样只出现一个掩码；没有 secret 值时也一样", () => {
+		const half = 20;
+		const line = `x ${TOKEN} y`;
+		const cut = 2 + half;
+		const pieces: Piece[] = [
+			{ text: line.slice(0, cut), before: "", after: line.slice(cut, cut + 30) },
+			{ text: line.slice(cut), before: line.slice(Math.max(0, cut - 30), cut), after: "" },
+		];
+		expect(joinMasked(NO_SECRETS, pieces)).toBe(`x ${MASK} y`);
+		expect(joinMasked(setOf("SECRET-VALUE-XYZ"), pieces)).toBe(`x ${MASK} y`);
+	});
+
+	it("值集合太大（建不了自动机）：整段盖住，和 mask 一样（带不带上下文一样）；说明那一行原样", () => {
+		const set = withSecretLimitsSync({ automatonChars: 50 }, () => {
+			const made = setOf(`fake-oversize-${"v".repeat(100)}`);
+			expect(made.oversize).toBe(true);
+			return made;
+		});
+		expect(set.maskInContext("some text", "before", "after")).toBe(MASK);
+		expect(set.maskInContext("some text", "before", "after")).toBe(set.mask("some text"));
+		// 说明那一行（平台写的，不带上下文）和 mask 的规则一样
+		expect(set.maskInContext(OVERSIZE_NOTICE, "", "")).toBe(OVERSIZE_NOTICE);
+	});
+
+	it("值比上下文长、只跨一个拆分处：保证范围之外，不出错，不比不带上下文时露出得多；露出一部分、或者只去掉不留掩码，都不含完整的值", () => {
+		const value = `V-${"y".repeat(12)}`; // 14 个字符，上下文只有 8：两边各留不下整个值
+		const set = setOf(value);
+		const isSubsequence = (small: string, big: string): boolean => {
+			let at = 0;
+			for (const ch of big) if (ch === small[at]) at += 1;
+			return at === small.length;
+		};
+		/** 值从第 `start` 个字符开始，拆分处在第 50 个字符：两段各自的输出（去掉填充的 p、q）。 */
+		const shown = (start: number) => {
+			const line = `${"p".repeat(start)}${value}${"q".repeat(40)}`;
+			const pieces = splitLikeAgent(line, 50, 8);
+			expect(pieces.length).toBe(2);
+			return pieces.map((p) => {
+				const out = set.maskInContext(p.text, p.before, p.after);
+				// 不带上下文时这一段里没有完整的出现，原样露出；有上下文时只会去掉、换成掩码，不会多出别的字符
+				expect(set.mask(p.text)).toBe(p.text);
+				expect(isSubsequence(out.replaceAll(MASK, ""), p.text)).toBe(true);
+				expect(out).not.toContain(value);
+				return out.replaceAll(/[pq]/g, "");
+			});
+		};
+		// 开头在拆分处前 5 个字符：前一段只露出值的开头一小段、没有掩码，后一段把剩下的去掉、也不留掩码（读的人看不出这里删过东西）
+		expect(shown(45)).toEqual(["V-yyy", ""]);
+		// 开头在拆分处前 9 个字符：前一段整个盖住，后一段（前面的上下文只够到值的第二个字符）露出值的结尾一小段
+		expect(shown(41)).toEqual([MASK, "yyyyy"]);
+	});
+
+	it("值比上下文长（不论跨几段）：不保证认得出，但不出错，别的出现照常盖住", () => {
+		const long = `LONG-${"x".repeat(60)}`;
+		const set = setOf(long, "short-secret");
+		const line = `a short-secret b ${long} c short-secret d`;
+		const pieces = splitLikeAgent(line, 20, 8);
+		expect(pieces.length).toBeGreaterThanOrEqual(4);
+		const out = joinMasked(set, pieces);
+		expect(out).not.toContain("short-secret");
+		expect(out.startsWith(`a ${MASK} b `)).toBe(true);
+		expect(out.endsWith(` c ${MASK} d`)).toBe(true);
+	});
+
+	it("结果只取决于这三段文字：重发、乱序到达、别的段有没有到都不影响；对同样的三段永远是同样的结果", () => {
+		const set = setOf("SECRET-VALUE-XYZ");
+		const pieces = splitLikeAgent(
+			"0123456789 SECRET-VALUE-XYZ 0123456789 SECRET-VALUE-XYZ end",
+			24,
+			16,
+		);
+		const forward = pieces.map((p) => set.maskInContext(p.text, p.before, p.after));
+		const reverse = [...pieces]
+			.reverse()
+			.map((p) => set.maskInContext(p.text, p.before, p.after))
+			.reverse();
+		expect(reverse).toEqual(forward);
+		expect(pieces.map((p) => set.maskInContext(p.text, p.before, p.after))).toEqual(forward);
+		expect(forward.join("")).toBe(
+			set.mask("0123456789 SECRET-VALUE-XYZ 0123456789 SECRET-VALUE-XYZ end"),
+		);
+	});
+
+	it("随机的超长行（值、令牌、带尾巴的令牌、重叠的值，跨在拆分处的各种位置）：几段接起来和不拆时逐字相同，没有留下值或令牌的任何完整的出现", () => {
+		let seed = 622;
+		const random = (n: number): number => {
+			seed = (seed * 1664525 + 1013904223) % 4294967296;
+			return Math.floor((seed / 4294967296) * n);
+		};
+		const pick = <T>(items: readonly T[]): T => items[random(items.length)] as T;
+		const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789 -_.,中文";
+		const filler = (n: number) => Array.from({ length: n }, () => pick([...alphabet])).join("");
+		let crossing = 0;
+		for (let round = 0; round < 1500; round++) {
+			// 上下文不短于最长的出现（值最长约 25 个字符，令牌带尾巴最长约 65 个字符）：保证的范围
+			const max = 90 + random(40);
+			const ctx = 70 + random(20);
+			const values = Array.from({ length: 1 + random(3) }, () =>
+				pick([
+					`SECRET-${filler(3 + random(5))}`,
+					filler(5 + random(6)),
+					`${filler(4)} and ${filler(4)}`,
+				]),
+			);
+			const set = setOf(...values);
+			let line = filler(random(30));
+			for (let k = 0; k < 4 + random(10); k++) {
+				line += pick([...values, TOKEN, `sfly_prj_${filler(18)}`, "sfly_pat_", filler(8)]);
+				line += filler(random(40));
+			}
+			const pieces = splitLikeAgent(line, max, ctx);
+			const joined = joinMasked(set, pieces);
+			const where = `${JSON.stringify(set.texts)} / max ${max} ctx ${ctx} / ${JSON.stringify(line)}`;
+			expect(joined, where).toBe(set.mask(line));
+			for (const text of set.texts) {
+				if (line.includes(text)) expect(joined, where).not.toContain(text);
+			}
+			if (pieces.length > 1 && joined !== line) crossing += 1;
+		}
+		expect(crossing).toBeGreaterThan(800);
 	});
 });

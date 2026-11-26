@@ -21,7 +21,7 @@ describe("切换运行预设时的字段", () => {
 	};
 	const none = new Set<string>();
 
-	it("原来锁定的敏感参数回到默认值时留空：默认值读不回来（占位符），不预填", () => {
+	it("原来锁定的 secret 参数回到默认值时留空：默认值读不回来（占位符），不预填", () => {
 		const withDefault: ParamDeclView[] = [
 			{ name: "api_token", type: "string", secret: true, default: "******" },
 		];

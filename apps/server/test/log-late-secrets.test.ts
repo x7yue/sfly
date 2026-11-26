@@ -421,18 +421,19 @@ describe("值集合太大的运行：任务日志里有一行平台写的说明�
 	});
 
 	it("总长超过上限的 secret 参数：第一批写入时在最前面写一行说明（系统写的 WARN，不含值），每个任务一行；读出来（分页、下载、按运行合并读）说明原样，其余整段是掩码", async () => {
+		// 触发时值集合已经太大会被拒绝（#632）：先触发，再把上限调小，和值集合在运行中才变大是同一个状态
+		const id = await api.orchestrationWith({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json", secret: true }] },
+				{ id: "sa", kind: "package", package: "bench", node: "load" },
+			],
+			edges: [{ from: "entry", to: "sa", kind: "chain" }],
+			packages: { bench: "1.0.0" },
+		});
+		const values = Array.from({ length: 20 }, (_, i) => `fake-oversize-${i}-${"p".repeat(40)}`);
+		const runId = await api.triggerOk(id, { cfg: values });
 		await withSecretLimits({ automatonChars: 300 }, async () => {
-			const id = await api.orchestrationWith({
-				default_agent: "agent-a",
-				nodes: [
-					{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json", secret: true }] },
-					{ id: "sa", kind: "package", package: "bench", node: "load" },
-				],
-				edges: [{ from: "entry", to: "sa", kind: "chain" }],
-				packages: { bench: "1.0.0" },
-			});
-			const values = Array.from({ length: 20 }, (_, i) => `fake-oversize-${i}-${"p".repeat(40)}`);
-			const runId = await api.triggerOk(id, { cfg: values });
 			const task = await agent.nextAssign();
 			agent.logs(task, [line(1, "first line"), line(2, `uses ${values[3]} here`)]);
 			await eventually(async () => {
@@ -465,18 +466,19 @@ describe("值集合太大的运行：任务日志里有一行平台写的说明�
 	it("说明那一行的时间取这一批第一行的时间：Agent 攒着发、这一批的行比收到时早好几秒，文件里的时间也不倒着走", async () => {
 		await agent.disconnect();
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 }, { clock: cp.clock });
+		// 触发时值集合已经太大会被拒绝（#632）：先触发，再把上限调小，和值集合在运行中才变大是同一个状态
+		const id = await api.orchestrationWith({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json", secret: true }] },
+				{ id: "sa", kind: "package", package: "bench", node: "load" },
+			],
+			edges: [{ from: "entry", to: "sa", kind: "chain" }],
+			packages: { bench: "1.0.0" },
+		});
+		const values = Array.from({ length: 20 }, (_, i) => `fake-oversize-${i}-${"p".repeat(40)}`);
+		await api.triggerOk(id, { cfg: values });
 		await withSecretLimits({ automatonChars: 300 }, async () => {
-			const id = await api.orchestrationWith({
-				default_agent: "agent-a",
-				nodes: [
-					{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json", secret: true }] },
-					{ id: "sa", kind: "package", package: "bench", node: "load" },
-				],
-				edges: [{ from: "entry", to: "sa", kind: "chain" }],
-				packages: { bench: "1.0.0" },
-			});
-			const values = Array.from({ length: 20 }, (_, i) => `fake-oversize-${i}-${"p".repeat(40)}`);
-			await api.triggerOk(id, { cfg: values });
 			const task = await agent.nextAssign();
 			const now = cp.clock.now().getTime();
 			const old = (seq: number, agoMs: number) => ({
@@ -493,6 +495,49 @@ describe("值集合太大的运行：任务日志里有一行平台写的说明�
 			expect(texts(page.lines)).toEqual([OVERSIZE_NOTICE, MASK, MASK, MASK]);
 			const times = page.lines.map((l) => Date.parse(l.time ?? ""));
 			expect(times).toEqual([now - 5000, now - 5000, now - 4000, now - 1000]);
+		});
+	}, 60_000);
+
+	it("说明的时间取第一条真正写入的行：值集合后来才变大，这一批以重发的旧行开头，说明的时间也不倒退，这一批没有要写入的行时不写说明（#657）", async () => {
+		await agent.disconnect();
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 }, { clock: cp.clock });
+		// 触发时值集合已经太大会被拒绝（#632）：先触发，再把上限调小，和值集合在运行中才变大是同一个状态
+		// 子流程 subB 的 secret 参数 k 取 user 的值：值本身要写出很多种写法（原样、转义、\uXXXX），合计超过 300 个字符才算太大
+		const big = "é".repeat(150);
+		const id = await api.orchestrationWith(LATE_SECRET);
+		const runId = await api.triggerOk(id, { user: big });
+		await withSecretLimits({ automatonChars: 300 }, async () => {
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
+			const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+			const now = cp.clock.now().getTime();
+			const at = (seq: number, agoMs: number, text: string) => ({
+				...line(seq, text),
+				timeUnixMs: BigInt(now - agoMs),
+				monotonicMs: agent.monotonicAt(now - agoMs),
+			});
+			const pageOf = () => api.getJson<Page>(`/tasks/${sa.taskId}/logs`);
+			agent.logs(sa, [at(1, 4000, "first"), at(2, 3000, "second")]);
+			await eventually(async () => expect((await pageOf()).lines).toHaveLength(2));
+			// 值集合现在才变大（子流程创建之后）
+			await agent.succeed(b);
+			await eventually(async () =>
+				expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+			);
+			// 只有重发的旧行（序号不大于已写入的）：没有要写入的行，不写说明，文件不变（先等这一批处理完，再查）
+			agent.logs(sa, [at(2, 20_000, "second")]);
+			await agent.sync();
+			const unchanged = await pageOf();
+			expect(texts(unchanged.lines)).toEqual([MASK, MASK]);
+			expect(unchanged.lines.map((l) => l.seq)).toEqual([1, 2]);
+			// 重发的旧行开头（时间比文件里最后一行早得多）、后面是新行：说明取新行的时间
+			agent.logs(sa, [at(2, 20_000, "second"), at(3, 1000, "third")]);
+			await eventually(async () => expect((await pageOf()).lines).toHaveLength(4));
+			const page = await pageOf();
+			expect(texts(page.lines)).toEqual([MASK, MASK, OVERSIZE_NOTICE, MASK]);
+			const times = page.lines.map((l) => Date.parse(l.time ?? ""));
+			expect(times).toEqual([now - 4000, now - 3000, now - 1000, now - 1000]);
+			expect(times).toEqual([...times].sort((x, y) => x - y));
 		});
 	}, 60_000);
 });
