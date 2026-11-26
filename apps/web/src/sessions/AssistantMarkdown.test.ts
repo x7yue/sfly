@@ -4,11 +4,17 @@ import { describe, expect, it } from "vitest";
 import { hasHidden } from "#/lib/untrusted-text";
 import {
 	AssistantMarkdown,
+	bracketDepth,
 	linkHost,
+	MAX_BRACKET_DEPTH,
 	MAX_NESTING_LEVELS,
+	MAX_TREE_DEPTH,
+	MarkdownBoundary,
+	MarkdownTooDeepError,
 	nestingLevels,
 	rehypeWrapText,
 	tooDeeplyNested,
+	tooManyOpenBrackets,
 } from "./AssistantMarkdown";
 import { CONSTRUCTS, ESC, RLO, ZWSP } from "./assistant-markdown-samples";
 
@@ -130,10 +136,17 @@ describe("rehypeWrapText：把文字节点换成可以交给不可信文字组�
 		expect(tree.children?.map((child) => child.tagName)).toEqual(["span", "span"]);
 	});
 
-	it("深度很大的树也不会爆栈（不递归）", () => {
+	it("深度很大的树也不会爆栈（不递归）：抛的是 MarkdownTooDeepError，不是 RangeError", () => {
 		let node: Node = text("底");
 		for (let i = 0; i < 200_000; i++) node = element("blockquote", node);
-		expect(() => run({ type: "root", children: [node] })).not.toThrow();
+		let thrown: unknown;
+		try {
+			run({ type: "root", children: [node] });
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).toBeInstanceOf(MarkdownTooDeepError);
+		expect(thrown).not.toBeInstanceOf(RangeError);
 	});
 });
 
@@ -186,6 +199,144 @@ describe("嵌套太深的助手的话", () => {
 		const text = "> 一行话\n".repeat(50_000);
 		const start = performance.now();
 		tooDeeplyNested(text);
+		expect(performance.now() - start).toBeLessThan(500);
+	});
+});
+
+describe("嵌套的深度要在解析出来的树上量（复审 #762 第二轮：脚注定义绕过行首的检查）", () => {
+	// 脚注定义 `[^a]:` 以 `[` 开头，行首检查数出 0 层；定义里的引用 `>` × N 照样嵌成 N 层。N=1500 渲染出 1504 层 DOM，
+	// N=1800、2000 Chromium 的渲染进程崩溃（Blink 排版爆原生栈，错误边界兜不住，存在历史里每次打开都崩），N=3000 mdast 转 hast 爆栈。
+	const footnoteQuote = (n: number) => `x[^a]\n\n[^a]: ${">".repeat(n)} y`;
+	type Node = {
+		type: string;
+		value?: string;
+		tagName?: string;
+		properties?: Record<string, unknown>;
+		children?: Node[];
+	};
+	const element = (tagName: string, ...children: Node[]): Node => ({
+		type: "element",
+		tagName,
+		properties: {},
+		children,
+	});
+	const chain = (depth: number): Node => {
+		let node: Node = { type: "text", value: "底" };
+		for (let i = 0; i < depth; i++) node = element("blockquote", node);
+		return node;
+	};
+
+	it("行首检查拦不住脚注里的深引用（这就是为什么要在树上量）", () => {
+		expect(tooDeeplyNested(footnoteQuote(2000))).toBe(false);
+		expect(tooDeeplyNested(footnoteQuote(1500))).toBe(false);
+	});
+
+	it("树的深度超过 MAX_TREE_DEPTH 就抛 MarkdownTooDeepError，等于上限不抛；很深的树也不爆栈（不递归）", () => {
+		const run = (depth: number) => rehypeWrapText()({ type: "root", children: [chain(depth)] });
+		expect(() => run(MAX_TREE_DEPTH - 1)).not.toThrow();
+		expect(() => run(MAX_TREE_DEPTH)).not.toThrow();
+		expect(() => run(MAX_TREE_DEPTH + 1)).toThrow(MarkdownTooDeepError);
+		expect(() => run(500_000)).toThrow(MarkdownTooDeepError);
+	});
+
+	it("脚注定义里的深引用（N=100、1500、2000，行首检查拦不住的）渲染时抛 MarkdownTooDeepError，不交给浏览器去排版", () => {
+		for (const n of [100, 1500, 2000]) {
+			expect(() => render(footnoteQuote(n)), `N=${n}`).toThrow(MarkdownTooDeepError);
+		}
+	});
+
+	it("浅的脚注、正常的嵌套（列表三层、引用两层、表格、脚注）不受影响", () => {
+		expect(() => render(footnoteQuote(5))).not.toThrow();
+		expect(render("正文[^1]\n\n[^1]: > 脚注里的一层引用")).toContain("<blockquote");
+		expect(() => render("- a\n  - b\n    - c\n\n> x\n> > y")).not.toThrow();
+	});
+
+	it("错误边界：渲染抛了错就置 failed，这一条退回纯文字（getDerivedStateFromError）", () => {
+		expect(MarkdownBoundary.getDerivedStateFromError()).toEqual({ failed: true });
+	});
+
+	describe("错误边界的重试（getDerivedStateFromProps）：失败过的这一条逐字出现时不每变一次就重试，整条消息到了再试一次", () => {
+		type State = { text: string; streaming: boolean; failed: boolean };
+		const next = (props: { text: string; streaming: boolean }, state: State): State => ({
+			...state,
+			...(MarkdownBoundary.getDerivedStateFromProps(props, state) ?? {}),
+		});
+
+		it("没有变化：不动", () => {
+			const state = { text: "a", streaming: true, failed: true };
+			expect(
+				MarkdownBoundary.getDerivedStateFromProps({ text: "a", streaming: true }, state),
+			).toBeNull();
+		});
+
+		it("逐字出现中失败过：文字再变也保持失败，不重试（每次重试都是一次 0.1 到 0.4 秒的失败）", () => {
+			let state: State = { text: "a", streaming: true, failed: true };
+			for (const text of ["ab", "abc", "abcd"]) {
+				state = next({ text, streaming: true }, state);
+				expect(state, text).toEqual({ text, streaming: true, failed: true });
+			}
+		});
+
+		it("逐字出现中没有失败：文字变了照常，不置 failed", () => {
+			const state = next(
+				{ text: "ab", streaming: true },
+				{ text: "a", streaming: true, failed: false },
+			);
+			expect(state).toEqual({ text: "ab", streaming: true, failed: false });
+		});
+
+		it("整条消息到了（streaming 变假）：重试一次（failed 清掉）；这一次再失败就一直是失败，直到文字变了", () => {
+			let state: State = { text: "abcd", streaming: true, failed: true };
+			state = next({ text: "abcde", streaming: false }, state);
+			expect(state).toEqual({ text: "abcde", streaming: false, failed: false });
+			// 重试又抛了错：getDerivedStateFromError 置 failed；之后同样的 props 不再清掉它。
+			state = { ...state, ...MarkdownBoundary.getDerivedStateFromError() };
+			expect(state.failed).toBe(true);
+			expect(
+				MarkdownBoundary.getDerivedStateFromProps({ text: "abcde", streaming: false }, state),
+			).toBeNull();
+			// 没有在逐字出现的消息文字变了（比如改了）：重试。
+			expect(next({ text: "另一段", streaming: false }, state).failed).toBe(false);
+		});
+	});
+});
+
+describe("括号嵌套太深的助手的话（连写的 `![`）退回纯文字", () => {
+	// 嵌套着成对的 `![ … ](u)`（所有开括号在前、闭括号在后）解析是平方级：9 KB 约 0.5 秒、18 KB 约 1.8 秒、36 KB 约 7.7 秒（浏览器里量的，
+	// 每次打开都冻住）。没闭合的 `[`、平摊的 `[1,2]`、平摊的链接、代码块里的大数组都是线性的，所以按括号的嵌套深度判，不按个数判。
+	const nestedImages = (n: number) => `${"![".repeat(n)}x${"](u)".repeat(n)}`;
+
+	it("括号深度：`[` 加一、`]` 减一（不小于 0），取最大值；平摊的不累加", () => {
+		expect(bracketDepth("没有括号")).toBe(0);
+		expect(bracketDepth("[a](u) [b](v) [c](w)")).toBe(1);
+		expect(bracketDepth("[[1,2],[3,4]]")).toBe(2);
+		expect(bracketDepth("![![![x](a)](b)](c)")).toBe(3);
+		expect(bracketDepth("]]]] [a]")).toBe(1);
+		expect(bracketDepth(nestedImages(1000))).toBe(1000);
+	});
+
+	it("深度超过 MAX_BRACKET_DEPTH 的不交给 Markdown；没闭合的 `[` 很多也算（拿不准，宁可按纯文字）；大数组、很多个链接不受影响", () => {
+		expect(tooManyOpenBrackets(nestedImages(MAX_BRACKET_DEPTH + 1))).toBe(true);
+		expect(tooManyOpenBrackets(nestedImages(MAX_BRACKET_DEPTH))).toBe(false);
+		expect(tooManyOpenBrackets("[".repeat(MAX_BRACKET_DEPTH + 1))).toBe(true);
+		expect(tooManyOpenBrackets("[[1,2],[3,4]]\n".repeat(5000))).toBe(false);
+		expect(tooManyOpenBrackets("[a](https://e.example/x) ".repeat(5000))).toBe(false);
+		expect(tooManyOpenBrackets("[1,2] ".repeat(20_000))).toBe(false);
+	});
+
+	it("渲染 9 KB、36 KB 的连写 `![`：退回纯文字，在时限内完成（修之前 0.5 到 7.7 秒）", () => {
+		for (const n of [1500, 6000]) {
+			const start = performance.now();
+			const html = render(nestedImages(n));
+			expect(performance.now() - start, `n=${n}`).toBeLessThan(500);
+			expect(html).toContain('data-fallback="plain"');
+			expect(html).not.toContain("<img");
+		}
+	});
+
+	it("检查本身是线性的：几十万个字符也很快", () => {
+		const start = performance.now();
+		tooManyOpenBrackets("[a](u) ".repeat(100_000));
 		expect(performance.now() - start).toBeLessThan(500);
 	});
 });

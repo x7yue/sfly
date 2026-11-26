@@ -24,6 +24,7 @@ import { RecordRow } from "./RecordRow";
 import { steerDeliveryLabel, turnEndText, turnEndTone, userRoleLabel } from "./session-text";
 import { ToolRow } from "./ToolRow";
 import { modelActivity, type TimelineItem, type TimelineState } from "./timeline";
+import { FollowContext } from "./timeline-follow";
 import { ROW_KEY_ATTRIBUTE, useTimelineScroll } from "./use-timeline-scroll";
 
 type UserItem = Extract<TimelineItem, { kind: "user" }>;
@@ -63,7 +64,7 @@ export function SessionTimeline({
 }) {
 	const last = state.items.at(-1);
 	const activity = modelActivity(state);
-	const { scroller, hasNew, scrollToBottom, captureAnchor } = useTimelineScroll({
+	const { scroller, hasNew, scrollToBottom, captureAnchor, follow } = useTimelineScroll({
 		head: state.items[0]?.key ?? null,
 		// 最后一行变了（新来一行、逐字出现的话变长、命令的输出变长、结果到了）或者进行中的提示出现、消失：底下有新内容。
 		tail: `${state.items.length}:${last?.key ?? ""}:${tailSize(last)}:${activity?.kind ?? ""}`,
@@ -101,29 +102,31 @@ export function SessionTimeline({
 							)}
 						</div>
 					)}
-					<ol
-						aria-label={SESSION.page.timeline}
-						data-testid="session-timeline"
-						className="m-0 flex list-none flex-col gap-2.5 p-0"
-					>
-						{state.items.map((item) => (
-							<TimelineRow key={item.key} item={item} hasMore={state.hasMore} />
-						))}
-						{activity !== null && (
-							<li
-								data-testid={activity.kind === "thinking" ? "thinking" : "waiting-model"}
-								className="flex items-center gap-2 px-1 text-sm text-fg-3"
-							>
-								<StatusDot kind="running" pulse />
-								<output>
-									{activity.kind === "thinking" ? SESSION.page.thinking : SESSION.page.waiting}
-								</output>
-								{activity.kind === "waiting" && activity.since !== null && (
-									<Elapsed since={Date.parse(activity.since)} className="font-mono text-xs" />
-								)}
-							</li>
-						)}
-					</ol>
+					<FollowContext.Provider value={follow}>
+						<ol
+							aria-label={SESSION.page.timeline}
+							data-testid="session-timeline"
+							className="m-0 flex list-none flex-col gap-2.5 p-0"
+						>
+							{state.items.map((item) => (
+								<TimelineRow key={item.key} item={item} hasMore={state.hasMore} />
+							))}
+							{activity !== null && (
+								<li
+									data-testid={activity.kind === "thinking" ? "thinking" : "waiting-model"}
+									className="flex items-center gap-2 px-1 text-sm text-fg-3"
+								>
+									<StatusDot kind="running" pulse />
+									<output>
+										{activity.kind === "thinking" ? SESSION.page.thinking : SESSION.page.waiting}
+									</output>
+									{activity.kind === "waiting" && activity.since !== null && (
+										<Elapsed since={Date.parse(activity.since)} className="font-mono text-xs" />
+									)}
+								</li>
+							)}
+						</ol>
+					</FollowContext.Provider>
 				</div>
 			</section>
 			{hasNew && (

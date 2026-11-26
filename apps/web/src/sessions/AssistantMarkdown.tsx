@@ -3,7 +3,9 @@ import {
 	Component,
 	isValidElement,
 	type ReactNode,
+	useContext,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -21,6 +23,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { FollowContext } from "./timeline-follow";
 
 /**
  * 助手的话（#550）：Markdown 渲染——段落、列表、代码块、行内代码、链接、引用、表格（GFM）、标题、脚注。
@@ -37,8 +40,13 @@ import {
  *   链接文字和地址对不上时（文字不是地址本身），后面写出地址的主机名，模型不能把「官方文档」指到别处而看不出来；别的链接（相对地址……）
  *   只显示文字，不可点；
  * - **嵌套太深的退回纯文字**：几 KB 的几千层嵌套引用会让 mdast 转 hast 的递归爆栈（`RangeError`），整个会话页换成路由默认的错误页，
- *   刷新也一样（审查 #762）。先查一遍层数（{@link tooDeeplyNested}，线性），超过的不交给 Markdown；再包一个错误边界（{@link MarkdownBoundary}），
- *   别的原因让渲染抛了错时也退回纯文字，只坏这一条，别的条目照常。纯文字照样经 `UntrustedText`；
+ *   刷新也一样；再深一点（1800 层以上）渲染出来的 DOM 让浏览器的排版爆栈、**整个标签页崩溃**，错误边界兜不住（审查 #762）。三道：
+ *   ① 先查每一行开头的层数（{@link tooDeeplyNested}，线性）和括号的嵌套深度（{@link tooManyOpenBrackets}，线性；连写的 `![` 解析是平方级），
+ *   超过的不交给 Markdown——这是快速路径，**不是唯一的一道**：行首检查认不出以 `[` 开头的脚注定义里的深引用（`[^a]: >>>>…`）；
+ *   ② **在解析出来的树上量深度**（{@link rehypeWrapText} 遍历时记，超过 {@link MAX_TREE_DEPTH} 抛 {@link MarkdownTooDeepError}），
+ *   不论怎么写出来的，树深了就不去渲染，浏览器不会看到深的 DOM；③ 再包一个错误边界（{@link MarkdownBoundary}），② 抛的和别的原因让渲染
+ *   抛的错都退回纯文字，只坏这一条，别的条目照常。失败过的这一条逐字出现时不每次都重试（每次重试是 0.1 到 0.4 秒的失败），整条消息到了再试一次。
+ *   纯文字照样经 `UntrustedText`；
  * - **脚注**的标题和「回到正文」写中文（默认是英文的 `Footnotes`、`Back to reference 1`）。
  *
  * **逐字出现**时每来一段增量，这一条要整条重新解析一遍（react-markdown 不做增量解析；20 KB 约二十几毫秒，一帧 16.7 毫秒放不下）：
@@ -56,10 +64,14 @@ export function AssistantMarkdown({
 	streaming?: boolean;
 }) {
 	const shown = useThrottledText(text, streaming ? STREAM_PARSE_INTERVAL_MS : 0);
-	const deep = useMemo(() => tooDeeplyNested(shown), [shown]);
-	if (deep) return <PlainText text={shown} />;
+	const unsafe = useMemo(() => tooDeeplyNested(shown) || tooManyOpenBrackets(shown), [shown]);
+	// 实际渲染出的文字变了（节流后延后的那一次）：内容变高了，在底部的人要跟到最新（时间线只在事件到达时按没节流的长度滚过一次）。
+	const follow = useContext(FollowContext);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 渲染出的文字（`shown`）变了才需要跟一次
+	useLayoutEffect(() => follow(), [shown, follow]);
+	if (unsafe) return <PlainText text={shown} />;
 	return (
-		<MarkdownBoundary text={shown}>
+		<MarkdownBoundary text={shown} streaming={streaming}>
 			<Parsed text={shown} />
 		</MarkdownBoundary>
 	);
@@ -122,25 +134,41 @@ const FOOTNOTES = {
 		`回到正文第 ${referenceIndex + 1} 处${rereferenceIndex > 1 ? `（第 ${rereferenceIndex} 次引用）` : ""}`,
 };
 
+/** 解析出来的树比 {@link MAX_TREE_DEPTH} 还深（{@link rehypeWrapText} 抛的）：不去渲染它。 */
+export class MarkdownTooDeepError extends Error {
+	constructor() {
+		super(`Markdown 的嵌套超过 ${MAX_TREE_DEPTH} 层`);
+		this.name = "MarkdownTooDeepError";
+	}
+}
+
 /**
- * 渲染这一条时抛了错（嵌套检查没拦住的原因）：这一条退回纯文字，别的条目照常。文字变了（逐字出现又来了一段）重新试一次：
- * 错可能只是因为文字还没写完。React 的错误边界只有类组件能写。
+ * 渲染这一条时抛了错（{@link MarkdownTooDeepError}，或者前两道没拦住的别的原因）：这一条退回纯文字，别的条目照常。React 的错误边界
+ * 只有类组件能写。**重试**：失败过的这一条在逐字出现（`streaming`）时不再每变一次文字就重试——深到会抛的话每次都是 0.1 到 0.4 秒的失败，
+ * 每 120 毫秒一次——记住失败；整条消息到了（`streaming` 变假）重试一次（错可能只是文字没写完），再失败就一直是失败，直到文字变了。
  */
-class MarkdownBoundary extends Component<
-	{ text: string; children: ReactNode },
-	{ text: string; failed: boolean }
+export class MarkdownBoundary extends Component<
+	{ text: string; streaming: boolean; children: ReactNode },
+	{ text: string; streaming: boolean; failed: boolean }
 > {
-	state = { text: this.props.text, failed: false };
+	state = { text: this.props.text, streaming: this.props.streaming, failed: false };
 
 	static getDerivedStateFromError() {
 		return { failed: true };
 	}
 
 	static getDerivedStateFromProps(
-		props: { text: string },
-		state: { text: string; failed: boolean },
+		props: { text: string; streaming: boolean },
+		state: { text: string; streaming: boolean; failed: boolean },
 	) {
-		return props.text === state.text ? null : { text: props.text, failed: false };
+		if (props.text === state.text && props.streaming === state.streaming) return null;
+		// 不在逐字出现、而且（刚刚整条到了，或者文字变了）：重试一次。逐字出现中：失败的保持失败。
+		const retry = !props.streaming && (state.streaming || props.text !== state.text);
+		return {
+			text: props.text,
+			streaming: props.streaming,
+			failed: retry ? false : state.failed,
+		};
 	}
 
 	render() {
@@ -203,6 +231,33 @@ export function tooDeeplyNested(text: string): boolean {
 	return false;
 }
 
+/**
+ * 括号的嵌套深度：`[` 加一、`]` 减一（不小于 0），取最大值。线性。嵌套着成对的 `![ … ](u)`（所有开括号在前、闭括号在后）解析是平方级——
+ * 9 KB 约 0.5 秒、18 KB 约 1.8 秒、36 KB 约 7.7 秒，每次打开都冻住（审查 #762 第二轮）；没闭合的 `[`、平摊的 `[1,2]`、平摊的链接、
+ * 代码块里的大数组都是线性的，所以量深度，不数个数（数个数会把一个大数组误伤成纯文字）。
+ */
+export function bracketDepth(text: string): number {
+	let depth = 0;
+	let max = 0;
+	for (let i = 0; i < text.length; i += 1) {
+		const code = text.charCodeAt(i);
+		if (code === 91) {
+			depth += 1;
+			if (depth > max) max = depth;
+		} else if (code === 93 && depth > 0) {
+			depth -= 1;
+		}
+	}
+	return max;
+}
+
+/** 括号嵌套多深以上不交给 Markdown：正常的话不超过十来层；这个深度的解析约二三十毫秒（平方级）。 */
+export const MAX_BRACKET_DEPTH = 256;
+
+/** 括号嵌套太深（连写的 `![`）：解析会冻住页面，按纯文字显示。 */
+export const tooManyOpenBrackets = (text: string): boolean =>
+	bracketDepth(text) > MAX_BRACKET_DEPTH;
+
 /** hast 树里的一个节点（只写这里用到的几项：不依赖 `@types/hast`）。 */
 interface HastNode {
 	type: string;
@@ -216,15 +271,24 @@ interface HastNode {
 const ONLY_WHITESPACE = /^[ \t\n\r]*$/;
 
 /**
+ * 解析出来的树最深允许多少层（根是第 0 层）：正常的话列表嵌三五层、引用两三层，十来层；复审 #762 量到的几千层、一千多层会让浏览器崩。
+ * 一层 `ul` 加一层 `li` 算两层，所以 64 层够嵌三十层的列表。
+ */
+export const MAX_TREE_DEPTH = 64;
+
+/**
  * rehype 插件：把树里**所有**文字节点——包括 `raw`（react-markdown 不开 `rehype-raw` 时会把块级和行内的 HTML 当文字显示）——换成
  * `span` 元素，里面是那段文字；`span` 组件统一把它交给 `UntrustedText`。代码块（`pre` 里面）的文字不动，由 `pre` 自己显示。
  * 只有空白的文字不动。不递归（用栈）：树很深也不会爆栈。
+ *
+ * **同一趟遍历里量树的深度**：超过 {@link MAX_TREE_DEPTH} 抛 {@link MarkdownTooDeepError}（`AssistantMarkdown` 的错误边界接住，退回纯文字），
+ * 不论这么深的树是怎么写出来的（行首的引用、脚注定义里的引用、别的什么），深的 DOM 一个都到不了浏览器。
  */
 export function rehypeWrapText() {
 	return (tree: HastNode) => {
-		const stack: [node: HastNode, inPre: boolean][] = [[tree, false]];
+		const stack: [node: HastNode, inPre: boolean, depth: number][] = [[tree, false, 0]];
 		for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
-			const [node, inPre] = top;
+			const [node, inPre, depth] = top;
 			const children = node.children;
 			if (!children) continue;
 			const insidePre = inPre || (node.type === "element" && node.tagName === "pre");
@@ -240,7 +304,8 @@ export function rehypeWrapText() {
 						children: [{ type: "text", value }],
 					};
 				} else if (child.children) {
-					stack.push([child, insidePre]);
+					if (depth + 1 > MAX_TREE_DEPTH) throw new MarkdownTooDeepError();
+					stack.push([child, insidePre, depth + 1]);
 				}
 			}
 		}

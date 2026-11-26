@@ -951,3 +951,133 @@ test("读文件的结果显示原文：两个空行（文件自己的）不被�
 		"import os\n\ndef main():\n    pass\n",
 	);
 });
+
+test("逐字出现的话被节流（每 120 毫秒才解析一次）：延后的那次渲染让内容变高时，在底部的人仍跟到最新", async ({
+	page,
+	controlPlane,
+}) => {
+	await page.setViewportSize({ width: 1280, height: 800 });
+	const id = await seedSession(controlPlane.database.url, {
+		title: TITLE,
+		status: "running",
+		events: [
+			{
+				type: "user_message",
+				message_id: MESSAGE_IDS.first,
+				text: "开始",
+				steer: false,
+				author: "alice",
+				author_user_id: null,
+			},
+			{ type: "turn_started", turn: 1 },
+			...NOTICES(60),
+		],
+		at: new Date("2026-01-01T00:00:00Z"),
+	});
+	await installSessionStream(page);
+	await page.goto(`/sessions/${id}`);
+	await expect(page.getByTestId("notice")).toHaveCount(60);
+	await expect.poll(() => fromBottom(page)).toBeLessThan(2);
+	await expect
+		.poll(async () =>
+			page.evaluate(
+				() => (window as unknown as { __sessionStream: { opened: number } }).__sessionStream.opened,
+			),
+		)
+		.toBe(1);
+	// 第一段：新起一条助手的话（马上显示）。
+	await pushEvent(page, { type: "assistant_delta", text: "开头一句。" });
+	await expect(page.getByTestId("assistant-message")).toHaveText("开头一句。");
+	await expect.poll(() => fromBottom(page)).toBeLessThan(2);
+	// 第二段：一大段（四十行）。文字到的这一刻时间线按没节流的长度滚了一次；真正画出这四十行是 120 毫秒之后那次延后的渲染，
+	// 它让内容变高很多：在底部的人要跟到最新，不能让最后这一大段落在可视区下面。
+	const lines = Array.from({ length: 40 }, (_, i) => `- 第 ${i + 1} 行`).join("\n");
+	await pushEvent(page, { type: "assistant_delta", text: `\n\n${lines}\n\n最后一句。` });
+	await expect(page.getByTestId("assistant-message")).toContainText("最后一句。");
+	await expect.poll(() => fromBottom(page)).toBeLessThan(2);
+	await expect(page.getByTestId("assistant-message").locator("li")).toHaveCount(40);
+});
+
+// 复审（#762 第二轮）：行首的嵌套检查认不出以 `[` 开头的脚注定义，定义里的 `>` × N 照样嵌成 N 层。N=1500 渲染出 1504 层 DOM，
+// N=1800、2000 Chromium 的渲染进程崩溃（整个标签页，错误边界兜不住：Blink 排版爆原生栈，存在历史里每次打开都崩），N=3000 mdast 转 hast 爆栈。
+// 树上量深度（`rehypeWrapText`）+ 错误边界两道：深的这一条退回纯文字，页面和前后的条目照常。
+for (const n of [1500, 2000, 3000]) {
+	test(`脚注定义里的 ${n} 层嵌套引用：标签页不崩，这一条退回纯文字，前后的条目照常，刷新也一样`, async ({
+		page,
+		controlPlane,
+	}) => {
+		let crashed = false;
+		page.on("crash", () => {
+			crashed = true;
+		});
+		const usage = { input: 1, output: 1, cache_read: 0, cache_write: 0 };
+		const events: SessionEventBody[] = [
+			{
+				type: "user_message",
+				message_id: MESSAGE_IDS.first,
+				text: "说话",
+				steer: false,
+				author: "alice",
+				author_user_id: null,
+			},
+			{ type: "turn_started", turn: 1 },
+			{ type: "assistant_message", text: "前面一条正常的话，有 `代码`。", usage },
+			{
+				type: "assistant_message",
+				text: `正文[^a]\n\n[^a]: ${">".repeat(n)} 最里面的字${"‮"}`,
+				usage,
+			},
+			{ type: "assistant_message", text: "后面一条正常的话：\n\n- 一\n- 二", usage },
+			{ type: "turn_end", turn: 1, outcome: "completed", reason: "", duration_ms: 1000 },
+		];
+		await open(page, controlPlane.database.url, events);
+		const messages = page.getByTestId("assistant-message");
+		await expect(messages).toHaveCount(3);
+		const deep = messages.nth(1);
+		await expect(deep.locator('[data-fallback="plain"]')).toBeVisible();
+		await expect(deep.locator("blockquote")).toHaveCount(0);
+		await expect(deep).toContainText("最里面的字");
+		await expect(deep.locator("[data-slot=hidden-character]")).toHaveCount(1);
+		await expect(messages.nth(0).locator("code")).toHaveText("代码");
+		await expect(messages.nth(2).locator("li")).toHaveCount(2);
+		await expect(page.getByRole("heading", { level: 1 })).toHaveText(TITLE);
+		await expect(page.getByRole("textbox", { name: "接着说" })).toBeEnabled();
+		await page.reload();
+		await expect(page.getByTestId("assistant-message")).toHaveCount(3);
+		await expect(
+			page.getByTestId("assistant-message").nth(1).locator('[data-fallback="plain"]'),
+		).toBeVisible();
+		expect(crashed).toBe(false);
+	});
+}
+
+test("连写的 `![`（括号嵌套太深，解析是平方级）：按纯文字显示，页面不冻住", async ({
+	page,
+	controlPlane,
+}) => {
+	const usage = { input: 1, output: 1, cache_read: 0, cache_write: 0 };
+	const nested = `${"![".repeat(6000)}x${"](u)".repeat(6000)}`;
+	const events: SessionEventBody[] = [
+		{
+			type: "user_message",
+			message_id: MESSAGE_IDS.first,
+			text: "说话",
+			steer: false,
+			author: "alice",
+			author_user_id: null,
+		},
+		{ type: "turn_started", turn: 1 },
+		{ type: "assistant_message", text: nested, usage },
+		{ type: "assistant_message", text: "后面一条正常的话", usage },
+		{ type: "turn_end", turn: 1, outcome: "completed", reason: "", duration_ms: 1000 },
+	];
+	const start = Date.now();
+	await open(page, controlPlane.database.url, events);
+	const messages = page.getByTestId("assistant-message");
+	await expect(messages).toHaveCount(2);
+	await expect(messages.nth(0).locator('[data-fallback="plain"]')).toBeVisible();
+	await expect(messages.nth(0).locator("img")).toHaveCount(0);
+	await expect(messages.nth(1)).toHaveText("后面一条正常的话");
+	// 36 KB 的连写在浏览器里原来要 7.7 秒：退回纯文字之后整页几秒内能用（耗时只作上限）。
+	expect(Date.now() - start).toBeLessThan(20_000);
+});

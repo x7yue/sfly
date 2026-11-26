@@ -107,6 +107,17 @@ export function useTimelineScroll({ head, tail }: { head: string | null; tail: s
 		measureAnchor();
 	}, [head, tail]);
 
+	/**
+	 * 内容在事件到达之外的时刻变高了（逐字出现的话被节流，延后那次渲染才画出新的文字，见 `timeline-follow.ts`）：在底部（跟随）的才滚到最新，
+	 * 往上翻看的人不动。
+	 */
+	const follow = useCallback(() => {
+		const el = scroller.current;
+		if (!el || !stuck.current) return;
+		el.scrollTop = el.scrollHeight;
+		lastTop.current = el.scrollTop;
+	}, []);
+
 	const scrollToBottom = useCallback(() => {
 		const el = scroller.current;
 		if (!el) return;
@@ -116,5 +127,5 @@ export function useTimelineScroll({ head, tail }: { head: string | null; tail: s
 		setHasNew(false);
 	}, []);
 
-	return { scroller, hasNew, scrollToBottom, captureAnchor: measureAnchor };
+	return { scroller, hasNew, scrollToBottom, captureAnchor: measureAnchor, follow };
 }
