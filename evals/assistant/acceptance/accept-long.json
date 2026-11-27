@@ -1,0 +1,17 @@
+{
+	"说明": "骨架验收（#553）：一条一秒打一行、共 60 行的命令，用来在一轮进行中刷新页面、换浏览器、重启控制面。",
+	"steps": [
+		{
+			"id": "long",
+			"tool": "bash",
+			"args": {
+				"command": "for i in $(seq 1 60); do echo \"第 $i 行\"; sleep 1; done",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "done",
+			"text": "长命令跑完了。"
+		}
+	]
+}
