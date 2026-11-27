@@ -1,3 +1,4 @@
+import { actAs } from "../../server/test/support/credentials.js";
 import { expect, test } from "./fixtures";
 import {
 	createScenario,
@@ -17,7 +18,7 @@ async function describeScenario(
 ) {
 	const res = await cp.fetch(`/orchestrations/${id}`, {
 		method: "PATCH",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify({ description }),
 	});
 	if (!res.ok) throw new Error(`修改说明失败：${res.status}`);
@@ -80,7 +81,7 @@ test("最近一次运行已请求取消、还在等待任务结束时，卡片�
 	await agent.nextAssign();
 	const res = await controlPlane.fetch(`/runs/${runId}/cancel`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: "{}",
 	});
 	expect(res.ok).toBe(true);
@@ -333,7 +334,7 @@ test("已归档场景的历史运行仍可回看：卡片与表格行的「打�
 	await agent.succeed(await agent.nextAssign());
 	const res = await controlPlane.fetch(`/orchestrations/${id}/archive`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: "{}",
 	});
 	expect(res.ok).toBe(true);
@@ -595,7 +596,7 @@ test("在「已归档」里恢复之后焦点落到下一张卡片，最后一�
 	for (const id of ids) {
 		const res = await controlPlane.fetch(`/orchestrations/${id}/archive`, {
 			method: "POST",
-			headers: { "x-sfly-nickname": "tester" },
+			headers: { ...actAs("tester") },
 		});
 		expect(res.ok).toBe(true);
 	}

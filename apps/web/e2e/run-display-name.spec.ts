@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
@@ -210,7 +211,7 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 
 	const saved = await controlPlane.fetch(`/orchestrations/${scenarioId}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify({ base_version: 1, document: namedDocument(RENAMED) }),
 	});
 	expect(saved.status).toBe(201);

@@ -721,6 +721,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			]);
 			for (const write of writes) {
 				expect(write.headers["x-sfly-client"]).toMatch(/^sfly-cli\/\S+ agent\/claude-code$/);
+				// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 				expect(write.headers["x-sfly-nickname"]).toBe("dana");
 			}
 			const run = await api.run(runId);

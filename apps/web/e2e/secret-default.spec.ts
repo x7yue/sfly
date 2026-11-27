@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import type { Page } from "@playwright/test";
 import { orchestrationsApi } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import { storedDocument } from "../../server/test/support/stored-document";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane";
 import { inspector, nodeCard, openEditor } from "./editor-support";
@@ -163,7 +164,7 @@ test("保存冲突后「另存为新场景」：已设置的 secret 默认值带
 	await regionParam(page).getByRole("combobox", { name: "默认值" }).fill("cn-west");
 	await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({ base_version: 1, document: { ...SCENARIO, default_agent: "agent-b" } }),
 	});
 	await page.keyboard.press("Control+s");

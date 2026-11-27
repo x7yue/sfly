@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { actAs } from "./support/credentials.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const INDEX_HTML = '<!doctype html><html><body><div id="app"></div></body></html>';
@@ -59,7 +60,7 @@ describe("控制面托管前端（SPA）", () => {
 
 		const created = await cp.fetch("/api/orchestrations", {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ name: "冒烟" }),
 		});
 		expect(created.status).toBe(201);

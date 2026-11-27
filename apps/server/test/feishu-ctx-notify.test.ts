@@ -8,6 +8,7 @@
 import { logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
@@ -216,7 +217,7 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		expect(task.referencedFeishuBots).toEqual(["ops"]);
 		const res = await cp.fetch("/feishu-bots/ops", {
 			method: "DELETE",
-			headers: { "x-sfly-nickname": "tester" },
+			headers: { ...actAs("tester") },
 		});
 		expect(res.status).toBe(204);
 

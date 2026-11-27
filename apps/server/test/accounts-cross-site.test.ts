@@ -5,7 +5,7 @@
 import { request } from "node:http";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { TestAccounts } from "./support/credentials.js";
+import { actAs, TestAccounts } from "./support/credentials.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
@@ -95,7 +95,7 @@ describe("跨站检查：带 Cookie 的请求", () => {
 			headers: {
 				...JSON_HEADERS,
 				...headers,
-				...(nickname ? { "x-sfly-nickname": encodeURIComponent(nickname) } : {}),
+				...(nickname ? { ...actAs(nickname) } : {}),
 			},
 			body: JSON.stringify({ name: "场景" }),
 		});

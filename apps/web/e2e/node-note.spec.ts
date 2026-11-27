@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import {
 	clipboard,
@@ -369,7 +370,7 @@ const noted = (note: string) => ({
 async function saveVersion(cp: TestControlPlane, scenario: string, base: number, document: object) {
 	const res = await cp.fetch(`/orchestrations/${scenario}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({ base_version: base, document }),
 	});
 	expect(res.status, await res.text()).toBe(201);

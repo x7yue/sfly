@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { Locator, Page } from "@playwright/test";
 import type { SessionEventBody } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	AgentUpdateState,
 	type AssignedTask,
@@ -658,7 +659,7 @@ async function scenarios(
 	const describe = (id: string, description: string) =>
 		controlPlane.fetch(`/orchestrations/${id}`, {
 			method: "PATCH",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ description }),
 		});
 	const ping = (id: string, agent?: string) => ({
@@ -819,7 +820,7 @@ test("场景的运行通知设置：机器人已被删除时的提示", async ({
 	});
 	await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 		method: "DELETE",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	await page.goto("/orchestrations");
 	await page.getByRole("article", { name: "订单压测" }).getByLabel("更多操作").click();

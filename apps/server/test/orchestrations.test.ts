@@ -1,6 +1,7 @@
 import { orchestrationsApi, runNotificationTriggerRemovedMessage } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -115,7 +116,7 @@ describe("编排版本", () => {
 		for (const method of ["PUT", "PATCH"]) {
 			const res = await cp.fetch(`/orchestrations/${id}/versions/1`, {
 				method,
-				headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+				headers: { "content-type": "application/json", ...actAs("alice") },
 				body: JSON.stringify({ base_version: 0, document: docV1 }),
 			});
 			expect(res.status).toBe(404);

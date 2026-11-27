@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { Locator } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { IDS, seedRemovedKindScenario } from "../../server/test/support/removed-kind-scenario.js";
 import { createEditorScenario, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
@@ -75,7 +76,7 @@ test("运行通知对话框：说明里的文档链接和红字里的「飞书�
 	});
 	await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 		method: "DELETE",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	await page.goto("/orchestrations");
 	await page.getByRole("article", { name: "订单压测" }).getByLabel("更多操作").click();

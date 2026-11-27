@@ -80,6 +80,7 @@ describe("sfly api → 控制面", () => {
 			);
 			expect(result.code, result.stderr).toBe(0);
 			const [request] = proxy.requests;
+			// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 			expect(request?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("小明"));
 			expect(request?.headers["x-sfly-client"]).toMatch(/^sfly-cli\/\S+$/);
 
