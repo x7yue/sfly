@@ -61,22 +61,18 @@ def split_lines(stream: IO[bytes]) -> Iterator[bytes]:
         yield pending
 
 
-def turn_config(address: str = "dev:50052") -> Record:
-    """产品的这一轮的配置（apps/assistant/src/turn-config.ts 的 TurnConfig）：
-    工作台是开发环境里的 Agent。"""
-    return {
-        "address": address,
-        "workdir": WORKSPACE,
-        "env": {"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"},
-        "defaultTimeoutSeconds": 1200,
-        "secrets": [],
-    }
+def turn_config() -> Record:
+    """产品的这一轮的配置（apps/assistant/src/turn-config.ts 的 TurnConfig）：宿主机准备探针容器时
+    写在 `/root/rpcprobe/turn.json` 里的那份（aeval/rpcprobe.py 的 `TURN_CONFIG`，只在那里写一份，
+    昵称也是那里引用评测集的常量）。"""
+    config: Record = json.loads(TURN_CONFIG.read_text())
+    return config
 
 
 def base_env() -> dict[str, str]:
     """只给 PATH、HOME、PI_CODING_AGENT_DIR、PI_TELEMETRY 和扩展的配置文件路径
     （助手服务起 pi 时给的那几项，apps/assistant/src/launch.ts）。配置文件由宿主机准备探针容器时写好
-    （aeval/rpcprobe.py 的 `prepare`，内容同 `turn_config()`）。"""
+    （aeval/rpcprobe.py 的 `prepare`，内容就是 `turn_config()` 读的那份）。"""
     return {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/root"),

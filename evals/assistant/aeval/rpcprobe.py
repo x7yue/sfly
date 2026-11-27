@@ -23,7 +23,7 @@ from typing import Any
 
 from aeval import docker as d
 from aeval.classify import read_events, tool_result_text
-from aeval.env import Stack
+from aeval.env import ASSISTANT_NICKNAME, Stack
 from aeval.models import FAKE, Model, load_models
 from aeval.session import run_session
 from aeval.toolcheck import EXPECT_B, ToolCheck
@@ -1151,11 +1151,12 @@ def models_json() -> str:
 
 
 # 交给产品的远程工具扩展的这一轮的配置（apps/assistant/src/turn-config.ts 的 TurnConfig；
-# container/rpcprobe_run.py 的 turn_config() 是同一份）：工作台是开发环境里的 Agent。
+# container/rpcprobe_run.py 的 turn_config() 读的就是写进探针容器的这一份）：
+# 工作台是开发环境里的 Agent。
 TURN_CONFIG = {
     "address": "dev:50052",
     "workdir": ToolCheck.workspace,
-    "env": {"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"},
+    "env": {"SFLY_NICKNAME": ASSISTANT_NICKNAME, "AI_AGENT": "pi"},
     "defaultTimeoutSeconds": 1200,
     "secrets": [],
 }
