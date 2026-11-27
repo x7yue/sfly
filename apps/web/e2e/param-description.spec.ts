@@ -209,8 +209,8 @@ test("版本对比列出参数说明的变化", async ({ page, controlPlane }) =
 
 	await page.goto(`/orchestrations/${id}/versions`);
 	const changes = page.getByRole("region", { name: "节点" });
-	await expect(changes).toContainText("参数 biz_date");
-	await expect(changes).toContainText("必填 · 说明「业务日期」");
+	// 两边都有的参数只写变了的字段（#341）。
+	await expect(changes).toContainText("参数 biz_date 的说明 业务日期（新增）");
 });
 
 test("运行预设固定的参数也显示说明：抽屉里说明在「由预设 … 固定」前面，预设的编辑表单里同样显示说明", async ({

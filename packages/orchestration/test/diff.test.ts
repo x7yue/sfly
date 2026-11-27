@@ -109,11 +109,7 @@ describe("编排文档差异", () => {
 						id: "entry",
 						kind: "entry",
 						changes: [
-							{
-								path: "params.url",
-								before: { name: "url", type: "string", required: true, secret: false },
-								after: { name: "url", type: "string", required: false, secret: false },
-							},
+							{ path: "params.url.required", before: true, after: false },
 							{
 								path: "params.token",
 								before: undefined,
@@ -346,6 +342,43 @@ describe("编排文档差异", () => {
 				kind: "package",
 				display_name: "改了名字",
 				changes: [{ path: "display_name", before: undefined, after: "改了名字" }],
+			},
+		]);
+	});
+});
+
+describe("入口参数按字段比较（#341）", () => {
+	const doc = (params: unknown[]) => ({ nodes: [{ id: "entry", kind: "entry", params }] });
+
+	it("只去掉了默认值：只写这一个字段，不把整条声明划掉再写一遍", () => {
+		const token = { name: "token", type: "string", secret: true, description: "被测服务的密钥" };
+		const changes = diffDocuments(doc([{ ...token, default: "******" }]), doc([token])).nodes
+			.changed[0]?.changes;
+		expect(changes).toEqual([{ path: "params.token.default", before: "******", after: undefined }]);
+	});
+
+	it("改了几个字段就各写一项；新增、删除的参数整条写", () => {
+		const before = doc([
+			{ name: "url", type: "string", required: true },
+			{ name: "old", type: "number" },
+		]);
+		const after = doc([
+			{ name: "url", type: "json", required: false, description: "地址" },
+			{ name: "new", type: "boolean" },
+		]);
+		expect(diffDocuments(before, after).nodes.changed[0]?.changes).toEqual([
+			{ path: "params.url.type", before: "string", after: "json" },
+			{ path: "params.url.required", before: true, after: false },
+			{ path: "params.url.description", before: undefined, after: "地址" },
+			{
+				path: "params.old",
+				before: { name: "old", type: "number", required: false, secret: false },
+				after: undefined,
+			},
+			{
+				path: "params.new",
+				before: undefined,
+				after: { name: "new", type: "boolean", required: false, secret: false },
 			},
 		]);
 	});
