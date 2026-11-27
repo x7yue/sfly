@@ -1,4 +1,4 @@
-import type { ParamDeclView } from "@sfly/schema";
+import { type ParamDeclView, SECRET_MASK } from "@sfly/schema";
 import { z } from "zod";
 
 /**
@@ -44,13 +44,43 @@ export function defaultFieldValue(p: ParamDeclView): FieldValue {
 	return fieldValue(p, p.secret ? undefined : p.default);
 }
 
+/** 值里有没有掩码：按 secret 值打码过的值（字符串里、JSON 的键和值里），原值读不回来（#485）。 */
+export function containsMask(value: unknown): boolean {
+	if (typeof value === "string") return value.includes(SECRET_MASK);
+	if (Array.isArray(value)) return value.some(containsMask);
+	if (value !== null && typeof value === "object") {
+		return Object.entries(value).some(([key, v]) => key.includes(SECRET_MASK) || containsMask(v));
+	}
+	return false;
+}
+
+/**
+ * 「再次运行」时不能沿用的普通参数：上一次的值里含有 secret 值，运行视图给的是打码后的值。预填它，不改就触发，
+ * 节点拿到的是带掩码的值。这些参数不预填（用默认值），表单里写明原因。只在预填的一侧处理：普通的值也可能恰好含有
+ * 六个星号，控制面直接拒绝会误伤。
+ */
+export function maskedRerunParams(
+	decls: ParamDeclView[],
+	initial?: Record<string, unknown>,
+): Set<string> {
+	return new Set(
+		decls
+			.filter((p) => initial && !p.secret && Object.hasOwn(initial, p.name))
+			.filter((p) => containsMask(initial?.[p.name]))
+			.map((p) => p.name),
+	);
+}
+
 function initialValue(p: ParamDeclView, initial?: Record<string, unknown>): FieldValue {
-	return initial && !p.secret && Object.hasOwn(initial, p.name)
+	return initial && !p.secret && Object.hasOwn(initial, p.name) && !containsMask(initial[p.name])
 		? fieldValue(p, initial[p.name])
 		: defaultFieldValue(p);
 }
 
-/** 初始值：给了 initial（再次运行时为上次运行的参数）时沿用它，secret 参数除外；否则用声明的默认值。 */
+/**
+ * 初始值：给了 initial（再次运行时为上次运行的参数）时沿用它，secret 参数和值里含有掩码的参数
+ * （{@link maskedRerunParams}）除外；否则用声明的默认值。
+ */
 export function initialValues(
 	decls: ParamDeclView[],
 	initial?: Record<string, unknown>,

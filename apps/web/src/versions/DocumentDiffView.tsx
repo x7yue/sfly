@@ -1,7 +1,8 @@
-import type { AnnotationChange, DocumentDiff, FieldChange } from "@sfly/orchestration";
+import type { AnnotationChange, DocumentDiff, FieldChange, NodeRef } from "@sfly/orchestration";
 import { isEmptyDiff } from "@sfly/orchestration";
 import { ANNOTATION_DEFAULT_COLOR, type AnnotationColor } from "@sfly/schema";
 import { KIND_META } from "#/components/canvas/node-display";
+import { NodeNameInline } from "#/components/node-name";
 import { UntrustedText } from "#/components/untrusted-text";
 import { ANNOTATION_COLOR_LABEL, ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 
@@ -40,25 +41,27 @@ export function DocumentDiffView({
 					{nodes.added.map((n) => (
 						<Row key={`+${n.id}`}>
 							<Ins>
-								+ {n.id}（{kindLabel(n.kind)}）
+								+ <NodeNameInline node={nodeName(n)} />（{kindLabel(n.kind)}）
 							</Ins>
 						</Row>
 					))}
 					{nodes.removed.map((n) => (
 						<Row key={`-${n.id}`}>
 							<Del>
-								− {n.id}（{kindLabel(n.kind)}）
+								− <NodeNameInline node={nodeName(n)} />（{kindLabel(n.kind)}）
 							</Del>
 						</Row>
 					))}
 					{nodes.changed.map((n) => (
 						<div key={`~${n.id}`}>
 							<Row>
-								<span className="font-mono text-fg-1">{n.id}</span>
+								<span className="text-fg-1">
+									<NodeNameInline node={nodeName(n)} />
+								</span>
 								<span className="text-fg-3">（{kindLabel(n.kind)}）</span>
 							</Row>
 							{n.changes.map((c) => (
-								<ChangeRow key={c.path} change={c} indent />
+								<ChangeRow key={c.path} change={paramFieldChange(c)} indent />
 							))}
 						</div>
 					))}
@@ -195,6 +198,31 @@ function annotationChange(change: AnnotationChange["changes"][number]): FieldCha
 
 const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.label ?? kind;
 
+/** 节点写成「显示名称（节点 ID）」，没有显示名称时只写节点 ID（#341，和运行监控一致）。 */
+const nodeName = (n: NodeRef) => ({ node_id: n.id, display_name: n.display_name });
+
+/** 入口参数声明的字段（`params.<参数名>.<字段>`，#341）：是否必填、是否 secret 写成「是 / 否」。 */
+const PARAM_FIELD_LABEL: Record<string, string> = {
+	type: "类型",
+	required: "必填",
+	secret: TERM.secret,
+	default: "默认值",
+	description: "说明",
+};
+
+function paramFieldChange(change: FieldChange): FieldChange {
+	const field = paramField(change.path);
+	if (field !== "required" && field !== "secret") return change;
+	const yesNo = (v: unknown) => (v === undefined ? v : v === true ? "是" : "否");
+	return { ...change, before: yesNo(change.before), after: yesNo(change.after) };
+}
+
+/** `params.<参数名>.<字段>` 里的字段；不是这种写法时是 undefined。参数名只有字母、数字和下划线，不含点。 */
+function paramField(path: string): string | undefined {
+	const [head, , field, ...rest] = path.split(".");
+	return head === "params" && field !== undefined && rest.length === 0 ? field : undefined;
+}
+
 const FIELD_LABEL: Record<string, string> = {
 	default_agent: "默认 Agent",
 	display_name: TERM.displayName,
@@ -241,7 +269,11 @@ function FieldLabel({ path }: { path: string }) {
 			</>
 		);
 	}
-	if (head === "params") return `参数 ${tail}`;
+	if (head === "params") {
+		const field = paramField(path);
+		if (field === undefined) return `参数 ${tail}`;
+		return `参数 ${rest[0]} 的${PARAM_FIELD_LABEL[field] ?? field}`;
+	}
 	return FIELD_LABEL[path] ?? path;
 }
 

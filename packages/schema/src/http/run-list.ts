@@ -25,6 +25,8 @@ export const RunListQuery = z.object({
 	triggered_by: blankAsMissing(z.string().max(200)),
 	/** 只要运行编号以它开头的运行（不分大小写，只能写十六进制数字和 `-`）。`q` 还会按触发人匹配，只想按编号找时用它。 */
 	id_prefix: blankAsMissing(z.string().regex(/^[0-9a-fA-F-]{1,36}$/)),
+	/** 只要这个会话触发的运行（会话令牌的 `sfly run … latest` 用它找这个会话触发的最近一次）。 */
+	session_id: blankAsMissing(z.uuid()),
 	/** 最多返回多少个运行（默认 200，最多 500），按开始时间从新到旧。 */
 	limit: z.coerce.number().int().min(1).max(500).default(200),
 });
