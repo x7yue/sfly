@@ -191,6 +191,9 @@ describe("闲置回收（时间可控）", () => {
 		await eventually(() => expect(count(h, id, "turn_start")).toBe(1));
 		await h.abort(id, 2); // 在停止：pi 不报告 agent_settled，要等 60 分钟
 		clock.advance(IDLE_RECLAIM_MS);
+		// 回收会马上把进程从会话上摘下来（`pid` 变成 undefined），stdin 的关闭要稍后才在 pi 那边看得到：两样都看。
+		expect(h.sessions.pid(id)).toBe(pid);
+		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(count(h, id, "fake_stdin_closed")).toBe(0);
 		expect(alive(pid)).toBe(true);
 	});
