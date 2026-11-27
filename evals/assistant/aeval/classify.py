@@ -9,6 +9,7 @@
 
 | 类 | 怎么认 |
 |---|---|
+| 平台故障 | 只有平台臂：检查过了之后平台这一侧出的问题（`aeval.platform`），由调用方定 |
 | 超时 | 会话驱动因轮数或时间上限结束 |
 | 上下文耗尽 | 出现压缩事件，或模型报上下文超长 |
 | 工具调用格式错 | 工具调用参数校验失败、调用了不存在的工具 |
@@ -28,11 +29,17 @@ from pathlib import Path
 from typing import Any
 
 INFRA = "环境故障"
+# 平台臂：检查过了之后平台这一侧出的问题（aeval.platform.classify_platform）。有效的失败，不作废。
+PLATFORM_FAULT = "平台故障"
+# 平台臂：认不出是平台还是评测环境的问题。作废，但 report 单独列出，判定写明只作参考。
+UNCLASSIFIED = "未归类"
 
 UNKNOWN = "认不出的错误"
 
 CATEGORIES = [
     INFRA,
+    PLATFORM_FAULT,
+    UNCLASSIFIED,
     "超时",
     "上下文耗尽",
     "工具调用格式错",
