@@ -360,18 +360,21 @@ def test_background_processes_go_under_the_project_procs_dir_named_after_the_run
     }
 
 
-def test_node_failure_exits_1_with_the_error_and_traceback(project: Path) -> None:
+def test_node_failure_exits_1_with_the_error_and_the_traceback_once(project: Path) -> None:
     run = sfly_debug(project, "fail", "--params", '{"message": "磁盘满了"}')
 
     assert run.returncode == 1
     assert "节点失败：RuntimeError: 磁盘满了" in run.stderr
-    assert "Traceback" in run.stderr
     assert "输出：" not in run.stdout
-    # 出错位置在失败原因后面、堆栈前面，不用翻堆栈（#471）；堆栈从节点代码开始。
-    reason, place, _blank, header = run.stderr.partition("节点失败：")[2].splitlines()[:4]
+    # 堆栈只打一遍：在节点的日志里（标准错误，从节点代码开始），「节点失败：」后面不再接（#404）。
+    assert run.stderr.count("Traceback (most recent call last):") == 1
+    logs, _, result = run.stderr.partition("节点失败：")
+    assert "stderr Traceback (most recent call last):" in logs
+    # 出错位置在失败原因后面，不用翻堆栈（#471）。
+    reason, place, pointer = result.splitlines()[:3]
     assert reason == "RuntimeError: 磁盘满了"
     assert re.fullmatch(r"出错位置：\S+\.fail 第 \d+ 行", place), place
-    assert header == "Traceback (most recent call last):"
+    assert pointer == "堆栈见上面的日志（标准错误）"
     assert "runner.py" not in run.stderr
 
 

@@ -14,7 +14,14 @@ import { ReferenceEditor, type ReferenceEditorHandle } from "./ReferenceEditor";
 import { ReferenceChip, ReferencePicker } from "./ReferencePicker";
 import { RunStateConnect } from "./RunStateConnect";
 import { type ReferenceChoice, wholeReference } from "./reference-completion";
-import { choicesFor, runStateShown, TYPE_NAMES, type ValueKind, valueKind } from "./value-kind";
+import {
+	choicesFor,
+	isNullableString,
+	runStateShown,
+	TYPE_NAMES,
+	type ValueKind,
+	valueKind,
+} from "./value-kind";
 import { formatJson, parseJson, parseNumber } from "./value-text";
 import { ReferenceActions } from "./ZoomEditor";
 
@@ -104,7 +111,11 @@ export function ValueField({
 			{control}
 		</Field>
 	);
-	if (kind === "string") return <StringValue {...common} value={value} render={field} />;
+	if (kind === "string") {
+		// 「字符串或 null」的必填输入：留空写 null（没有默认值可用）；可选的留空就是不填，用节点的默认值。
+		const empty = required && isNullableString(schema) ? null : undefined;
+		return <StringValue {...common} value={value} empty={empty} render={field} />;
+	}
 	return (
 		<TypedValue
 			{...common}
@@ -142,13 +153,14 @@ function StringValue({
 	errors,
 	choices,
 	value,
+	empty,
 	onChange,
 	render,
-}: ValueProps) {
+}: ValueProps & { empty: null | undefined }) {
 	const editor = useRef<ReferenceEditorHandle>(null);
 	const text = typeof value === "string" ? value : "";
 	const invalid = errors.length > 0;
-	const change = (v: string) => onChange(v === "" ? undefined : v);
+	const change = (v: string) => onChange(v === "" ? empty : v);
 	return render(
 		(control) => (
 			<ReferenceEditor
