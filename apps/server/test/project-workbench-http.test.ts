@@ -62,9 +62,11 @@ describe("登记项目的工作台", () => {
 		await cp.close();
 	});
 
+	// 凭据都由调用方写明（`{}` 是不带凭据）：不要测试控制面默认带的那一个。
 	const send = (method: string, path: string, headers: Record<string, string>, body?: unknown) =>
 		cp.fetch(path, {
 			method,
+			credentials: "omit",
 			headers: { ...(body === undefined ? {} : JSON_HEADERS), ...headers },
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});

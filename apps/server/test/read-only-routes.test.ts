@@ -908,7 +908,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 			`${task.artifactUploadUrl}${ARTIFACT.split("/").map(encodeURIComponent).join("/")}`,
 			{
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream" },
+				headers: { ...agent.auth, "content-type": "application/octet-stream" },
 				body: JSON.stringify({ ok: true }),
 			},
 		);

@@ -64,7 +64,10 @@ describe("错误响应上的头", () => {
 
 	it("不经过错误处理的错误（401）也不缓存", async () => {
 		cp = await startTestControlPlane({ initialAdmin: ADMIN });
-		const res = await cp.fetch("/auth/me", { headers: { "sec-fetch-site": "same-origin" } });
+		const res = await cp.fetch("/auth/me", {
+			credentials: "omit",
+			headers: { "sec-fetch-site": "same-origin" },
+		});
 		expect(res.status).toBe(401);
 		expect(res.headers.get("cache-control")).toBe("no-store");
 	});

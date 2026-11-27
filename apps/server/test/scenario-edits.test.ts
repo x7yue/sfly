@@ -11,6 +11,7 @@ import {
 import { orchestrationsApi, type StoredOrchestrationDocument } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -698,7 +699,7 @@ describe("场景的局部编辑", () => {
 		});
 		expect(res.status).toBe(404);
 		expect(await res.json()).toEqual({
-			error: { code: "not_found", message: "orchestration not found" },
+			error: { code: "not_found", message: ACCESS_NOT_FOUND_MESSAGE },
 		});
 	});
 });

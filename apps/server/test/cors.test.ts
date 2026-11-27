@@ -99,6 +99,7 @@ describe("跨域：默认允许所有来源", () => {
 			cp.fetch("/api/runs", { headers: { origin: PAGE } }),
 			cp.fetch("/orchestrations", {
 				method: "POST",
+				credentials: "omit",
 				headers: { "content-type": "application/json", origin: PAGE },
 				body: JSON.stringify({ name: "t" }),
 			}),

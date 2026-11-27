@@ -121,7 +121,7 @@ describe("sfly publish → 控制面", () => {
 			const bossToken = await accounts.personalToken(boss);
 			const args = ["publish", publicProject, "--server", cp.httpUrl, "--project", "public"];
 
-			const noToken = await sfly(args);
+			const noToken = await sfly(args, { env: { SFLY_API_TOKEN: undefined } });
 			const notAdmin = await sfly(args, { env: { SFLY_API_TOKEN: bossToken } });
 			const ok = await sfly(args, { env: { SFLY_API_TOKEN: adminToken } });
 
