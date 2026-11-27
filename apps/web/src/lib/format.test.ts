@@ -7,9 +7,37 @@ import {
 	formatElapsed,
 	formatFullDateTime,
 	formatFullDateTimeMs,
+	formatProgress,
 	spansOtherDay,
 	valueText,
 } from "./format";
+
+describe("formatProgress（#806）", () => {
+	it("总数是整数时当前值取整", () => {
+		expect(formatProgress(70.32576644897927, 1500)).toBe("70/1500");
+		expect(formatProgress(229.9794373550103, 1500)).toBe("230/1500");
+		expect(formatProgress(3, 10)).toBe("3/10");
+	});
+
+	it("总数是小数时两边最多 1 位小数", () => {
+		expect(formatProgress(1.23456, 2.5)).toBe("1.2/2.5");
+		expect(formatProgress(2, 7.125)).toBe("2/7.1");
+	});
+
+	it("没有总数时只写当前值，最多 1 位小数", () => {
+		expect(formatProgress(377.6008894639672, null)).toBe("377.6");
+		expect(formatProgress(42, null)).toBe("42");
+	});
+
+	it("一万以上照指标值的写法", () => {
+		expect(formatProgress(12_345.678, 1_000_000)).toBe("12.3k/1.0M");
+		expect(formatProgress(250_000, null)).toBe("250k");
+	});
+
+	it("可以换分隔符", () => {
+		expect(formatProgress(40.4, 100, " / ")).toBe("40 / 100");
+	});
+});
 
 describe("valueText", () => {
 	it("字符串原样，其余按 JSON，字符串和数字不会混淆", () => {

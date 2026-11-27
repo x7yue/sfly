@@ -5,7 +5,7 @@ import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { TriggeredAt } from "#/components/via-tag";
 import { ACTION, ELAPSED_LABEL, moreLabel } from "#/lib/copy";
-import { formatElapsed, shortId } from "#/lib/format";
+import { formatElapsed, formatProgress, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
@@ -113,8 +113,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 								fallback={
 									node.progress && (
 										<span className="ml-auto font-mono text-xs text-fg-2">
-											{node.progress.current}
-											{node.progress.total !== null && ` / ${node.progress.total}`}
+											{formatProgress(node.progress.current, node.progress.total, " / ")}
 										</span>
 									)
 								}

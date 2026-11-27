@@ -897,7 +897,11 @@ function NodeRow({
 						</Badge>
 					)}
 					{progress && (
-						<span data-progress className="ml-auto flex-none font-mono text-2xs text-fg-3">
+						// 放不下时先收进度，节点名留着。
+						<span
+							data-progress
+							className="ml-auto min-w-0 shrink-[1000] truncate font-mono text-2xs text-fg-3"
+						>
 							{progress}
 						</span>
 					)}
