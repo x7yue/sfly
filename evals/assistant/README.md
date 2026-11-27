@@ -175,7 +175,10 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
     `turn.json` 带着这一轮的环境变量，不复制。
   - `platform-events.jsonl` 是事件流里收到的每个事件，**原样一行一个**（心跳不记）：除了会话的事件，连上事件流时控制面
     补发的一条 `snapshot`（没有序号，重连每次一条：正在输出的文字、在跑的命令、排位）、一轮结束时平台提交工作区的
-    `platform`（`kind: commit`，在 `turn_end` 之前）也在里面，不要把它们当成助手的事件数。`platform.json` 是开始前的
+    `platform`（`kind: commit`，在 `turn_end` 之前）也在里面，不要把它们当成助手的事件数。**现在的四道题里不会有
+    `commit` 行**：题目的工作区是会话工作目录 `/work` 里嵌套的 git 仓库（`/work/<包>/`，题目自己 `git init`），外层仓库只
+    记这个目录的一个指针，模型改里面的文件，外层的树不变，平台就没有东西可提交（`platform` 行里只有 `run`、`scenario_version`
+    这样的）。`platform.json` 是开始前的
     检查、会话 ID、结局、断开的次数和原因、评测有没有停下它、记下的问题和每个问题的种类（`problem_kinds`：控制面回错、
     过了时限、停止之后没有结局、评测自己出错、驱动被结束了、管理员登录失败、建会话时环境没准备好）、用时。
   - `driver.json`：模型调用次数当轮数（臂 A 到上限时也记上限的值）、token 是平台的合计；用时是评测这一侧量的
