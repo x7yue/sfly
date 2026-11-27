@@ -39,6 +39,7 @@ import {
 	ConnectionClock,
 	clockOffsetView,
 	measureClockOffset,
+	type RecalibrationNote,
 } from "./agent-clock.js";
 import { agentEndpoint } from "./agent-endpoint.js";
 import { loadAgentTasks } from "./agent-tasks.js";
@@ -342,7 +343,7 @@ export class AgentHub {
 		return this.deps.mutex.run(async () => {
 			if (this.#connections.get(conn.name) !== conn) return;
 			const note = conn.clock.recalibrate(reading.monotonicMs, receivedAt);
-			if (note) printInfo(recalibrationLine(conn.name, note.driftMs));
+			if (note) printInfo(recalibrationLine(conn.name, note));
 			const offset = measureClockOffset(reading, receivedAt);
 			await this.deps.db
 				.update(agents)
@@ -533,8 +534,8 @@ export class AgentHub {
 	}
 }
 
-/** 重新估算换算时写的一行：按原来的换算折算出的时间比控制面时间晚多少（负数是早），重新估算以后是 0。 */
-export function recalibrationLine(name: string, driftMs: number): string {
-	const sign = driftMs > 0 ? "+" : "";
-	return `Agent「${name}」的时间换算偏差 ${sign}${driftMs} ms，超过 ${CLOCK_OFFSET_THRESHOLD_MS} ms，已重新估算（之后的点按新的换算，偏差 0 ms；已经写下的点不改）`;
+/** 重新估算换算时写的一行：这次心跳按原来的、按新的换算折算出的时间比控制面时间晚多少（负数是早）。 */
+export function recalibrationLine(name: string, note: RecalibrationNote): string {
+	const ms = (v: number) => `${v > 0 ? "+" : ""}${v} ms`;
+	return `Agent「${name}」的时间换算偏差 ${ms(note.beforeMs)}，超过 ${CLOCK_OFFSET_THRESHOLD_MS} ms，已重新估算：按新的换算这次心跳的偏差 ${ms(note.afterMs)}（之后的点按新的换算，已经写下的点不改）`;
 }

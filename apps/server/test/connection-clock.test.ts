@@ -1,6 +1,6 @@
 // 一次连接的时间换算在心跳时重新估算（#389）：ConnectionClock 的纯逻辑。
 import { describe, expect, it } from "vitest";
-import { ConnectionClock } from "../src/agents/agent-clock.js";
+import { ConnectionClock, type RecalibrationNote } from "../src/agents/agent-clock.js";
 import { recalibrationLine } from "../src/agents/agent-hub.js";
 import { ManualClock } from "./support/manual-clock.js";
 
@@ -34,7 +34,10 @@ describe("心跳时重新估算时间换算（#389）", () => {
 		// 控制面的墙上时钟拨快了 30 分钟：连续两次都对不上，第二次重新估算。
 		const jump = 30 * 60_000;
 		expect(clock.recalibrate(41_000, new Date(T0 + 40_000 + jump + 500))).toBeUndefined();
-		expect(clock.recalibrate(51_000, new Date(T0 + 50_000 + jump))).toEqual({ driftMs: -jump });
+		expect(clock.recalibrate(51_000, new Date(T0 + 50_000 + jump))).toEqual({
+			beforeMs: -jump,
+			afterMs: 0,
+		});
 		expect(at(clock, 61_000)).toBe(T0 + 60_000 + jump);
 		// 这次心跳之前的读数仍按原来的换算：已经写下的点不变。
 		expect(at(clock, 41_000)).toBe(T0 + 40_000);
@@ -44,7 +47,10 @@ describe("心跳时重新估算时间换算（#389）", () => {
 		const clock = connection();
 		const back = 20 * 60_000;
 		// 控制面的墙上时钟被往回拨了 20 分钟。
-		expect(clock.recalibrate(61_000, new Date(T0 + 60_000 - back))).toEqual({ driftMs: back });
+		expect(clock.recalibrate(61_000, new Date(T0 + 60_000 - back))).toEqual({
+			beforeMs: back,
+			afterMs: 0,
+		});
 		expect(at(clock, 61_000)).toBe(T0 + 60_000 - back);
 		expect(at(clock, 66_000)).toBe(T0 + 65_000 - back);
 		// 这次心跳之前的读数（晚到的批次）仍按原来的换算。
@@ -72,9 +78,16 @@ describe("心跳时重新估算时间换算（#389）", () => {
 		expect(clock.occurredAt(61_000)).toBeUndefined();
 	});
 
-	it("控制面的日志写一行：换算偏差多少、已经重新估算、已经写下的点不改", () => {
-		expect(recalibrationLine("agent-a", 1_800_000)).toBe(
-			"Agent「agent-a」的时间换算偏差 +1800000 ms，超过 2000 ms，已重新估算（之后的点按新的换算，偏差 0 ms；已经写下的点不改）",
+	it("控制面的日志写一行：同一次心跳在调整前后的偏差；两次心跳晚到 3 秒和 8 秒时，调整后仍有 −5000 ms", () => {
+		const clock = connection();
+		expect(clock.recalibrate(11_000, new Date(T0 + 13_000))).toBeUndefined();
+		const note = clock.recalibrate(21_000, new Date(T0 + 28_000));
+		expect(note).toEqual({ beforeMs: -8000, afterMs: -5000 });
+		expect(recalibrationLine("agent-a", note as RecalibrationNote)).toBe(
+			"Agent「agent-a」的时间换算偏差 -8000 ms，超过 2000 ms，已重新估算：按新的换算这次心跳的偏差 -5000 ms（之后的点按新的换算，已经写下的点不改）",
+		);
+		expect(recalibrationLine("agent-a", { beforeMs: 1_800_000, afterMs: 0 })).toBe(
+			"Agent「agent-a」的时间换算偏差 +1800000 ms，超过 2000 ms，已重新估算：按新的换算这次心跳的偏差 0 ms（之后的点按新的换算，已经写下的点不改）",
 		);
 	});
 });

@@ -93,7 +93,8 @@ interface ClockSegment {
 const MAX_SEGMENTS = 16;
 
 /** 换算偏差（毫秒）：重新估算时写的一行说明，正数表示按原来的换算折算出的时间比控制面时间晚。 */
-export type RecalibrationNote = { driftMs: number };
+/** 重新估算时这次心跳的观测偏差（折算出的时间减去收到心跳的控制面时间，负数是早）：按原来的和按新的换算。 */
+export type RecalibrationNote = { beforeMs: number; afterMs: number };
 
 /**
  * 一次连接的「单调时钟读数 → 控制面时间」对应关系（控制面时间 = 单调时钟读数 + 常量）：收到 Hello 时用当时的控制面时间和
@@ -124,7 +125,7 @@ export class ConnectionClock {
 	}
 
 	/**
-	 * 心跳带来的读数：检查换算偏差，需要时重新估算常量。重新估算了返回换算偏差（调用方写一行日志），否则返回 undefined。
+	 * 心跳带来的读数：检查换算偏差，需要时重新估算常量。重新估算了返回这次心跳在调整前后的偏差（调用方写一行日志），否则返回 undefined。
 	 * 读数比当前这一段的起点早（乱序到达）时不处理。
 	 */
 	recalibrate(monotonicMs: number, receivedAt: Date): RecalibrationNote | undefined {
@@ -148,7 +149,7 @@ export class ConnectionClock {
 		this.#pendingMs = undefined;
 		this.#segments.push({ fromMs: monotonicMs, constantMs });
 		if (this.#segments.length > MAX_SEGMENTS) this.#segments.shift();
-		return { driftMs: current.constantMs - constantMs };
+		return { beforeMs: driftMs, afterMs: constantMs - sampleMs };
 	}
 
 	/**
