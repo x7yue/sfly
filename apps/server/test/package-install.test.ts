@@ -102,11 +102,11 @@ describe("节点包安装", () => {
 				package: "sfly-stub",
 				version: "0.2.0",
 				state: 1, // INSTALLING
-				taskId: "t-1",
+				taskId: "",
 				installedPackages: [{ name: "sfly-stub", version: "0.1.0" }],
 			},
 		});
-		// 库里没有 t-1 这个任务：确认不了是读者项目里的，列表不给任务编号（#500）。
+		// 不为任务装的（没有任务编号）照常给包名和版本；为别的项目的任务装的见 agent-tasks-project.test.ts。
 		await eventually(async () =>
 			expect(await agentView("agent-a")).toMatchObject({
 				install: { package: "sfly-stub", version: "0.2.0", state: "installing", task_id: "" },
@@ -119,7 +119,7 @@ describe("节点包安装", () => {
 				package: "sfly-stub",
 				version: "0.2.0",
 				state: 2, // INSTALLED
-				taskId: "t-1",
+				taskId: "",
 				output: "Installed 1 package",
 				installedPackages: [
 					{ name: "demo", version: "1.0.0" },

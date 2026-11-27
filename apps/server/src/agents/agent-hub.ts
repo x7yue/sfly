@@ -456,7 +456,8 @@ export class AgentHub {
 				),
 			),
 		);
-		// 最近一次安装是为哪个任务装的：确认不了是读者项目里的任务时不给任务编号，状态照给。
+		// 最近一次安装是为哪个任务装的：确认不了是读者项目里的任务时只给状态（和别的项目的任务只给个数一致）。
+		// 不为任务装的（task_id 为空，例如 sfly dev）照常给。
 		const ownInstalls = await tasksInProject(
 			this.deps.db,
 			project,
@@ -475,9 +476,10 @@ export class AgentHub {
 				preparing_since: this.preparingSince(row.name)?.toISOString() ?? null,
 				clock_offset: clockOffsetView(row.clockOffsetMs, row.clockOffsetMeasuredAt),
 				installed_packages: info.installed_packages ?? [],
-				install: install
-					? { ...install, task_id: ownInstalls.has(install.task_id) ? install.task_id : "" }
-					: null,
+				install:
+					install && install.task_id !== "" && !ownInstalls.has(install.task_id)
+						? { package: "", version: "", state: install.state, task_id: "" }
+						: (install ?? null),
 				dev_packages: (dev_packages ?? []).map((p) => ({
 					...p,
 					metadata: devMetadataWithDefaultCharts(p.metadata),

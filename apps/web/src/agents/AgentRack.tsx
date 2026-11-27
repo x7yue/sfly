@@ -168,7 +168,7 @@ function RackStatus({ agent }: { agent: AgentView }) {
 					<UntrustedText text={update.detail} />
 				</span>
 			)}
-			{!update && installing && agent.install && (
+			{!update && installing && agent.install?.package && (
 				<span className="font-mono text-2xs text-fg-3">
 					<UntrustedText text={`${agent.install.package}@${agent.install.version}`} />
 				</span>
@@ -192,7 +192,14 @@ function RackStatus({ agent }: { agent: AgentView }) {
 			)}
 			{failed && agent.install && (
 				<span className="text-xs text-danger-fg">
-					安装 <UntrustedText text={`${agent.install.package}@${agent.install.version}`} /> 失败
+					{/* 为别的项目的任务装的没有包名（#500）。 */}
+					{agent.install.package ? (
+						<>
+							安装 <UntrustedText text={`${agent.install.package}@${agent.install.version}`} /> 失败
+						</>
+					) : (
+						"安装节点包失败"
+					)}
 				</span>
 			)}
 		</div>

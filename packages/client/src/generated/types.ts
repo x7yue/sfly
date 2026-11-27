@@ -1192,7 +1192,7 @@ export interface InstallProgressView {
 	package: string;
 	version: string;
 	state: "installing" | "installed" | "failed";
-	/** 为哪个任务安装的；确认不了是读者项目里的任务时为空字符串（#500）。 */
+	/** 为哪个任务安装的；不为任务装的为空字符串。确认不了是读者项目里的任务时它和 package、version 都是空字符串，只给 state（#500）。 */
 	task_id: string;
 }
 
