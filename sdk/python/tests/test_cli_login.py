@@ -39,7 +39,7 @@ class FakeServer:
         self.issue_error: tuple[int, dict[str, Any]] | None = None
         # 按顺序用掉的错误（每次 POST /account/tokens 取一个，用完了再看 issue_error）。
         self.issue_errors: list[tuple[int, dict[str, Any]]] = []
-        # POST /packages 的回答状态码（201 是成功）。
+        # POST /projects/:project/packages 的回答状态码（201 是成功）。
         self.publish_status = 201
         # 失败时的错误信息、成功时回的包名和版本（服务端的文字，什么都可能有）。
         self.publish_message = "需要登录或令牌"
@@ -81,7 +81,7 @@ class FakeServer:
                 )
 
             def do_POST(self) -> None:
-                if self.path == "/packages":
+                if self.path == "/projects/default/packages":
                     length = int(self.headers.get("content-length") or 0)
                     raw = self.rfile.read(length)
                     self._record(raw)
@@ -160,7 +160,7 @@ class FakeServer:
                             },
                         },
                     )
-                if path == "/runs":
+                if path == "/projects/default/runs":
                     if outer.runs_status != 200:
                         return self._send(
                             outer.runs_status,
@@ -706,7 +706,7 @@ class TestPlatformCommandsUseTheToken:
         server.requests.clear()
         code, _, err = run(capsys, monkeypatch, "run", "list", "--json")
         assert code == 0, err
-        headers = server.headers_of("GET", "/runs")
+        headers = server.headers_of("GET", "/projects/default/runs")
         assert headers["authorization"] == f"Bearer {TOKEN}"
         assert "x-sfly-nickname" not in headers
         assert headers["x-sfly-client"].startswith("sfly-cli/")
@@ -720,7 +720,7 @@ class TestPlatformCommandsUseTheToken:
     ) -> None:
         code, _, err = run(capsys, monkeypatch, "run", "list", "--nickname", "小明")
         assert code == 0, err
-        headers = server.headers_of("GET", "/runs")
+        headers = server.headers_of("GET", "/projects/default/runs")
         assert "authorization" not in headers
         assert headers["x-sfly-nickname"] == "%E5%B0%8F%E6%98%8E"
 
@@ -735,7 +735,10 @@ class TestPlatformCommandsUseTheToken:
         monkeypatch.setenv("SFLY_API_TOKEN", OTHER_TOKEN)
         code, _, err = run(capsys, monkeypatch, "run", "list")
         assert code == 0, err
-        assert server.headers_of("GET", "/runs")["authorization"] == f"Bearer {OTHER_TOKEN}"
+        assert (
+            server.headers_of("GET", "/projects/default/runs")["authorization"]
+            == f"Bearer {OTHER_TOKEN}"
+        )
 
     def test_an_explicit_nickname_with_a_token_is_ignored_with_one_notice(
         self,
@@ -752,11 +755,11 @@ class TestPlatformCommandsUseTheToken:
         monkeypatch.setenv("SFLY_NICKNAME", "小红")
         code, _, err = run(capsys, monkeypatch, "run", "list")
         assert err.count("身份由令牌决定") == 1
-        assert "x-sfly-nickname" not in server.headers_of("GET", "/runs")
+        assert "x-sfly-nickname" not in server.headers_of("GET", "/projects/default/runs")
         # 两次请求（同一个 Client）也只提示一次。
         client = Client(server.url, "小明", token=TOKEN, nickname_ignored=True)
-        client.get("/runs")
-        client.get("/runs")
+        client.get("/projects/default/runs")
+        client.get("/projects/default/runs")
         assert capsys.readouterr().err.count("身份由令牌决定") == 1
 
     def test_no_notice_when_no_nickname_was_given(
@@ -800,7 +803,9 @@ class TestPlatformCommandsUseTheToken:
         client = Client(server.url, "系统用户名", token=TOKEN)
         assert client.owner_name() == "爱丽丝"
         assert resolve_run(client, "latest") == "3f9a1c2e-7b4d-4a55-9c1e-0d2b6a8e4f10"
-        asked = [r["path"] for r in server.requests if r["path"].startswith("/runs")]
+        asked = [
+            r["path"] for r in server.requests if r["path"].startswith("/projects/default/runs")
+        ]
         assert asked and "triggered_by=%E7%88%B1%E4%B8%BD%E4%B8%9D" in asked[0]
         # 用户的显示名只问一次。
         assert len([r for r in server.requests if r["path"] == "/account/tokens"]) == 1
@@ -868,7 +873,7 @@ class TestPlainHttpNote:
         client = Client("http://cp.example.test:1", "alice", token=TOKEN, stderr=err, timeout=0.2)
         for _ in range(2):
             with pytest.raises(CliError):
-                client.get("/runs")
+                client.get("/projects/default/runs")
         text = err.getvalue()
         assert text.count("明文") == 1 and "https" in text
         assert TOKEN not in text
@@ -883,7 +888,7 @@ class TestPlainHttpNote:
             err = io.StringIO()
             client = Client(server, "alice", token=token, stderr=err, timeout=0.2)
             with pytest.raises(CliError):
-                client.get("/runs")
+                client.get("/projects/default/runs")
             assert "明文" not in err.getvalue(), (server, token)
 
 
@@ -1012,7 +1017,7 @@ class TestPublishUsesTheToken:
         code, out, err = run(capsys, monkeypatch, "publish", str(archive))
         assert code == 0, err
         assert "已发布 demo@1.0.0" in out
-        request = next(r for r in server.requests if r["path"] == "/packages")
+        request = next(r for r in server.requests if r["path"] == "/projects/default/packages")
         assert request["headers"]["authorization"] == f"Bearer {TOKEN}"
         assert request["headers"]["content-type"] == "application/octet-stream"
         assert request["body"] == b"archive-bytes"
@@ -1058,7 +1063,7 @@ class TestPublishUsesTheToken:
         archive.write_bytes(b"archive-bytes")
         code, out, err = run(capsys, monkeypatch, "publish", str(archive))
         assert code == 0, err
-        request = next(r for r in server.requests if r["path"] == "/packages")
+        request = next(r for r in server.requests if r["path"] == "/projects/default/packages")
         assert "authorization" not in request["headers"]
 
         server.publish_status = 401

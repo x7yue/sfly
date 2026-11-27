@@ -271,7 +271,7 @@ describe("连接的项目", () => {
 		await db.query("update agents set disabled_at = now() where name = 'off-alpha'");
 		expect(
 			(
-				await cp.fetch("/agents/off-default/disable", {
+				await cp.fetch("/projects/default/agents/off-default/disable", {
 					method: "POST",
 					headers: await adminHeaders(),
 				})

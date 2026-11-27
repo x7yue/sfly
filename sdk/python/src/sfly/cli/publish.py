@@ -1,4 +1,4 @@
-"""`sfly publish`：把节点包归档上传到控制面（`POST /packages`，请求体为归档原始字节）。
+"""`sfly publish`：把节点包归档上传到控制面（`POST /projects/<项目>/packages`，请求体是归档）。
 
 和别的平台命令一样经 `Client` 发请求：有令牌（`SFLY_API_TOKEN` 或 `sfly login` 存下的）
 就带 `Authorization: Bearer`（发布要「发布」范围，平台管理员往公共项目发布也要它），
@@ -21,15 +21,13 @@ class PublishError(Exception):
 def publish(archive: Path, client: Client, project: str | None = None) -> dict[str, Any]:
     """上传归档，返回控制面记录的节点包版本信息（包含 sha256）。
 
-    `project` 是发布到哪个项目：现在只能写 `public`（公共项目，只有平台管理员能这样做，
-    要带他的令牌），不写发布到默认项目；写别的值时控制面返回 400，信息写明现在只能写 public。
-    这是过渡的查询参数，路径带项目（#488）之后改成路径里的项目。
+    `project` 是发布到哪个项目（`public` 是公共项目，只有平台管理员能发布，要带他的令牌）；
+    不写时是 `client.project`（默认项目，`SFLY_PROJECT` 可以改）。
     """
     try:
         body: dict[str, Any] = client.request(
             "POST",
-            "/packages",
-            query={"project": project} if project is not None else None,
+            client.in_project("/packages", project),
             raw=archive.read_bytes(),
             headers={"Content-Type": "application/octet-stream"},
             timeout=300,

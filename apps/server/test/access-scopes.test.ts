@@ -35,7 +35,7 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	// 局部编辑（#470）：一组操作存成新版本，就是 ADR 表里「保存版本」那一行（场景 × 写）→ 编辑
 	"POST /orchestrations/:id/edits": "edit",
 	"PATCH /orchestrations/:id": "edit",
-	"POST /orchestrations": "edit",
+	"POST /projects/:project/orchestrations": "edit",
 	"POST /orchestrations/:id/archive": "edit",
 	"POST /orchestrations/:id/unarchive": "edit",
 	// 复制场景（场景，写，creates: scenario）：源场景只被读；新建的是场景 → 编辑
@@ -50,21 +50,21 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	// 取消运行（运行，写）→ 运行
 	"POST /runs/:id/cancel": "run",
 	// 发布正式版本（节点包，写，upload）→ 发布
-	"POST /packages": "publish",
+	"POST /projects/:project/packages": "publish",
 	// Agent 立即更新、飞书机器人的增删改与测试消息（写）→ 管理
-	"POST /agents/:name/update-now": "manage",
+	"POST /projects/:project/agents/:name/update-now": "manage",
 	// Agent 凭据的签发、吊销，停用和恢复（Agent，写）→ 管理
-	"POST /agents/:name/credentials": "manage",
-	"DELETE /agents/:name/credentials/:id": "manage",
-	"POST /agents/:name/disable": "manage",
-	"POST /agents/:name/enable": "manage",
+	"POST /projects/:project/agents/:name/credentials": "manage",
+	"DELETE /projects/:project/agents/:name/credentials/:id": "manage",
+	"POST /projects/:project/agents/:name/disable": "manage",
+	"POST /projects/:project/agents/:name/enable": "manage",
 	// 我的开发 Agent 的注册、吊销（开发 Agent，写）→ 编辑（只认有用户的人的凭据）
 	"POST /projects/:project/dev-agents": "edit",
 	"DELETE /projects/:project/dev-agents/:name": "edit",
-	"POST /feishu-bots": "manage",
-	"PATCH /feishu-bots/:name": "manage",
-	"DELETE /feishu-bots/:name": "manage",
-	"POST /feishu-bots/:name/test": "manage",
+	"POST /projects/:project/feishu-bots": "manage",
+	"PATCH /projects/:project/feishu-bots/:name": "manage",
+	"DELETE /projects/:project/feishu-bots/:name": "manage",
+	"POST /projects/:project/feishu-bots/:name/test": "manage",
 	// 项目令牌的签发、吊销（项目，写）→ 管理
 	"POST /projects/:project/tokens": "manage",
 	// 登记项目的工作台（#549）：项目自己的设置（project × 写）→ 管理，只有人能做（项目令牌、会话令牌、Agent 凭据都不行）
@@ -274,7 +274,6 @@ describe("契约和访问检查的规则对得上", () => {
 			"account",
 			"none",
 			"path",
-			"query",
 			"run",
 			"scenario",
 			"session",
@@ -283,23 +282,23 @@ describe("契约和访问检查的规则对得上", () => {
 		// 列表与新建（场景、运行、Agent、节点包、飞书机器人、控制台统计）和按名字定位的 Agent、节点包、飞书机器人。
 		expect(classes.get("path")).toEqual(
 			expect.arrayContaining([
-				"GET /agents",
-				"POST /agents/:name/update-now",
-				"GET /dashboard",
-				"GET /runs",
-				"GET /orchestrations",
-				"POST /orchestrations",
-				"GET /packages",
-				"GET /packages/:name/versions/:version/archive",
-				"GET /feishu-bots",
-				"DELETE /feishu-bots/:name",
+				"GET /projects/:project/agents",
+				"POST /projects/:project/agents/:name/update-now",
+				"GET /projects/:project/dashboard",
+				"GET /projects/:project/runs",
+				"GET /projects/:project/orchestrations",
+				"POST /projects/:project/orchestrations",
+				"GET /projects/:project/packages",
+				"GET /projects/:project/packages/:name/versions/:version/archive",
+				"GET /projects/:project/feishu-bots",
+				"DELETE /projects/:project/feishu-bots/:name",
 				// 会话的列表和新建：路径里的 :project 是项目（会话的集合属于项目）。
 				"GET /projects/:project/sessions",
 				"POST /projects/:project/sessions",
 			]),
 		);
-		// 发布节点包：路径里没有项目，过渡的查询参数 project=public（#565；#488 之后由路径替代）。
-		expect(classes.get("query")).toEqual(["POST /packages"]);
+		// 发布节点包：项目在路径里（#488；发布到公共项目写 /projects/public/packages）。
+		expect(classes.get("path")).toContain("POST /projects/:project/packages");
 		expect(classes.get("scenario")).toContain("POST /orchestrations/:id/runs");
 		expect(classes.get("run")).toContain("POST /runs/:id/cancel");
 		expect(classes.get("task")).toContain("PUT /tasks/:id/artifacts/*");
@@ -362,18 +361,18 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 			problems.filter((p) => p.includes("REVOKE_OWN_ROUTES"));
 		try {
 			// 不是账号类的接口。
-			list.add("GET /orchestrations");
+			list.add("GET /projects/:project/orchestrations");
 			expect(mentions(checkAccessRules(httpContract))).toEqual([
-				expect.stringContaining("GET /orchestrations"),
+				expect.stringContaining("GET /projects/:project/orchestrations"),
 			]);
-			list.delete("GET /orchestrations");
+			list.delete("GET /projects/:project/orchestrations");
 			// 账号类，但认的是平台管理员（写进去会悄悄放宽管理账号的接口）。
 			list.add("POST /users");
 			expect(mentions(checkAccessRules(httpContract))).toEqual([
 				expect.stringContaining("POST /users"),
 			]);
 		} finally {
-			list.delete("GET /orchestrations");
+			list.delete("GET /projects/:project/orchestrations");
 			list.delete("POST /users");
 		}
 		// 现在的清单没有问题。
@@ -394,10 +393,10 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 		// 例外清单里写进不是账号类的接口：同样让控制面起不来。
 		const list = REVOKE_OWN_ROUTES as Set<string>;
 		try {
-			list.add("GET /orchestrations");
+			list.add("GET /projects/:project/orchestrations");
 			expect(() => guardHttpContract(Fastify(), httpContract)).toThrow(/REVOKE_OWN_ROUTES/);
 		} finally {
-			list.delete("GET /orchestrations");
+			list.delete("GET /projects/:project/orchestrations");
 		}
 	});
 

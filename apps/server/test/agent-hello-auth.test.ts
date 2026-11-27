@@ -50,8 +50,12 @@ describe("Agent 连接时的身份", () => {
 		return adminHeaders;
 	};
 	const toggle = async (name: string, action: "disable" | "enable") =>
-		(await cp.fetch(`/agents/${name}/${action}`, { method: "POST", headers: await admin() }))
-			.status;
+		(
+			await cp.fetch(`/projects/default/agents/${name}/${action}`, {
+				method: "POST",
+				headers: await admin(),
+			})
+		).status;
 	/** 把一个名字登记到项目 alpha（凭据连一次再断开），返回 alpha 里这台的凭据。 */
 	const alphaAgent = async (name: string) => {
 		await db.query(

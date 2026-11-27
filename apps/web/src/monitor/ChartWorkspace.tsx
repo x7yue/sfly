@@ -27,7 +27,7 @@ import {
 	noDataLabel,
 	PROGRESS_LABEL,
 } from "#/lib/copy";
-import { formatDuration } from "#/lib/format";
+import { formatDuration, formatProgress } from "#/lib/format";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { useElementWidth } from "#/lib/use-element-width";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -48,7 +48,13 @@ import {
 	isActive,
 	isFailed,
 } from "./chart-groups";
-import { balancedColumns, chartLines, chartWindow } from "./charts";
+import {
+	balancedColumns,
+	chartLines,
+	chartWindow,
+	pointsOutsideAttempt,
+	timeRangeText,
+} from "./charts";
 import { MetricChart } from "./MetricChart";
 import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
@@ -56,6 +62,7 @@ import { nodeKey } from "./node-ref";
 import { NODE_TOTAL_HINT, NODE_TOTAL_LABEL, timingTitle } from "./node-timing";
 import { chainLabel, documentNodes, findNode } from "./run-model";
 import { nodeSegments, type TimeRange, timingOf } from "./timeline-model";
+import { useRevealGroup } from "./use-reveal-group";
 import {
 	attemptsSignature,
 	seriesQuery,
@@ -255,10 +262,17 @@ export function ChartWorkspace({
 		if (result.data && !entry.loaded.includes(result.data)) entry.loaded.push(result.data);
 	}
 
+	// 打开页面时滚到选中节点或第一个执行中 / 失败的组；之后选中节点时展开它的组并滚到可见处，版面变了再对准。
+	const {
+		reveal,
+		stop: stopRevealing,
+		userScroll,
+	} = useRevealGroup({ scroller, content, toolbar });
 	const changeFilter = (next: ReadonlySet<string> | null, open: Record<string, boolean> = {}) => {
 		actions.setFilter(next);
 		setOpened(open);
 		// 筛选变化时回到顶部。
+		stopRevealing();
 		if (scroller.current) scroller.current.scrollTop = 0;
 	};
 	const setAll = (open: boolean) =>
@@ -266,7 +280,6 @@ export function ChartWorkspace({
 			Object.fromEntries([...groups.map((g) => g.key), PLATFORM_KEY].map((k) => [k, open])),
 		);
 
-	// 打开页面时滚到选中节点或第一个执行中 / 失败的组；之后选中节点时展开它的组并滚到可见处。
 	const [scrollTo, setScrollTo] = useState<string | null>(null);
 	const selectedKey = selected ? nodeKey(selected) : null;
 	const lastSelected = useRef<string | null | undefined>(undefined);
@@ -289,20 +302,8 @@ export function ChartWorkspace({
 	useLayoutEffect(() => {
 		if (!scrollTo) return;
 		setScrollTo(null);
-		const box = scroller.current;
-		const el = box?.querySelector<HTMLElement>(`[data-group="${CSS.escape(scrollTo)}"]`);
-		if (!box || !el) return;
-		const top = el.offsetTop - (toolbar.current?.offsetHeight ?? 0) - 8;
-		// 看得见：组的上沿在工具栏下面，第一张图表露出大半（组标题和节点摘要在图表上面，只露出它们看不到曲线）。
-		// 图表还没有渲染出来时（组刚展开）只要求露出组标题那一截。
-		const chart = el.querySelector<HTMLElement>("[data-chart]");
-		const boxTop = box.getBoundingClientRect().top;
-		const needed = chart
-			? chart.getBoundingClientRect().top - boxTop + box.scrollTop + chart.offsetHeight * 0.75
-			: el.offsetTop + 40;
-		const visible = top >= box.scrollTop && needed <= box.scrollTop + box.clientHeight;
-		if (!visible) box.scrollTop = Math.max(0, top);
-	}, [scrollTo]);
+		reveal(scrollTo);
+	}, [scrollTo, reveal]);
 
 	const nodes = filter ? [...filter].filter((k) => k !== PLATFORM_KEY) : [];
 	const only = groups.find((g) => g.key === nodes[0])?.node;
@@ -319,6 +320,7 @@ export function ChartWorkspace({
 	return (
 		<section
 			ref={scrollerRef}
+			{...userScroll}
 			aria-label="图表工作区"
 			className={cn(
 				"relative flex-initial overflow-auto px-3 [scrollbar-gutter:stable]",
@@ -702,16 +704,29 @@ function NodeGroup({
 				<LossNotes loss={loss} />
 				{charts.map((chart) => {
 					const result = series.charts.get(chart.title);
+					const lines = chartLines(chart.metrics, entry.metrics, result?.data?.series);
+					const bucketSeconds = result?.data?.bucket_seconds ?? 1;
+					// 缩放时只查到选区里的桶，判断不了整次尝试：选区里没有点就是选区空态。
+					const outside =
+						!zoomed && runAttempt && pointsOutsideAttempt(lines, runAttempt, now, bucketSeconds);
 					return (
 						<MetricChart
 							key={chart.title}
 							title={chart.title}
 							type={chart.type}
 							unit={units.get(chart.metrics[0] ?? "") ?? ""}
-							lines={chartLines(chart.metrics, entry.metrics, result?.data?.series)}
-							bucketSeconds={result?.data?.bucket_seconds ?? 1}
+							lines={lines}
+							bucketSeconds={bucketSeconds}
 							window={window}
-							empty={empty(result?.isPending ?? true)}
+							empty={
+								outside ? (
+									<span data-clock-offset className="px-3 text-center">
+										{MESSAGE.clockOffset(timeRangeText(outside, now))}
+									</span>
+								) : (
+									empty(result?.isPending ?? true)
+								)
+							}
 							dense={dense}
 							// 只有一张图表时不横贯整行：1920 宽下 1870 × 150 的一条线看不出斜率
 							className={charts.length === 1 ? "max-w-[max(50%,720px)]" : undefined}
@@ -810,8 +825,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 				<div className="min-w-45">
 					<div className="text-xs text-fg-3">{PROGRESS_LABEL}</div>
 					<div className="font-mono text-xs">
-						{progress.current}
-						{progress.total === null ? "" : ` / ${progress.total}`}
+						{formatProgress(progress.current, progress.total)}
 						{progress.message && (
 							<span className="ml-2 font-sans text-fg-2">
 								<UntrustedText text={progress.message} />

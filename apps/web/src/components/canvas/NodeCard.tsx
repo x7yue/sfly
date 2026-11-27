@@ -113,6 +113,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const warnings = info.warnings.get(id) ?? [];
 	const decoration = decorateNode?.(id, node);
 	const running = decoration?.run !== undefined;
+	const figure = running && decoration?.figure !== undefined;
 	// 要盯的状态（执行中、失败、等待中）画在描边、站外一行上的颜色，取自状态表。
 	const stroke =
 		running && decoration?.status ? STATUS[decoration.status.kind].canvas.stroke : undefined;
@@ -254,7 +255,12 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 							aria-hidden
 							// 显示名称放不下时截断：悬停给出全文（读屏用的全文在 aria-label 里）。
 							title={named ? title : undefined}
-							className={cn("min-w-0 flex-1 leading-[1.45] tracking-[0.01em]", ZOOM_TEXT_TITLE)}
+							className={cn(
+								"min-w-0 flex-1 leading-[1.45] tracking-[0.01em]",
+								// 运行时右边有数字：名称按自身宽度占位，放不下时先收数字。
+								figure && "basis-auto",
+								ZOOM_TEXT_TITLE,
+							)}
 						>
 							<UntrustedText text={title} />
 						</BaseNodeHeaderTitle>
@@ -262,13 +268,17 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					{/* 右侧：运行时的状态（读屏读到，看得见的是站点灯）和数字；编辑时的警告、版本对比的差异。 */}
 					<span
 						id={statusId}
-						className={cn("flex flex-none items-center gap-1 font-mono text-fg-3", ZOOM_TEXT_12)}
+						className={cn(
+							"flex items-center gap-1 font-mono text-fg-3",
+							figure ? "min-w-0 shrink-[1000]" : "flex-none",
+							ZOOM_TEXT_12,
+						)}
 					>
 						{running && decoration?.status && (
 							<span className="sr-only">{decoration.status.label}</span>
 						)}
-						{running && decoration?.figure !== undefined && (
-							<span data-node-figure className="in-data-[lod=true]:hidden">
+						{figure && (
+							<span data-node-figure className="min-w-0 truncate in-data-[lod=true]:hidden">
 								{decoration.figure}
 							</span>
 						)}

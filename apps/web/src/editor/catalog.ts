@@ -20,6 +20,7 @@ import {
 import { type QueryClient, useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { ApiError, apiQuery } from "#/lib/api";
+import { PROJECT } from "#/lib/project";
 
 /** 加载了某个包开发版本的 Agent（在线的排在前面）。 */
 export const agentsWithDev = (agents: AgentView[], name: string) =>
@@ -194,7 +195,7 @@ export function usePackageCatalog(
 	const entries = Object.entries(locked).filter(([, version]) => version !== DEV_VERSION);
 	const results = useQueries({
 		queries: entries.map(([name, version]) => ({
-			...apiQuery(packagesApi.version, { params: { name, version } }),
+			...apiQuery(packagesApi.version, { params: { project: PROJECT, name, version } }),
 			staleTime: Number.POSITIVE_INFINITY, // 已发布的版本不可变
 		})),
 	});
@@ -233,7 +234,9 @@ export async function publishedNodeInputs(
 	item: { package: string; version: string; node: string },
 ): Promise<NodeTypeIo["inputs"] | undefined> {
 	const found = await queryClient.ensureQueryData(
-		apiQuery(packagesApi.version, { params: { name: item.package, version: item.version } }),
+		apiQuery(packagesApi.version, {
+			params: { project: PROJECT, name: item.package, version: item.version },
+		}),
 	);
 	return found.metadata.nodes.find((n) => n.name === item.node)?.inputs;
 }

@@ -67,6 +67,7 @@ describe("跨域：默认允许所有来源", () => {
 		expect(await res.text()).toBe("");
 		expect(res.headers.get("access-control-allow-origin")).toBe("*");
 		expect(headerNames(res, "access-control-allow-headers")).toEqual(
+			// biome-ignore lint/plugin/test-nickname-header: 测的是跨域允许的请求头里有昵称请求头
 			expect.arrayContaining(["content-type", "x-sfly-nickname", "x-sfly-client", "last-event-id"]),
 		);
 		expect(Number(res.headers.get("access-control-max-age"))).toBeGreaterThan(0);
@@ -85,8 +86,11 @@ describe("跨域：默认允许所有来源", () => {
 	it("不是预检的 OPTIONS（没有 Origin 或没有 Access-Control-Request-Method）照常处理", async () => {
 		cp = await startTestControlPlane();
 
-		const plain = await cp.fetch("/agents", { method: "OPTIONS" });
-		const noMethod = await cp.fetch("/agents", { method: "OPTIONS", headers: { origin: PAGE } });
+		const plain = await cp.fetch("/projects/default/agents", { method: "OPTIONS" });
+		const noMethod = await cp.fetch("/projects/default/agents", {
+			method: "OPTIONS",
+			headers: { origin: PAGE },
+		});
 
 		expect(plain.status).toBe(404);
 		expect(noMethod.status).toBe(404);
@@ -95,10 +99,11 @@ describe("跨域：默认允许所有来源", () => {
 	it("接口响应带允许来源和暴露的响应头：成功、错误、/api 前缀、未知路由都一样", async () => {
 		cp = await startTestControlPlane();
 		const responses = await Promise.all([
-			cp.fetch("/agents", { headers: { origin: PAGE } }),
-			cp.fetch("/api/runs", { headers: { origin: PAGE } }),
-			cp.fetch("/orchestrations", {
+			cp.fetch("/projects/default/agents", { headers: { origin: PAGE } }),
+			cp.fetch("/api/projects/default/runs", { headers: { origin: PAGE } }),
+			cp.fetch("/projects/default/orchestrations", {
 				method: "POST",
+				credentials: "omit",
 				headers: { "content-type": "application/json", origin: PAGE },
 				body: JSON.stringify({ name: "t" }),
 			}),
@@ -155,7 +160,7 @@ describe("跨域：控制台的静态文件不带跨域头", () => {
 
 		const index = await cp.fetch("/", { headers: { ...NAVIGATE, origin: PAGE } });
 		const asset = await cp.fetch("/assets/app-abc123.js", { headers: { origin: PAGE } });
-		const api = await cp.fetch("/api/agents", { headers: { origin: PAGE } });
+		const api = await cp.fetch("/api/projects/default/agents", { headers: { origin: PAGE } });
 
 		expect(index.status).toBe(200);
 		expect(asset.status).toBe(200);
@@ -178,12 +183,15 @@ describe("跨域：来源名单", () => {
 		cp = await startTestControlPlane({ corsOrigins: [PAGE, "http://localhost:5173"] });
 
 		const answered = await preflight(cp, "/api/orchestrations/any/runs");
-		const agents = await cp.fetch("/agents", { headers: { origin: "http://localhost:5173" } });
+		const agents = await cp.fetch("/projects/default/agents", {
+			headers: { origin: "http://localhost:5173" },
+		});
 		const stream = await openRunStream(cp, PAGE);
 
 		expect(answered.status).toBe(204);
 		expect(answered.headers.get("access-control-allow-origin")).toBe(PAGE);
 		expect(headerNames(answered, "access-control-allow-headers")).toEqual(
+			// biome-ignore lint/plugin/test-nickname-header: 测的是跨域允许的请求头里有昵称请求头
 			expect.arrayContaining(["content-type", "x-sfly-nickname", "x-sfly-client", "last-event-id"]),
 		);
 		expect(Number(answered.headers.get("access-control-max-age"))).toBeGreaterThan(0);
@@ -201,7 +209,7 @@ describe("跨域：来源名单", () => {
 		cp = await startTestControlPlane({ corsOrigins: [PAGE] });
 
 		const refused = await preflight(cp, "/orchestrations/any/runs", { origin: OTHER_PAGE });
-		const agents = await cp.fetch("/agents", { headers: { origin: OTHER_PAGE } });
+		const agents = await cp.fetch("/projects/default/agents", { headers: { origin: OTHER_PAGE } });
 		const stream = await openRunStream(cp, OTHER_PAGE);
 
 		expect(agents.status).toBe(200);
@@ -215,8 +223,10 @@ describe("跨域：来源名单", () => {
 	it("名单只比较来源：端口或协议不同的页面不算在名单里", async () => {
 		cp = await startTestControlPlane({ corsOrigins: ["http://localhost:5173"] });
 
-		const wrongPort = await cp.fetch("/agents", { headers: { origin: "http://localhost:5174" } });
-		const wrongScheme = await cp.fetch("/agents", {
+		const wrongPort = await cp.fetch("/projects/default/agents", {
+			headers: { origin: "http://localhost:5174" },
+		});
+		const wrongScheme = await cp.fetch("/projects/default/agents", {
 			headers: { origin: "https://localhost:5173" },
 		});
 
@@ -227,7 +237,7 @@ describe("跨域：来源名单", () => {
 	it("没有 Origin 的请求（命令行、Agent、同源页面）不带允许来源", async () => {
 		cp = await startTestControlPlane({ corsOrigins: [PAGE] });
 
-		const res = await cp.fetch("/agents");
+		const res = await cp.fetch("/projects/default/agents");
 
 		expect(res.status).toBe(200);
 		expect(res.headers.get("access-control-allow-origin")).toBeNull();

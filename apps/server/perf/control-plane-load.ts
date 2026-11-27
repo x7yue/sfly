@@ -108,9 +108,10 @@ export async function controlPlaneLoad(
 	// 一个任务先补 1 小时的历史数据，查询它 1 小时范围的全部指标。
 	const history = fleet.tasks[0] as LoadTask;
 	const chainInstanceId = (await api.run(history.runId)).chains[0]?.id as string;
-	const firstSecond = Math.floor(Date.now() / 1000) + 2;
+	// 历史数据止于当前这一秒（含），实时负载从下一秒起，两边不会落在同一秒被去重（#381）。
+	const historyEnd = Math.floor(Date.now() / 1000) + 1;
 	ctx.log(`补 ${HISTORY_SECONDS} 秒的历史数据（${HISTORY_SECONDS * METRICS_PER_TASK} 个点）`);
-	await backfill(fleet, history, firstSecond, HISTORY_SECONDS);
+	await backfill(fleet, history, historyEnd, HISTORY_SECONDS);
 	let lastQueryPoints = 0;
 	const query = async () => {
 		const now = Date.now();

@@ -1,5 +1,6 @@
 /** 显示用的格式化（时间按浏览器时区，数字等宽由样式保证）。 */
 
+import { formatMetric } from "@sfly/schema";
 import { controlPlaneNow } from "./control-plane-time";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -127,7 +128,18 @@ export function formatClockMs(time: number | string): string {
 }
 
 /** 指标值：`1.2M`、`12.3k`、`812`、`3.14`；定义在 `@sfly/schema`（`metric-format.ts`），各处共用。 */
-export { formatMetric } from "@sfly/schema";
+export { formatMetric };
+
+/**
+ * 进度（ctx.progress）：`70/1500`，没有总数时只写当前值。总数是整数时当前值取整，否则最多 1 位小数；
+ * 一万以上照指标值的写法（`12.3k`）。运行抽屉和运行记录里宽度够，两边留空格（`separator`）。
+ */
+export function formatProgress(current: number, total: number | null, separator = "/"): string {
+	const digits = total !== null && Number.isInteger(total) ? 0 : 1;
+	const num = (n: number) =>
+		Math.abs(n) >= 1e4 ? formatMetric(n) : String(Number(n.toFixed(digits)));
+	return total === null ? num(current) : `${num(current)}${separator}${num(total)}`;
+}
 
 /** 整数加千位分隔：`1,284,819`（计数）。 */
 export const formatInteger = (n: number): string => Math.round(n).toLocaleString("en-US");

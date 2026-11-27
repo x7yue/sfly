@@ -59,9 +59,11 @@ describe("Agent 凭据和开发 Agent", () => {
 		await cp.close();
 	});
 
+	// 凭据都由调用方写明（`{}` 是不带凭据）：不要测试控制面默认带的那一个。
 	const send = (method: string, path: string, headers: Record<string, string>, body?: unknown) =>
 		cp.fetch(path, {
 			method,
+			credentials: "omit",
 			headers: { ...(body === undefined ? {} : JSON_HEADERS), ...headers },
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});
@@ -70,7 +72,7 @@ describe("Agent 凭据和开发 Agent", () => {
 		return (await res.json()) as T;
 	};
 	const issue = (name: string, headers = boss) =>
-		send("POST", `/agents/${name}/credentials`, headers, {});
+		send("POST", `/projects/default/agents/${name}/credentials`, headers, {});
 	const rows = async (name: string) =>
 		(
 			await db.query(
@@ -149,7 +151,7 @@ describe("Agent 凭据和开发 Agent", () => {
 			const second = await json<Issued>(await issue("worker-1"), 201);
 			expect(first.token).not.toBe(second.token);
 			const list = await json<{ credentials: Issued["credential"][] }>(
-				await send("GET", "/agents/worker-1/credentials", boss),
+				await send("GET", "/projects/default/agents/worker-1/credentials", boss),
 				200,
 			);
 			expect(list.credentials.map((c) => c.id)).toEqual([
@@ -163,7 +165,7 @@ describe("Agent 凭据和开发 Agent", () => {
 			expect(
 				(
 					await json<{ credentials: unknown[] }>(
-						await send("GET", "/agents/worker-1/credentials", boss),
+						await send("GET", "/projects/default/agents/worker-1/credentials", boss),
 						200,
 					)
 				).credentials,
@@ -177,23 +179,30 @@ describe("Agent 凭据和开发 Agent", () => {
 			const issued = await json<Issued>(await issue("worker-1"), 201);
 			for (const who of [editor, reader, projectToken, session]) {
 				expect(
-					(await send("DELETE", `/agents/worker-1/credentials/${issued.credential.id}`, who))
-						.status,
+					(
+						await send(
+							"DELETE",
+							`/projects/default/agents/worker-1/credentials/${issued.credential.id}`,
+							who,
+						)
+					).status,
 				).toBe(403);
 			}
 			expect((await rows("worker-1")).filter((r) => r.revoked_at !== null)).toHaveLength(0);
 			// 只读也能看到有哪些凭据（前缀、状态），看不到原值。
-			expect((await send("GET", "/agents/worker-1/credentials", reader)).status).toBe(200);
+			expect(
+				(await send("GET", "/projects/default/agents/worker-1/credentials", reader)).status,
+			).toBe(200);
 		});
 
 		it("不带任何凭据、带共享令牌：签发、列出、吊销、停用、恢复都不行（401 / 403），什么都没有发生；Agent 凭据是新这一套信任的根，不能匿名（#638 审查）", async () => {
 			const issued = await json<Issued>(await issue("worker-1"), 201);
 			const calls: [string, string, number][] = [
-				["POST", "/agents/worker-1/credentials", 401],
-				["GET", "/agents/worker-1/credentials", 401],
-				["DELETE", `/agents/worker-1/credentials/${issued.credential.id}`, 401],
-				["POST", "/agents/worker-1/disable", 401],
-				["POST", "/agents/worker-1/enable", 401],
+				["POST", "/projects/default/agents/worker-1/credentials", 401],
+				["GET", "/projects/default/agents/worker-1/credentials", 401],
+				["DELETE", `/projects/default/agents/worker-1/credentials/${issued.credential.id}`, 401],
+				["POST", "/projects/default/agents/worker-1/disable", 401],
+				["POST", "/projects/default/agents/worker-1/enable", 401],
 			];
 			for (const [method, path, status] of calls) {
 				const anonymous = await send(
@@ -229,18 +238,42 @@ describe("Agent 凭据和开发 Agent", () => {
 			const issued = await json<Issued>(await issue("worker-1"), 201);
 			const other = await json<Issued>(await issue("worker-2"), 201);
 			expect(
-				(await send("DELETE", `/agents/worker-1/credentials/${issued.credential.id}`, boss)).status,
+				(
+					await send(
+						"DELETE",
+						`/projects/default/agents/worker-1/credentials/${issued.credential.id}`,
+						boss,
+					)
+				).status,
 			).toBe(204);
 			expect((await rows("worker-1"))[0]?.revoked_at).not.toBeNull();
 			expect(
-				(await send("DELETE", `/agents/worker-1/credentials/${issued.credential.id}`, boss)).status,
+				(
+					await send(
+						"DELETE",
+						`/projects/default/agents/worker-1/credentials/${issued.credential.id}`,
+						boss,
+					)
+				).status,
 			).toBe(204);
 			// 别的 Agent 的凭据：按这台的名字吊销不了。
 			expect(
-				(await send("DELETE", `/agents/worker-1/credentials/${other.credential.id}`, boss)).status,
+				(
+					await send(
+						"DELETE",
+						`/projects/default/agents/worker-1/credentials/${other.credential.id}`,
+						boss,
+					)
+				).status,
 			).toBe(404);
 			expect(
-				(await send("DELETE", `/agents/worker-1/credentials/${crypto.randomUUID()}`, boss)).status,
+				(
+					await send(
+						"DELETE",
+						`/projects/default/agents/worker-1/credentials/${crypto.randomUUID()}`,
+						boss,
+					)
+				).status,
 			).toBe(404);
 			expect((await rows("worker-2"))[0]?.revoked_at).toBeNull();
 		});
@@ -382,28 +415,42 @@ describe("Agent 凭据和开发 Agent", () => {
 		it("停用、恢复要「管理」；停用写下时间，恢复清空；重复操作 204；没有这台 Agent 是 404", async () => {
 			await seed("worker-1");
 			for (const who of [editor, reader, session, projectToken]) {
-				expect((await send("POST", "/agents/worker-1/disable", who)).status).toBe(403);
+				expect((await send("POST", "/projects/default/agents/worker-1/disable", who)).status).toBe(
+					403,
+				);
 			}
 			expect(await disabledAt("worker-1")).toBeNull();
-			expect((await send("POST", "/agents/worker-1/disable", boss)).status).toBe(204);
+			expect((await send("POST", "/projects/default/agents/worker-1/disable", boss)).status).toBe(
+				204,
+			);
 			const stamp = await disabledAt("worker-1");
 			expect(stamp).not.toBeNull();
-			expect((await send("POST", "/agents/worker-1/disable", boss)).status).toBe(204);
+			expect((await send("POST", "/projects/default/agents/worker-1/disable", boss)).status).toBe(
+				204,
+			);
 			expect(await disabledAt("worker-1")).toEqual(stamp);
 			// 列表里带着停用的时间和最近一次连接用的凭据。
 			const list = await json<{
 				agents: Array<{ name: string; disabled_at: string | null; auth_kind: string | null }>;
-			}>(await send("GET", "/agents", boss), 200);
+			}>(await send("GET", "/projects/default/agents", boss), 200);
 			expect(list.agents.find((a) => a.name === "worker-1")).toMatchObject({
 				disabled_at: stamp?.toISOString(),
 				auth_kind: null,
 			});
-			expect((await send("POST", "/agents/worker-1/enable", editor)).status).toBe(403);
-			expect((await send("POST", "/agents/worker-1/enable", boss)).status).toBe(204);
+			expect((await send("POST", "/projects/default/agents/worker-1/enable", editor)).status).toBe(
+				403,
+			);
+			expect((await send("POST", "/projects/default/agents/worker-1/enable", boss)).status).toBe(
+				204,
+			);
 			expect(await disabledAt("worker-1")).toBeNull();
-			expect((await send("POST", "/agents/worker-1/enable", boss)).status).toBe(204);
-			expect((await send("POST", "/agents/nobody/disable", boss)).status).toBe(404);
-			expect((await send("POST", "/agents/nobody/enable", boss)).status).toBe(404);
+			expect((await send("POST", "/projects/default/agents/worker-1/enable", boss)).status).toBe(
+				204,
+			);
+			expect((await send("POST", "/projects/default/agents/nobody/disable", boss)).status).toBe(
+				404,
+			);
+			expect((await send("POST", "/projects/default/agents/nobody/enable", boss)).status).toBe(404);
 		});
 	});
 });

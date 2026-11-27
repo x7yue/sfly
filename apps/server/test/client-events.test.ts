@@ -43,7 +43,7 @@ describe("API 客户端订阅事件流", () => {
 	const proxied = async () => {
 		const proxy = await startStreamingProxy(cp.httpUrl);
 		proxies.push(proxy);
-		return { proxy, ...observedClient({ baseUrl: proxy.url }) };
+		return { proxy, ...observedClient({ baseUrl: proxy.url, token: await cp.users.token() }) };
 	};
 	const startRun = async (): Promise<{ runId: string; task: AssignedTask }> => {
 		const runId = await api.triggerOk(scenarioId);

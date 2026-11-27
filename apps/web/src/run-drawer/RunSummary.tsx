@@ -27,6 +27,7 @@ import {
 	formatDateTime,
 	formatElapsed,
 	formatFullDateTime,
+	formatProgress,
 	formatSpan,
 	shortId,
 	spansOtherDay,
@@ -271,9 +272,7 @@ function ActiveNode({
 						</div>
 					)}
 					<div className="mt-1 truncate font-mono text-xs text-fg-3">
-						{progress.total !== null
-							? `${progress.current} / ${progress.total}`
-							: String(progress.current)}
+						{formatProgress(progress.current, progress.total, " / ")}
 						{progress.message && (
 							<>
 								{" · "}

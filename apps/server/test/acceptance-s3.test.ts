@@ -251,7 +251,7 @@ describeWithAgent("验收 S3：故障", () => {
 
 		const { agents } = await api.getJson<{
 			agents: Array<{ name: string; installed_packages: unknown; install: unknown }>;
-		}>("/agents");
+		}>("/projects/default/agents");
 		expect(agents.find((x) => x.name === "s3-install")).toMatchObject({
 			installed_packages: [{ name: "conf-a", version: "1.0.0" }],
 			install: { package: "conf-b", version: "1.0.0", state: "failed" },

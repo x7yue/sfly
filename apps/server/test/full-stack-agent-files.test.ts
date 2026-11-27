@@ -242,7 +242,7 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 			await eventually(async () => {
 				const { agents } = await api.getJson<{
 					agents: Array<{ name: string; dev_packages: Array<{ name: string }> }>;
-				}>("/agents");
+				}>("/projects/default/agents");
 				expect(agents.find((a) => a.name === "fs-runner")?.dev_packages).toMatchObject([
 					{ name: `${PACKAGE}-dev` },
 				]);
@@ -271,7 +271,7 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 		await away.disconnect();
 		await eventually(async () => {
 			const { agents } = await api.getJson<{ agents: Array<{ name: string; status: string }> }>(
-				"/agents",
+				"/projects/default/agents",
 			);
 			expect(agents.find((a) => a.name === "fs-away")?.status).toBe("offline");
 		});

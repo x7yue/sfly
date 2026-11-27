@@ -122,9 +122,10 @@ describe("下载日志时日志文件变了", () => {
 		return { runId, task, file: join(cp.dataDir, "logs", runId, `${task.taskId}.jsonl`) };
 	};
 
-	const download = (path: string) =>
-		new Promise<Downloaded>((resolve, reject) => {
-			httpRequest(`${cp.httpUrl}${path}`, (res) => {
+	const download = async (path: string) => {
+		const headers = { authorization: `Bearer ${await cp.users.token()}` };
+		return new Promise<Downloaded>((resolve, reject) => {
+			httpRequest(`${cp.httpUrl}${path}`, { headers }, (res) => {
 				const chunks: Buffer[] = [];
 				res.on("data", (chunk: Buffer) => chunks.push(chunk));
 				res.on("error", () => {});
@@ -140,6 +141,7 @@ describe("下载日志时日志文件变了", () => {
 				.on("error", reject)
 				.end();
 		});
+	};
 	const rows = (body: string) =>
 		body
 			.split("\n")

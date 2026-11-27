@@ -128,14 +128,14 @@ function publisherToken(cp: TestControlPlane): Promise<string> {
 
 /**
  * 把节点包归档发布成公共项目里的版本（ADR 0029：平台维护的节点包放在公共项目）：平台管理员的个人令牌
- * `POST /packages?project=public`，和部署者发布 sfly-std 的做法一样（#565）。
+ * `POST /projects/public/packages`，和部署者发布 sfly-std 的做法一样（#565）。
  */
 export async function publishIntoPublicProject(
 	cp: TestControlPlane,
 	archive: Uint8Array,
 	where: { name: string; version: string },
 ): Promise<void> {
-	const res = await cp.fetch("/packages?project=public", {
+	const res = await cp.fetch("/projects/public/packages", {
 		...publishInit(archive),
 		headers: {
 			"content-type": "application/octet-stream",
@@ -155,7 +155,7 @@ export async function moveIntoPublicProject(
 	archive: Uint8Array,
 	where: { name: string; version: string },
 ): Promise<void> {
-	const res = await cp.fetch("/packages", publishInit(archive));
+	const res = await cp.fetch("/projects/default/packages", publishInit(archive));
 	if (res.status !== 201)
 		throw new Error(`发布 ${where.name}@${where.version}：${res.status} ${await res.text()}`);
 	const client = new pg.Client({ connectionString: cp.database.url });

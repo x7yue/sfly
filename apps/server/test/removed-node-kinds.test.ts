@@ -83,7 +83,7 @@ describe("已移除的节点种类留在历史数据里", () => {
 
 		it("运行列表和按运行读节点的接口也不报错", async () => {
 			const list = await api.getJson<{ runs: Array<{ id: string; status: string }> }>(
-				`/runs?orchestration_id=${IDS.scenario}`,
+				`/projects/default/runs?orchestration_id=${IDS.scenario}`,
 			);
 			expect(list.runs.map((r) => [r.id, r.status])).toEqual([[IDS.run, "success"]]);
 			for (const [id, kind] of [

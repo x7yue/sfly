@@ -18,6 +18,7 @@ import { UntrustedText } from "#/components/untrusted-text";
 import { callApi } from "#/lib/api";
 import { attemptLabel } from "#/lib/copy";
 import { shortId } from "#/lib/format";
+import { PROJECT } from "#/lib/project";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,7 +59,8 @@ export function UpdateNowButton({
 	const queryClient = useQueryClient();
 	const tasks = agent.running_tasks;
 	const update = useMutation({
-		mutationFn: () => callApi(agentsApi.updateNow, { params: { name: agent.name } }),
+		mutationFn: () =>
+			callApi(agentsApi.updateNow, { params: { project: PROJECT, name: agent.name } }),
 		onSuccess: ({ terminated_tasks }) => {
 			// Agent 的更新状态和槽位、被终止任务所在的运行都变了。
 			for (const key of [

@@ -24,7 +24,7 @@ const API_BASE = "/api";
  * 所有请求都走契约（@sfly/schema 的 http 模块，ADR 0007），没有手写的接口函数和类型：
  *
  *   const agents = useQuery(apiQuery(agentsApi.list));                           // 查询
- *   await callApi(packagesApi.version, { params: { name, version } });         // 直接调用
+ *   await callApi(packagesApi.version, { params: { project: PROJECT, name, version } });         // 直接调用
  *   queryClient.invalidateQueries({ queryKey: domainKey(packagesApi.list) });   // 按领域失效
  *   <a href={apiUrl(logsApi.download, { params: { id } })}>                     // 下载链接
  *   openEventSource(logsApi.runEvents, { params: { id } }, { logs: (chunk) => … }); // SSE（./sse.ts）

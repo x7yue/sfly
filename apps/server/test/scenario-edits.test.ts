@@ -11,6 +11,7 @@ import {
 import { orchestrationsApi, type StoredOrchestrationDocument } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -102,7 +103,9 @@ describe("场景的局部编辑", () => {
 			],
 		});
 		await eventually(async () => {
-			const { agents } = await api.getJson<{ agents: Array<{ status: string }> }>("/agents");
+			const { agents } = await api.getJson<{ agents: Array<{ status: string }> }>(
+				"/projects/default/agents",
+			);
 			expect(agents[0]?.status).toBe("online");
 		});
 	});
@@ -386,7 +389,9 @@ describe("场景的局部编辑", () => {
 			});
 		const statusOf = async (name: string) =>
 			(
-				await api.getJson<{ agents: Array<{ name: string; status: string }> }>("/agents")
+				await api.getJson<{ agents: Array<{ name: string; status: string }> }>(
+					"/projects/default/agents",
+				)
 			).agents.find((a) => a.name === name)?.status;
 
 		it("一组操作里改了节点的 Agent：按改之后的 Agent 检查（改成别的、去掉、改不写 id 的新节点）", async () => {
@@ -518,7 +523,7 @@ describe("场景的局部编辑", () => {
 				await eventually(async () => {
 					const { agents } = await api.getJson<{
 						agents: Array<{ name: string; status: string }>;
-					}>("/agents");
+					}>("/projects/default/agents");
 					expect(agents.find((a) => a.name === "agent-other")?.status).toBe("online");
 				});
 				await pool.query(
@@ -698,7 +703,7 @@ describe("场景的局部编辑", () => {
 		});
 		expect(res.status).toBe(404);
 		expect(await res.json()).toEqual({
-			error: { code: "not_found", message: "orchestration not found" },
+			error: { code: "not_found", message: ACCESS_NOT_FOUND_MESSAGE },
 		});
 	});
 });

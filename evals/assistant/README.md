@@ -176,7 +176,7 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
     `turn.json` 带着这一轮的环境变量，不复制。
   - `platform-events.jsonl` 是事件流里收到的每个事件，**原样一行一个**（心跳不记）：除了会话的事件，连上事件流时控制面
     补发的一条 `snapshot`（没有序号，重连每次一条：正在输出的文字、在跑的命令、排位）、一轮结束时平台提交工作区的
-    `platform`（`kind: commit`，在 `turn_end` 之前）也在里面，不要把它们当成助手的事件数。**现在的四道题里不会有
+    `platform`（`kind: commit`，在 `turn_end` 之前）也在里面，不要把它们当成助手的事件数。**现在的题目里不会有
     `commit` 行**：题目的工作区是会话工作目录 `/work` 里嵌套的 git 仓库（`/work/<包>/`，题目自己 `git init`），外层仓库只
     记这个目录的一个指针，模型改里面的文件，外层的树不变，平台就没有东西可提交（`platform` 行里只有 `run`、`scenario_version`
     这样的）。`platform.json` 是开始前的
@@ -214,7 +214,7 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
 ./aeval.sh ci --results <目录>     # 要先 up --assistant
 ```
 
-平台臂、假的模型端点、四道题各一次，全部通过才算过（`aeval/ci.py`）。最后不论结果如何都扫一遍结果目录里的凭据
+平台臂、假的模型端点、五道题各一次（四道原有的题和「常驻」），全部通过才算过（`aeval/ci.py`）。最后不论结果如何都扫一遍结果目录里的凭据
 （`aeval/leakscan.py`）：按值认评测知道原值的 secret（每次会话的初始管理员密码、控制面和助手服务共用的密钥），
 按格式认令牌（`sfly_ses_` 等前缀加一串令牌字符）和登录 Cookie（`sfly_login=` 加值），只认完整的出现，报文件和种类、不报原值。
 退出码：0 通过；4 有题没通过（没通过时 `containers/` 下有控制面、助手服务和镜像站的日志）；5 扫到凭据。
@@ -224,6 +224,34 @@ CI 的 `package` job 在构建好控制面和助手镜像之后跑它（`.github
 （只有 `dev`、`main` 上的提交写回缓存）。退出码是 0 或 4 时把结果目录作为产物 `assistant-eval` 上传，5 和别的退出码不上传。
 缓存的键按决定下载什么的文件算（见工作流里那一步）：改了别处让环境要下载新东西时，正式的一遍会因为缓存里没有而失败，
 镜像站的日志里有没找到的路径，把那个文件加进键里。
+
+### 骨架验收（#553）
+
+`acceptance/accept.sh` 在**正式部署形态**里按 #553「一句话之后的十分钟」逐行核对页面，模型是假的模型端点（不花钱），
+结论只说明页面和平台怎么显示，不说明模型做得成。用 `deploy/docker-compose.yml --profile assistant`（和
+`scripts/release/compose-smoke.sh` 一样），不是上面评测自己的环境。
+
+先构建三个镜像（在仓库根目录；Agent 的包在 macOS 上照上面「从源码构建控制面镜像」在 `pnpm linux` 里打）：
+
+```sh
+pnpm bundle:server && docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-server:accept out/server
+pnpm bundle:assistant && docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-assistant:accept out/assistant
+docker build -t sfly-workbench:accept deploy/workbench
+pnpm heavy bash evals/assistant/acceptance/accept.sh [--project <项目>] [--images <标签>] [--out <目录>] [--keep]
+```
+
+- 环境：compose 的三个服务加一个 override（PostgreSQL、假的模型端点、被测机 `sut`：普通 Agent `sut-01` 和
+  `container/demo_svc.py`）；开着登录，登记工作台；准备一个编辑者账号（两人交替用），照「编排」那道题的初始状态发布
+  `svc-probe`、建「demo 巡检」。
+- 剧本：`acceptance/accept-*.json`，和 `fake_model.py` 放在同一个目录里给假的模型端点。剧本的一步可以带 `thinking`
+  （先流一段「思考」）和 `thinking_delay`；文字里的 `{last_user}` 换成最近一条用户的话（看插话、接着说送到了没有）。
+- 浏览器：Playwright 官方镜像（和 e2e 同一个版本）在这套环境的网络里跑 `acceptance/acceptance.spec.ts`。用例要停掉、
+  重启容器时在控制目录里写请求，`accept.sh` 在后台照做。
+- 结果（默认 `~/.local/share/sfly/evals/<日期>-accept/<时间>/`）：`summary.md`（每行 通过/失败、说明、证据）、
+  `results.jsonl`、`shots/`、`samples/`、各个日志。结束前按值搜管理员和编辑者的密码、Agent 凭据、助手的共享密钥，按格式搜会话令牌、
+  个人令牌、登录 Cookie；搜到就删掉这次的结果，以退出码 2 结束。全部通过退出码 0，有行没过 1。
+- `--project`：项目内的接口（登记工作台、就绪、建会话）都用它；第二个项目要等 #499、#796，现在只在默认项目跑通。
+- CI 的 `package` job 在 compose 冒烟之后用同一套 `:smoke` 镜像跑它（`--images smoke`），在上面的平台臂之前。
 
 ## 模型
 
@@ -323,6 +351,10 @@ HTTPS_PROXY=http://127.0.0.1:7890 python3 -m aeval.model_proxy --port 18900   # 
 
 得分是通过的目标占全部目标的比例（破坏了就是 0）；全部通过才算这道题通过。
 
+**已知边界**（五道题共用）：判分在开发环境容器里跑，助手在那里是 root，判分不防故意改判分用到的工具（`sfly`、`uv`、`pytest`）或者伪造痕迹的模型。
+判分尽量看判分自己跑出来的结果（重新触发的运行、自己跑的测试）；「常驻」的第 1 个目标（替身起着时调试到两个商品）是唯一只看助手留下的记录（`.sfly/runs/`）判的。
+真实模型的会话里发现这样做的，这次会话记作废，开 issue。
+
 ### 失败分类
 
 没通过的会话按事件流、退出原因和控制面上的运行自动归类（`aeval/classify.py`），取第一个命中的：
@@ -340,8 +372,14 @@ HTTPS_PROXY=http://127.0.0.1:7890 python3 -m aeval.model_proxy --port 18900   # 
 | `fix` | 修 | 联调副本最近一次运行失败了，修好节点让它跑通 | 看不到的断言、重新运行联调副本的输出；不许改坏场景、不许降低检查标准 |
 | `orchestrate` | 编排 | 在场景里加一步，在另一台 Agent 上读被测机的日志，保持原有说明 | 新节点的类型、输入、执行的 Agent、位置、显示名称，重新运行的输出；原有说明和注释框、文档警告 |
 | `cross` | 跨机器 | 写一个经 Agent 能力读另一台机器上日志的节点，加进联调副本跑通 | 单测、看不到的断言、联调副本里的新节点、重新运行的输出 |
+| `daemon` | 常驻 | 起库存服务的本地替身，对它 `sfly debug` 两次；写一个自己起替身、用完关掉的集成测试 | 两次调试运行的输入和输出（替身起着才拿得到）；判分把集成测试跑两遍：没有服务起着时通过、结束后替身不在，替身起不来时不通过；不许改节点、替身和原有单测 |
 
 题目内容都是通用的被测服务（HTTP 服务、日志文件），给助手的话在 `tasks/<id>/prompt.md`。
+
+「常驻」量的是平台上「命令结束时它起的进程被结束」的代价（ADR 0019，`remote-tools/README.md` 第 12、13 条）：前四道题都不需要
+常驻进程，#539 第 11 题在已有的会话里数到跨两次命令依赖后台进程的是 0 处。一次工具调用里把替身放到后台、下一次调试它，
+平台臂上连不上（臂 A 上连得上）；参考答案把起替身和调试写在同一条命令里，平台臂上也能过。判分的检查项由
+`aeval/tasks/daemon.py` 的 `checks_from` 从看到的结果算出，参考答案满分、什么都不做零分有单测（`tests/test_daemon.py`）。
 
 ### 加一道题
 

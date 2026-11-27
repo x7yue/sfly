@@ -1,4 +1,5 @@
 import type { PresetView } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 
 /** 运行预设端到端测试共用：通过 HTTP API 准备预设（根路径 API，与 CLI 一样不经过 /api 前缀）。 */
@@ -14,7 +15,7 @@ export async function createRunPreset(
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			"x-sfly-nickname": encodeURIComponent(nickname),
+			...actAs(nickname),
 		},
 		body: JSON.stringify(body),
 	});
@@ -44,7 +45,7 @@ export async function updateRunPreset(
 		method: "PATCH",
 		headers: {
 			"content-type": "application/json",
-			"x-sfly-nickname": encodeURIComponent("tester"),
+			...actAs("tester"),
 		},
 		body: JSON.stringify(changes),
 	});
@@ -59,7 +60,7 @@ export async function deleteRunPreset(
 ): Promise<void> {
 	const res = await cp.fetch(`/orchestrations/${scenarioId}/presets/${presetId}`, {
 		method: "DELETE",
-		headers: { "x-sfly-nickname": encodeURIComponent("tester") },
+		headers: { ...actAs("tester") },
 	});
 	if (res.status !== 204) throw new Error(`删除运行预设：HTTP ${res.status} ${await res.text()}`);
 }
@@ -72,7 +73,7 @@ export async function saveScenarioVersion(
 ): Promise<void> {
 	const res = await cp.fetch(`/orchestrations/${scenarioId}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify({ base_version: 1, document }),
 	});
 	if (res.status !== 201) throw new Error(`保存场景版本：HTTP ${res.status} ${await res.text()}`);

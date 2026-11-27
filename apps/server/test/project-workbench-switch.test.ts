@@ -45,7 +45,8 @@ describe("换一台工作台：在做的一轮在原来的上做完，下一轮�
 		accounts = new TestAccounts(cp.database.url);
 		db = new pg.Client({ connectionString: cp.database.url });
 		await db.connect();
-		const bossId = await accounts.user("boss");
+		// 第一次登记打开整个部署的开关，要平台管理员（#778）。
+		const bossId = await accounts.user("boss", { admin: true });
 		await accounts.member("default", bossId, "project_admin");
 		boss = bearer(await accounts.personalToken(bossId));
 		api = new ApiClient(asUsers(cp));

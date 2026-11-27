@@ -93,6 +93,9 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ clock, leaseMs: 60 * 60_000 });
+		// spawnSfly 同步起进程：先建好用到的昵称的用户和令牌。
+		await cp.users.user();
+		await cp.users.user("alice");
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 	}, 120_000);
@@ -694,7 +697,8 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			const proxy: RecordingProxy = await startRecordingProxy(cp.httpUrl);
 			proxies.push(proxy);
 			const id = await scenario("记录场景", [echo("a")]);
-			const env = { CLAUDECODE: "1" };
+			// 测的是命令行发的昵称请求头（不带令牌时才发，#494 一并删除）：不带默认的令牌。
+			const env = { CLAUDECODE: "1", SFLY_API_TOKEN: undefined };
 			const triggered = await sfly(
 				["run", "start", "记录场景", "--server", proxy.url, "--nickname", "dana"],
 				{ env },
@@ -717,6 +721,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			]);
 			for (const write of writes) {
 				expect(write.headers["x-sfly-client"]).toMatch(/^sfly-cli\/\S+ agent\/claude-code$/);
+				// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 				expect(write.headers["x-sfly-nickname"]).toBe("dana");
 			}
 			const run = await api.run(runId);

@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from fake_model import chunks, next_reply
+from fake_model import _substitute, chunks, next_reply
 
 
 def tasks_dir(tmp_path: Path) -> Path:
@@ -88,3 +88,27 @@ def test_overflow_then_summary_then_the_scripts_ending(tmp_path: Path) -> None:
     assert "AEVAL-SCRIPT:rpcprobe-compact" in summary["text"]
     after = {"role": "user", "content": summary["text"]}
     assert next_reply({"messages": [after, tool]}, tmp_path) == {"text": "压缩之后做完了。"}
+
+
+def test_thinking_comes_first_as_reasoning_content() -> None:
+    for reply in (
+        {"text": "好了", "thinking": "先想一想", "thinking_delay": 2.0},
+        {"tool": "bash", "arguments": "{}", "call_id": "call_1", "thinking": "先想一想"},
+    ):
+        events = chunks(reply, "fake")
+        assert events[0]["choices"][0]["delta"] == {
+            "role": "assistant",
+            "reasoning_content": "先想一想",
+        }
+        assert all("reasoning_content" not in e["choices"][0]["delta"] for e in events[1:])
+    plain = chunks({"text": "好了"}, "fake")
+    assert all("reasoning_content" not in e["choices"][0]["delta"] for e in plain)
+
+
+def test_last_user_is_the_latest_thing_the_user_said() -> None:
+    messages = [
+        {"role": "user", "content": "第一句"},
+        {"role": "tool", "content": "结果"},
+        {"role": "user", "content": '插话："顺便看一下"'},
+    ]
+    assert json.loads(_substitute('"收到：{last_user}"', messages)) == '收到：插话："顺便看一下"'

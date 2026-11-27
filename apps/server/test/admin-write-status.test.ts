@@ -55,7 +55,12 @@ describe("平台管理员的写记录：响应的状态码", () => {
 	});
 
 	const post = () =>
-		app.inject({ method: "POST", url: "/feishu-bots", headers: HEADERS, payload: BODY });
+		app.inject({
+			method: "POST",
+			url: "/projects/default/feishu-bots",
+			headers: HEADERS,
+			payload: BODY,
+		});
 	const statuses = () => store.adminResults.map((r) => r.status);
 
 	it("成功的：201", async () => {

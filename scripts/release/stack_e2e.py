@@ -31,7 +31,8 @@ from typing import Any
 from aeval import e2e
 from aeval.env import ADMIN_LOGIN, Stack
 
-PROJECT = "default"
+# 项目：骨架验收（#553）能指定，终验在两个项目上各跑一遍（#797）。
+PROJECT = os.environ.get("PROJECT", "default")
 
 
 class RemoteStack(Stack):
@@ -56,7 +57,7 @@ def issue_credential(name: str) -> int:
     凭据只写到标准输出。"""
     s = stack()
     request = urllib.request.Request(
-        f"{s.cp_url}/agents/{name}/credentials", data=b"{}", method="POST"
+        f"{s.cp_url}/projects/{PROJECT}/agents/{name}/credentials", data=b"{}", method="POST"
     )
     request.add_header("content-type", "application/json")
     request.add_header("cookie", e2e.login_cookie(s))

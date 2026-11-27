@@ -30,6 +30,9 @@ interface PutResult {
 	body: string;
 }
 
+/** 上传产物带的凭据：这台 Agent 的（`agent.auth`，连上 Agent 时取）。默认的个人令牌不能上传。 */
+let agentAuth: Record<string, string> = {};
+
 /**
  * 上传一份请求体：`declare` 为真时带 Content-Length，否则分块传输；`contentType` 是 undefined 时不带这个请求头。
  * 请求体分两次发（先发前一半，隔 `gapMs` 毫秒再发后一半），让并发的几份在时间上重叠。
@@ -45,6 +48,7 @@ function put(
 			{
 				method: "PUT",
 				headers: {
+					...agentAuth,
 					...(options.contentType === undefined ? {} : { "content-type": options.contentType }),
 					...(options.declare
 						? { "content-length": String(options.body.length) }
@@ -121,6 +125,7 @@ describe("上传产物：请求体一律按原始字节存，不管 Content-Type
 		cp = await startTestControlPlane({ artifactLimitBytes: 64 * 1024 * 1024 });
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agentAuth = agent.auth;
 		const api = new ApiClient(cp);
 		await api.triggerOk(await api.orchestrationWith(DOC));
 		task = await agent.nextAssign();
@@ -215,6 +220,7 @@ describe("上传产物：并发时存下来的合计不超过上限，不管 Con
 			cp = await startTestControlPlane({ artifactLimitBytes: LIMIT });
 			await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 			agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+			agentAuth = agent.auth;
 			const api = new ApiClient(cp);
 			const runId = await api.triggerOk(await api.orchestrationWith(DOC));
 			const task = await agent.nextAssign();

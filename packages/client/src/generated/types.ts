@@ -2082,6 +2082,11 @@ export interface ProgressEvent {
 	progress: TaskProgressView;
 }
 
+/** 路径里的项目（`/projects/:project/…`，ADR 0029「项目从请求的哪里来」）：项目不存在时控制面回 404。 */
+export interface ProjectParams {
+	project: string;
+}
+
 /**
  * 排队中的尝试在等什么：等的那台 Agent 现在为什么没接它。控制面在读取的这一刻按派发的条件判断（在线、准备好环境、
  * 版本与控制面一致、有空闲槽位），不是尝试自己存下来的状态：Agent 上下线、槽位被占或释放不改变运行本身，

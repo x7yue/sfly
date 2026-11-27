@@ -80,7 +80,7 @@ describe("sfly-std 在控制面的包索引里", () => {
 				name: "sfly-std-extras",
 				version: "1.0.0",
 			});
-			const res = await cp.fetch("/packages", publishInit(own.archive));
+			const res = await cp.fetch("/projects/default/packages", publishInit(own.archive));
 			expect(res.status).toBe(201);
 		});
 

@@ -36,7 +36,7 @@ export interface Victim {
 	project: string;
 	/** 项目乙里一个项目令牌的 ID：项目令牌的接口（`/projects/:project/tokens/:id`）填它。 */
 	token: string;
-	/** 项目乙里 `agent` 这台 Agent 的一个 Agent 凭据的 ID：Agent 凭据的接口（`/agents/:name/credentials/:id`）填它。 */
+	/** 项目乙里 `agent` 这台 Agent 的一个 Agent 凭据的 ID：Agent 凭据的接口（`/projects/:project/agents/:name/credentials/:id`）填它。 */
 	credential: string;
 }
 
@@ -110,7 +110,7 @@ function paramValue(def: RouteDef, name: string, victim: Victim): string {
 
 /** 请求体样本：每个有请求体的写接口一个，写成能通过契约校验的样子（测试检查）。上传是原始字节。 */
 const JSON_BODIES: Record<string, unknown> = {
-	"POST /orchestrations": { name: "新场景" },
+	"POST /projects/:project/orchestrations": { name: "新场景" },
 	"POST /orchestrations/:id/versions": {
 		base_version: 1,
 		document: { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },
@@ -133,8 +133,8 @@ const JSON_BODIES: Record<string, unknown> = {
 	"POST /orchestrations/:id/edits/check": {
 		operations: [{ op: "set", node: "entry", field: "display_name", value: "开始" }],
 	},
-	"POST /feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
-	"PATCH /feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
+	"POST /projects/:project/feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
+	"PATCH /projects/:project/feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
 	"POST /projects/:project/tokens": { name: "新令牌", scopes: ["read"] },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },
 	"POST /orchestrations/:id/presence/leave": { session_id: "s1" },
@@ -152,14 +152,14 @@ const NO_BODY = new Set([
 	"POST /orchestrations/:id/unarchive",
 	"DELETE /orchestrations/:id/presets/:presetId",
 	"POST /runs/:id/cancel",
-	"POST /agents/:name/update-now",
-	"DELETE /feishu-bots/:name",
-	"POST /feishu-bots/:name/test",
+	"POST /projects/:project/agents/:name/update-now",
+	"DELETE /projects/:project/feishu-bots/:name",
+	"POST /projects/:project/feishu-bots/:name/test",
 	"DELETE /projects/:project/tokens/:id",
-	"POST /agents/:name/credentials",
-	"DELETE /agents/:name/credentials/:id",
-	"POST /agents/:name/disable",
-	"POST /agents/:name/enable",
+	"POST /projects/:project/agents/:name/credentials",
+	"DELETE /projects/:project/agents/:name/credentials/:id",
+	"POST /projects/:project/agents/:name/disable",
+	"POST /projects/:project/agents/:name/enable",
 	"DELETE /projects/:project/dev-agents/:name",
 	"POST /sessions/:id/stop",
 	"POST /sessions/:id/end",
@@ -167,7 +167,7 @@ const NO_BODY = new Set([
 
 /** 上传：请求体是原始字节。 */
 const UPLOAD_BODIES: Record<string, () => Uint8Array<ArrayBuffer>> = {
-	"POST /packages": () =>
+	"POST /projects/:project/packages": () =>
 		packageArchive(
 			packageMetadata({ name: "uploaded", version: "9.9.9" }),
 		) as Uint8Array<ArrayBuffer>,

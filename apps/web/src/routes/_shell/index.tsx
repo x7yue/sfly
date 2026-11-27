@@ -16,6 +16,7 @@ import { ACTION, MESSAGE, PAGE, QUEUED_LABEL, RUN_STATUS_LABEL } from "#/lib/cop
 import { formatClock } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { LIVE_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -30,7 +31,10 @@ export const Route = createFileRoute("/_shell/")({
  * 环境里还没有运行过任何场景时只显示「开始使用」（原型 #/empty），页头也只剩标题和一句说明。
  */
 function Dashboard() {
-	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: LIVE_POLL_MS });
+	const dashboard = useQuery({
+		...apiQuery(dashboardApi.get, { params: { project: PROJECT } }),
+		refetchInterval: LIVE_POLL_MS,
+	});
 	const overlays = useOverlays();
 	const data = dashboard.data;
 	const gettingStarted = data !== undefined && !data.setup.run.done;

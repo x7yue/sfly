@@ -11,6 +11,7 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { promisify } from "node:util";
 import { type AttemptView, logsApi, metricsApi, NICKNAME_HEADER, runsApi } from "@sfly/schema";
 import { type BundledServer, startBundledServer } from "../test/support/bundled-server.js";
+import { registerCredentialIssuer } from "../test/support/fake-agent.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "../test/support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "../test/support/test-database.js";
 import { runChecked } from "./command.js";
@@ -110,7 +111,7 @@ export class PerfApi {
 
 	/** 发布一个已经构建好的节点包（`.sflypkg` 的内容）。 */
 	async publishArchive(body: Uint8Array): Promise<void> {
-		await this.request("/packages", {
+		await this.request("/projects/default/packages", {
 			method: "POST",
 			headers: { "content-type": "application/octet-stream" },
 			body,
@@ -119,7 +120,9 @@ export class PerfApi {
 
 	/** 新建场景并保存第一个版本，返回场景 ID。 */
 	async createOrchestration(document: unknown, name = "perf"): Promise<string> {
-		const { id } = (await this.postJson("/orchestrations", { name })) as { id: string };
+		const { id } = (await this.postJson("/projects/default/orchestrations", { name })) as {
+			id: string;
+		};
 		await this.postJson(`/orchestrations/${id}/versions`, { base_version: 0, document });
 		return id;
 	}
@@ -279,6 +282,44 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
+/** 打包的控制面的初始管理员（环境变量）：Agent 凭据要登录才能签发（#492），性能测试的 Agent 用它签发的凭据连接。 */
+export const PERF_ADMIN_ENV = {
+	SFLY_ADMIN_LOGIN: "perf_admin",
+	SFLY_ADMIN_PASSWORD: "perf-admin-password",
+};
+
+/**
+ * 以初始管理员（{@link PERF_ADMIN_ENV}）登录这个控制面，登记按名字签发 Agent 凭据的办法：真实 Agent（`startRealAgent`）和
+ * 假 Agent（`FakeAgent.connect`）连接时自己取。项结束时撤掉。
+ */
+export async function allowAgents(ctx: PerfContext, server: BundledServer): Promise<void> {
+	const login = await fetch(`${server.httpUrl}/auth/login`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			login_name: PERF_ADMIN_ENV.SFLY_ADMIN_LOGIN,
+			password: PERF_ADMIN_ENV.SFLY_ADMIN_PASSWORD,
+		}),
+	});
+	if (!login.ok) throw new Error(`初始管理员登录返回 ${login.status}：${await login.text()}`);
+	const cookie = /sfly_login=([^;]*)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
+	const issue = async (name: string) => {
+		const res = await fetch(`${server.httpUrl}/agents/${encodeURIComponent(name)}/credentials`, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				cookie: `sfly_login=${cookie}`,
+				"sec-fetch-site": "same-origin",
+			},
+			body: "{}",
+		});
+		if (res.status !== 201)
+			throw new Error(`签发 ${name} 的 Agent 凭据返回 ${res.status}：${await res.text()}`);
+		return ((await res.json()) as { token: string }).token;
+	};
+	ctx.defer(registerCredentialIssuer(server.grpcUrl, issue));
+}
+
 /** 一套运行中的被测对象。 */
 export interface Stack {
 	readonly database: TestDatabase;
@@ -304,10 +345,16 @@ export async function startStack(
 	ctx.defer(() => database.drop());
 	const dataDir = await mkdtemp(join(ctx.tmpDir, "data-"));
 	const [server, venv] = await Promise.all([
-		startBundledServer({ dir: ctx.artifacts.bundleDir, databaseUrl: database.url, dataDir }),
+		startBundledServer({
+			dir: ctx.artifacts.bundleDir,
+			databaseUrl: database.url,
+			dataDir,
+			env: PERF_ADMIN_ENV,
+		}),
 		createStubVenv(),
 	]);
 	ctx.defer(() => server.stop());
+	await allowAgents(ctx, server);
 	const api = new PerfApi(server.httpUrl);
 	await api.publishStubPackage(ctx.repoRoot, ctx.tmpDir);
 	const agent = await startRealAgent({

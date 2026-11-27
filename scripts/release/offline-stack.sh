@@ -190,7 +190,7 @@ grep '^结果' <<<"$checked" | head -c 700; echo
 #      不动工作台自己的凭据；登记同一台是幂等的）----
 docker exec -i "$prefix-wb" sh -c 'sfly login --server http://sfly:8080 --login-name "$0" --password-stdin' "$admin_login" \
 	<<<"$admin_password" >/dev/null || fail "sfly login（管理员登录）"
-issued=$(workbench sfly api POST /agents/doc-check/credentials) || fail "sfly api POST /agents/<名字>/credentials"
+issued=$(workbench sfly api POST /projects/default/agents/doc-check/credentials) || fail "sfly api POST /projects/default/agents/<名字>/credentials"
 grep -Eq '"token": *"sfly_agt_' <<<"$issued" || fail "sfly api 的响应里没有 Agent 凭据的 token"
 issued=$(workbench sfly agent credentials issue doc-check-2 --token-only) || fail "sfly agent credentials issue --token-only"
 [[ $issued == sfly_agt_* && $issued != *$'\n'* ]] || fail "--token-only 应当只写一行 Agent 凭据"

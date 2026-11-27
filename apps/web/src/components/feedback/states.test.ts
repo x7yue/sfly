@@ -72,11 +72,11 @@ describe("错误状态的「复制错误详情」", () => {
 			message: "HTTP 502",
 			details: "<html><body><h1>502 Bad Gateway</h1>nginx</body></html>",
 			method: "GET",
-			path: "/agents",
+			path: "/projects/default/agents",
 		});
 
 		const text = await copiedErrorDetails(error);
 
-		expect(text).toBe("GET /api/agents → 502 http_error\nHTTP 502");
+		expect(text).toBe("GET /api/projects/default/agents → 502 http_error\nHTTP 502");
 	});
 });

@@ -174,7 +174,7 @@ console.log(JSON.stringify(await client.system.health()));
 				["run", "--locked", "--quiet", "sfly", "build", "testdata/stub-package", "--out", out],
 				{ cwd: repoRoot },
 			);
-			const res = await fetchPath("/packages", {
+			const res = await fetchPath("/projects/default/packages", {
 				method: "POST",
 				headers: { "content-type": "application/octet-stream" },
 				body: await readFile(join(out, "sfly-stub-0.1.0.sflypkg")),
@@ -188,7 +188,7 @@ console.log(JSON.stringify(await client.system.health()));
 		// （签发要凭据，不带凭据是 401）。
 		expect(
 			(
-				await fetchPath("/agents/bundle-agent/credentials", {
+				await fetchPath("/projects/default/agents/bundle-agent/credentials", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: "{}",
@@ -202,7 +202,7 @@ console.log(JSON.stringify(await client.system.health()));
 		});
 		expect(login.status).toBe(200);
 		const cookie = /sfly_login=([^;]*)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
-		const issued = await fetchPath("/agents/bundle-agent/credentials", {
+		const issued = await fetchPath("/projects/default/agents/bundle-agent/credentials", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",

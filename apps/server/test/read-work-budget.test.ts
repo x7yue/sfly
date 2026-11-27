@@ -267,7 +267,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 			await eventually(async () => expect((await api.run(exhausted.runId)).status).toBe("failed"));
 
 			{
-				const res = await cp.fetch("/dashboard");
+				const res = await cp.fetch("/projects/default/dashboard");
 				const dashboard = (await res.json()) as {
 					recent_ended: Array<{
 						id: string;
@@ -289,7 +289,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 	it("Agent 列表里几个运行占着槽位：用光预算的、值集合太大的运行只盖住它们自己，别的运行的进度说明一个字不少", async () => {
 		await withSecretLimits(LIMITS, async () => {
 			const read = async () => {
-				const res = await cp.fetch("/agents");
+				const res = await cp.fetch("/projects/default/agents");
 				const body = (await res.json()) as {
 					agents: Array<{
 						running_tasks: Array<{ run_id: string; progress: { message: string } | null }>;

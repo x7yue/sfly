@@ -241,7 +241,7 @@ describe("Agent 上报的字符串里含 NUL", () => {
 		await agent.sync();
 
 		const { agents: listed } = agentsApi.list.response.parse(
-			await (await cp.fetch("/agents")).json(),
+			await (await cp.fetch("/projects/default/agents")).json(),
 		);
 		const [view] = listed;
 		expect(view?.info.os).toBe(`linux${REPLACEMENT}`);
