@@ -1,6 +1,14 @@
 import type { SessionDetailResponse, SessionEvent } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { addResult, addResults, emptyResults, hasResults } from "./results";
+import {
+	addResult,
+	addResults,
+	emptyResults,
+	hasResults,
+	newestFirst,
+	resultScenarios,
+	versionsSearch,
+} from "./results";
 import { commitTotals, shortHash } from "./session-text";
 import { applyEvent, emptyTimeline, initialTimeline, prependHistory } from "./timeline";
 import { initialSession, reduceSession } from "./use-session-timeline";
@@ -220,5 +228,59 @@ describe("页面上的状态：历史、事件流、往前翻页三条路都进�
 			after: 3,
 		});
 		expect(queued.results).toBe(older.results);
+	});
+});
+
+// 成果栏的三块都是「最近的在前」，场景版本按场景合并（#551）：一个场景这个会话保存过几个版本，列在同一项里，链到版本历史对比。
+describe("成果栏：最近的在前；场景版本按场景合并", () => {
+	const SCENARIO_2 = "2b7c5d8e-1a4f-4c63-8d90-7e6f5a4b3c21";
+	const versionOf = (
+		seq: number,
+		scenario: string,
+		name: string,
+		number: number,
+	): SessionEvent => ({
+		type: "platform",
+		kind: "scenario_version",
+		seq,
+		at: at(),
+		turn: 1,
+		scenario_id: scenario,
+		name,
+		version: number,
+	});
+
+	it("newestFirst：按事件序号从大到小，不改原来的清单", () => {
+		const results = addResults(emptyResults, [run(5, RUN), run(9, RUN_2), run(7, RUN)]);
+		expect(newestFirst(results.runs).map((r) => r.seq)).toEqual([9, 7, 5]);
+		expect(results.runs.map((r) => r.seq)).toEqual([5, 7, 9]);
+	});
+
+	it("同一个场景保存过几个版本：一项，版本号从小到大列出；场景之间最近保存的在前", () => {
+		const results = addResults(emptyResults, [
+			versionOf(3, SCENARIO, "接口巡检", 2),
+			versionOf(4, SCENARIO_2, "磁盘巡检", 1),
+			versionOf(8, SCENARIO, "接口巡检", 3),
+			versionOf(6, SCENARIO, "接口巡检", 5),
+		]);
+		expect(resultScenarios(results)).toEqual([
+			{ scenarioId: SCENARIO, name: "接口巡检", versions: [2, 3, 5], lastSeq: 8 },
+			{ scenarioId: SCENARIO_2, name: "磁盘巡检", versions: [1], lastSeq: 4 },
+		]);
+	});
+
+	it("场景名取最近一次保存时的（场景中途改过名）；没有保存过版本时没有这一块", () => {
+		const renamed = addResults(emptyResults, [
+			versionOf(3, SCENARIO, "旧名字", 1),
+			versionOf(5, SCENARIO, "新名字", 2),
+		]);
+		expect(resultScenarios(renamed)[0]?.name).toBe("新名字");
+		expect(resultScenarios(emptyResults)).toEqual([]);
+	});
+
+	it("版本历史里选中哪几个版本：一个版本就选它，几个版本对比最早和最晚的", () => {
+		expect(versionsSearch([3])).toEqual({ b: 3 });
+		expect(versionsSearch([2, 3, 5])).toEqual({ a: 2, b: 5 });
+		expect(versionsSearch([4, 4])).toEqual({ b: 4 });
 	});
 });

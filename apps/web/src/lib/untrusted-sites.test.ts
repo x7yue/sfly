@@ -334,8 +334,12 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			"sessions/CommitRow.tsx": { truncate: 1 },
 			// 成果：提交里的文件路径和差异是模型写的东西；场景名会话令牌能写（新建、改名、保存版本），也不当作登录的人写的名字（版本号、运行 ID 不是）。
 			"sessions/RecordRow.tsx": { truncate: 1 },
-			"sessions/ResultsPanel.tsx": { wrapped: ["commit.diff"], truncate: 3 },
-			"sessions/ReadinessLine.tsx": { wrapped: ["SESSION.ready(readiness.workbench)", "problem"] },
+			// 成果栏的场景名（版本链接的提示用 `untrustedPlain`）和提交里的文件路径；运行卡片里的场景名、失败的节点和原因（#551）。
+			"sessions/ResultsPanel.tsx": { wrapped: ["commit.diff", "scenario.name"], truncate: 2 },
+			"sessions/SessionRunCard.tsx": { wrapped: ["scenarioName", "failure"], truncate: 2 },
+			"sessions/ReadinessLine.tsx": {
+				wrapped: ["SESSION.ready(readiness.workbench)", "item.what"],
+			},
 			"sessions/SessionList.tsx": { wrapped: ["session.created_by"], truncate: 1 },
 			"sessions/SessionPage.tsx": {
 				wrapped: ["waitingFor.title", "waitingFor.created_by", "next"],

@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from "node:fs";
 import type { RunView } from "@sfly/schema";
 import { focusManager, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +16,7 @@ vi.hoisted(() => {
 	});
 });
 
-// 会话页「成果」栏里每个运行的状态（#547）：**不开运行事件流**，在跑的定时重新读，结束了就不读。一个会话可以有很多运行，
+// 会话页运行卡片里没有事件流名额的运行的状态（#547、#551）：**不开运行事件流**，在跑的定时重新读，结束了就不读。一个会话可以有很多运行，
 // 每个在跑的运行开一条事件流的话，五个就占满浏览器对同源的 6 条连接，页面自己的发送、停止、结束会话排不上队。
 
 const RUN = "00000000-0000-4000-8000-000000000001";
@@ -157,5 +158,44 @@ describe("成果栏里运行的状态：定时重新读，不开事件流", () =
 		expect(reads).toBe(done);
 		expect(again.status()).toBe("failed");
 		again.stop();
+	});
+});
+
+// 会话页的事件流名额（`sessions/live-runs.ts`，2 个）只管会话页上的运行卡片：运行监控页、运行抽屉、画布自己用 `useLiveRun`，
+// 不能因为会话页占满了名额就让它们的订阅降级成轮询。名额靠 `LiveRunsContext` 传给 `SessionRunCard`，`monitor/` 里的代码不认识它。
+describe("事件流名额不限制运行监控、运行抽屉、画布", () => {
+	const source = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
+
+	it("useLiveRun 和 live-run.ts 不认识会话页的名额：不读 LiveRunsContext，不引用 sessions/", () => {
+		const live = source("./live-run.ts");
+		expect(live).not.toMatch(/LiveRunsContext|liveRunIds|MAX_LIVE_RUN_STREAMS|#\/sessions\//);
+		// useLiveRun 自己：只看 `enabled` 和运行有没有结束，不看别的开关。
+		const body = live.slice(
+			live.indexOf("export function useLiveRun("),
+			live.indexOf("export function runStatusQuery"),
+		);
+		expect(body).toContain(
+			'const live = enabled && !!runId && (!run.data || run.data.status === "running");',
+		);
+	});
+
+	it("只有会话页的运行卡片读名额；monitor/、run-drawer/、dashboard/、components/ 里没有人读", () => {
+		const users: string[] = [];
+		const walk = (dir: URL) => {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				const url = new URL(entry.name + (entry.isDirectory() ? "/" : ""), dir);
+				if (entry.isDirectory()) walk(url);
+				else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+					if (/LiveRunsContext/.test(readFileSync(url, "utf8")))
+						users.push(url.pathname.split("/src/")[1] ?? "");
+				}
+			}
+		};
+		walk(new URL("../", import.meta.url));
+		expect(users.sort()).toEqual([
+			"sessions/SessionPage.tsx",
+			"sessions/SessionRunCard.tsx",
+			"sessions/use-live-runs.ts",
+		]);
 	});
 });

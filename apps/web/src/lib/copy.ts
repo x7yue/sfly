@@ -261,6 +261,19 @@ export const SESSION = {
 		workbench === null ? "可以用" : `可以用 · 工作台 ${workbench} 在线`,
 	notReady: "现在不能用：",
 	workbenchOffline: (workbench: string) => `工作台 ${workbench} 不在线`,
+	/**
+	 * 就绪状态里每一种问题后面写该找谁、做什么（和控制面给的「缺什么」那句分开写：「缺什么」带着具体的变量名、哪一台，由控制面写；
+	 * 找谁由页面按种类写）。部署者是装平台、配置容器和环境变量的人。现在工作台只能由部署者设（`SFLY_WORKBENCH_AGENT`），#549 改成项目登记之后
+	 * 「设置工作台」那一条由 #549 改这句。工作台本身就是一台 Agent（GLOSSARY「工作台」）：「不在线」和「能力端口不可用」是同一种问题（`workbench_offline`）。
+	 */
+	readinessHint: {
+		assistant_not_configured: "请部署者在控制面上开启助手",
+		assistant_unreachable: "请部署者检查助手容器有没有在运行",
+		workbench_not_set: "请部署者设置这个项目的工作台",
+		workbench_offline: "请部署者检查工作台有没有在运行、能不能连上控制面、能力端口有没有上报",
+		model_not_configured: "请部署者在助手容器上配置模型",
+		model_unreachable: "请部署者检查助手容器能不能连上模型",
+	},
 	input: {
 		label: "要做什么？",
 		placeholder: "要做什么？例如：给 http_check 加一个超时参数",
@@ -281,6 +294,18 @@ export const SESSION = {
 		truncated: (limit: number) => `只显示了最近活动的 ${limit} 个会话`,
 		/** 排队中的会话（和停止途中说了话、排在这一轮后面的在做的会话）在状态后面写排第几。 */
 		queuePosition: (position: number) => `排在第 ${position} 位`,
+		/**
+		 * 上一轮的结局不是「完成」时，在状态下面标出来（`last_turn_outcome`）：「上一轮被打断」。完成的不标；还没有结束过一轮的没有。
+		 * 在做的会话也标：它标的是在这一轮之前的那一轮。
+		 */
+		lastTurn: (outcome: string) => `上一轮${outcome}`,
+		outcome: {
+			stopped: "已停止",
+			limit: "到了上限",
+			model_unavailable: "模型不可用",
+			interrupted: "被打断",
+			failed: "出错",
+		},
 	},
 	status: {
 		idle: "空闲",
@@ -465,26 +490,41 @@ export const SESSION = {
 		openVersion: "打开版本历史",
 	},
 	/**
-	 * 会话页右侧的「成果」（#547）：这个会话留下了什么，三块，全部来自这个会话的 `platform` 事件；运行的状态跟着运行变（和运行监控共用同一份缓存，定时重新读，不开运行事件流）。
+	 * 会话页右侧的「成果」（#547、#551）：这个会话留下了什么，三块（场景、运行、工作区的提交），全部来自这个会话的 `platform` 事件，
+	 * 没有内容的块不显示；运行的卡片和时间线上内嵌的是同一个组件，状态和运行监控里的一致。
 	 */
 	results: {
 		title: "成果",
-		commits: "工作区的提交",
-		versions: "场景版本",
+		scenarios: "场景",
 		runs: "运行",
-		emptyCommits: "还没有提交",
-		emptyVersions: "还没有保存场景的版本",
-		emptyRuns: "还没有触发运行",
+		commits: "工作区的提交",
+		/** 整栏没有任何成果时的一句话。 */
+		empty: "助手对平台做的事会出现在这里",
 		/** 事件只读到了最近一页：更早的成果在「加载更早的」之后才会列出来。 */
 		partial: "更早的成果在加载更早的内容后列出",
+		/** 场景那一项：这个会话保存过的版本，几个时再给一个对比的入口。 */
+		versions: "保存的版本",
+		compareVersions: (a: number, b: number) => `对比 v${a} 和 v${b}`,
+		openScenario: "打开场景",
+		openVersion: (version: number) => `在版本历史里打开 v${version}`,
 		commitTurn: (turn: number) => `第 ${turn} 轮`,
 		commitStat: (files: number, additions: number, deletions: number) =>
 			`${files} 个文件 +${additions} −${deletions}`,
 		showDiff: "展开看差异",
 		hideDiff: "收起差异",
 		noDiff: "（没有差异）",
+	},
+	/**
+	 * 运行卡片（时间线上平台记录下面内嵌的和成果栏里的是同一个组件，#551）：场景名、运行 ID 前几位、状态（实时）、用时，失败时第一个失败的
+	 * 节点和原因一行；点开进运行监控。
+	 */
+	runCard: {
 		/** 运行的状态读不到（运行已经被清理、没有权限）。 */
-		runUnknown: "状态未知",
+		unknown: "状态未知",
+		/** 失败时的一行：「<节点>：<原因>」；原因是节点（别人写的代码）报的，整句经不可信文字组件。 */
+		failed: (node: string, reason: string) => (reason === "" ? node : `${node}：${reason}`),
+		/** 用时的读屏名称。 */
+		elapsed: "用时",
 	},
 	turnEnd: {
 		completed: "这一轮完成",

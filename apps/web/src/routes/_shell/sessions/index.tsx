@@ -9,7 +9,6 @@ import { PAGE, SESSION } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { NewSession } from "#/sessions/NewSession";
 import { SESSION_PROJECT } from "#/sessions/project";
-import { ReadinessLine } from "#/sessions/ReadinessLine";
 import { SessionList } from "#/sessions/SessionList";
 
 export const Route = createFileRoute("/_shell/sessions/")({
@@ -18,7 +17,7 @@ export const Route = createFileRoute("/_shell/sessions/")({
 });
 
 /**
- * 助手页（#542）：助手此刻能不能用，一个输入框（说一句话就开始一个会话），和本项目的会话。
+ * 助手页（#542）：一个输入框（说一句话就开始一个会话，助手此刻能不能用写在输入框旁边，`NewSession`），和本项目的会话。
  * 列表在窗口重新获得焦点时和建会话之后刷新，不开事件流；有会话在做或排队时每 5 秒重新查询，排队的位置前进了、做完的会话回到空闲
  * 才看得到（#544）。
  */
@@ -49,7 +48,6 @@ function AssistantPage() {
 			>
 				{(data) => (
 					<div className="flex flex-col gap-4">
-						<ReadinessLine readiness={data.readiness} />
 						<NewSession readiness={data.readiness} />
 						<section aria-labelledby="session-list-heading">
 							<SectionHeading level={2} id="session-list-heading">

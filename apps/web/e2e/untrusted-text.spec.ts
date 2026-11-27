@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto";
 import type { Page } from "@playwright/test";
 import { LogLevel } from "../../server/test/support/fake-agent.js";
+import { seedSession } from "../../server/test/support/sessions.js";
 import { addMenu, dock, editorDocument, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { FAILED_NODE, failedRun } from "./monitor-failure-scenario";
 import { logLine, metricPackage, openMonitor } from "./monitor-scenario";
-import { createScenario, publishPackage, triggerRun } from "./support";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 import {
 	copiedTextOf,
 	expectNoUnsafeText,
@@ -571,4 +573,55 @@ test("日志里从右到左的文字（希伯来文开头的混排、纯希伯�
 		await page.reload();
 		await expect(logs).toBeVisible();
 	}
+});
+
+test("会话页的运行卡片：场景名（会话令牌能写）、失败的节点和原因（节点报的）：时间线上的和成果栏里的，文字和悬停提示都写出来", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
+	const runId = await triggerRun(controlPlane, scenario);
+	// 失败原因一行（`errorHeadline`）里带着方向控制字符、零宽字符、转义字符。
+	await agent.fail(await agent.nextAssign(), hostileText("AssertionError"));
+	const name = hostileText("巡检");
+	const id = await seedSession(controlPlane.database.url, {
+		title: "运行卡片里的别人写的文字",
+		status: "idle",
+		events: [
+			{
+				type: "user_message",
+				message_id: randomUUID(),
+				text: "跑一遍巡检",
+				steer: false,
+				author: "tester",
+				author_user_id: null,
+			},
+			{ type: "turn_started", turn: 1 },
+			{ type: "platform", kind: "run", turn: 1, run_id: runId, scenario_name: name },
+			{
+				type: "turn_end",
+				turn: 1,
+				outcome: "completed",
+				reason: "助手已完成",
+				steps: 1,
+				model_calls: 1,
+				duration_ms: 1000,
+			},
+		],
+	});
+	await page.goto(`/sessions/${id}`);
+	// 时间线上一张、成果栏里一张，状态读到、失败的一行出来之后查整页。
+	const failures = page.getByTestId("run-card-failure");
+	await expect(failures).toHaveCount(2);
+	await expectNoUnsafeText(page, undefined, "会话页：");
+	await expectWrittenOut(page, BIDI, ZERO_WIDTH, ESCAPE);
+	// 悬停提示里的全文（场景名、失败的一行）：看不见的字符写成纯文字的 ⟨U+202E⟩。
+	const tooltip = page.locator('[data-slot="tooltip-content"]');
+	await page.getByTestId("session-results").getByTestId("run-card").hover();
+	await expect(tooltip).toContainText("⟨U+202E⟩");
+	await expect(tooltip).toContainText("⟨U+200B⟩");
+	await expectNoUnsafeText(page, undefined, "会话页（悬停提示）：");
 });
