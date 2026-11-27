@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { vaultKey } from "../src/db/vault-schema.js";
@@ -102,19 +103,63 @@ describe("控制面启动时检查钥匙文件", () => {
 		await expect(cp.restart(() => rm(file))).rejects.toThrow(/secrets\.key 不见了/);
 	});
 
-	it("库里有加密的副本、没记钥匙（数据库和数据目录不是同一套）：重启失败", async () => {
+	/** 给一个运行存一份副本，再按 `change` 改库（删掉指纹等）。 */
+	const sealOne = async (change: (db: Database["db"]) => Promise<unknown>) => {
 		const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
-		const file = join(cp.dataDir, VAULT_KEY_FILE);
-		const vaults = new RunVaults(await readFile(file));
+		const vaults = new RunVaults(await readFile(join(cp.dataDir, VAULT_KEY_FILE)));
 		const opened = openDatabase(cp.database.url, () => {});
 		try {
 			await opened.db.transaction((tx) =>
 				vaults.put(tx, run, { values: ["s3cr3t"], params: {}, outputs: {} }),
 			);
-			await opened.db.delete(vaultKey);
+			await change(opened.db);
 		} finally {
 			await opened.close();
 		}
+	};
+
+	it("库里有加密的副本、没记钥匙（数据库和数据目录不是同一套）：重启失败", async () => {
+		await sealOne((db) => db.delete(vaultKey));
 		await expect(cp.restart()).rejects.toThrow(/secrets\.key 和数据库对不上/);
 	});
+
+	it("库里有加密的副本、指纹和钥匙文件都没了：重启失败，不当作第一次启动生成新钥匙", async () => {
+		const file = join(cp.dataDir, VAULT_KEY_FILE);
+		await sealOne((db) => db.delete(vaultKey));
+		await expect(cp.restart(() => rm(file))).rejects.toThrow(
+			/secrets\.key 不见了，库里也没有记下钥匙，却有加密的运行副本/,
+		);
+		await expect(stat(file)).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
+		const opened = openDatabase(cp.database.url, () => {});
+		try {
+			expect(await opened.db.select().from(vaultKey)).toEqual([]);
+		} finally {
+			await opened.close();
+		}
+	});
+
+	it("钥匙对不上时启动失败，在恢复运行之前：任务的租约和状态、Agent 的登记都没有被改", async () => {
+		await seedTask(cp, { agent: "agent-a", status: "running" });
+		const snapshot = () =>
+			rowsOf(
+				cp.database.url,
+				"select * from tasks order by id; select * from agents order by name",
+			);
+		const before = await snapshot();
+		await expect(cp.restart(() => rm(join(cp.dataDir, VAULT_KEY_FILE)))).rejects.toThrow(
+			/secrets\.key 不见了/,
+		);
+		expect(await snapshot()).toEqual(before);
+	});
 });
+
+async function rowsOf(url: string, sql: string): Promise<unknown[]> {
+	const client = new pg.Client({ connectionString: url });
+	await client.connect();
+	try {
+		const results = await client.query(sql);
+		return (Array.isArray(results) ? results : [results]).map((r) => r.rows);
+	} finally {
+		await client.end();
+	}
+}

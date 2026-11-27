@@ -28,17 +28,20 @@ export function sealRunVault(key: Buffer, runId: string, vault: RunVault): Buffe
 }
 
 export function openRunVault(key: Buffer, runId: string, sealed: Buffer): RunVault {
-	const decipher = createDecipheriv("aes-256-gcm", key, sealed.subarray(0, IV_BYTES));
-	decipher.setAAD(Buffer.from(runId));
-	decipher.setAuthTag(sealed.subarray(IV_BYTES, IV_BYTES + TAG_BYTES));
+	const broken = () =>
+		new RunVaultError(`运行 ${runId} 的加密副本解不开：钥匙不对，或者副本被改过、截断过`);
+	if (sealed.length < IV_BYTES + TAG_BYTES) throw broken();
 	let text: string;
 	try {
+		const decipher = createDecipheriv("aes-256-gcm", key, sealed.subarray(0, IV_BYTES));
+		decipher.setAAD(Buffer.from(runId));
+		decipher.setAuthTag(sealed.subarray(IV_BYTES, IV_BYTES + TAG_BYTES));
 		text = Buffer.concat([
 			decipher.update(sealed.subarray(IV_BYTES + TAG_BYTES)),
 			decipher.final(),
 		]).toString("utf8");
 	} catch {
-		throw new RunVaultError(`运行 ${runId} 的加密副本解不开：钥匙不对，或者副本被改过`);
+		throw broken();
 	}
 	return JSON.parse(text) as RunVault;
 }

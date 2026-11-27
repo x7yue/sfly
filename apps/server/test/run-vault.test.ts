@@ -29,6 +29,18 @@ describe("运行的加密副本：加密和解开（#505）", () => {
 		expect(a.toString("base64")).not.toContain(Buffer.from(SECRET).toString("base64"));
 	});
 
+	it("截断的副本（没有完整的 IV 和认证标签、只剩 IV 和标签、少了最后一个字节）：同样是 RunVaultError", () => {
+		const sealed = sealRunVault(key, run, VAULT);
+		for (const length of [0, 5, 12, 27, 28, sealed.length - 1]) {
+			expect(() => openRunVault(key, run, sealed.subarray(0, length)), `长度 ${length}`).toThrow(
+				expect.objectContaining({
+					name: "RunVaultError",
+					message: expect.stringContaining("截断"),
+				}),
+			);
+		}
+	});
+
 	it("换了钥匙、挪到别的运行上、改过一个字节：都解不开", () => {
 		const sealed = sealRunVault(key, run, VAULT);
 		const tampered = Buffer.from(sealed);
@@ -64,15 +76,37 @@ describe("运行的加密副本：存在库里", () => {
 		await cp.close();
 	});
 
-	it("存、改、读、删；库里任何一张表的文字里都没有原值", async () => {
+	it("存、改、读、删：每次写之后，库里每张表的文字和副本的原始字节里都没有写过的任何一个原值", async () => {
+		// 原值集合、对象里的口令、链实例参数、原样输出、更新时才加进来的值：各自一个标记，每次写之后都查一遍写过的全部。
+		const first: RunVault = {
+			values: ["mark-set-7f3a91", { password: "mark-nested-c41e" }],
+			params: { "chain-1": { token: "mark-param-90bd" } },
+			outputs: { "task-1": { url: "https://x.test/?t=mark-output-5a2f" } },
+		};
+		const written = ["mark-set-7f3a91", "mark-nested-c41e", "mark-param-90bd", "mark-output-5a2f"];
+		const leaked = async () => {
+			const text = await databaseText(cp.database.url);
+			return written.filter((m) =>
+				[m, Buffer.from(m).toString("hex"), Buffer.from(m).toString("base64")].some((form) =>
+					text.includes(form),
+				),
+			);
+		};
 		expect(await db.db.transaction((tx) => vaults.get(tx, run))).toBeUndefined();
-		await db.db.transaction((tx) => vaults.put(tx, run, VAULT));
-		const grown = { ...VAULT, values: [...VAULT.values, "second-value-77"] };
+		await db.db.transaction((tx) => vaults.put(tx, run, first));
+		expect(await leaked()).toEqual([]);
+		const grown: RunVault = {
+			values: [...first.values, "mark-update-e88c"],
+			params: { ...first.params, "chain-2": { key: "mark-update-param-13d0" } },
+			outputs: first.outputs,
+		};
+		written.push("mark-update-e88c", "mark-update-param-13d0");
 		await db.db.transaction((tx) => vaults.put(tx, run, grown));
+		expect(await leaked()).toEqual([]);
 		expect(await db.db.transaction((tx) => vaults.get(tx, run))).toEqual(grown);
-		expect(await databaseText(cp.database.url)).not.toContain(SECRET);
 		await db.db.transaction((tx) => vaults.delete(tx, run));
 		expect(await db.db.transaction((tx) => vaults.get(tx, run))).toBeUndefined();
+		expect(await leaked()).toEqual([]);
 	});
 
 	it("运行删了，副本跟着删", async () => {

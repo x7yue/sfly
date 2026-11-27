@@ -22,11 +22,18 @@ export async function openVaultKey(dataDir: string, db: Db): Promise<Buffer> {
 	const file = join(dataDir, VAULT_KEY_FILE);
 	const [recorded] = await db.select().from(vaultKey);
 	const key = await readKey(file);
-	if (key === undefined) {
-		if (recorded !== undefined) {
+	if (recorded === undefined) {
+		const [sealed] = await db.select({ runId: runVaults.runId }).from(runVaults).limit(1);
+		if (sealed !== undefined) {
 			throw new VaultKeyError(
-				`钥匙文件 ${file} 不见了：库里记着用它加密过，没有它读不出加密的运行副本。${RESTORE}`,
+				key === undefined
+					? `钥匙文件 ${file} 不见了，库里也没有记下钥匙，却有加密的运行副本：没有原来的钥匙读不出它们，不能当作第一次启动换一把新的。${RESTORE}`
+					: `钥匙文件 ${file} 和数据库对不上：库里有加密的运行副本，却没有记下钥匙。数据库和数据目录要是同一套部署的；${RESTORE}`,
 			);
+		}
+		if (key !== undefined) {
+			await db.insert(vaultKey).values({ fingerprint: fingerprintOf(key) });
+			return key;
 		}
 		const created = randomBytes(KEY_BYTES);
 		// `wx`：已经有了就失败，不覆盖。
@@ -34,18 +41,12 @@ export async function openVaultKey(dataDir: string, db: Db): Promise<Buffer> {
 		await db.insert(vaultKey).values({ fingerprint: fingerprintOf(created) });
 		return created;
 	}
-	const fingerprint = fingerprintOf(key);
-	if (recorded === undefined) {
-		const [sealed] = await db.select({ runId: runVaults.runId }).from(runVaults).limit(1);
-		if (sealed !== undefined) {
-			throw new VaultKeyError(
-				`钥匙文件 ${file} 和数据库对不上：库里有加密的运行副本，却没有记下钥匙。数据库和数据目录要是同一套部署的；${RESTORE}`,
-			);
-		}
-		await db.insert(vaultKey).values({ fingerprint });
-		return key;
+	if (key === undefined) {
+		throw new VaultKeyError(
+			`钥匙文件 ${file} 不见了：库里记着用它加密过，没有它读不出加密的运行副本。${RESTORE}`,
+		);
 	}
-	if (recorded.fingerprint !== fingerprint) {
+	if (recorded.fingerprint !== fingerprintOf(key)) {
 		throw new VaultKeyError(
 			`钥匙文件 ${file} 被换过：和库里记下的钥匙不是同一个，用它读不出加密的运行副本。${RESTORE}`,
 		);
