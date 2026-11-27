@@ -138,8 +138,8 @@ class FakeControlPlane:
                         return self._json(503, {"code": "assistant_unavailable"})
                     if mode == "create-500-model-unavailable":
                         # 不是 503：就算错误码对，也不是「环境没准备好」的拒绝。
-                        body = {"error": {"code": "model_unavailable", "message": "x"}}
-                        return self._json(500, body)
+                        refusal = {"error": {"code": "model_unavailable", "message": "x"}}
+                        return self._json(500, refusal)
                     echo = f"（回显：{PASSWORD} {COOKIE}）"
                     for name, code, message in (
                         ("model-unavailable", "model_unavailable", "没有配置模型：缺 MODEL_KEY"),
