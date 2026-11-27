@@ -257,7 +257,7 @@ export interface Api {
 		/**
 		 * `POST /projects/:project/feishu-bots`
 		 *
-		 * 登记一个飞书机器人（201，需要昵称请求头）。名称已被占用 409 `name_taken`。
+		 * 登记一个飞书机器人（201）。名称已被占用 409 `name_taken`。
 		 */
 		create: Endpoint<
 			{
@@ -274,7 +274,7 @@ export interface Api {
 		/**
 		 * `PATCH /projects/:project/feishu-bots/:name`
 		 *
-		 * 替换 Webhook 地址（需要昵称请求头）。名称创建后不能修改：请求里带 `name` 返回 400 `name_immutable`。
+		 * 替换 Webhook 地址。名称创建后不能修改：请求里带 `name` 返回 400 `name_immutable`。
 		 * 机器人不存在 404 `not_found`。
 		 */
 		replaceWebhook: Endpoint<
@@ -314,7 +314,7 @@ export interface Api {
 		/**
 		 * `DELETE /projects/:project/feishu-bots/:name`
 		 *
-		 * 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。
+		 * 删除（204）。机器人不存在 404 `not_found`。
 		 */
 		remove: Endpoint<
 			{
@@ -567,7 +567,7 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/versions`
 		 *
-		 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
+		 * 保存（追加）一个版本，返回 201。base_version 是编辑起点的版本号，
 		 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 		 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
 		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
@@ -616,7 +616,7 @@ export interface Api {
 		 *   每条多一个 `existing`：改动之前就有（见 CheckedWarningView）。
 		 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
 		 *
-		 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
+		 * 用 POST 是因为请求体是一整份文档；它是只读的。
 		 */
 		check: Endpoint<
 			{
@@ -657,7 +657,7 @@ export interface Api {
 		 * `POST /orchestrations/:id/edits`
 		 *
 		 * 对场景做一组局部编辑（#470），存成一个新版本，返回 201：和保存相同的响应，再加上这组操作造成的差异（`diff`，相对 base_version）。
-		 * 需要昵称请求头。操作见
+		 * 操作见
 		 */
 		edit: Endpoint<
 			{
@@ -675,7 +675,7 @@ export interface Api {
 				id: string;
 				orchestration_id: string;
 				number: number;
-				/** 保存这个版本的人的昵称。 */
+				/** 保存这个版本的人的名字。 */
 				author: string;
 				author_via: string | null;
 				/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
@@ -694,7 +694,7 @@ export interface Api {
 		 * `POST /orchestrations/:id/edits/check`
 		 *
 		 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
-		 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+		 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写。
 		 * 没有给 base_version 时对照最新版本，不报冲突。
 		 */
 		checkEdits: Endpoint<
@@ -746,7 +746,7 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/versions/:number/restore`
 		 *
-		 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
+		 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。
 		 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
 		 * 恢复也不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样恢复（#576），响应的 `warnings` 里每个这样的字段一条
 		 * （`timeout_out_of_range`、`queue_timeout_out_of_range`）；要保存任何改动之前先把它们改成合格的值。
@@ -945,7 +945,7 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/presets`
 		 *
-		 * 新建运行预设（201，需要昵称请求头，昵称记为最后修改人）。`params` 是预设参数的完整清单，
+		 * 新建运行预设（201，写操作的身份记为最后修改人）。`params` 是预设参数的完整清单，
 		 * 对照最新版本检查：参数已声明、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
 		 * 至少一个参数，不能重复；secret 参数也能设为预设参数，值明文保存，所有响应里只返回打码后的值。
 		 * 不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，`message` 写明原因）；
@@ -968,7 +968,7 @@ export interface Api {
 		/**
 		 * `PATCH /orchestrations/:id/presets/:presetId`
 		 *
-		 * 修改运行预设（需要昵称请求头，昵称和时间记为最后修改人）：立即生效，不产生新的场景版本；
+		 * 修改运行预设（写操作的身份和时间记为最后修改人）：立即生效，不产生新的场景版本；
 		 * 两个人同时改时后保存的覆盖先保存的，不做冲突检测。请求体见 `PresetChanges`：没有 `params` 时只改名称和说明；
 		 * 给了 `params` 时 400 `invalid_preset` 的规则同新建；其中 secret 参数不重新输入时写 `{name, keep: true}` 沿用原值，
 		 * `keep` 用在非 secret 参数上，或者这个预设里原来没有值的参数上，同样是 `invalid_preset`。
@@ -991,7 +991,7 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/presets/:presetId/copy`
 		 *
-		 * 复制运行预设（201，需要昵称请求头）：在控制面复制，说明和预设参数（包括 secret 的值）不变，新的 ID，
+		 * 复制运行预设（201）：在控制面复制，说明和预设参数（包括 secret 的值）不变，新的 ID，
 		 * 请求体里是新名称（规则同新建），最后修改人记为复制的人。新名称已被占用时 409 `preset_name_taken`，
 		 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能复制。
 		 */
@@ -1012,7 +1012,7 @@ export interface Api {
 		/**
 		 * `DELETE /orchestrations/:id/presets/:presetId`
 		 *
-		 * 删除运行预设（204，需要昵称请求头）。已有运行上记下的预设 ID、名称和预设参数的名单不受影响。
+		 * 删除运行预设（204）。已有运行上记下的预设 ID、名称和预设参数的名单不受影响。
 		 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能删除。
 		 */
 		remove: Endpoint<

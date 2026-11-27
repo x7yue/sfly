@@ -8,7 +8,7 @@ import { codePointLabel, REJECTED_NAME_CHARACTER, scanCharacters } from "@sfly/s
  * 做两件事：① 看不见的字符和控制字符写成看得见的样子（`U+202E` 加一句说明）；② 文字的方向隔离在自己的范围里（`UntrustedText`
  * 组件的 `<bdi dir="ltr">`：**基准方向一律是从左到右**，和整个控制台一样；从右到左书写的文字自己成一段，不影响旁边的文字，
  * 也不会因为它在开头就把整行翻过来）。**字符表和位置规则都是 `@sfly/schema` 的 `text-safety.ts` 里那一份**（{@link REJECTED_NAME_CHARACTER}、
- * {@link scanCharacters}；令牌名称、显示名、昵称的校验用的也是它，命令行把同一张表写成 `\uXXXX`，控制台写成一小块），这里不另写：
+ * {@link scanCharacters}；令牌名称、显示名的校验用的也是它，命令行把同一张表写成 `\uXXXX`，控制台写成一小块），这里不另写：
  * 零宽连接符、零宽不连字符、变体选择符三种例外紧跟在一个看得见的字符后面才原样显示（波斯文、带零宽连接符的组合表情、表情的呈现方式），
  * 位置不对的和别的一样写出来。
  *

@@ -15,6 +15,9 @@ const root = document.getElementById("app");
 if (!root) throw new Error("missing #app");
 alignPulses(document);
 initMotionPause();
+// #494 删掉了浏览器昵称：以前存的 `sfly.nickname` 没有人再读，顺手清掉，不迁移（写操作的身份是登录的用户）。
+// 留着也无害；这一行可以在大家都打开过新版控制台之后删掉。
+window.localStorage.removeItem("sfly.nickname");
 // 登录失效（空闲期限到了、被注销、被停用）：请求或事件流重连拿到 401 时，本来登录着的人回到登录页，
 // 登录之后再回到现在这个页面；缓存里是登录期间的数据，一起清掉。
 setSessionExpiredHandler(() => {

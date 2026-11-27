@@ -20,8 +20,8 @@ import { StatusPill } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
+import { useIdentity } from "#/lib/identity";
 import { INLINE_LINK } from "#/lib/inline-link";
-import { useNickname } from "#/lib/nickname";
 import { PROJECT } from "#/lib/project";
 import { writeRunView } from "#/monitor/live-run";
 import { unusablePresetNotice } from "#/presets/invalid-preset";
@@ -157,7 +157,7 @@ function ParamsForm({
 	presetSelect: React.RefObject<HTMLSelectElement | null>;
 }) {
 	const queryClient = useQueryClient();
-	const nickname = useNickname();
+	const identity = useIdentity();
 	const decls = preflight.params;
 	const [presetId, setPresetId] = useState<string | null>(() =>
 		initialPresetId(preflight.presets, readLastPreset(orchestrationId), options.rerunOf),
@@ -291,8 +291,9 @@ function ParamsForm({
 			</ul>
 			{trigger.error && <TriggerError error={trigger.error} onLocate={options.onLocate} />}
 			<p className="m-0 text-xs text-fg-3">
-				运行使用最新保存的版本 <span className="font-mono">v{preflight.version}</span>。触发人：
-				{nickname ?? "未设置昵称"}
+				运行使用最新保存的版本 <span className="font-mono">v{preflight.version}</span>。
+				{/* 触发人是登录的用户（显示名）；页面刚打开、还没问到身份时不写。 */}
+				{identity.status === "user" && `触发人：${identity.user.display_name}`}
 			</p>
 		</form>
 	);

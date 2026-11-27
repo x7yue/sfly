@@ -40,7 +40,7 @@ def item(
 
 
 class FakeClient:
-    """只回答 `GET /runs`，和控制面一样：`id_prefix` 只看编号前缀，`triggered_by` 要昵称整个相等，
+    """只回答 `GET /runs`，和控制面一样：`id_prefix` 只看编号前缀，`triggered_by` 要触发人整个相等，
     `q` 按编号前缀或触发人包含匹配；`limit` 取最近的几个（`runs` 已经是从新到旧）。
     `session_id` 只要那个会话触发的。
     `old=True` 模仿比命令行旧的控制面：不认 `id_prefix`、`triggered_by`、`session_id`，当没给。
@@ -49,23 +49,23 @@ class FakeClient:
     def __init__(
         self,
         runs: list[dict[str, Any]],
-        nickname: str = "alice",
+        owner: str = "alice",
         *,
         old: bool = False,
         session_token: bool = False,
         session_id: str | None = None,
     ) -> None:
         self.runs = runs
-        self.nickname = nickname
+        self.owner = owner
         self.old = old
         self.session_token = session_token
         self.session_id = session_id
         self.requests: list[tuple[str, dict[str, Any]]] = []
 
     def owner_name(self) -> str:
-        """「自己」在运行记录里的名字：没有令牌时就是昵称（和 `Client.owner_name` 一样）。"""
+        """「自己」在运行记录里的名字：个人令牌所属用户的显示名（`Client.owner_name` 问控制面）。"""
         assert not self.session_token, "会话令牌不问所属用户"
-        return self.nickname
+        return self.owner
 
     def in_project(self, path: str) -> str:
         return f"/projects/default{path}"
@@ -87,8 +87,8 @@ class FakeClient:
         return {"runs": found[: query.get("limit", 200)], "counts": {}}
 
 
-def client(runs: list[dict[str, Any]], nickname: str = "alice") -> Any:
-    return FakeClient(runs, nickname)
+def client(runs: list[dict[str, Any]], owner: str = "alice") -> Any:
+    return FakeClient(runs, owner)
 
 
 def test_a_full_id_is_returned_as_written_without_asking_the_control_plane() -> None:
@@ -150,7 +150,7 @@ def test_the_control_plane_looks_the_prefix_up_by_id_only() -> None:
 
 
 def test_a_username_that_contains_the_prefix_does_not_make_it_ambiguous() -> None:
-    # 编号前缀只按编号找（控制面的 `id_prefix`）：昵称里有 beef 的人触发的运行不算。
+    # 编号前缀只按编号找（控制面的 `id_prefix`）：名字里有 beef 的人触发的运行不算。
     other = "11111111-2222-4333-8444-555555555555"
     fake = client([item(other, by="beefy"), item("beef0000-0000-4000-8000-000000000000")])
     assert resolve_run(fake, "beef") == "beef0000-0000-4000-8000-000000000000"
@@ -177,7 +177,7 @@ def test_latest_is_the_most_recent_run_the_caller_started_not_someone_elses() ->
     assert len(fake.requests) == 2
 
 
-def test_latest_ignores_runs_by_users_whose_name_contains_the_nickname() -> None:
+def test_latest_ignores_runs_by_users_whose_name_contains_ones_own() -> None:
     fake = client([item(B, by="alice-bot"), item(A, by="alice")])
     assert resolve_run(fake, "latest") == A
 

@@ -3,7 +3,7 @@
 用一个本地的假控制面（http.server，只回答令牌相关的几个接口和 `GET /runs`），
 经 `main([...])` 跑真实的命令：
 凭据文件的权限、令牌和密码不出现在输出和命令行参数里、`SFLY_API_TOKEN` 优先于凭据文件、
-有令牌时昵称被忽略并提示一次、401 的错误信息写明 `sfly login`。
+身份只由令牌决定（不发昵称）、401 的错误信息写明 `sfly login`。
 """
 
 from __future__ import annotations
@@ -148,6 +148,11 @@ class FakeServer:
                 if path == "/landing":
                     return self._send(200, {"landed": True})
                 if path == "/account/tokens":
+                    if "authorization" not in {k.lower() for k in self.headers}:
+                        # 和控制面一样：不带凭据的请求是 401（#494）。
+                        return self._send(
+                            401, {"error": {"code": "unauthorized", "message": "需要登录或令牌"}}
+                        )
                     return self._send(
                         200,
                         {
@@ -220,7 +225,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, server: FakeServer) ->
     root = tmp_path / "sfly-home"
     monkeypatch.setenv("SFLY_HOME", str(root))
     monkeypatch.setenv("SFLY_SERVER", server.url)
-    for name in ("SFLY_API_TOKEN", "SFLY_NICKNAME", "SFLY_CONTROL_PLANE_URL"):
+    for name in ("SFLY_API_TOKEN", "SFLY_CONTROL_PLANE_URL"):
         monkeypatch.delenv(name, raising=False)
     return root
 
@@ -370,7 +375,7 @@ class TestLogin:
         assert "token" not in summary
         assert TOKEN not in out
 
-    def test_the_exchange_request_never_carries_an_existing_token_or_nickname_identity(
+    def test_the_exchange_request_never_carries_an_existing_token(
         self,
         server: FakeServer,
         home: Path,
@@ -695,7 +700,7 @@ class TestLogout:
 
 
 class TestPlatformCommandsUseTheToken:
-    def test_the_stored_token_goes_in_authorization_and_no_nickname_is_sent(
+    def test_the_stored_token_goes_in_authorization(
         self,
         server: FakeServer,
         home: Path,
@@ -708,21 +713,33 @@ class TestPlatformCommandsUseTheToken:
         assert code == 0, err
         headers = server.headers_of("GET", "/projects/default/runs")
         assert headers["authorization"] == f"Bearer {TOKEN}"
-        assert "x-sfly-nickname" not in headers
         assert headers["x-sfly-client"].startswith("sfly-cli/")
+        # 身份只由令牌决定（#494）：不带任何昵称请求头。
+        assert not [name for name in headers if "nickname" in name]
 
-    def test_without_a_token_the_nickname_is_sent_as_before(
+    def test_without_a_token_the_request_is_sent_without_an_identity(
         self,
         server: FakeServer,
         home: Path,
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        code, _, err = run(capsys, monkeypatch, "run", "list", "--nickname", "小明")
+        # 不在命令行里替控制面判断：照样发请求，没有凭据时由控制面回 401（见下）。
+        code, _, err = run(capsys, monkeypatch, "run", "list")
         assert code == 0, err
         headers = server.headers_of("GET", "/projects/default/runs")
         assert "authorization" not in headers
-        assert headers["x-sfly-nickname"] == "%E5%B0%8F%E6%98%8E"
+        assert not [name for name in headers if "nickname" in name]
+
+    def test_there_is_no_nickname_option_anymore(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with pytest.raises(SystemExit) as caught:
+            main(["run", "list", "--nickname", "小明"])
+        assert caught.value.code == 2
+        assert "unrecognized arguments: --nickname" in capsys.readouterr().err
 
     def test_sfly_api_token_beats_the_credentials_file(
         self,
@@ -739,38 +756,6 @@ class TestPlatformCommandsUseTheToken:
             server.headers_of("GET", "/projects/default/runs")["authorization"]
             == f"Bearer {OTHER_TOKEN}"
         )
-
-    def test_an_explicit_nickname_with_a_token_is_ignored_with_one_notice(
-        self,
-        server: FakeServer,
-        home: Path,
-        capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        assert login(capsys, monkeypatch)[0] == 0
-        # --nickname 和 SFLY_NICKNAME 都一样：被忽略，提示一次（不是每个请求一次）。
-        code, _, err = run(capsys, monkeypatch, "run", "list", "--nickname", "小明")
-        assert code == 0
-        assert err.count("身份由令牌决定") == 1
-        monkeypatch.setenv("SFLY_NICKNAME", "小红")
-        code, _, err = run(capsys, monkeypatch, "run", "list")
-        assert err.count("身份由令牌决定") == 1
-        assert "x-sfly-nickname" not in server.headers_of("GET", "/projects/default/runs")
-        # 两次请求（同一个 Client）也只提示一次。
-        client = Client(server.url, "小明", token=TOKEN, nickname_ignored=True)
-        client.get("/projects/default/runs")
-        client.get("/projects/default/runs")
-        assert capsys.readouterr().err.count("身份由令牌决定") == 1
-
-    def test_no_notice_when_no_nickname_was_given(
-        self,
-        home: Path,
-        capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        assert login(capsys, monkeypatch)[0] == 0
-        _, _, err = run(capsys, monkeypatch, "run", "list")
-        assert "身份由令牌决定" not in err
 
     def test_a_401_says_to_run_sfly_login_with_or_without_a_token(
         self,
@@ -800,7 +785,7 @@ class TestPlatformCommandsUseTheToken:
         home: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        client = Client(server.url, "系统用户名", token=TOKEN)
+        client = Client(server.url, token=TOKEN)
         assert client.owner_name() == "爱丽丝"
         assert resolve_run(client, "latest") == "3f9a1c2e-7b4d-4a55-9c1e-0d2b6a8e4f10"
         asked = [
@@ -809,8 +794,20 @@ class TestPlatformCommandsUseTheToken:
         assert asked and "triggered_by=%E7%88%B1%E4%B8%BD%E4%B8%9D" in asked[0]
         # 用户的显示名只问一次。
         assert len([r for r in server.requests if r["path"] == "/account/tokens"]) == 1
-        # 没有令牌时「自己」是昵称。
-        assert Client(server.url, "小明").owner_name() == "小明"
+
+    def test_latest_without_a_token_asks_the_control_plane_and_says_to_run_sfly_login(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 没有令牌就没有「自己」：不在本机猜名字，问控制面得到 401，下一步是 sfly login。
+        code, _, err = run(capsys, monkeypatch, "run", "show", "latest", "--json")
+        assert code == 2
+        body = json.loads(err)["error"]
+        assert body["code"] == "unauthorized" and body["next"] == "sfly login"
+        assert [r["path"] for r in server.requests] == ["/account/tokens"]
 
     def test_a_project_token_has_no_user_so_latest_says_so(self, server: FakeServer) -> None:
         # 项目令牌不能读 /account/tokens（403）：「自己触发的运行」没有意义。
@@ -821,7 +818,7 @@ class TestPlatformCommandsUseTheToken:
                 raise ApiError(403, "forbidden", "这个接口只认登录和个人令牌")
 
         with pytest.raises(CliError) as caught:
-            Forbidden(server.url, "x", token=TOKEN).owner_name()
+            Forbidden(server.url, token=TOKEN).owner_name()
         assert caught.value.code == "token_without_user"
 
 
@@ -843,7 +840,7 @@ class TestTokenNeverLeavesTheControlPlane:
     ) -> None:
         # 另一个端口的同一台机器也是另一个源。
         server.redirect_to = f"{other.url}/landing"
-        client = Client(server.url, "alice", token=TOKEN)
+        client = Client(server.url, token=TOKEN)
         assert client.request("GET", "/redirect") == {"landed": True}
         assert "authorization" not in other.headers_of("GET", "/landing")
         # 控制面自己收到的是带令牌的。
@@ -853,7 +850,7 @@ class TestTokenNeverLeavesTheControlPlane:
         self, server: FakeServer, home: Path
     ) -> None:
         server.redirect_to = f"{server.url}/landing"
-        client = Client(server.url, "alice", token=TOKEN)
+        client = Client(server.url, token=TOKEN)
         assert client.request("GET", "/redirect") == {"landed": True}
         assert server.headers_of("GET", "/landing")["authorization"] == f"Bearer {TOKEN}"
 
@@ -870,7 +867,7 @@ class TestTokenNeverLeavesTheControlPlane:
 class TestPlainHttpNote:
     def test_a_token_over_non_local_http_is_noted_once(self) -> None:
         err = io.StringIO()
-        client = Client("http://cp.example.test:1", "alice", token=TOKEN, stderr=err, timeout=0.2)
+        client = Client("http://cp.example.test:1", token=TOKEN, stderr=err, timeout=0.2)
         for _ in range(2):
             with pytest.raises(CliError):
                 client.get("/projects/default/runs")
@@ -886,7 +883,7 @@ class TestPlainHttpNote:
             ("http://cp.example.test:1", None),
         ):
             err = io.StringIO()
-            client = Client(server, "alice", token=token, stderr=err, timeout=0.2)
+            client = Client(server, token=token, stderr=err, timeout=0.2)
             with pytest.raises(CliError):
                 client.get("/projects/default/runs")
             assert "明文" not in err.getvalue(), (server, token)

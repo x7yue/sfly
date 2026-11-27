@@ -15,7 +15,6 @@ import { OriginNotice } from "#/components/account/OriginNotice";
 import { Keys } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { useIdentity } from "#/lib/identity";
-import { useNickname } from "#/lib/nickname";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { PROJECT } from "#/lib/project";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -24,7 +23,7 @@ import { useOverlays } from "./overlays";
 import { toggleSidebar, useSidebarCollapsed } from "./sidebar-state";
 
 /**
- * 中后台外壳（原型 shell()）：左侧可折叠的侧边栏 + 顶栏（面包屑、全局搜索入口、昵称或账号菜单）+ 可滚动的内容区。
+ * 中后台外壳（原型 shell()）：左侧可折叠的侧边栏 + 顶栏（面包屑、全局搜索入口、账号菜单）+ 可滚动的内容区。
  * 导航项右侧平时显示计数（Agent 在线数），悬停或键盘聚焦时换成跳转快捷键（占同一个位置，不挤宽）。
  * 由 routes/_shell.tsx 使用；全屏页（编排画布、运行监控）不放在 _shell 下面，不带外壳。
  * 面包屑来自各路由的 `staticData.crumb`。
@@ -42,7 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 			<Sidebar collapsed={collapsed} />
 			<div className="flex min-w-0 flex-col overflow-hidden">
 				<Topbar />
-				{/* 只有登录着的人受影响（写请求靠登录 Cookie，地址对不上被当作没登录）；用昵称的不受影响，不提示。 */}
+				{/* 只有登录着的人受影响（写请求靠登录 Cookie，地址对不上被当作没登录）；还不知道有没有登录时不提示。 */}
 				{identity.status === "user" && <OriginNotice className="mx-5 mt-3" />}
 				{/* 滚动条槽始终预留：页面之间有没有滚动条，内容宽度和右上角的按钮都不跳 */}
 				<main id="main" className="flex-1 overflow-auto [scrollbar-gutter:stable]">
@@ -166,7 +165,6 @@ function SidebarItem({
 
 function Topbar() {
 	const { open } = useOverlays();
-	const nickname = useNickname();
 	const identity = useIdentity();
 	const crumbs = useMatches().flatMap((m) => m.staticData.crumb ?? []);
 
@@ -199,24 +197,8 @@ function Topbar() {
 				搜索页面、场景、命令…
 				<Keys shortcut="command-palette" className="ml-auto" />
 			</button>
-			{/* 登录之后是账号菜单（显示名、修改密码、登出）；没有登录（#494 之前仍然可以）还是昵称按钮。 */}
+			{/* 页面刚打开、还没问到身份时不显示；没有登录的人已经被带到登录页（main.tsx）。 */}
 			{identity.status === "user" && <AccountMenu user={identity.user} />}
-			{identity.status !== "user" && nickname && (
-				<button
-					type="button"
-					title="修改昵称"
-					onClick={() => open("nickname")}
-					className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-sm text-fg-2 hover:bg-raised hover:text-fg-1"
-				>
-					<span
-						aria-hidden
-						className="grid size-6.5 flex-none place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground"
-					>
-						{[...nickname][0]?.toUpperCase()}
-					</span>
-					{nickname}
-				</button>
-			)}
 		</header>
 	);
 }

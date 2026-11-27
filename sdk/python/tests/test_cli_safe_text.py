@@ -675,7 +675,7 @@ def test_progress_line_is_filtered() -> None:
 def test_version_mismatch_warning_is_filtered() -> None:
     """版本不一致的警告里有控制面回的版本号（服务端的文字）：过一遍。"""
     err = io.StringIO()
-    client = Client("http://127.0.0.1:1", "小明", stderr=err)
+    client = Client("http://127.0.0.1:1", stderr=err)
     headers = Message()
     headers["x-sfly-version"] = "9.9.9"  # 请求头只能是 latin-1：8 位的控制字符能到这里
     headers.replace_header("x-sfly-version", "9.9.9" + chr(0x85) + chr(0xAD))

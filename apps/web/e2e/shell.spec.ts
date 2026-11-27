@@ -345,7 +345,7 @@ test.describe("没有登录时", () => {
 		await expect(page).toHaveURL(/\/login\?/);
 		expect(new URL(page.url()).searchParams.get("redirect")).toBe("/agents");
 		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
-		// 没有昵称弹窗，也没有应用外壳（侧边栏）。
+		// 没有弹窗，也没有应用外壳（侧边栏）。
 		await expect(page.getByRole("dialog")).toBeHidden();
 		await expect(sidebar(page)).toBeHidden();
 

@@ -265,7 +265,7 @@ export const RunView = z.object({
 	orchestration_id: z.string(),
 	orchestration_version: z.number().int(),
 	status: RunStatus,
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: z.string().nullable(),

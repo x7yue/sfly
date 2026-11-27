@@ -496,7 +496,7 @@ export class SessionService {
 			{
 				project,
 				title: titleOf(text),
-				createdBy: actor.nickname,
+				createdBy: actor.name,
 				createdByUserId: actor.userId,
 			},
 			userMessage(messageId, actor, text),
@@ -740,7 +740,7 @@ export class SessionService {
 			return;
 		}
 		const actor: Actor = {
-			nickname: message.author,
+			name: message.author,
 			via: null,
 			userId: message.author_user_id,
 			token: null,
@@ -1096,7 +1096,7 @@ export class SessionService {
 				if (cancelled.cancelled) await this.#announceQueue(current.projectId);
 				continue;
 			}
-			const ended = await sessions.end(current.id, actor.nickname);
+			const ended = await sessions.end(current.id, actor.name);
 			if (!ended.ended) continue;
 			try {
 				await this.deps.onEnded?.(current);
@@ -1245,7 +1245,7 @@ const userMessage = (
 	message_id: messageId,
 	text,
 	steer,
-	author: actor.nickname,
+	author: actor.name,
 	author_user_id: actor.userId,
 });
 

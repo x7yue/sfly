@@ -20,7 +20,7 @@ const Devtools = import.meta.env.DEV
 	: () => null;
 
 /**
- * 根路由：全局浮层（命令面板、快捷键面板、昵称、通知）与快捷键监听。
+ * 根路由：全局浮层（命令面板、快捷键面板、通知）与快捷键监听。
  * 带侧边栏和顶栏的页面在 _shell/ 下面；全屏页（编排画布、运行监控，#35 / #36）直接放在 routes/ 下。
  */
 export const Route = createRootRouteWithContext<MyRouterContext>()({

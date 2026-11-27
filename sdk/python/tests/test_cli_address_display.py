@@ -49,7 +49,7 @@ def test_without_userinfo(address: str, shown: str) -> None:
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("SFLY_HOME", str(tmp_path / "sfly-home"))
-    for name in ("SFLY_NICKNAME", "SFLY_CONTROL_PLANE_URL", "SFLY_API_TOKEN", "SFLY_SERVER"):
+    for name in ("SFLY_CONTROL_PLANE_URL", "SFLY_API_TOKEN", "SFLY_SERVER"):
         monkeypatch.delenv(name, raising=False)
     # 本机有 HTTP 代理时连不上会变成代理回的 502：测试要的是「连不上」那一条路。
     for name in (
@@ -142,7 +142,7 @@ def test_the_address_from_the_environment_is_checked_too(
 
 
 def test_a_clean_address_still_connects(home: Path, counting: Counting) -> None:
-    assert Client(f"http://127.0.0.1:{counting.port}", "tester").get("/anything") == {}
+    assert Client(f"http://127.0.0.1:{counting.port}").get("/anything") == {}
     assert counting.requests == 1
 
 
@@ -179,7 +179,7 @@ def test_a_low_level_error_text_with_a_user_name_is_scrubbed_as_a_fallback(
 def test_plain_http_warning_does_not_show_the_password(
     home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    client = Client(f"http://user:{PASSWORD}@example.invalid", "tester", token="sfly_pat_x")
+    client = Client(f"http://user:{PASSWORD}@example.invalid", token="sfly_pat_x")
     client.note_plain_http()
     captured = capsys.readouterr()
     assert "http://example.invalid 是 http 地址" in captured.err
@@ -215,7 +215,7 @@ def test_the_install_command_printed_by_credentials_issue_does_not_show_the_pass
 
 
 def test_the_run_link_does_not_show_the_password() -> None:
-    client = Client(f"https://user:{PASSWORD}@plane.example", "tester")
+    client = Client(f"https://user:{PASSWORD}@plane.example")
     assert run_url(client, "run-1") == "https://plane.example/runs/run-1"
 
 

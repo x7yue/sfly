@@ -161,8 +161,7 @@ def logged_in(
     monkeypatch.setenv("SFLY_HOME", str(tmp_path / "sfly-home"))
     monkeypatch.setenv("SFLY_SERVER", plane.url)
     monkeypatch.setenv("SFLY_API_TOKEN", PERSONAL)
-    for name in ("SFLY_NICKNAME", "SFLY_CONTROL_PLANE_URL"):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("SFLY_CONTROL_PLANE_URL", raising=False)
     return plane
 
 

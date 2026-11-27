@@ -78,19 +78,25 @@ function serverOf(
 	return inline?.slice("--server=".length) ?? env.SFLY_SERVER;
 }
 
-/** 命令里的昵称：`--nickname` 参数或 `SFLY_NICKNAME`；去掉它之后的参数。 */
+/**
+ * 测试用的「以谁的身份跑」：参数 `--as-user <名字>`（只在测试里有，发给命令行之前去掉）或环境变量 `SFLY_NICKNAME`
+ * （会话的命令环境里本来就有它，值是发起人的显示名）；去掉它之后的参数。命令行本身没有昵称（#494）。
+ */
+/** 测试里选人的参数名（{@link nicknameOf}）。 */
+export const AS_USER = "--as-user";
+
 function nicknameOf(
 	args: readonly string[],
 	env: Record<string, string | undefined>,
 ): { nickname: string | undefined; rest: string[] } {
-	const flag = args.indexOf("--nickname");
+	const flag = args.indexOf(AS_USER);
 	if (flag >= 0) {
 		return { nickname: args[flag + 1], rest: [...args.slice(0, flag), ...args.slice(flag + 2)] };
 	}
-	const inline = args.findIndex((arg) => arg.startsWith("--nickname="));
+	const inline = args.findIndex((arg) => arg.startsWith(`${AS_USER}=`));
 	if (inline >= 0) {
 		return {
-			nickname: args[inline]?.slice("--nickname=".length),
+			nickname: args[inline]?.slice(AS_USER.length + 1),
 			rest: args.filter((_, i) => i !== inline),
 		};
 	}
@@ -113,9 +119,8 @@ export function usableNickname(nickname: string | undefined): boolean {
 }
 
 /**
- * 命令的参数和环境：干净环境，加上调用方给的；连的是登记过的测试控制面时，带上昵称的那个用户的个人令牌
- * （`SFLY_API_TOKEN`），并去掉昵称（`--nickname`、`SFLY_NICKNAME`）：有令牌时身份由令牌决定，命令行会提示昵称被忽略。
- * 用户的显示名就是昵称，记下的名字和只带昵称时一样。调用方写了 `SFLY_API_TOKEN`（值为 undefined 也算）时什么都不动，
+ * 命令的参数和环境：干净环境，加上调用方给的；连的是登记过的测试控制面时，带上这个名字的用户的个人令牌
+ * （`SFLY_API_TOKEN`），并去掉 `--as-user`。用户的显示名就是这个名字，作者、触发人记的就是它。调用方写了 `SFLY_API_TOKEN`（值为 undefined 也算）时什么都不动，
  * 要测不带凭据或昵称本身的命令就这样写。`token` 给出连的控制面上这个昵称的令牌。
  */
 function prepare(

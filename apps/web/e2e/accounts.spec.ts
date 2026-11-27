@@ -34,7 +34,7 @@ const accountMenu = (page: import("@playwright/test").Page) =>
 	page.getByRole("banner").getByRole("button", { name: /管理员/ });
 
 test.describe("初始化页（没有任何用户）", () => {
-	test("用初始化码创建第一个管理员并登录：回到首页，顶栏是账号菜单，不弹昵称弹窗；初始化码用过即失效", async ({
+	test("用初始化码创建第一个管理员并登录：回到首页，顶栏是账号菜单；初始化码用过即失效", async ({
 		page,
 		controlPlane,
 	}) => {
@@ -77,7 +77,6 @@ test.describe("初始化页（没有任何用户）", () => {
 		await page.getByRole("button", { name: "创建并登录" }).click();
 		await expect(page).toHaveURL(/\/$/);
 		await expect(accountMenu(page)).toBeVisible();
-		await expect(page.getByRole("dialog", { name: "欢迎使用 sfly" })).toBeHidden();
 
 		// 用过的码失效：初始化页只剩一句指路。
 		await page.goto("/setup");
@@ -89,7 +88,7 @@ test.describe("初始化页（没有任何用户）", () => {
 test.describe("登录与账号菜单", () => {
 	test.use({ controlPlaneOptions: { initialAdmin: ADMIN } });
 
-	test("登录页：字段校验；登录名或密码不对写在表单里；登录后回到首页，刷新仍是登录的，昵称弹窗不出现", async ({
+	test("登录页：字段校验；登录名或密码不对写在表单里；登录后回到首页，刷新仍是登录的", async ({
 		page,
 	}) => {
 		await page.goto("/login");
@@ -112,11 +111,9 @@ test.describe("登录与账号菜单", () => {
 		await page.getByRole("button", { name: "登录" }).click();
 		await expect(page).toHaveURL(/\/$/);
 		await expect(accountMenu(page)).toBeVisible();
-		await expect(page.getByRole("dialog", { name: "欢迎使用 sfly" })).toBeHidden();
 
 		await page.reload();
 		await expect(accountMenu(page)).toBeVisible();
-		await expect(page.getByRole("dialog", { name: "欢迎使用 sfly" })).toBeHidden();
 	});
 
 	test("登录后回到 redirect 指的本站路径；别的站点的地址一律回首页", async ({ page }) => {
@@ -194,7 +191,7 @@ test.describe("登录与账号菜单", () => {
 		await expect(page).toHaveURL(/\/$/);
 	});
 
-	test("登录之后触发运行：页面上的触发人是登录的显示名，库里记下用户 ID（身份来自登录，不是昵称）", async ({
+	test("登录之后触发运行：页面上的触发人是登录的显示名，库里记下用户 ID（身份来自登录）", async ({
 		page,
 		controlPlane,
 		connectAgent,
@@ -261,7 +258,7 @@ test.describe("登录与账号菜单", () => {
 		expect(me.status()).toBe(401);
 	});
 
-	test("没有登录打开首页：换到登录页，不弹昵称弹窗；登录之后回到首页", async ({ page }) => {
+	test("没有登录打开首页：换到登录页，没有弹窗；登录之后回到首页", async ({ page }) => {
 		await page.goto("/");
 		await expect(page).toHaveURL(/\/login\?/);
 		expect(new URL(page.url()).searchParams.get("redirect")).toBe("/");

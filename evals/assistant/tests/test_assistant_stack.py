@@ -130,13 +130,12 @@ def test_the_platform_arms_identity_is_the_arm_as_nickname(recorder: Recorder) -
     `run show latest` 找自己触发的运行都对不上。所以初始管理员的显示名设成臂 A 的昵称，
     两处用同一个常量。"""
     from aeval.env import ASSISTANT_NICKNAME
-    from aeval.platform import NICKNAME
     from aeval.session import ASSISTANT_ENV
 
     Stack(slot=9)._start_control_plane()
     [(args, _)] = recorder.runs("cp")
     assert f"SFLY_ADMIN_DISPLAY_NAME={ASSISTANT_ENV['SFLY_NICKNAME']}" in args
-    assert ASSISTANT_ENV["SFLY_NICKNAME"] == ASSISTANT_NICKNAME == NICKNAME == "eval"
+    assert ASSISTANT_ENV["SFLY_NICKNAME"] == ASSISTANT_NICKNAME == "eval"
     assert ADMIN_LOGIN != ASSISTANT_NICKNAME
 
 
@@ -836,7 +835,7 @@ def test_requests_log_in_as_the_initial_admin_first(monkeypatch: pytest.MonkeyPa
     # 请求头的名字 urllib 首字母大写；Cookie 只对同源的请求有效。
     assert create[3]["Cookie"] == "sfly_login=abc123"
     assert create[3]["Sec-fetch-site"] == "same-origin"
-    assert create[3]["X-sfly-nickname"] == e2e.NICKNAME
+    assert "X-sfly-nickname" not in create[3]
 
 
 def test_login_without_the_admin_password_says_what_to_do() -> None:

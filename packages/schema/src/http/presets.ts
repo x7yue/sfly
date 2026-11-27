@@ -81,7 +81,7 @@ export const PresetView = z.object({
 	status: z.enum(["ok", "invalid"]),
 	/** 失效的原因，按参数名称排序；`status` 为 `ok` 时为空。 */
 	problems: z.array(PresetProblemView),
-	/** 最后修改人的昵称。 */
+	/** 最后修改人的名字。 */
 	updated_by: z.string(),
 	/** 最后修改时间（控制面时间）。 */
 	updated_at: Timestamp,
@@ -145,7 +145,7 @@ export const presetsApi = {
 		response: z.object({ presets: z.array(PresetView) }),
 	}),
 	/**
-	 * 新建运行预设（201，需要昵称请求头，昵称记为最后修改人）。`params` 是预设参数的完整清单，
+	 * 新建运行预设（201，写操作的身份记为最后修改人）。`params` 是预设参数的完整清单，
 	 * 对照最新版本检查：参数已声明、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
 	 * 至少一个参数，不能重复；secret 参数也能设为预设参数，值明文保存，所有响应里只返回打码后的值。
 	 * 不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，`message` 写明原因）；
@@ -170,7 +170,7 @@ export const presetsApi = {
 		response: PresetView,
 	}),
 	/**
-	 * 修改运行预设（需要昵称请求头，昵称和时间记为最后修改人）：立即生效，不产生新的场景版本；
+	 * 修改运行预设（写操作的身份和时间记为最后修改人）：立即生效，不产生新的场景版本；
 	 * 两个人同时改时后保存的覆盖先保存的，不做冲突检测。请求体见 {@link PresetChanges}：没有 `params` 时只改名称和说明；
 	 * 给了 `params` 时 400 `invalid_preset` 的规则同新建；其中 secret 参数不重新输入时写 `{name, keep: true}` 沿用原值，
 	 * `keep` 用在非 secret 参数上，或者这个预设里原来没有值的参数上，同样是 `invalid_preset`。
@@ -192,7 +192,7 @@ export const presetsApi = {
 		response: PresetView,
 	}),
 	/**
-	 * 复制运行预设（201，需要昵称请求头）：在控制面复制，说明和预设参数（包括 secret 的值）不变，新的 ID，
+	 * 复制运行预设（201）：在控制面复制，说明和预设参数（包括 secret 的值）不变，新的 ID，
 	 * 请求体里是新名称（规则同新建），最后修改人记为复制的人。新名称已被占用时 409 `preset_name_taken`，
 	 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能复制。
 	 */
@@ -210,7 +210,7 @@ export const presetsApi = {
 		response: PresetView,
 	}),
 	/**
-	 * 删除运行预设（204，需要昵称请求头）。已有运行上记下的预设 ID、名称和预设参数的名单不受影响。
+	 * 删除运行预设（204）。已有运行上记下的预设 ID、名称和预设参数的名单不受影响。
 	 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能删除。
 	 */
 	remove: endpoint({

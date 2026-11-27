@@ -356,7 +356,7 @@ def drive(
     try:
         started = time.monotonic()
         record = run(
-            client(cp.url) if client else Client(cp.url, "eval", LOGIN_NAME, PASSWORD),
+            client(cp.url) if client else Client(cp.url, LOGIN_NAME, PASSWORD),
             "default",
             "写一个节点",
             max_seconds,
@@ -642,7 +642,7 @@ def test_a_signal_ends_the_session_writes_the_record_and_is_an_environment_fault
     cp = FakeControlPlane("heartbeats")
     (tmp_path / "prompt.md").write_text("写一个节点")
     proc = subprocess.Popen(
-        [sys.executable, str(DRIVER), "--cp", cp.url, "--nickname", "eval"]
+        [sys.executable, str(DRIVER), "--cp", cp.url]
         + ["--login-name", LOGIN_NAME]
         + ["--prompt-file", str(tmp_path / "prompt.md"), "--max-seconds", "60"]
         + ["--out", str(tmp_path / "run")],
@@ -685,7 +685,7 @@ def test_a_deadline_that_passes_while_connecting_still_cuts_the_connection(
     try:
         started = time.monotonic()
         with (tmp_path / "events.jsonl").open("w") as sink:
-            client = Client(cp.url, "eval", LOGIN_NAME, PASSWORD)
+            client = Client(cp.url, LOGIN_NAME, PASSWORD)
             client.login()
             why = client.stream_once("s1", 0, time.monotonic() + 0.3, sink, [])
         took = time.monotonic() - started
@@ -716,11 +716,9 @@ def test_a_create_without_the_login_cookie_is_refused_like_on_dev() -> None:
     cp = FakeControlPlane("ok")
     try:
         with pytest.raises(ControlPlaneError, match="返回 401"):
-            Client(cp.url, "eval").request(
-                "POST", "/projects/default/sessions", {"text": "写一个节点"}
-            )
+            Client(cp.url).request("POST", "/projects/default/sessions", {"text": "写一个节点"})
         # 登录之后同一个请求成功。
-        client = Client(cp.url, "eval", LOGIN_NAME, PASSWORD)
+        client = Client(cp.url, LOGIN_NAME, PASSWORD)
         client.login()
         assert (
             client.request("POST", "/projects/default/sessions", {"text": "写一个节点"})["id"]
@@ -743,9 +741,7 @@ def test_a_refused_login_is_an_environment_fault_and_nothing_else_is_sent(tmp_pa
 def test_a_wrong_password_is_an_environment_fault_and_the_password_is_not_recorded(
     tmp_path: Path,
 ) -> None:
-    record = drive(
-        "ok", tmp_path, client=lambda url: Client(url, "eval", LOGIN_NAME, PASSWORD + "-wrong")
-    )
+    record = drive("ok", tmp_path, client=lambda url: Client(url, LOGIN_NAME, PASSWORD + "-wrong"))
     assert record["problem_kinds"] == ["login"]
     assert "-wrong" not in json.dumps(record["problems"]) + record["precheck"]
     assert "******" in record["precheck"]
@@ -764,7 +760,7 @@ def test_login_that_cannot_reach_the_control_plane_is_an_environment_fault(
 ) -> None:
     said: list[dict[str, Any]] = []
     record = run(
-        Client("http://127.0.0.1:1", "eval", LOGIN_NAME, PASSWORD),
+        Client("http://127.0.0.1:1", LOGIN_NAME, PASSWORD),
         "default",
         "写一个节点",
         5,
@@ -778,7 +774,7 @@ def test_login_that_cannot_reach_the_control_plane_is_an_environment_fault(
 
 
 def test_no_admin_password_is_an_environment_fault_and_says_which_variable(tmp_path: Path) -> None:
-    record = drive("ok", tmp_path, client=lambda url: Client(url, "eval", LOGIN_NAME, None))
+    record = drive("ok", tmp_path, client=lambda url: Client(url, LOGIN_NAME, None))
     assert record["problem_kinds"] == ["login"]
     assert ADMIN_PASSWORD_ENV in record["precheck"]
     assert record["calls"] == []
@@ -843,7 +839,7 @@ def test_neither_the_password_nor_the_cookie_reaches_a_file_or_stdout(
 def test_the_driver_process_takes_the_password_from_the_environment_only(tmp_path: Path) -> None:
     cp = FakeControlPlane("ok")
     (tmp_path / "prompt.md").write_text("写一个节点")
-    argv = [sys.executable, str(DRIVER), "--cp", cp.url, "--nickname", "eval"]
+    argv = [sys.executable, str(DRIVER), "--cp", cp.url]
     argv += ["--login-name", LOGIN_NAME, "--prompt-file", str(tmp_path / "prompt.md")]
     argv += ["--max-seconds", "30", "--out", str(tmp_path / "run")]
     try:
@@ -917,7 +913,7 @@ def test_the_not_ready_verdict_reads_the_whole_body_not_the_cut_one(tmp_path: Pa
 
 
 def test_scrub_masks_every_way_the_credentials_are_written() -> None:
-    client = Client("http://127.0.0.1:1", "eval", LOGIN_NAME, PASSWORD)
+    client = Client("http://127.0.0.1:1", LOGIN_NAME, PASSWORD)
     client._cookie = COOKIE
     value = COOKIE.removeprefix("sfly_login=")
     for text in (
@@ -942,7 +938,7 @@ def test_scrub_masks_every_way_the_credentials_are_written() -> None:
 def test_scrub_masks_the_json_escaped_writing_of_a_credential() -> None:
     # 回应体是 JSON：值里有引号、反斜杠时，回显出来的是转义之后的写法，和原文不一样。
     password = 'pa"ss\\word-0123456789'
-    client = Client("http://127.0.0.1:1", "eval", LOGIN_NAME, password)
+    client = Client("http://127.0.0.1:1", LOGIN_NAME, password)
     escaped = json.dumps({"echo": password})
     assert password not in escaped
     scrubbed = client.scrub(escaped)

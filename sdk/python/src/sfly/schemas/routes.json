@@ -8030,7 +8030,7 @@
               "string",
               "null"
             ],
-            "description": "保存这个版本的人的昵称；还没有版本时为 null。"
+            "description": "保存这个版本的人的名字；还没有版本时为 null。"
           },
           "author_via": {
             "type": [
@@ -9110,7 +9110,7 @@
           },
           "author": {
             "type": "string",
-            "description": "保存这个版本的人的昵称。"
+            "description": "保存这个版本的人的名字。"
           },
           "author_via": {
             "type": [
@@ -11144,7 +11144,7 @@
           },
           "author": {
             "type": "string",
-            "description": "保存这个版本的人的昵称。"
+            "description": "保存这个版本的人的名字。"
           },
           "author_via": {
             "type": [
@@ -12691,7 +12691,7 @@
           },
           "author": {
             "type": "string",
-            "description": "保存这个版本的人的昵称。"
+            "description": "保存这个版本的人的名字。"
           },
           "author_via": {
             "type": [
@@ -13292,7 +13292,7 @@
           },
           "author": {
             "type": "string",
-            "description": "保存这个版本的人的昵称。"
+            "description": "保存这个版本的人的名字。"
           },
           "author_via": {
             "type": [
@@ -16584,7 +16584,7 @@
           },
           "updated_by": {
             "type": "string",
-            "description": "最后修改人的昵称。"
+            "description": "最后修改人的名字。"
           },
           "updated_at": {
             "type": "string",
@@ -16762,7 +16762,7 @@
           },
           "updated_by": {
             "type": "string",
-            "description": "最后修改人的昵称。"
+            "description": "最后修改人的名字。"
           },
           "updated_at": {
             "type": "string",
@@ -16918,7 +16918,7 @@
           },
           "updated_by": {
             "type": "string",
-            "description": "最后修改人的昵称。"
+            "description": "最后修改人的名字。"
           },
           "updated_at": {
             "type": "string",
@@ -17117,7 +17117,7 @@
           "triggered_by": {
             "type": "string",
             "maxLength": 200,
-            "description": "只要这个触发人的运行：昵称整个相等（区分大小写）。`q` 会把昵称里的文字也当关键字，要精确找一个人的运行用它。"
+            "description": "只要这个触发人的运行：名字整个相等（区分大小写）。`q` 会把名字里的文字也当关键字，要精确找一个人的运行用它。"
           },
           "id_prefix": {
             "type": "string",
@@ -17983,7 +17983,7 @@
           },
           "triggered_by": {
             "type": "string",
-            "description": "触发人的昵称。"
+            "description": "触发人的名字。"
           },
           "triggered_via": {
             "type": [
@@ -19407,7 +19407,7 @@
           },
           "triggered_by": {
             "type": "string",
-            "description": "触发人的昵称。"
+            "description": "触发人的名字。"
           },
           "triggered_via": {
             "type": [
@@ -20359,7 +20359,7 @@
           },
           "triggered_by": {
             "type": "string",
-            "description": "触发人的昵称。"
+            "description": "触发人的名字。"
           },
           "triggered_via": {
             "type": [
@@ -21241,7 +21241,7 @@
           },
           "triggered_by": {
             "type": "string",
-            "description": "触发人的昵称。"
+            "description": "触发人的名字。"
           },
           "triggered_via": {
             "type": [
@@ -22121,7 +22121,7 @@
             },
             "triggered_by": {
               "type": "string",
-              "description": "触发人的昵称。"
+              "description": "触发人的名字。"
             },
             "triggered_via": {
               "type": [

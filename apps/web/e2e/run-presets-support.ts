@@ -4,18 +4,18 @@ import type { TestControlPlane } from "../../server/test/support/test-control-pl
 
 /** 运行预设端到端测试共用：通过 HTTP API 准备预设（根路径 API，与 CLI 一样不经过 /api 前缀）。 */
 
-/** 新建运行预设并返回它的 ID；`nickname` 是最后修改人。 */
+/** 新建运行预设并返回它的 ID；`user` 是最后修改人（`actAs` 换成他的个人令牌）。 */
 export async function createRunPreset(
 	cp: TestControlPlane,
 	scenarioId: string,
 	body: { name: string; description?: string; params: Array<{ name: string; value: unknown }> },
-	nickname = "tester",
+	user = "tester",
 ): Promise<string> {
 	const res = await cp.fetch(`/orchestrations/${scenarioId}/presets`, {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			...actAs(nickname),
+			...actAs(user),
 		},
 		body: JSON.stringify(body),
 	});

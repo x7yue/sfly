@@ -21,7 +21,7 @@ export const RunListQuery = z.object({
 	orchestration_id: blankAsMissing(z.uuid()),
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q: blankAsMissing(z.string().trim().max(200)),
-	/** 只要这个触发人的运行：昵称整个相等（区分大小写）。`q` 会把昵称里的文字也当关键字，要精确找一个人的运行用它。 */
+	/** 只要这个触发人的运行：名字整个相等（区分大小写）。`q` 会把名字里的文字也当关键字，要精确找一个人的运行用它。 */
 	triggered_by: blankAsMissing(z.string().max(200)),
 	/** 只要运行编号以它开头的运行（不分大小写，只能写十六进制数字和 `-`）。`q` 还会按触发人匹配，只想按编号找时用它。 */
 	id_prefix: blankAsMissing(z.string().regex(/^[0-9a-fA-F-]{1,36}$/)),
@@ -88,7 +88,7 @@ export const RunListItem = z.object({
 	status: z.enum(RUN_STATUSES),
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: z.boolean(),
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: z.string().nullable(),

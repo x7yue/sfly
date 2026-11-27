@@ -245,14 +245,13 @@ describe("API 客户端的写操作", () => {
 
 	describe("没有令牌", () => {
 		it.each([
-			["没有给昵称", undefined],
-			["昵称是空字符串", ""],
-			["昵称只有空白", "  "],
-			["昵称函数返回 null", () => null],
-			["昵称函数返回 undefined", () => undefined],
-			["昵称函数返回空白", () => " "],
-		])("没有令牌、%s：每个写操作都在发请求之前抛出 nickname_required，控制面没有收到请求", async (_, nickname) => {
-			const { client, proxy } = await through({ token: undefined, nickname });
+			["没有给令牌", undefined],
+			["令牌是空字符串", ""],
+			["令牌只有空白", "  "],
+			["令牌函数返回 undefined", () => undefined],
+			["令牌函数返回空白", () => " "],
+		])("%s：每个写操作照发，控制面 401，抛出错误码 unauthorized 的 ApiError，说明里有 sfly login", async (_, token) => {
+			const { client, proxy } = await through({ token });
 			const params = { id: seeded.scenarioId };
 			const writes = {
 				"POST /projects/:project/orchestrations": () =>
@@ -272,9 +271,13 @@ describe("API 客户端的写操作", () => {
 			for (const [route, attempt] of Object.entries(writes)) {
 				const failure = await rejection(attempt());
 				expect(failure, route).toBeInstanceOf(ApiError);
-				expect(failure, route).toMatchObject({ status: 400, code: "nickname_required" });
+				expect(failure, route).toMatchObject({ status: 401, code: "unauthorized" });
+				expect((failure as ApiError).message, route).toContain("sfly login");
 			}
-			expect(proxy.requests).toEqual([]);
+			expect(proxy.requests).toHaveLength(Object.keys(writes).length);
+			for (const request of proxy.requests) {
+				expect(request.headers.authorization, `${request.method} ${request.path}`).toBeUndefined();
+			}
 		});
 	});
 
@@ -291,14 +294,16 @@ describe("API 客户端的写操作", () => {
 				{ params: { id: seeded.runId } },
 			);
 			await rejection(withToken.client.orchestrations.get({ params: { id: randomUUID() } }));
-			// 不带令牌的读：控制面 401，请求照样带着客户端版本；写操作在发出之前就被客户端拦下。
+			// 不带令牌的读和写：控制面 401，请求照样带着客户端版本。
 			expect(
 				await rejection(without.client.orchestrations.list({ params: { project: "default" } })),
 			).toMatchObject({ status: 401, code: "unauthorized" });
-			await rejection(without.client.runs.cancel({ params: { id: seeded.runId } }));
+			expect(
+				await rejection(without.client.runs.cancel({ params: { id: seeded.runId } })),
+			).toMatchObject({ status: 401, code: "unauthorized" });
 
 			expect(withToken.proxy.requests).toHaveLength(4);
-			expect(without.proxy.requests).toHaveLength(1);
+			expect(without.proxy.requests).toHaveLength(2);
 			for (const request of [...withToken.proxy.requests, ...without.proxy.requests]) {
 				expect(request.headers["x-sfly-client"], `${request.method} ${request.path}`).toBe(
 					CLIENT_TAG,

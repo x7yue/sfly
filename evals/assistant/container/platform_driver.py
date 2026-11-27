@@ -160,14 +160,12 @@ class Client:
     def __init__(
         self,
         base: str,
-        nickname: str,
         login_name: str | None = None,
         password: str | None = None,
     ) -> None:
         parsed = urllib.parse.urlsplit(base)
         self.host = parsed.hostname or "localhost"
         self.port = parsed.port or 80
-        self.nickname = nickname
         self.login_name = login_name
         self._password = password
         # 登录拿到的 Cookie（`sfly_login=…`）：一个会话凭据，和密码一样不写进任何文件、不打印。
@@ -195,7 +193,7 @@ class Client:
         return self.scrub(text)[:limit]
 
     def _headers(self) -> dict[str, str]:
-        headers = {"x-sfly-nickname": self.nickname}
+        headers: dict[str, str] = {}
         if self._cookie:
             # 登录 Cookie 只对同源的请求有效（和控制台页面自己发的请求一样）。
             headers["cookie"] = self._cookie
@@ -470,7 +468,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="平台臂的一次会话")
     parser.add_argument("--cp", default="http://sfly.internal:8080")
     parser.add_argument("--project", default="default")
-    parser.add_argument("--nickname", required=True)
     parser.add_argument(
         "--login-name",
         help=f"初始管理员的登录名；密码只经环境变量 {ADMIN_PASSWORD_ENV} 交进来，不经命令行参数",
@@ -490,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(line, ensure_ascii=False), flush=True)
 
     record = run(
-        Client(args.cp, args.nickname, args.login_name, os.environ.get(ADMIN_PASSWORD_ENV)),
+        Client(args.cp, args.login_name, os.environ.get(ADMIN_PASSWORD_ENV)),
         args.project,
         Path(args.prompt_file).read_text(),
         args.max_seconds,

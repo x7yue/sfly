@@ -1,7 +1,6 @@
 import { CLIENT_HEADER, VIA_NAME_PATTERN, VIA_UNKNOWN } from "@sfly/schema";
-import type { FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyRequest } from "fastify";
 import type { Actor } from "../actor.js";
-import { requireNickname } from "./nickname.js";
 
 const AGENT_PREFIX = "agent/";
 
@@ -24,17 +23,18 @@ export function viaOf(request: FastifyRequest): string | null {
 	return invalid ? VIA_UNKNOWN : null;
 }
 
-/** 写操作的发起人守卫：没有昵称时已回复 400 `nickname_required`，返回 undefined，路由应直接 `return reply`。 */
-export function requireActor(request: FastifyRequest, reply: FastifyReply): Actor | undefined {
-	const nickname = requireNickname(request, reply);
-	if (nickname === undefined) return undefined;
-	// 带了凭据的请求，身份是访问检查得出的（用户 ID、令牌的名称），昵称请求头不作数。
+/**
+ * 写操作的发起人：访问检查得出的身份（用户的显示名和 ID，项目令牌的名称，会话令牌的会话）。不带凭据的请求在访问检查那一步
+ * 就是 401（#494），走到处理函数的写请求都带着凭据；没有时是接口的声明错了（比如写接口被声明成不看凭据），当作程序错误。
+ */
+export function actorOf(request: FastifyRequest): Actor {
 	const { access } = request;
+	if (!access) throw new Error(`${request.method} ${request.url}：写操作没有经过访问检查得出身份`);
 	return {
-		nickname,
+		name: access.name,
 		via: viaOf(request),
-		userId: access?.userId ?? null,
-		token: access?.tokenName ?? null,
-		sessionId: access?.sessionId ?? null,
+		userId: access.userId ?? null,
+		token: access.tokenName ?? null,
+		sessionId: access.sessionId ?? null,
 	};
 }

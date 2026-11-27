@@ -2,7 +2,6 @@ import { ApiError } from "./errors.js";
 import {
 	createExchange,
 	type FetchLike,
-	type Nickname,
 	type ResponseLike,
 	type Token,
 	type VersionMismatch,
@@ -33,15 +32,10 @@ export interface ClientOptions {
 	/**
 	 * API 令牌（`sfly_pat_…` 个人令牌或 `sfly_prj_…` 项目令牌，在控制台的「令牌」页签发）：固定值，或每次请求时
 	 * 取值的函数（轮换令牌），空白算没有。每个请求（含事件流）带 `Authorization: Bearer <令牌>`，身份由令牌决定：
-	 * 运行记录里的触发人是令牌所属的用户（项目令牌是令牌的名称），不再需要昵称。令牌的范围不够时控制面回 403。
-	 * 非 GET 的请求既没有令牌也没有昵称时，在发请求之前抛出错误码 `nickname_required` 的 ApiError（读操作不受影响）。
+	 * 运行记录里的触发人是令牌所属的用户（项目令牌是令牌的名称）。令牌的范围不够时控制面回 403。
+	 * 没有令牌时请求照发，控制面回 401：抛出错误码 `unauthorized` 的 ApiError。同源页面靠登录后的 Cookie，不用给令牌。
 	 */
 	token?: Token;
-	/**
-	 * @deprecated 昵称只给控制台里没有登录的人用（#494 起所有请求都要凭据，昵称一并删除）；脚本、自建页面和自动化请用 `token`。
-	 * 没有令牌时，写操作的昵称（运行记录里的触发人）：固定值，或每次请求时取值的函数，空白算没有。
-	 */
-	nickname?: Nickname;
 	/**
 	 * 控制面和客户端的版本不一致时，每个客户端实例调用一次；请求照常进行。
 	 * 默认 `console.warn(mismatch.message)`。
@@ -82,7 +76,6 @@ export function createClient(options: ClientOptions): Client {
 		baseUrl: options.baseUrl,
 		fetch: options.fetch ?? ((url, init) => globalThis.fetch(url, init)),
 		token: options.token,
-		nickname: options.nickname,
 		onControlPlaneTime: options.onControlPlaneTime ?? (() => {}),
 		onVersionMismatch: options.onVersionMismatch ?? ((mismatch) => console.warn(mismatch.message)),
 		onInsecureToken: options.onInsecureToken ?? ((message) => console.warn(message)),

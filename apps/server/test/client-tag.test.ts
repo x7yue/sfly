@@ -1,5 +1,5 @@
 // 记录「经哪个 AI 编程助手」（规格 #238、ADR 0020）：控制面从 `x-sfly-client` 请求头里的 `agent/<名称>`
-// 记在触发的运行、取消请求和保存的场景版本上，接口返回；只是标注，不影响昵称。
+// 记在触发的运行、取消请求和保存的场景版本上，接口返回；只是标注，不影响触发人。
 import { cp as copy, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,13 +43,13 @@ describe("经哪个 AI 编程助手", () => {
 		await cp.close();
 	});
 
-	/** 带昵称的写请求；client 是 `x-sfly-client` 请求头的值，不给就不带这个头（浏览器的请求就是这样）。 */
-	const write = (path: string, body: unknown, client?: string, nickname = "小明") =>
+	/** 以 user 的身份发的写请求；client 是 `x-sfly-client` 请求头的值，不给就不带这个头（浏览器的请求就是这样）。 */
+	const write = (path: string, body: unknown, client?: string, user = "小明") =>
 		cp.fetch(path, {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				...actAs(nickname),
+				...actAs(user),
 				...(client === undefined ? {} : { "x-sfly-client": client }),
 			},
 			body: JSON.stringify(body),
@@ -71,7 +71,7 @@ describe("经哪个 AI 编程助手", () => {
 		return orchestrationsApi.saveVersion.response.parse(await res.json());
 	};
 
-	it("带 agent/claude-code 触发运行：触发的响应、运行详情和两个运行列表都返回 claude-code，昵称不变", async () => {
+	it("带 agent/claude-code 触发运行：触发的响应、运行详情和两个运行列表都返回 claude-code，触发人不变", async () => {
 		const scenario = await api.orchestrationWith(DOCUMENT);
 
 		const triggered = await trigger(scenario, CLAUDE_CODE);

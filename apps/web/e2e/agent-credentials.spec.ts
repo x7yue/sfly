@@ -637,7 +637,7 @@ test.describe("谁看得到这些按钮", () => {
 		await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
 	});
 
-	test("登录失效之后从别的页面点进 Agent 页：回到登录页，不悄悄掉进昵称模式（进页面时不另外刷新身份）", async ({
+	test("登录失效之后从别的页面点进 Agent 页：回到登录页，不悄悄停在没有登录的 Agent 页（进页面时不另外刷新身份）", async ({
 		page,
 		context,
 		controlPlane,

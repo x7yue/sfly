@@ -13,10 +13,9 @@ import { describeSecretDefaultProblem } from "../orchestrations/secret-defaults.
 import { versionCheck, versionDiff, versionWarnings } from "../orchestrations/version-check.js";
 import { DEFAULT_PROJECT, pathProject } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
-import { requireActor } from "./actor.js";
+import { actorOf } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
-import { requireNickname } from "./nickname.js";
 
 const notFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "orchestration not found");
@@ -70,8 +69,7 @@ export function registerOrchestrationRoutes(
 		);
 	};
 
-	contractRoute(app, orchestrationsApi.create, async ({ params, body }, reply, raw) => {
-		if (!requireNickname(raw, reply)) return reply;
+	contractRoute(app, orchestrationsApi.create, async ({ params, body }, reply) => {
 		return reply
 			.code(201)
 			.send(await orchestrations.create(pathProject(params), body.name, body.description));
@@ -87,8 +85,7 @@ export function registerOrchestrationRoutes(
 	});
 
 	contractRoute(app, orchestrationsApi.copy, async ({ params, body }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		const copied = isUuid(params.id)
 			? await orchestrations.copy(params.id, body.name, actor)
 			: undefined;
@@ -110,8 +107,7 @@ export function registerOrchestrationRoutes(
 
 	// 关注项不合格时的错误码见契约的 update（focus_items_limit / focus_item_duplicate / focus_item_unknown_chart）。
 	contractRoute(app, orchestrationsApi.update, async ({ params, body }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		const result = isUuid(params.id)
 			? await orchestrations.update(params.id, body, actor)
 			: ({ kind: "not_found" } as const);
@@ -123,8 +119,7 @@ export function registerOrchestrationRoutes(
 		return result.orchestration;
 	});
 
-	contractRoute(app, orchestrationsApi.archive, async ({ params }, reply, raw) => {
-		if (!requireNickname(raw, reply)) return reply;
+	contractRoute(app, orchestrationsApi.archive, async ({ params }, reply) => {
 		if (!isUuid(params.id)) return notFound(reply);
 		const result = await orchestrations.archive(params.id);
 		if (result.kind === "not_found") return notFound(reply);
@@ -140,16 +135,14 @@ export function registerOrchestrationRoutes(
 		return result.orchestration;
 	});
 
-	contractRoute(app, orchestrationsApi.unarchive, async ({ params }, reply, raw) => {
-		if (!requireNickname(raw, reply)) return reply;
+	contractRoute(app, orchestrationsApi.unarchive, async ({ params }, reply) => {
 		const restored = isUuid(params.id) ? await orchestrations.unarchive(params.id) : undefined;
 		return restored ?? notFound(reply);
 	});
 
 	// 缺 base_version、文档不合法时的错误码见契约的 requestError（base_version_required / invalid_document）。
 	contractRoute(app, orchestrationsApi.saveVersion, async ({ params, body }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		const result = isUuid(params.id)
 			? await orchestrations.saveVersion(params.id, body.document, actor, body.base_version, {
 					strict: body.strict === true,
@@ -201,8 +194,7 @@ export function registerOrchestrationRoutes(
 			: Promise.resolve({ kind: "not_found" } as const);
 
 	contractRoute(app, orchestrationsApi.edit, async ({ params, body }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		const prepared = await editsOf(params.id, body.operations, body.base_version);
 		if (prepared.kind !== "edited") return rejectEdits(reply, prepared, body.base_version);
 		// 结果和最新版本相同：不存出新版本，返回当前版本（检查走和保存同一段代码，警告和差异与保存时一样）。
@@ -256,8 +248,7 @@ export function registerOrchestrationRoutes(
 
 	// 恢复历史版本 = 用旧内容追加一个新版本（docs/ARCHITECTURE.md §6.4）。
 	contractRoute(app, orchestrationsApi.restoreVersion, async ({ params }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		const number = Number(params.number);
 		const restored =
 			isUuid(params.id) && Number.isInteger(number)

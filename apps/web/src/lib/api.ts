@@ -10,7 +10,6 @@ import {
 import { queryOptions } from "@tanstack/react-query";
 import { observeControlPlaneTime } from "./control-plane-time";
 import { noteUnauthorized } from "./identity";
-import { getNickname } from "./nickname";
 
 export { ApiError };
 
@@ -45,19 +44,6 @@ const watchedFetch: FetchLike = async (url, init) => {
 export const apiClient = createClient({
 	baseUrl: API_BASE,
 	fetch: watchedFetch,
-	nickname: getNickname,
-	onControlPlaneTime: observeControlPlaneTime,
-});
-
-/**
- * 账号类接口（登录、初始化、登出、改密码…，资源类别 `account`）用的客户端：它们的身份是登录或密码，不看昵称，
- * 但 API 客户端对非 GET 的请求要求有昵称（还没登录、也没填过昵称的人要能登录）：这里没有昵称时给一个占位，
- * 控制面不读它。
- */
-const accountClient = createClient({
-	baseUrl: API_BASE,
-	fetch: watchedFetch,
-	nickname: () => getNickname() ?? "未登录",
 	onControlPlaneTime: observeControlPlaneTime,
 });
 
@@ -85,8 +71,7 @@ async function send<E extends EndpointDef>(
 	def: E,
 	input: EndpointInput<E> | undefined,
 ): Promise<EndpointResponse<E>> {
-	const client = def.resource.kind === "account" ? accountClient : apiClient;
-	const data = await client.request(def, routeInput(input));
+	const data = await apiClient.request(def, routeInput(input));
 	if (import.meta.env.DEV) {
 		const parsed = def.response.safeParse(data);
 		if (!parsed.success) {

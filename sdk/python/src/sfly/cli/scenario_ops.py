@@ -42,7 +42,6 @@ def _edit_options(*, nested: bool) -> argparse.ArgumentParser:
     default: Any = argparse.SUPPRESS if nested else None
     if nested:
         parser.add_argument("--server", default=default, help=argparse.SUPPRESS)
-        parser.add_argument("--nickname", default=default, help=argparse.SUPPRESS)
         parser.add_argument("--json", action="store_true", default=default, help=argparse.SUPPRESS)
     parser.add_argument(
         "--dry-run",

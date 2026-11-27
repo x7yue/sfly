@@ -1,13 +1,10 @@
-"""命令行访问控制面的公共部分：地址、昵称、`x-sfly-client`、HTTP 请求（只用标准库）和错误解析。
+"""命令行访问控制面的公共部分：地址、令牌、`x-sfly-client`、HTTP 请求（只用标准库）和错误解析。
 
 所有操作平台的命令都经 `Client` 发请求，不各自拼请求头、不各自处理错误：
 - 地址：`--server` > `SFLY_SERVER` > `$SFLY_HOME/agent.env` 的 `SFLY_CONTROL_PLANE_URL` > 默认地址，
   和 `sfly publish` 共用 `home.control_plane_url`；
 - 令牌：`SFLY_API_TOKEN` > 凭据文件里这台控制面的（`sfly login` 写的，见 `credentials.py`），
-  放进 `Authorization: Bearer`；有令牌时身份由令牌决定，不再发昵称，`--nickname`、`SFLY_NICKNAME`
-  被忽略并提示一次；
-- 昵称（没有令牌时）：`--nickname` > `SFLY_NICKNAME` > 系统登录用户名，放进
-  `x-sfly-nickname`（URL 编码）；
+  放进 `Authorization: Bearer`，身份由令牌决定；没有令牌时照样发请求，控制面返回 401（见下）；
 - 每个请求都带 `x-sfly-client: sfly-cli/<版本>`；在 AI 编程助手里运行时再追加 ` agent/<名称>`；
 - 控制面在所有响应上带 `x-sfly-time`（控制面的当前时间，ADR 0018）；
   `Client.control_plane_time` 是最近一次响应带来的，命令里要算「已多久」时用它，不用本机时间；
@@ -22,7 +19,6 @@
 
 from __future__ import annotations
 
-import getpass
 import ipaddress
 import json
 import os
@@ -44,7 +40,6 @@ from sfly.cli.home import control_plane_url
 from sfly.cli.safe_text import printable
 
 CLIENT_HEADER = "x-sfly-client"
-NICKNAME_HEADER = "x-sfly-nickname"
 VERSION_HEADER = "x-sfly-version"
 TIME_HEADER = "x-sfly-time"
 
@@ -190,16 +185,6 @@ def client_tag(ai_agent: str | None) -> str:
     return f"{tag} agent/{ai_agent}" if ai_agent else tag
 
 
-def resolve_nickname(nickname: str | None, environ: Mapping[str, str] = os.environ) -> str:
-    """昵称：`--nickname` > `SFLY_NICKNAME` > 系统登录用户名（取不到时为 `sfly-cli`）。"""
-    if name := (nickname or environ.get("SFLY_NICKNAME") or "").strip():
-        return name
-    try:
-        return getpass.getuser().strip() or "sfly-cli"
-    except (KeyError, OSError, ImportError):
-        return "sfly-cli"
-
-
 class ApiError(CliError):
     """控制面返回了错误响应。`code`、`message` 来自响应体 `{ error: { code, message, details? } }`，
     不是这个格式时为 `http_<状态码>`；`details` 是响应体里的 details（没有时为 None）。"""
@@ -231,11 +216,9 @@ class Client:
     def __init__(
         self,
         server: str,
-        nickname: str,
         *,
         token: str | None = None,
         sends_password: bool = False,
-        nickname_ignored: bool = False,
         session_id: str | None = None,
         project: str = DEFAULT_PROJECT,
         ai_agent: str | None = None,
@@ -243,9 +226,8 @@ class Client:
         timeout: float = 30.0,
     ) -> None:
         self.server = server.rstrip("/")
-        self.nickname = nickname
         self.token = token
-        """有令牌时身份由它决定：请求带 `Authorization: Bearer`，不再带昵称。"""
+        """身份由它决定：请求带 `Authorization: Bearer`；没有令牌时控制面返回 401。"""
         self.session_id = session_id
         """令牌所属的会话（`SFLY_SESSION_ID`，工作台上控制面设好）：会话令牌的 `latest` 按它找。"""
         self.project = project
@@ -257,8 +239,6 @@ class Client:
         self._stderr = stderr
         self._warned_version = False
         self._warned_plain_http = False
-        # 用户明确给了昵称（`--nickname`、`SFLY_NICKNAME`），而这次用的是令牌：提示一次「被忽略」。
-        self._nickname_ignored_pending = nickname_ignored and token is not None
         self._owner_name: str | None = None
         self.control_plane_time: datetime | None = None
         """最近一次响应的 `x-sfly-time`（控制面时间）；还没有响应或响应不带它时为 None。"""
@@ -267,7 +247,6 @@ class Client:
     def from_options(
         cls,
         server: str | None,
-        nickname: str | None,
         *,
         environ: Mapping[str, str] = os.environ,
     ) -> Client:
@@ -284,25 +263,19 @@ class Client:
                     "令牌可能已经泄露的话，sfly logout 后重新 sfly login",
                     file=sys.stderr,
                 )
-        given_nickname = bool((nickname or "").strip() or environ.get("SFLY_NICKNAME", "").strip())
         return cls(
             url,
-            resolve_nickname(nickname, environ),
             token=resolved.token if resolved else None,
-            nickname_ignored=given_nickname,
             session_id=environ.get(SESSION_ID_ENV, "").strip() or None,
             project=environ.get(PROJECT_ENV, "").strip() or DEFAULT_PROJECT,
             ai_agent=detect_ai_agent(environ),
         )
 
     def headers(self) -> dict[str, str]:
-        """每个请求都带的请求头：有令牌时是 `Authorization: Bearer`，
-        身份由令牌决定、不发昵称；没有令牌时是昵称。"""
+        """每个请求都带的请求头：有令牌时是 `Authorization: Bearer`，身份由令牌决定。"""
         headers = {CLIENT_HEADER: client_tag(self.ai_agent), "Accept": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        else:
-            headers[NICKNAME_HEADER] = urllib.parse.quote(self.nickname, safe="")
         return headers
 
     def in_project(self, path: str, project: str | None = None) -> str:
@@ -314,11 +287,9 @@ class Client:
         return self.token is not None and self.token.startswith(SESSION_TOKEN_PREFIX)
 
     def owner_name(self) -> str:
-        """「自己」在运行记录里的名字（`latest` 用它找自己触发的最近一次运行）：没有令牌时是昵称，
-        有令牌时是令牌所属用户的显示名（问控制面一次，之后记着）；
-        只有个人令牌问得了所属用户，别的令牌抛 `CliError`。"""
-        if not self.token:
-            return self.nickname
+        """「自己」在运行记录里的名字（`latest` 用它找自己触发的最近一次运行）：令牌所属用户的显示名
+        （问控制面一次，之后记着）。只有个人令牌问得了所属用户，别的令牌抛 `CliError`；
+        没有令牌时照样问，控制面返回 401（错误信息写明 `sfly login`）。"""
         if self._owner_name is None:
             try:
                 listing = self.get("/account/tokens")
@@ -332,15 +303,6 @@ class Client:
                 raise
             self._owner_name = str(listing["user"]["display_name"])
         return self._owner_name
-
-    def _note_nickname_ignored(self) -> None:
-        if not self._nickname_ignored_pending:
-            return
-        self._nickname_ignored_pending = False
-        print(
-            "提示：身份由令牌决定，--nickname 和 SFLY_NICKNAME 被忽略。",
-            file=self._stderr or sys.stderr,
-        )
 
     def note_plain_http(self) -> None:
         """带着令牌、或者要发账号密码（`sfly login`）往不是本机的 `http://` 地址发请求：提示一次
@@ -430,7 +392,6 @@ class Client:
         失败时抛 `CliError`（连不上）或 `ApiError`（错误响应）。"""
         check_address(self.server)
         data = raw
-        self._note_nickname_ignored()
         self.note_plain_http()
         send = {**self.headers(), **(headers or {})}
         if body is not None:

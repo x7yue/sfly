@@ -54,12 +54,10 @@ export interface E2eFixtures {
 	/** 假的飞书 Webhook 服务（ADR 0020）：飞书机器人的 Webhook 地址指向它；测试结束时自动关闭。 */
 	feishu: FakeFeishu;
 	/**
-	 * 浏览器以哪个用户登录着（#493）：用例开始前为这个昵称的用户（`TestUsers`，平台管理员、默认项目的项目管理员）
-	 * 建一个登录，Cookie 放进浏览器。测没登录时的样子（登录页、初始化、昵称弹窗）的用例设为 null：空的登录状态。
+	 * 浏览器以哪个用户登录着（#493）：用例开始前为这个名字的用户（`TestUsers`，平台管理员、默认项目的项目管理员）
+	 * 建一个登录，Cookie 放进浏览器。测没登录时的样子（登录页、初始化、没登录被带到登录页）的用例设为 null：空的登录状态。
 	 */
 	loginAs: string | null;
-	/** 没登录时浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；默认不写。登录着时页面不用它。 */
-	nickname: string | null;
 	/**
 	 * 覆盖控制面的选项：对外地址、版本号（默认是实际监听地址和 package.json 的版本；视觉回归里固定它们，
 	 * 文档里替换出来的地址、版本号才不随端口和发版变化）、用户文档目录（默认仓库的 docs/guide）和单任务的指标上限
@@ -144,8 +142,7 @@ export const test = base.extend<E2eFixtures>({
 		}
 	},
 	loginAs: [DEFAULT_TESTER, { option: true }],
-	nickname: [null, { option: true }],
-	page: async ({ page, clock, controlPlane, loginAs, nickname }, use) => {
+	page: async ({ page, clock, controlPlane, loginAs }, use) => {
 		// Date.now() / new Date() 固定在手动时钟的当前时刻（定时器照常运行）。
 		await page.clock.setFixedTime(clock.now());
 		if (loginAs !== null) {
@@ -155,11 +152,6 @@ export const test = base.extend<E2eFixtures>({
 				.addCookies([
 					{ name: "sfly_login", value, url: controlPlane.httpUrl, httpOnly: true, sameSite: "Lax" },
 				]);
-		}
-		if (nickname !== null) {
-			await page.addInitScript((name) => {
-				window.localStorage.setItem("sfly.nickname", name);
-			}, nickname);
 		}
 		await use(page);
 	},

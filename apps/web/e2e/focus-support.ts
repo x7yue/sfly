@@ -42,9 +42,9 @@ export async function createFocusScenario(cp: TestControlPlane): Promise<string>
 	return createScenario(cp, "撮合浸泡", focusDocument);
 }
 
-const json = (method: string, body: unknown, nickname: string): RequestInit => ({
+const json = (method: string, body: unknown, user: string): RequestInit => ({
 	method,
-	headers: { "content-type": "application/json", ...actAs(nickname) },
+	headers: { "content-type": "application/json", ...actAs(user) },
 	body: JSON.stringify(body),
 });
 
@@ -58,13 +58,10 @@ export async function setFocusItems(
 	cp: TestControlPlane,
 	scenarioId: string,
 	items: Array<{ node_id: string; chart: string; title?: string }>,
-	nickname = "tester",
+	user = "tester",
 ): Promise<void> {
 	await ok(
-		await cp.fetch(
-			`/orchestrations/${scenarioId}`,
-			json("PATCH", { focus_items: items }, nickname),
-		),
+		await cp.fetch(`/orchestrations/${scenarioId}`, json("PATCH", { focus_items: items }, user)),
 		"设置关注项",
 	);
 }

@@ -107,7 +107,7 @@ export const feishuBotsApi = {
 		response: z.object({ bots: z.array(FeishuBotView) }),
 	}),
 	/**
-	 * 登记一个飞书机器人（201，需要昵称请求头）。名称已被占用 409 `name_taken`。
+	 * 登记一个飞书机器人（201）。名称已被占用 409 `name_taken`。
 	 */
 	create: endpoint({
 		method: "POST",
@@ -127,7 +127,7 @@ export const feishuBotsApi = {
 		response: FeishuBotView,
 	}),
 	/**
-	 * 替换 Webhook 地址（需要昵称请求头）。名称创建后不能修改：请求里带 `name` 返回 400 `name_immutable`。
+	 * 替换 Webhook 地址。名称创建后不能修改：请求里带 `name` 返回 400 `name_immutable`。
 	 * 机器人不存在 404 `not_found`。
 	 */
 	replaceWebhook: endpoint({
@@ -171,7 +171,7 @@ export const feishuBotsApi = {
 			scenarios: z.array(FeishuBotScenario),
 		}),
 	}),
-	/** 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。 */
+	/** 删除（204）。机器人不存在 404 `not_found`。 */
 	remove: endpoint({
 		method: "DELETE",
 		path: "/projects/:project/feishu-bots/:name",

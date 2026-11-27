@@ -114,7 +114,7 @@ export const RunState = z.object({
 	 * 否则是 `success`；运行结束时的最终状态只会比它更坏（运行已经结束时它就是 `status`）。
 	 */
 	result_so_far: z.enum(["success", "failed", "cancelled"]),
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: z.string().nullable(),
