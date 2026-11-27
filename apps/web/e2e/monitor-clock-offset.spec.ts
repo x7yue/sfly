@@ -11,12 +11,6 @@ const chart = (page: Page, title: string) =>
 		.getByRole("region", { name: "ping 的图表" })
 		.getByRole("figure", { name: title, exact: true });
 
-const pad = (n: number) => String(n).padStart(2, "0");
-const clockText = (ms: number) => {
-	const d = new Date(ms);
-	return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-};
-
 test("点都在尝试的时段之外：图表写「这台 Agent 的时间换算可能有偏差」和点所在的时间范围", async ({
 	page,
 	controlPlane,
@@ -43,9 +37,11 @@ test("点都在尝试的时段之外：图表写「这台 Agent 的时间换算�
 
 	const level = chart(page, "level");
 	const start = Math.floor(clock0 / 1000) * 1000 + 1_800_000;
+	// 钟点按浏览器的时区写，和跑测试的进程不一定一样。
+	const startText = await page.evaluate((t) => new Date(t).toTimeString().slice(0, 8), start);
 	await expect(level.locator("[data-clock-offset]")).toHaveText(
 		new RegExp(
-			`^这台 Agent 的时间换算可能有偏差：点在 ${clockText(start)} – \\d\\d:\\d\\d:\\d\\d（控制面时间）$`,
+			`^这台 Agent 的时间换算可能有偏差：点在 ${startText} – \\d\\d:\\d\\d:\\d\\d（控制面时间）$`,
 		),
 	);
 	await expect(level).not.toContainText("还没有数据");
