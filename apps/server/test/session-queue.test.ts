@@ -1505,6 +1505,8 @@ describe("停止、插话、结束会话、排队", () => {
 				expect((await detail(b.id)).events.at(-1)).toMatchObject({
 					type: "turn_end",
 					outcome: "failed",
+					// 助手服务全都在做（#545）：队首这一轮以 failed 结束，原因是固定的一句。
+					reason: "助手服务同时在做的会话太多：等别的会话停下来再试",
 				});
 				expect(await view(c.id)).toMatchObject({ status: "queued", queue_position: 1 });
 				expect(await view(d.id)).toMatchObject({ status: "queued", queue_position: 2 });
@@ -1626,6 +1628,10 @@ describe("停止、插话、结束会话、排队", () => {
 					cp,
 					"insert into projects (id, display_name, created_at) values ('proj-b', 'proj-b', now()) on conflict do nothing",
 				);
+				// 项目乙也登记同一台工作台（直接写库：登记接口要求这台 Agent 已经在乙里，而这里是把它在两个项目之间挪来挪去）。
+				await database_query(cp, "update projects set workbench_agent = $1 where id = 'proj-b'", [
+					WORKBENCH,
+				]);
 				const move = (project: string) =>
 					database_query(cp, "update agents set project_id = $1 where name = $2", [
 						project,

@@ -89,6 +89,10 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "project",
 		why: "项目令牌的签发、列出、吊销：项目令牌是项目的一部分（服务账号），定位用路径里的 :project，要「管理」范围",
 	},
+	"/projects/:project/workbench": {
+		kind: "project",
+		why: "项目的工作台（助手的会话在哪台 Agent 上做事）：登记属于项目自己的设置，定位用路径里的 :project，要「管理」范围",
+	},
 	"/projects/:project/sessions": {
 		kind: "session",
 		why: "项目里的会话：列出和新建，路径里的 :project 是项目标识（会话的集合属于项目）",

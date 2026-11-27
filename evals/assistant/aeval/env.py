@@ -390,8 +390,9 @@ class Stack:
             # up 完就能用。
             self.start_agents()
             self.wait_agents(timeout=180)
+            self.register_workbench()
             self.wait_assistant_ready()
-            log("助手就绪：工作台是 dev 上的 Agent")
+            log("助手就绪：工作台是 dev 上的 Agent（已登记）")
         log(f"初始管理员（登录控制台、建会话要先登录）：登录名和密码在 {self.admin_file}")
         log(f"环境就绪：控制面 {self.cp_url}")
 
@@ -482,9 +483,9 @@ class Stack:
         env["SFLY_ADMIN_DISPLAY_NAME"] = ASSISTANT_NICKNAME
         secret_env: dict[str, str] = {ADMIN_PASSWORD_ENV: self.admin_password}
         if self.assistant:
-            # 控制面把会话交给助手服务，工作台是 dev 上的 Agent（竖切的桩，#549 换成项目上的设置）。
+            # 控制面把会话交给助手服务；工作台是 dev 上的 Agent，由 register_workbench 登记
+            # （#549，存在库里，不是环境变量）。
             env["SFLY_ASSISTANT_URL"] = self.assistant_url
-            env["SFLY_WORKBENCH_AGENT"] = DEV_AGENT
             secret_env[ASSISTANT_SECRET_ENV] = self._secret()
         self._run(
             "cp",
@@ -681,6 +682,21 @@ class Stack:
         )
         return str(json.loads(out.stdout)["token"])
 
+    def register_workbench(self) -> None:
+        """登记 dev 上的 Agent 为默认项目的工作台（`PUT /projects/default/workbench`，#549）：
+        和部署文档里的 `sfly api PUT …` 是同一个接口，这里用初始管理员的登录。登记要这台 Agent
+        已经用自己的 Agent 凭据连上来过（两台 Agent 的凭据都是上面签发的），所以放在 `wait_agents`
+        之后；登记之后控制面只接受 Agent 凭据，共享令牌和不带凭据的连接都被拒绝
+        （评测环境里本来就没有）。Cookie 经标准输入给 curl，不在命令行参数里。"""
+        cookie = self._admin_cookie(self.dev)
+        d.sh(
+            self.dev,
+            "curl -fsS -X PUT -H 'content-type: application/json' -H @- "
+            f"-d '{json.dumps({'agent': DEV_AGENT})}' "
+            "http://sfly.internal:8080/projects/default/workbench",
+            input_text=f"cookie: {cookie}\nsec-fetch-site: same-origin\n",
+        )
+
     def _renew_agent_credentials(self) -> None:
         """控制面的库重建之后（reset），登记和凭据都没了，两台 Agent 的 agent.env 里还是旧凭据：
         重新签发、换掉 agent.env 里的 SFLY_TOKEN（经标准输入，不在命令行参数里）。"""
@@ -833,6 +849,8 @@ class Stack:
         self.wait_agents(timeout=180)
         self.start_service()
         if self.assistant:
+            # 库重建了，工作台的登记也没了：Agent 重新连上来之后再登记。
+            self.register_workbench()
             self.wait_assistant_ready()
 
     # ---- 在开发环境容器里执行 ----

@@ -7,6 +7,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionListResponse } from "@sfly/schema";
+import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAssistant } from "./support/fake-assistant.js";
@@ -75,13 +76,22 @@ describe("启动时 HTTP 已经监听、助手服务的事件连接还没建好�
 			grpc: { host: "127.0.0.1", port: 0 },
 			assistantUrl: assistant.url,
 			assistantSecret: assistant.secret,
-			workbenchAgent: "workbench-startup",
 			sessionSweepIntervalMs: 3_600_000,
 		});
 		let plane: Awaited<typeof starting> | undefined;
 		try {
 			// 路由登记完、HTTP 监听上，走到网关的启动（在这里停住）：此刻助手服务的事件连接对象还没有建。
 			await entered;
+			// 工作台登记了（直接写库：迁移已经跑完，Agent 还没有连上来），这样就绪状态里只剩助手服务的事件流还没连上。
+			const pgClient = new pg.Client({ connectionString: database.url });
+			await pgClient.connect();
+			try {
+				await pgClient.query(
+					"update projects set workbench_agent = 'workbench-startup' where id = 'default'",
+				);
+			} finally {
+				await pgClient.end();
+			}
 			const api = new ApiClient(
 				asUsers({
 					database,

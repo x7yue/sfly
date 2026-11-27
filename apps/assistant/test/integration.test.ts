@@ -537,6 +537,58 @@ describe("真的 pi：一轮进行中被结束，工作台上的命令不留下�
 	}, 120_000);
 });
 
+describe("真的 pi：意外退出（kill -9）之后工作台上的命令不留下，会话从会话文件恢复（#545）", () => {
+	const alive = (pid: number) => {
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	it("命令执行到一半 pi 被 kill -9：命令之前在跑、之后不在了（连接断了，Agent 结束它）；这一轮以 interrupted 结束；再说一句用同一条启动命令恢复，发给模型的请求里有之前的对话和那次没有结果的工具调用，不换会话", async () => {
+		const h = await Harness.start();
+		try {
+			h.model.scripts.set("剧本：被杀", [
+				{ tool: "bash", args: { command: "echo $$ > running.pid; exec sleep 60", timeout: 120 } },
+				{ text: "接着说完了。" },
+			]);
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "剧本：被杀" });
+			// 先断言结束之前命令确实在跑。
+			let pid = 0;
+			await eventually(() => {
+				pid = Number(readFileSync(join(h.workdir, "running.pid"), "utf8"));
+				expect(pid).toBeGreaterThan(0);
+			}, 30_000);
+			expect(alive(pid)).toBe(true);
+			const pi = h.sessions.pid(id);
+			expect(pi).toBeDefined();
+			process.kill(pi as number, "SIGKILL");
+			expect(await h.turnEnd(id)).toMatchObject({ outcome: "interrupted" });
+			// 再断言之后不在了。
+			await eventually(() => expect(alive(pid)).toBe(false), 10_000);
+			expect(h.sessions.pid(id)).toBeUndefined();
+			const before = h.model.requests.length;
+			await h.prompt(id, { turn: 2, text: "接着说" });
+			expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+			const messages = h.model.requests.slice(before).at(0)?.messages ?? [];
+			expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool", "user"]);
+			expect(messages[2]?.tool_calls).toBeDefined();
+			// 恢复上了：不是换了新会话（没有 context_reset、第一句不是摘要）。
+			expect(
+				h.events
+					.of(id)
+					.filter((r) => r.event.type === "notice" && r.event.kind === "context_reset"),
+			).toEqual([]);
+			expect(JSON.stringify(messages[1])).not.toContain("【平台说明】");
+		} finally {
+			await h.close();
+		}
+	}, 120_000);
+});
+
 describe("真的 pi：secret 环境变量不出助手服务", () => {
 	it("工作台上的命令打印出 secret_env 的值：发出的所有事件、pi 原始事件、助手服务的日志里都没有它", async () => {
 		const h = await Harness.start();

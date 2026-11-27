@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashCredential } from "../src/auth/credential-hash.js";
 import { SETUP_CODE_FILE } from "../src/auth/setup-code.js";
 import { TestAccounts } from "./support/credentials.js";
+import { FakeAgent } from "./support/fake-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const JSON_HEADERS = { "content-type": "application/json" };
@@ -256,6 +257,32 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 			},
 		);
 		await send(cp, "用已吊销的令牌请求", "GET", "/account/tokens", { bearer: t2.token ?? "" });
+		// 登记项目的工作台（#549，项目的管理面）：没有凭据、令牌（不是人）、没有这台 Agent、成功。
+		const workbenchBody = { agent: "wb" };
+		await send(cp, "登记工作台：没有凭据", "PUT", "/projects/default/workbench", {
+			body: workbenchBody,
+		});
+		await send(cp, "登记工作台：个人令牌，没有这台 Agent", "PUT", "/projects/default/workbench", {
+			bearer: t1.token ?? "",
+			body: workbenchBody,
+		});
+		await send(cp, "登记工作台：项目不存在", "PUT", "/projects/no-such-project/workbench", {
+			cookie: adminCookie,
+			body: workbenchBody,
+		});
+		await send(cp, "登记工作台：没有这台 Agent", "PUT", "/projects/default/workbench", {
+			cookie: adminCookie,
+			body: workbenchBody,
+		});
+		const workbenchAgent = await FakeAgent.connect(cp.grpcUrl, { name: "wb" });
+		try {
+			await send(cp, "登记工作台", "PUT", "/projects/default/workbench", {
+				cookie: adminCookie,
+				body: workbenchBody,
+			});
+		} finally {
+			await workbenchAgent.disconnect();
+		}
 
 		// 初始化：另起一个空库，初始化码、新管理员的密码。
 		setupCp = await startTestControlPlane();
