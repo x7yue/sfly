@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -1086,11 +1087,45 @@ def judge(question: str, raw: dict[str, Any]) -> Verdict:
     return JUDGES[question](raw)
 
 
+def short_id(image_id: str) -> str:
+    return image_id.removeprefix("sha256:")[:12]
+
+
+def version_warnings(versions: dict[str, str]) -> list[str]:
+    """量的是不是产品里的那一份：探针里跑的 pi 是工作台镜像里的，产品跑的是助手镜像里的，
+    两边分别固定。"""
+    if "assistant_image" not in versions:
+        return []
+    probe_pi, product_pi = versions.get("pi", "?"), versions.get("assistant_pi", "?")
+    if product_pi == "?":
+        return ["没有读到助手镜像里 pi 的版本：不知道探针量的 pi 和产品跑的是不是同一版"]
+    if probe_pi != product_pi:
+        return [
+            f"探针里跑的是工作台镜像里的 pi {probe_pi}，产品跑的是助手镜像里的 pi {product_pi}，"
+            "版本不一样：除第 9 题 slim 镜像那一半（用的就是助手镜像里的 pi）以外，"
+            f"结论量的是 pi {probe_pi} 的行为，不是产品的；把两边升到同一版之后重跑"
+        ]
+    return []
+
+
 def render(verdicts: list[Verdict], versions: dict[str, str]) -> str:
     lines = [
         "# rpcprobe",
         "",
         f"pi {versions.get('pi', '?')}，Node {versions.get('node', '?')}，假的模型端点。",
+    ]
+    if "assistant_image" in versions:
+        lines += [
+            "",
+            f"产品的远程工具扩展取自助手镜像 {versions['assistant_image']}"
+            f"（ID {short_id(versions.get('assistant_image_id', '?'))}，"
+            f"构建于 {versions.get('assistant_image_created', '?')}），"
+            f"`extension.mjs` 的 sha256 是 {versions.get('extension_sha256', '?')}；"
+            f"助手镜像里的 pi 是 {versions.get('assistant_pi', '?')}。",
+        ]
+    for warning in version_warnings(versions):
+        lines += ["", f"**提醒：** {warning}"]
+    lines += [
         "",
         "| # | 问题 | 结论 |",
         "|---|---|---|",
@@ -1129,10 +1164,22 @@ TURN_CONFIG = {
 # EXTENSION）。
 PRODUCT_EXTENSION = "/app/dist/extension.mjs"
 PROBE_EXTENSION = "/opt/aeval-product/extension.mjs"
+# 助手镜像里 pi 的包（产品起的 pi 是它，不是工作台镜像里的 `pi`）。
+ASSISTANT_PI_PACKAGE = "/app/node_modules/@earendil-works/pi-coding-agent/package.json"
 
 
-def copy_product_extension(stack: Stack, container: str, workdir: Path) -> None:
-    """从助手镜像里取产品的远程工具扩展，放进探针容器（不起助手容器：建一个不运行的容器、复制出来、删掉）。"""
+def assistant_image_choice(stack: Stack, explicit: str | None) -> str | None:
+    """探针从哪个助手镜像取产品的扩展：明确给的；没给时是这个槽位的助手容器用的（`make_stack` 已经
+    照它接着用）。两样都没有时是 None：**不退到默认标签**，默认标签可能是几天前构建的旧镜像，
+    量到的是旧扩展，结论照出。"""
+    if explicit:
+        return explicit
+    return stack.assistant_image if stack.assistant else None
+
+
+def copy_product_extension(stack: Stack, container: str, workdir: Path) -> dict[str, str]:
+    """从助手镜像里取产品的远程工具扩展，放进探针容器（不起助手容器：建一个不运行的容器、复制出来、删掉）。
+    返回这次量的是哪一份：镜像的名字、ID、构建时间、扩展文件的 sha256、助手镜像里 pi 的版本。"""
     if not d.exists("image", stack.assistant_image):
         raise d.DockerError(
             f"没有助手镜像 {stack.assistant_image}：探针用产品的远程工具扩展，先从源码构建助手镜像"
@@ -1143,10 +1190,26 @@ def copy_product_extension(stack: Stack, container: str, workdir: Path) -> None:
     d.docker("create", "--name", holder, stack.assistant_image)
     try:
         d.docker("cp", f"{holder}:{PRODUCT_EXTENSION}", str(workdir / "extension.mjs"))
+        d.docker(
+            "cp", f"{holder}:{ASSISTANT_PI_PACKAGE}", str(workdir / "assistant-pi-package.json")
+        )
     finally:
         d.docker("rm", "-f", holder, check=False)
     d.sh(container, f"mkdir -p {Path(PROBE_EXTENSION).parent}")
     d.copy_in(str(workdir / "extension.mjs"), container, PROBE_EXTENSION)
+    info = d.docker(
+        "image", "inspect", "--format", "{{.Id}}\t{{.Created}}", stack.assistant_image
+    ).stdout.strip()
+    image_id, _, created = info.partition("\t")
+    return {
+        "assistant_image": stack.assistant_image,
+        "assistant_image_id": image_id,
+        "assistant_image_created": created,
+        "extension_sha256": hashlib.sha256((workdir / "extension.mjs").read_bytes()).hexdigest(),
+        "assistant_pi": str(
+            json.loads((workdir / "assistant-pi-package.json").read_text()).get("version", "?")
+        ),
+    }
 
 
 def arm_a_toolcheck(stack: Stack, results: Path) -> list[dict[str, Any]]:
@@ -1159,8 +1222,9 @@ def arm_a_toolcheck(stack: Stack, results: Path) -> list[dict[str, Any]]:
     return [e for e in events if e.get("type") == "tool_execution_end"]
 
 
-def prepare(stack: Stack, evals_dir: Path, results: Path) -> str:
-    """重置环境、准备工作区，重建探针容器，放好脚本、模型文件和产品的远程工具扩展，起假的模型端点。"""
+def prepare(stack: Stack, evals_dir: Path, results: Path) -> tuple[str, dict[str, str]]:
+    """重置环境、准备工作区，重建探针容器，放好脚本、模型文件和产品的远程工具扩展，起假的模型端点。
+    返回探针容器的名字和这次用的产品扩展的出处（`copy_product_extension`）。"""
     stack.reset()
     ToolCheck().seed(stack)
     container = probe_container(stack)
@@ -1172,7 +1236,7 @@ def prepare(stack: Stack, evals_dir: Path, results: Path) -> str:
         extra=["--memory", "2g"],
     )
     d.sh(container, f"mkdir -p {PROBE_DIR} {ROOT} {ToolCheck.workspace}")
-    copy_product_extension(stack, container, results)
+    product = copy_product_extension(stack, container, results)
     for name in SCRIPTS:
         d.copy_in(str(evals_dir / "container" / name), container, f"{PROBE_DIR}/{name}")
     d.docker(
@@ -1196,7 +1260,7 @@ def prepare(stack: Stack, evals_dir: Path, results: Path) -> str:
         f"for i in $(seq 50); do curl -fsS -o /dev/null http://127.0.0.1:{FAKE_PORT}/v1/models "
         "&& exit 0; sleep 0.2; done; exit 1",
     )
-    return container
+    return container, product
 
 
 # 工作台上的采样：每 0.2 秒一行「时间 正在跑的剧本命令|…」。
@@ -1312,10 +1376,11 @@ def run(
     results.mkdir(parents=True, exist_ok=True)
     # 第 1 题的对照先跑（它自己重置环境）：臂 A 在开发环境里跑同一个工具自检的剧本。
     arm_a = arm_a_toolcheck(stack, results) if "q1" in questions else []
-    container = prepare(stack, evals_dir, results)
+    container, product = prepare(stack, evals_dir, results)
     versions = {
         "pi": d.sh(container, "pi --version", check=False).stdout.strip(),
         "node": d.sh(container, "node --version", check=False).stdout.strip(),
+        **product,
     }
     verdicts = []
     start_watch(stack)

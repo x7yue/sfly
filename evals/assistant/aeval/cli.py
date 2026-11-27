@@ -182,8 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     rp.add_argument(
         "--assistant-image",
-        help="从哪个助手镜像取产品的远程工具扩展（默认这个槽位的助手容器用的，没有时 "
-        "sfly-assistant:dev）",
+        help="从哪个助手镜像取产品的远程工具扩展（不给时用这个槽位的助手容器用的；槽位里也没有助手容器"
+        "就报错，不退到默认标签）",
     )
     bg = sub.add_parser(
         "bgcheck", help="已有的会话记录里，模型多常跨两次命令依赖后台进程（#539，不调模型）"
@@ -259,8 +259,13 @@ def main(argv: list[str] | None = None) -> int:
         results.mkdir(parents=True, exist_ok=True)
         return toolcheck.run(stack, results, EVALS_DIR)
     elif args.command == "rpcprobe":
-        if args.assistant_image:
-            stack.assistant_image = args.assistant_image
+        image = rpcprobe.assistant_image_choice(stack, args.assistant_image)
+        if image is None:
+            parser.error(
+                "没有指定助手镜像，这个槽位里也没有助手容器：用 --assistant-image 明确指定"
+                "产品的助手镜像（不退到默认标签，免得量到几天前构建的旧扩展）"
+            )
+        stack.assistant_image = image
         results = args.results or DATA_HOME / f"{date.today().isoformat()}-rpcprobe"
         questions = tuple(args.questions) or rpcprobe.QUESTIONS
         return rpcprobe.run(stack, results, EVALS_DIR, questions)

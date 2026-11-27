@@ -709,3 +709,168 @@ def test_q17_fails_on_an_extra_user_message_and_is_unfinished_without_compaction
         e for e in missing["threshold"]["timeline"] if e["type"] != "compaction_end"
     ]
     assert judge("q17", missing).verdict == UNFINISHED
+
+
+# ---- 量的是哪一份扩展（#727 审查必须改 2） ----
+
+
+def test_the_assistant_image_is_the_given_one_or_the_slots_never_the_default_tag() -> None:
+    from aeval.env import DEFAULT_ASSISTANT_IMAGE, Stack
+
+    assert rpcprobe.assistant_image_choice(Stack(slot=9), "mine:1") == "mine:1"
+    # 槽位里起着助手容器（make_stack 已经照它接着用）：用它的镜像。
+    adopted = Stack(slot=9, assistant=True, assistant_image="slot-image:7")
+    assert rpcprobe.assistant_image_choice(adopted, None) == "slot-image:7"
+    assert rpcprobe.assistant_image_choice(adopted, "mine:1") == "mine:1"
+    # 没给、槽位里也没有助手容器：没有答案，不退到默认标签（可能是几天前构建的旧镜像）。
+    plain = Stack(slot=9)
+    assert plain.assistant_image == DEFAULT_ASSISTANT_IMAGE
+    assert rpcprobe.assistant_image_choice(plain, None) is None
+
+
+def test_rpcprobe_without_an_assistant_image_stops_before_touching_the_environment(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aeval import cli
+    from aeval.env import Stack
+
+    monkeypatch.setattr(cli, "_stack", lambda _args: Stack(slot=9))
+
+    def touched(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("动了环境")
+
+    monkeypatch.setattr(rpcprobe, "run", touched)
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["rpcprobe", "q1"])
+    assert raised.value.code == 2
+    error = capsys.readouterr().err
+    assert "--assistant-image" in error and "默认标签" in error
+
+
+def test_rpcprobe_uses_the_given_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aeval import cli
+    from aeval.env import Stack
+
+    stack = Stack(slot=9)
+    monkeypatch.setattr(cli, "_stack", lambda _args: stack)
+    seen: list[str] = []
+
+    def fake_run(st: Stack, *_args: Any, **_kwargs: Any) -> int:
+        seen.append(st.assistant_image)
+        return 0
+
+    monkeypatch.setattr(rpcprobe, "run", fake_run)
+    assert cli.main(["rpcprobe", "q1", "--assistant-image", "mine:1"]) == 0
+    assert seen == ["mine:1"]
+
+
+class FakeDocker:
+    """`copy_product_extension` 要用的 docker：`cp` 把预置的内容写到目的地，别的只记下来。"""
+
+    def __init__(self, extension: bytes, pi_package: str, *, fail_cp: bool = False) -> None:
+        self.extension, self.pi_package, self.fail_cp = extension, pi_package, fail_cp
+        self.calls: list[tuple[str, ...]] = []
+
+    def exists(self, _kind: str, _name: str) -> bool:
+        return True
+
+    def docker(self, *args: str, **_kwargs: Any) -> Any:
+        import subprocess
+
+        self.calls.append(args)
+        out = ""
+        if args[0] == "cp":
+            if self.fail_cp:
+                raise RuntimeError("cp 失败")
+            source, dest = args[1], Path(args[2])
+            if source.endswith("extension.mjs"):
+                dest.write_bytes(self.extension)
+            elif source.endswith("package.json"):
+                dest.write_text(self.pi_package)
+        elif args[0] == "image" and args[1] == "inspect":
+            out = "sha256:" + "ab" * 32 + "\t2026-11-25T07:00:00.123Z\n"
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+
+def patch_docker(monkeypatch: pytest.MonkeyPatch, fake: FakeDocker) -> None:
+    from aeval import docker as docker_module
+
+    monkeypatch.setattr(docker_module, "exists", fake.exists)
+    monkeypatch.setattr(docker_module, "docker", fake.docker)
+    monkeypatch.setattr(docker_module, "sh", lambda *_a, **_k: None)
+    monkeypatch.setattr(docker_module, "copy_in", lambda *_a, **_k: None)
+
+
+def test_copy_product_extension_records_which_extension_was_measured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from aeval.env import Stack
+
+    fake = FakeDocker(b"export default 1;\n", json.dumps({"name": "pi", "version": "1.7.0"}))
+    patch_docker(monkeypatch, fake)
+    stack = Stack(slot=9, assistant_image="sfly-assistant:test")
+    info = rpcprobe.copy_product_extension(stack, "probe", tmp_path)
+    assert info == {
+        "assistant_image": "sfly-assistant:test",
+        "assistant_image_id": "sha256:" + "ab" * 32,
+        "assistant_image_created": "2026-11-25T07:00:00.123Z",
+        "extension_sha256": hashlib.sha256(b"export default 1;\n").hexdigest(),
+        "assistant_pi": "1.7.0",
+    }
+    # 先清掉可能留着的同名容器，建一个不运行的，复制两个文件，删掉它，再读镜像的信息。
+    assert [c[0] for c in fake.calls] == ["rm", "create", "cp", "cp", "rm", "image"]
+
+
+def test_copy_product_extension_removes_the_holder_when_the_copy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aeval.env import Stack
+
+    fake = FakeDocker(b"x", "{}", fail_cp=True)
+    patch_docker(monkeypatch, fake)
+    with pytest.raises(RuntimeError):
+        rpcprobe.copy_product_extension(Stack(slot=9), "probe", tmp_path)
+    assert fake.calls[-1][:2] == ("rm", "-f")
+
+
+def test_render_says_which_extension_was_measured() -> None:
+    versions = {
+        "pi": "1.6.0",
+        "node": "v26",
+        "assistant_image": "sfly-assistant:test",
+        "assistant_image_id": "sha256:" + "cd" * 32,
+        "assistant_image_created": "2026-11-25T07:00:00Z",
+        "extension_sha256": "ef" * 32,
+        "assistant_pi": "1.6.0",
+    }
+    report = rpcprobe.render([], versions)
+    assert "sfly-assistant:test" in report and "cdcdcdcdcdcd" in report
+    assert "ef" * 32 in report and "2026-11-25T07:00:00Z" in report
+    assert "助手镜像里的 pi 是 1.6.0" in report
+    assert "提醒" not in report
+
+
+def test_render_warns_when_the_two_pi_versions_differ() -> None:
+    versions = {
+        "pi": "1.6.0",
+        "node": "v26",
+        "assistant_image": "sfly-assistant:test",
+        "assistant_image_id": "sha256:" + "cd" * 32,
+        "assistant_pi": "1.7.0",
+    }
+    report = rpcprobe.render([], versions)
+    assert "**提醒：**" in report
+    assert "工作台镜像里的 pi 1.6.0" in report and "助手镜像里的 pi 1.7.0" in report
+    assert rpcprobe.version_warnings({**versions, "assistant_pi": "1.6.0"}) == []
+
+
+def test_render_warns_when_the_assistant_pi_version_is_unknown() -> None:
+    versions = {"pi": "1.6.0", "assistant_image": "sfly-assistant:test"}
+    assert len(rpcprobe.version_warnings(versions)) == 1
+
+
+def test_render_without_the_product_info_is_unchanged() -> None:
+    report = rpcprobe.render([], {"pi": "1.6.0", "node": "v26"})
+    assert "助手镜像" not in report and "提醒" not in report
