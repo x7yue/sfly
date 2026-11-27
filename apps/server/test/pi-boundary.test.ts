@@ -1,7 +1,6 @@
 // pi（`@earendil-works/*`）只能被助手服务依赖（ADR 0027）。引入的写法由 lint 规则 biome-plugins/pi-only-in-assistant.grit 拦
 // （它的自测在 biome-plugins.test.ts）；这里检查规则看不见的两处：
-//   - `package.json` 的依赖：只有 apps/assistant/package.json 可以把 pi 的包写进依赖（#552 删除评测集臂 B 之前，
-//     evals/assistant/remote-tools/ 也可以）；
+//   - `package.json` 的依赖：只有 apps/assistant/package.json 可以把 pi 的包写进依赖；
 //   - 三斜线指令 `/// <reference types="…" />`：注释不在语法树里，规则匹配不到。
 // 规则管不了的写法还有拼出来的包名，那一种静态检查做不到。
 import { spawnSync } from "node:child_process";
@@ -12,8 +11,8 @@ import { repoRoot } from "./support/agent-binary.js";
 
 const PI_SCOPE = "@earendil-works/";
 
-/** 可以依赖 pi 的目录（仓库根下的路径前缀）：助手服务；评测集臂 B 的原型扩展（#552 删除臂 B 时一起删掉这一项）。 */
-const ALLOWED = ["apps/assistant/", "evals/assistant/remote-tools/"] as const;
+/** 可以依赖 pi 的目录（仓库根下的路径前缀）：只有助手服务。 */
+const ALLOWED = ["apps/assistant/"] as const;
 
 const allowed = (path: string) => ALLOWED.some((prefix) => path.startsWith(prefix));
 
@@ -104,15 +103,21 @@ describe("pi 只能被 apps/assistant 依赖：规则看不见的两处（样例
 				pkg({ dependencies: { "@earendil-works/pi-ai": "*" } }),
 			),
 		).toHaveLength(1);
+		// 评测集臂 B 的原型扩展以前是例外，#552 删掉了。
+		expect(
+			hit(
+				"evals/assistant/remote-tools/package.json",
+				pkg({ dependencies: { "@earendil-works/pi-coding-agent": "1.2.3" } }),
+			),
+		).toHaveLength(1);
 	});
 
 	it("package.json 的依赖：不该拦的", () => {
 		const miss = (path: string, json: Record<string, unknown>) =>
 			piDependencyProblems([{ path, json }]);
-		// 助手服务和评测集臂 B 的原型扩展可以。
+		// 助手服务可以。
 		const pi = pkg({ dependencies: { "@earendil-works/pi-coding-agent": "1.2.3" } });
 		expect(miss("apps/assistant/package.json", pi)).toEqual([]);
-		expect(miss("evals/assistant/remote-tools/package.json", pi)).toEqual([]);
 		// 别的依赖、没有依赖、相近的作用域名。
 		expect(
 			miss("apps/server/package.json", pkg({ dependencies: { zod: "4.6.7", "@earendil/x": "1" } })),
@@ -154,7 +159,6 @@ describe("pi 只能被 apps/assistant 依赖：规则看不见的两处（样例
 		const miss = (path: string, text: string) => piReferenceProblems([{ path, text }]);
 		const reference = '/// <reference types="@earendil-works/pi-ai" />';
 		expect(miss("apps/assistant/src/types.d.ts", reference)).toEqual([]);
-		expect(miss("evals/assistant/remote-tools/types.d.ts", reference)).toEqual([]);
 		// 别的包的三斜线指令、写在字符串里或普通注释里的包名。
 		expect(miss("apps/server/src/a.ts", '/// <reference types="node" />')).toEqual([]);
 		expect(
@@ -175,7 +179,7 @@ function repoFiles(patterns: readonly string[]): string[] {
 }
 
 describe("pi 只能被 apps/assistant 依赖：仓库里现在的样子", () => {
-	it("只有 apps/assistant/package.json（和 #552 删掉之前的评测集臂 B）把 pi 的包写进依赖", () => {
+	it("只有 apps/assistant/package.json 把 pi 的包写进依赖", () => {
 		const manifests = repoFiles(["package.json", "**/package.json"])
 			.filter((path) => !path.includes("node_modules/"))
 			.map((path) => ({
@@ -186,7 +190,7 @@ describe("pi 只能被 apps/assistant 依赖：仓库里现在的样子", () => 
 		expect(piDependencyProblems(manifests)).toEqual([]);
 	});
 
-	it("只有 apps/assistant（和 #552 删掉之前的评测集臂 B）用三斜线指令引用 pi 的包", () => {
+	it("只有 apps/assistant 用三斜线指令引用 pi 的包", () => {
 		const sources = repoFiles(["*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.mjs", "*.cjs"]).map(
 			(path) => ({ path, text: readFileSync(join(repoRoot, path), "utf8") }),
 		);

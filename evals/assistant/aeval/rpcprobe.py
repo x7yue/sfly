@@ -26,7 +26,7 @@ from aeval.classify import read_events, tool_result_text
 from aeval.env import ASSISTANT_NICKNAME, Stack
 from aeval.models import FAKE, Model, load_models
 from aeval.session import run_session
-from aeval.toolcheck import EXPECT_B, ToolCheck
+from aeval.toolcheck import EXPECT_P, ToolCheck
 
 PROBE_DIR = "/opt/aeval-probe"
 ROOT = "/root/rpcprobe"
@@ -119,7 +119,7 @@ KNOWN_DIFFERENCES: dict[str, tuple[bool, str]] = {
     "bash_background_alive": (False, "dead"),
     "bash_setsid_alive": (False, "dead"),
 }
-DIFFERENCES_DOC = "evals/assistant/remote-tools/README.md「本地和远程的语义差别」第 12、13 条"
+DIFFERENCES_DOC = "docs/ARCHITECTURE.md「远程工具和本地工具的语义差别」第 12、13 条"
 
 
 def judge_q1(raw: dict[str, Any]) -> Verdict:
@@ -161,7 +161,7 @@ def judge_q1(raw: dict[str, Any]) -> Verdict:
             )
     unexpected = []
     for i, step in enumerate(steps):
-        expect = EXPECT_B.get(step["id"])
+        expect = EXPECT_P.get(step["id"])
         got = b[i] if i < len(b) else None
         if expect and not (got and got["error"] == expect[0] and expect[1] in got["text"]):
             unexpected.append(step["id"])

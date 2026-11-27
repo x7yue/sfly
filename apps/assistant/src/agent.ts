@@ -1,6 +1,6 @@
 // 连到一台 Agent 的能力端口（默认 50052，ADR 0019）：执行命令、读文件、写文件、查文件属性。
 // 端口上是 tonic 的 gRPC 服务，没有认证；这里用 connect-node 的 gRPC 传输（HTTP/2）。
-// 从评测集的远程工具扩展（evals/assistant/remote-tools/agent.ts）搬过来；远程工具扩展和助手服务（往工作台上写 skill）都用它。
+// 从评测集臂 B 的原型扩展搬过来（原型在 #552 删掉了）；远程工具扩展和助手服务（往工作台上写 skill）都用它。
 
 import type { ClientSessionOptions } from "node:http2";
 import { create } from "@bufbuild/protobuf";

@@ -94,21 +94,21 @@ def test_plan_fills_only_missing_sessions_and_alternates_arms() -> None:
     from aeval.cli import plan_sessions
 
     have = Counter({("write", "m", "a"): 2, ("fix", "m", "a"): 5})
-    plan = plan_sessions(["write", "fix"], ["m"], ["a", "b"], 3, have)
+    plan = plan_sessions(["write", "fix"], ["m"], ["a", "p"], 3, have)
     assert plan == [
-        ("write", "m", 0, "b"),
-        ("fix", "m", 0, "b"),
-        ("write", "m", 1, "b"),
-        ("fix", "m", 1, "b"),
+        ("write", "m", 0, "p"),
+        ("fix", "m", 0, "p"),
+        ("write", "m", 1, "p"),
+        ("fix", "m", 1, "p"),
         ("write", "m", 2, "a"),
-        ("write", "m", 2, "b"),
-        ("fix", "m", 2, "b"),
+        ("write", "m", 2, "p"),
+        ("fix", "m", 2, "p"),
     ]
 
 
 def test_parse_caps() -> None:
     from aeval.cli import parse_caps
 
-    assert parse_caps(["a=37", "b=35"], ["a", "b"]) == {"a": 37, "b": 35}
-    assert parse_caps(["10"], ["a", "b"]) == {"a": 10, "b": 10}
+    assert parse_caps(["a=37", "p=35"], ["a", "p"]) == {"a": 37, "p": 35}
+    assert parse_caps(["10"], ["a", "p"]) == {"a": 10, "p": 10}
     assert parse_caps(None, ["a"]) == {}

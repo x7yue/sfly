@@ -8,7 +8,7 @@
 ## 前提
 
 - Docker（Linux 或 macOS 的 Docker Desktop），宿主机上有 `python3`（3.10 及以上，只用标准库）和 git（离线包只打包被 git 跟踪的文件）。
-- 磁盘：五个镜像约 7 GB（工作台、臂 B 的 pi、加固工作台三个各约 2 GB，共用大部分层），镜像站缓存约 50 MB，每次会话的记录几 MB。
+- 磁盘：四个镜像约 5 GB（工作台、加固工作台两个各约 2 GB，共用大部分层），镜像站缓存约 50 MB，每次会话的记录几 MB。
 - 三个镜像：
   - 控制面：默认 `ghcr.io/x7yue/sfly-server:0.5.0`。从 GitHub Release 下载 `sfly-server-<版本>-linux-<架构>.tar.gz` 后 `docker load -i`；
     要测当前源码，照下面「从源码构建控制面镜像」构建 `sfly-server:dev`，再 `./aeval.sh up --server-image sfly-server:dev`；
@@ -204,7 +204,7 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
   - **未归类**：结局不是契约里的值，或者驱动记下了认不出种类的问题。作废，主类「未归类」，`report` 单独一张表列出，判定
     那一行写明「有 N 次会话未归类」并带上「只作参考」：既不藏掉，也不算到平台头上。
   - 其余照常判分：平台自己给出的到上限算「超时」。
-- `report` 有平台臂时给出臂 A 对平台臂的判定，三条标准和臂 B 的一样（`aeval/decide.py`），结论是「平台臂没有明显变差」或
+- `report` 有平台臂时给出臂 A 对平台臂的判定，三条标准是 #443 事先定下的（`aeval/decide.py`），结论是「平台臂没有明显变差」或
   「明显变差」，明显变差时写明其中几次是平台故障；两臂的上限不一样时（臂 A 传了别的 `--max-turns`、`--max-seconds`）判定
   那一行带上「只作参考」，开头按臂写出各自的上限（没记上限的会话不算，例如被宿主机超时结束、没写 `driver.json` 的臂 A 会话）。判定下面说明内存、用时、轮数的口径。
 
@@ -254,8 +254,8 @@ HTTPS_PROXY=http://127.0.0.1:7890 python3 -m aeval.model_proxy --port 18900   # 
 每次会话：重置环境 → 准备这道题的初始状态 → 在开发环境容器里以 JSON 模式运行 pi（`--approve` 让它加载节点包目录里的两份 skill）→ 判分 → 保存记录。
 上限默认 40 轮、20 分钟（`--max-turns`、`--max-seconds`），到了就停；`--budget`（默认 40）是这一条命令最多跑多少次会话，计划超过它就不开始。
 加 `--fill` 时 `--repeat` 是目标次数：结果目录里已有的有效会话算进去，只跑缺的。模型端点出故障停下之后，重跑同一条命令接着跑。
-`--cap a=37 --cap b=35` 按臂限制会话总数：结果目录里这一臂已有的会话（作废的也算）到了上限就不再跑这一臂，每跑一次之前都查。
-给了几个臂时，同一道题的同一次重复两臂挨着跑（A、B、A、B……），上游的状态变化不会集中落在某一臂上。
+`--cap a=37 --cap p=35` 按臂限制会话总数：结果目录里这一臂已有的会话（作废的也算）到了上限就不再跑这一臂，每跑一次之前都查。
+给了几个臂时，同一道题的同一次重复两臂挨着跑（A、平台、A、平台……），上游的状态变化不会集中落在某一臂上。
 
 每次重置会重启开发环境容器和被测机：上一次会话里助手起的后台进程不会留到下一次，`/tmp` 清空。家目录里 Agent、uv、sfly 之外的文件不清（uv 的缓存要留着）。
 
@@ -265,9 +265,9 @@ HTTPS_PROXY=http://127.0.0.1:7890 python3 -m aeval.model_proxy --port 18900   # 
 ./aeval.sh campaign --model <名字>      # 结果在 ~/.local/share/sfly/evals/<日期>-<名字>/
 ```
 
-依次是：第一轮（每道题 3 次，臂 A）；对照实验（每道题臂 A、臂 B 各 5 次，两臂交替，臂 A 沿用第一轮的）。
+依次是：第一轮（每道题 3 次，臂 A）；对照实验（每道题臂 A、平台臂各 5 次，两臂交替，臂 A 沿用第一轮的；平台臂要先 `up --assistant`）。
 最后打印汇总表、过线检查（「写」「修」前 3 次各 ≥2 次、到 5 次时各 ≥4 次）和对照实验的判定。
-臂 A、臂 B 各有 40 次的上限（`--budget`、`--budget-b`），按结果目录里已有的会话（作废的也算）每跑一次之前检查。中途停下后重跑同一条命令，从停下的地方接着跑。
+臂 A、平台臂各有 40 次的上限（`--budget`、`--budget-p`），按结果目录里已有的会话（作废的也算）每跑一次之前检查。中途停下后重跑同一条命令，从停下的地方接着跑。
 
 调题目时可以分开做：
 
@@ -294,7 +294,7 @@ HTTPS_PROXY=http://127.0.0.1:7890 python3 -m aeval.model_proxy --port 18900   # 
 ./aeval.sh report ~/.local/share/sfly/evals/2026-11-21   # 汇总成 Markdown 表格
 ```
 
-汇总有：按（模型、题目、臂）的通过次数和各项中位数；作废的次数和原因、有效会话里的端点重试次数；每个模型的过线检查；有臂 B 的模型的对照实验判定。
+汇总有：按（模型、题目、臂）的通过次数和各项中位数；作废的次数和原因、有效会话里的端点重试次数；每个模型的过线检查；有平台臂的模型的对照实验判定（臂 A 对平台臂）。
 
 ### 判分
 
@@ -341,21 +341,22 @@ HTTPS_PROXY=http://127.0.0.1:7890 python3 -m aeval.model_proxy --port 18900   # 
 #442 里唯一没定的一处由对照实验决定（#443 的追加评论）：
 
 - **臂 A**：pi 在开发环境容器里，工具在本地执行（上面的做法，`--arm a`，默认）；
-- **臂 B**：pi 在单独的 `pi` 容器里，本地没有工作区，读、写、编辑、命令四个工具经扩展落到开发环境里 Agent 的能力端口（`--arm b`）。
-  扩展和本地、远程的语义差别见 [remote-tools/README.md](remote-tools/README.md)。
+- **平台臂**：平台内的助手，读、写、编辑、命令四个工具经远程工具扩展落到工作台 Agent 的能力端口（`--arm p`，见上面「平台臂」）。
+  远程工具和本地工具的语义差别见 `docs/ARCHITECTURE.md` 讲助手服务的那一节。
+  当初做选择时的远程臂是评测集里的原型扩展（臂 B，#443），选了「单独的助手容器加远程工具」之后，#552 用平台臂取代、删掉了它。
 
 ```sh
-./aeval.sh toolcheck                                          # 不花钱：假的模型端点照剧本调用四个工具，两臂逐步对比
+./aeval.sh toolcheck                                          # 不花钱：假的模型端点照剧本调用四个工具，两臂逐步对比（要 up --assistant）
 ./aeval.sh run --fill --task write --task fix --task orchestrate --task cross \
-    --model <名字> --arm a --arm b --repeat 5                   # 两臂各 5 次
+    --model <名字> --arm a --arm p --repeat 5                   # 两臂各 5 次
 ./aeval.sh report <结果目录>                                   # 汇总表按臂分开，最后是判定
 ```
 
-判定照事先定下的标准算（`aeval/decide.py`）：臂 B 同时满足「通过的会话数比臂 A 少不超过 1」「轮数中位数不超过臂 A 的 1.3 倍」
-「没有只在臂 B 出现两次以上的失败类型」就选方案甲（单独的助手容器加远程工具），否则选方案乙（循环就在工作台里）。
+判定照 #443 事先定下的标准算（`aeval/decide.py`）：平台臂同时满足「通过的会话数比臂 A 少不超过 1」「轮数中位数不超过臂 A 的 1.3 倍」
+「没有只在平台臂出现两次以上的失败类型」就是没有明显变差，否则明显变差，结果记到 #443，再定在产品里补什么。
 边界上恰好少 1、恰好 1.3 倍算满足，恰好 2 次算「两次以上」。两臂每道题的有效会话数不一样时不给判定；不到四道题各 5 次时标明只作参考；
-两臂作废的次数相差悬殊时提醒；判为方案乙时提示 #443 里的前提（越权探测发现的问题要先证明堵得住）；最后列出对臂 B 有利的已知差别。
-`toolcheck` 还核对两臂的系统提示里都有开发环境里的 skill 和 `AGENTS.md`。
+两臂作废的次数相差悬殊时提醒。以前结果目录里臂 B 的会话照样列在汇总表里，不算进判定。
+`toolcheck` 还核对两臂的系统提示里各有各该有的：臂 A 有工作目录里的 skill 和 `AGENTS.md`，平台臂只有平台自带的 skill。
 
 另外两项测量：
 
@@ -399,7 +400,7 @@ pi 进程的环境里放一个每次随机生成的假令牌。每一项的结�
 工作台上的命令什么时候消失由开发环境容器里的采样量（每 0.2 秒一次）。第 1 题的对照是臂 A：宿主机先在开发环境里用
 原版 pi（工具在本地执行）跑同一个工具自检的剧本。**只有后台进程那两步（`bash_background_alive`、`bash_setsid_alive`）
 允许和臂 A 不一样**，而且要是写明的样子：不报错、输出里有 `dead`（命令退出之后它起的后台进程被结束，
-`remote-tools/README.md`「本地和远程的语义差别」第 12、13 条）；别的每一步，含工具自检里没有预期的另外 5 个后台进程的步骤，
+`docs/ARCHITECTURE.md`「远程工具和本地工具的语义差别」第 12、13 条）；别的每一步，含工具自检里没有预期的另外 5 个后台进程的步骤，
 都要和臂 A 逐字相同。
 第 9 题另外在助手镜像（Node 的 slim 镜像，只有助手服务、pi 和扩展）上试一次：用镜像里的 pi 和扩展跑一轮。断网的环境里也能跑（`up --offline --isolated`）。
 升级 pi 之后重跑它，对照上一次的结论。容器里那一半在 `container/rpcprobe_run.py`，结论在 `aeval/rpcprobe.py` 里算。
@@ -491,7 +492,7 @@ pi 进程的环境里放一个每次随机生成的假令牌。每一项的结�
 ./aeval.sh pack ~/.local/share/sfly/evals/offline   # 生成 sfly-aeval-offline-<时间>.tar，约 750 MB
 ```
 
-包里有五个镜像（`images.tar`：控制面、PostgreSQL、工作台、臂 B 的 pi、`probe` 用的加固工作台）、这个评测目录（`evals/`）、镜像站的缓存（`mirror-cache/`）和 `MANIFEST.json`。在不能联网的机器上：
+包里有四个镜像（`images.tar`：控制面、PostgreSQL、工作台、`probe` 用的加固工作台）、这个评测目录（`evals/`）、镜像站的缓存（`mirror-cache/`）和 `MANIFEST.json`。在不能联网的机器上：
 
 ```sh
 tar -xf sfly-aeval-offline-*.tar && cd sfly-aeval-offline-*
@@ -503,13 +504,13 @@ evals/aeval.sh campaign --model <内网模型>     # 第一轮、过线补跑、
 evals/aeval.sh report ~/.local/share/sfly/evals/<日期>-<内网模型>
 ```
 
-验证离线包本身能用（不需要模型）：`up --offline --isolated` 把容器放进不通外网、也到不了宿主机的网络，并在网络里起一个假的模型端点（`container/fake_model.py`，照剧本执行参考答案），然后 `run --model fake --arm a --arm b`：两臂每道题都应该通过；`toolcheck` 两臂逐步一致。
+验证离线包本身能用（不需要模型）：`up --offline --isolated` 把容器放进不通外网、也到不了宿主机的网络，并在网络里起一个假的模型端点（`container/fake_model.py`，照剧本执行参考答案），然后 `run --model fake --arm a`：每道题都应该通过。离线包不带助手镜像，平台臂和 `toolcheck` 要另外 `docker load` 源码构建的控制面和助手镜像（见上面「平台的助手」）。
 
 ## 维护
 
 - 判分的纯逻辑（汇总规则、失败分类、`sfly debug` 输出的解析、会话驱动、转发口、假的模型端点、对照实验的判定、题目文件都被 git 跟踪、助手容器里的文件没有提示）有单元测试，在 `tests/` 下，几秒钟，不依赖 Docker 和网络。
   随 `pnpm test:py` 运行；单独跑用 `uv run --locked pytest evals/assistant`（`conftest.py` 不收集 `tasks/` 下题目里的节点包测试，它们要在那个包的 venv 里跑）。
   要起容器的判分自检是 `./aeval.sh selfcheck`，改了题目或判分时手动跑。两者分开，是为了不让 `pnpm test` 依赖 Docker 和网络。
-- 工作台、臂 B 的 pi、加固工作台三个镜像带着源文件的内容哈希（标签 `sfly.aeval.source`），改了 Dockerfile 或扩展会自动重新构建。
+- 工作台、加固工作台两个镜像带着源文件的内容哈希（标签 `sfly.aeval.source`），改了 Dockerfile 或扩展会自动重新构建。
 - 这个目录不会进发布物：控制面的单文件和镜像只打包 `apps/server`，SDK 的 wheel 只打包 `sdk/python`。
 - `tasks/` 下的节点包源码属于各自的节点包，`tasks/ruff.toml` 按节点包里的规则排 import。
