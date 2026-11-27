@@ -4,7 +4,8 @@ import { openPage } from "./cross-origin-page";
 import { START_TIME } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing } from "./support";
 
-const NICKNAME = "小明";
+/** 另一个来源的页面用这个人的个人令牌调用（测试用户的显示名就是这个名字）。 */
+const TRIGGERER = "小明";
 
 interface Subscription {
 	statuses: string[];
@@ -15,39 +16,44 @@ function subscribeToRun(
 	page: Page,
 	baseUrl: string,
 	runId: string,
+	token: string,
 ): Promise<JSHandle<Subscription>> {
 	return page.evaluateHandle(
-		({ baseUrl, runId }) => {
+		({ baseUrl, runId, token }) => {
 			const statuses: string[] = [];
-			const client = window.sfly.createClient({ baseUrl });
+			const client = window.sfly.createClient({ baseUrl, token });
 			const stop = client.runs.events(
 				{ params: { id: runId } },
 				{ run: (view) => statuses.push(view.status) },
 			);
 			return { statuses, stop };
 		},
-		{ baseUrl, runId },
+		{ baseUrl, runId, token },
 	);
 }
 
 const latestStatus = (subscription: JSHandle<Subscription>) =>
 	subscription.evaluate(({ statuses }) => statuses.at(-1));
 
-function readThenTrigger(page: Page, baseUrl: string, scenarioId: string) {
+function readThenTrigger(page: Page, baseUrl: string, scenarioId: string, token: string) {
 	return page.evaluate(
-		async ({ baseUrl, scenarioId, nickname }) => {
-			const client = window.sfly.createClient({ baseUrl, nickname });
+		async ({ baseUrl, scenarioId, token }) => {
+			const client = window.sfly.createClient({ baseUrl, token });
 			const { orchestrations } = await client.orchestrations.list({
 				params: { project: "default" },
 			});
 			const run = await client.runs.trigger({ params: { id: scenarioId } });
-			return { scenarios: orchestrations.map((s) => s.name), runId: run.id };
+			return {
+				scenarios: orchestrations.map((s) => s.name),
+				runId: run.id,
+				triggeredBy: run.triggered_by,
+			};
 		},
-		{ baseUrl, scenarioId, nickname: NICKNAME },
+		{ baseUrl, scenarioId, token },
 	);
 }
 
-test("另一个来源的页面：读到场景列表，带昵称触发运行（浏览器先预检），订阅运行的事件流并收到事件", async ({
+test("另一个来源的页面：带个人令牌读到场景列表、触发运行（浏览器先预检，触发人是令牌的用户），订阅运行的事件流并收到事件", async ({
 	page,
 	pageHost,
 	controlPlane,
@@ -57,11 +63,18 @@ test("另一个来源的页面：读到场景列表，带昵称触发运行（�
 	const agent = await connectAgent({ name: "agent", slots: 4 });
 	await publishPackage(controlPlane);
 	const scenarioId = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
+	const token = await controlPlane.users.token(TRIGGERER);
 	await openPage(page, pageHost);
 
-	const { scenarios, runId } = await readThenTrigger(page, controlPlaneProxy.url, scenarioId);
+	const { scenarios, runId, triggeredBy } = await readThenTrigger(
+		page,
+		controlPlaneProxy.url,
+		scenarioId,
+		token,
+	);
 
 	expect(scenarios).toEqual(["巡检"]);
+	expect(triggeredBy).toBe(TRIGGERER);
 	const triggers = controlPlaneProxy.requests.filter(
 		(request) => request.path === `/orchestrations/${scenarioId}/runs`,
 	);
@@ -69,12 +82,10 @@ test("另一个来源的页面：读到场景列表，带昵称触发运行（�
 	const [preflight, post] = triggers;
 	expect(preflight?.headers.origin).toBe(pageHost.origin);
 	expect(preflight?.headers["access-control-request-method"]).toBe("POST");
-	// biome-ignore lint/plugin/test-nickname-header: 测的是浏览器跨域请求带的昵称请求头
-	expect(preflight?.headers["access-control-request-headers"]).toContain("x-sfly-nickname");
-	// biome-ignore lint/plugin/test-nickname-header: 测的是浏览器跨域请求带的昵称请求头
-	expect(post?.headers["x-sfly-nickname"]).toBe(encodeURIComponent(NICKNAME));
+	expect(preflight?.headers["access-control-request-headers"]).toContain("authorization");
+	expect(post?.headers.authorization).toBe(`Bearer ${token}`);
 
-	const subscription = await subscribeToRun(page, controlPlaneProxy.url, runId);
+	const subscription = await subscribeToRun(page, controlPlaneProxy.url, runId, token);
 	await expect.poll(() => latestStatus(subscription)).toBe("running");
 	await agent.succeed(await agent.nextAssign());
 	await expect.poll(() => latestStatus(subscription)).toBe("success");
@@ -130,7 +141,7 @@ test.describe("控制面版本和 API 客户端不一致", () => {
 test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 	test.use({ restrictCorsToPage: true });
 
-	test("名单里的来源照常调用：读、带昵称触发、订阅事件流", async ({
+	test("名单里的来源照常调用：带个人令牌读、触发、订阅事件流", async ({
 		page,
 		pageHost,
 		controlPlane,
@@ -139,10 +150,16 @@ test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 		const agent = await connectAgent({ name: "agent", slots: 4 });
 		await publishPackage(controlPlane);
 		const scenarioId = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
+		const token = await controlPlane.users.token(TRIGGERER);
 		await openPage(page, pageHost);
 
-		const { scenarios, runId } = await readThenTrigger(page, controlPlane.httpUrl, scenarioId);
-		const subscription = await subscribeToRun(page, controlPlane.httpUrl, runId);
+		const { scenarios, runId } = await readThenTrigger(
+			page,
+			controlPlane.httpUrl,
+			scenarioId,
+			token,
+		);
+		const subscription = await subscribeToRun(page, controlPlane.httpUrl, runId, token);
 		await agent.succeed(await agent.nextAssign());
 
 		expect(scenarios).toEqual(["巡检"]);
@@ -162,11 +179,12 @@ test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 				blocked.push(message.text());
 			}
 		});
+		const token = await controlPlane.users.token(TRIGGERER);
 		await openPage(page, foreignPageHost);
 
 		const codes = await page.evaluate(
-			async ({ baseUrl, scenarioId, nickname }) => {
-				const client = window.sfly.createClient({ baseUrl, nickname });
+			async ({ baseUrl, scenarioId, token }) => {
+				const client = window.sfly.createClient({ baseUrl, token });
 				const codeOf = (call: () => Promise<unknown>) =>
 					call().then(
 						() => "ok",
@@ -177,7 +195,7 @@ test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 					write: await codeOf(() => client.runs.trigger({ params: { id: scenarioId } })),
 				};
 			},
-			{ baseUrl: controlPlane.httpUrl, scenarioId, nickname: NICKNAME },
+			{ baseUrl: controlPlane.httpUrl, scenarioId, token },
 		);
 
 		expect(codes).toEqual({ read: "network_error", write: "network_error" });

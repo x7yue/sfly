@@ -152,17 +152,19 @@ describe("编排版本：冲突、历史与恢复", () => {
 		});
 	});
 
-	it("恢复需要昵称；版本不存在时返回 404", async () => {
+	it("恢复不带凭据 401；版本不存在时返回 404", async () => {
 		const id = await api.createOrchestration("恢复校验");
 		await save(id, { base_version: 0, document: doc("a") });
-		const noNick = await cp.fetch(`/orchestrations/${id}/versions/1/restore`, {
+		const anonymous = await cp.fetch(`/orchestrations/${id}/versions/1/restore`, {
 			method: "POST",
 			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: "{}",
 		});
-		expect(noNick.status).toBe(400);
-		expect(await noNick.json()).toMatchObject({ error: { code: "nickname_required" } });
+		expect(anonymous.status).toBe(401);
+		expect(await anonymous.json()).toMatchObject({
+			error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+		});
 
 		for (const path of [
 			`/orchestrations/${id}/versions/9/restore`,

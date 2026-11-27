@@ -31,11 +31,11 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 		env: PERF_ADMIN_ENV,
 	});
 	ctx.defer(() => server.stop());
-	await allowAgents(ctx, server);
+	const cookie = await allowAgents(ctx, server);
 	return controlPlaneLoad(
 		ctx,
 		{
-			api: new PerfApi(server.httpUrl),
+			api: new PerfApi(server.httpUrl, cookie),
 			grpcUrl: server.grpcUrl,
 			databaseUrl: database.url,
 			serverPid: server.child.pid as number,

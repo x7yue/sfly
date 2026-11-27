@@ -119,9 +119,9 @@ describe("飞书机器人的登记和测试消息", () => {
 			expect((await list()).map((b) => b.name)).toEqual(["a", "b"]);
 		});
 
-		it("所有写操作都需要昵称", async () => {
+		it("所有写操作不带凭据都是 401", async () => {
 			await api.createFeishuBot("群", feishu.webhookUrl());
-			const noNickname = (method: string, path: string, body?: unknown) =>
+			const anonymous = (method: string, path: string, body?: unknown) =>
 				cp.fetch(path, {
 					method,
 					credentials: "omit",
@@ -129,16 +129,18 @@ describe("飞书机器人的登记和测试消息", () => {
 					body: body === undefined ? undefined : JSON.stringify(body),
 				});
 			for (const res of [
-				await noNickname("POST", "/projects/default/feishu-bots", {
+				await anonymous("POST", "/projects/default/feishu-bots", {
 					name: "新",
 					webhook_url: feishu.webhookUrl(),
 				}),
-				await noNickname("PATCH", botUrl("群"), { webhook_url: feishu.webhookUrl("n") }),
-				await noNickname("DELETE", botUrl("群")),
-				await noNickname("POST", `${botUrl("群")}/test`),
+				await anonymous("PATCH", botUrl("群"), { webhook_url: feishu.webhookUrl("n") }),
+				await anonymous("DELETE", botUrl("群")),
+				await anonymous("POST", `${botUrl("群")}/test`),
 			]) {
-				expect(res.status).toBe(400);
-				expect(await res.json()).toMatchObject({ error: { code: "nickname_required" } });
+				expect(res.status).toBe(401);
+				expect(await res.json()).toMatchObject({
+					error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+				});
 			}
 			expect(feishu.requests).toEqual([]);
 			expect((await list()).map((b) => b.name)).toEqual(["群"]);

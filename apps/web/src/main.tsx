@@ -4,7 +4,7 @@ import { LucideProvider } from "lucide-react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { alignPulses } from "#/components/status";
-import { refreshIdentity, setSessionExpiredHandler } from "#/lib/identity";
+import { getIdentity, refreshIdentity, setSessionExpiredHandler } from "#/lib/identity";
 import { initMotionPause } from "#/lib/motion-pause";
 import { createRouter } from "./router";
 import "./styles/app.css";
@@ -22,8 +22,15 @@ setSessionExpiredHandler(() => {
 	router.options.context.queryClient.clear();
 	void router.navigate({ to: "/login", search: { redirect: here, expired: true }, replace: true });
 });
-// 问控制面现在是不是登录着（登录 Cookie 页面脚本读不到）：顶栏的账号菜单、昵称弹窗要用。
-void refreshIdentity();
+// 问控制面现在是不是登录着（登录 Cookie 页面脚本读不到）：顶栏的账号菜单要用。没有登录就去登录页（#494 起不带凭据的请求一律 401），
+// 登录之后回到现在这个页面；登录页、初始化页本身不跳。
+void refreshIdentity().then(() => {
+	if (getIdentity().status !== "anonymous") return;
+	const { pathname } = window.location;
+	if (pathname === "/login" || pathname === "/setup") return;
+	const here = `${pathname}${window.location.search}${window.location.hash}`;
+	void router.navigate({ to: "/login", search: { redirect: here }, replace: true });
+});
 
 createRoot(root).render(
 	<StrictMode>

@@ -181,6 +181,7 @@ export const STRING_ENV_NAMES = [
 	"SFLY_PUBLIC_GRPC_URL",
 	"SFLY_PYPI_MIRROR",
 	"SFLY_GITHUB_RELEASE_MIRROR",
+	"SFLY_AGENT_TOKEN",
 ] as const;
 /** 这一份检查读的数字类环境变量。 */
 export const NUMERIC_ENV_NAMES = [
@@ -212,7 +213,8 @@ type PassedSettingKey =
 	| "publicHttpUrl"
 	| "publicGrpcUrl"
 	| "pypiMirror"
-	| "githubReleaseMirror";
+	| "githubReleaseMirror"
+	| "agentToken";
 
 /**
  * 环境变量换成的设置；没设置的项是 undefined（用各自的默认值）。端口（`httpPort`、`grpcPort`）另外传（`main.ts` 把它们放进
@@ -243,6 +245,24 @@ export class EnvSettingsError extends Error {
 		);
 		this.name = "EnvSettingsError";
 	}
+}
+
+/** 共享令牌（`SFLY_AGENT_TOKEN`）最短几个字符（#494）。 */
+export const AGENT_TOKEN_MIN_LENGTH = 32;
+
+/**
+ * 共享令牌（`SFLY_AGENT_TOKEN`）：库里存的是不加盐的 SHA-256，对随机串够用，对人设的弱口令不够（拿到备份就能离线猜）。
+ * 短于 {@link AGENT_TOKEN_MIN_LENGTH} 个字符的不启动，写明怎么生成（#494）；不回显填的值。空的是没配。
+ */
+export function agentTokenFromEnv(value: string | undefined): string | undefined {
+	if (value === undefined || value === "") return undefined;
+	if ([...value].length < AGENT_TOKEN_MIN_LENGTH) {
+		throw new Error(
+			`SFLY_AGENT_TOKEN（Agent 共享令牌）太短：至少 ${AGENT_TOKEN_MIN_LENGTH} 个字符（库里存的是不加盐的 SHA-256，短的令牌拿到备份就能猜出来）；` +
+				"用 `openssl rand -hex 32` 生成一个，换掉之后用旧令牌连接的 Agent 要一起换（更好的做法是给每台 Agent 签发自己的 Agent 凭据）",
+		);
+	}
+	return value;
 }
 
 /**
@@ -351,6 +371,7 @@ export function readEnvSettings(env: Readonly<Record<string, string | undefined>
 				),
 			undefined,
 		),
+		agentToken: read(() => agentTokenFromEnv(text("SFLY_AGENT_TOKEN")), undefined),
 	};
 	if (problems.length > 0) throw new EnvSettingsError(problems);
 	return settings;

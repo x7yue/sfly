@@ -10,6 +10,7 @@ import { locatorOf, routeKey } from "../src/auth/access-rules.js";
 import { publicPackageLockKey } from "../src/packages/package-repository.js";
 import { ApiClient } from "./support/api-client.js";
 import { actAs, bearer, loginCookie, TestAccounts } from "./support/credentials.js";
+import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { benchDocument, publishBench } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -73,7 +74,7 @@ describe("带凭据的请求", () => {
 	const one = async (sql: string, params: unknown[] = []) => (await db.query(sql, params)).rows[0];
 
 	describe("身份来自凭据，不看昵称请求头", () => {
-		it("写操作带令牌不需要昵称；不带凭据照旧要昵称（400 nickname_required）", async () => {
+		it("写操作带令牌不需要昵称；不带凭据是 401，说明写明 sfly login（#494）", async () => {
 			const token = await accounts.personalToken(editor);
 			const res = await call(bearer(token), "POST", "/projects/default/orchestrations", {
 				name: "场景",
@@ -82,8 +83,10 @@ describe("带凭据的请求", () => {
 			const anonymous = await call({}, "POST", "/projects/default/orchestrations", {
 				name: "场景",
 			});
-			expect(anonymous.status).toBe(400);
-			expect(await anonymous.json()).toMatchObject({ error: { code: "nickname_required" } });
+			expect(anonymous.status).toBe(401);
+			expect(await anonymous.json()).toMatchObject({
+				error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+			});
 		});
 
 		it("个人令牌：保存版本、触发、取消、运行预设、关注项记下用户 ID 和令牌的名称，显示名取用户的（昵称请求头不作数）", async () => {
@@ -238,19 +241,7 @@ describe("带凭据的请求", () => {
 			);
 		});
 
-		it("不带凭据：昵称请求头照旧，用户 ID 和令牌的名称为空", async () => {
-			const api = new ApiClient(cp);
-			const scenario = await api.orchestrationWith(DOCUMENT);
-			const runId = await api.triggerOk(scenario);
-			expect(
-				await one(
-					"select triggered_by, triggered_by_user_id, triggered_token from runs where id = $1",
-					[runId],
-				),
-			).toEqual({ triggered_by: "tester", triggered_by_user_id: null, triggered_token: null });
-		});
-
-		it("发布节点包：带凭据的记下发布人（显示名、用户 ID、令牌的名称），不带凭据的没有", async () => {
+		it("发布节点包：记下发布人（显示名、用户 ID、令牌的名称）；不带凭据的发布不了（401）", async () => {
 			const token = await accounts.personalToken(editor, { name: "发布令牌" });
 			const archive = (name: string) =>
 				packageArchive(packageMetadata({ name, version: "1.0.0" })) as Uint8Array<ArrayBuffer>;
@@ -261,7 +252,7 @@ describe("带凭据的请求", () => {
 					body: archive(name),
 				});
 			expect((await publish(bearer(token), "with-credential")).status).toBe(201);
-			expect((await publish({}, "anonymous")).status).toBe(201);
+			expect((await publish({}, "anonymous")).status).toBe(401);
 			expect(
 				await one(
 					"select published_by, published_by_user_id, published_token from node_packages where name = 'with-credential'",
@@ -272,10 +263,8 @@ describe("带凭据的请求", () => {
 				published_token: "发布令牌",
 			});
 			expect(
-				await one(
-					"select published_by, published_by_user_id, published_token from node_packages where name = 'anonymous'",
-				),
-			).toEqual({ published_by: null, published_by_user_id: null, published_token: null });
+				await one("select count(*)::int as n from node_packages where name = 'anonymous'"),
+			).toEqual({ n: 0 });
 		});
 	});
 
@@ -510,29 +499,28 @@ describe("带凭据的请求", () => {
 			expect((await db.query("select 1 from platform_admin_actions")).rowCount).toBe(0);
 		});
 
-		it("路径里的项目不存在：404，有没有凭据、是谁都一样；什么也没有发布", async () => {
+		it("路径里的项目不存在：带凭据的 404；不带凭据的 401，不透露项目存不存在；什么也没有发布", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = await accounts.personalToken(admin);
 			for (const project of ["alpha", "Not-A-Project"]) {
-				for (const headers of [{}, bearer(token)]) {
-					const res = await publish(headers, "rejected", project);
-					expect(res.status, project).toBe(404);
-					expect(await error(res), project).toMatchObject({ code: "not_found" });
-				}
+				const res = await publish(bearer(token), "rejected", project);
+				expect(res.status, project).toBe(404);
+				expect(await error(res), project).toMatchObject({ code: "not_found" });
+				expect((await publish({}, "rejected", project)).status, project).toBe(401);
 			}
 			expect(await projectOf("rejected")).toEqual([]);
 		});
 	});
 
 	describe("拒绝的方式", () => {
-		it("失效的凭据 401 unauthorized，带什么凭据都一样；不带凭据照旧放行", async () => {
+		it("失效的凭据 401 unauthorized，带什么凭据都一样；不带凭据也是 401", async () => {
 			const res = await call(bearer("sfly_pat_unknown"), "GET", "/projects/default/orchestrations");
 			expect(res.status).toBe(401);
 			expect(await res.json()).toMatchObject({ error: { code: "unauthorized" } });
 			expect(
 				(await call(loginCookie("nope"), "GET", "/projects/default/orchestrations")).status,
 			).toBe(401);
-			expect((await call({}, "GET", "/projects/default/orchestrations")).status).toBe(200);
+			expect((await call({}, "GET", "/projects/default/orchestrations")).status).toBe(401);
 			// 不属于项目的接口不看凭据。
 			expect((await call(bearer("sfly_pat_unknown"), "GET", "/health")).status).toBe(200);
 		});
@@ -749,7 +737,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 			member_role: string | null;
 		}[];
 
-	it("路径参数含 NUL：和不带凭据一样是 404，不是 500，也不留记录（NUL 存不进 PostgreSQL 的文本）", async () => {
+	it("路径参数含 NUL：带凭据的是 404，不是 500，也不留记录（NUL 存不进 PostgreSQL 的文本）；不带凭据的 401", async () => {
 		for (const path of [
 			"/projects/default/feishu-bots/%00x",
 			"/projects/default/feishu-bots/a%00",
@@ -758,7 +746,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 			const withToken = await call("DELETE", path);
 			const anonymous = await cp.fetch(path, { method: "DELETE" });
 			expect(withToken.status, path).toBe(404);
-			expect(withToken.status, path).toBe(anonymous.status);
+			expect(anonymous.status, path).toBe(401);
 		}
 		expect(await records()).toEqual([]);
 	});
@@ -955,7 +943,7 @@ describe("开发 Agent 的凭据随用户停用失效（真库）", () => {
 	});
 });
 
-describe("共享令牌", () => {
+describe("共享令牌：和不带凭据一样（#494）", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ defaultCredentials: false, agentToken: "s3cret" });
@@ -964,26 +952,26 @@ describe("共享令牌", () => {
 		await cp.close();
 	});
 
-	it("带共享令牌的 HTTP 请求和不带凭据的走同一套：照旧放行，不看昵称以外的身份（库里没有的 Bearer 才是 401）", async () => {
-		const api = new ApiClient(cp);
-		const withShared = await cp.fetch("/projects/default/orchestrations", {
+	it("带共享令牌的 HTTP 请求：读、写都是 401，说明写明 sfly login；库里没有的 Bearer 也是 401", async () => {
+		for (const headers of [bearer("s3cret"), bearer("wrong"), {}]) {
+			const read = await cp.fetch("/projects/default/orchestrations", { headers });
+			expect(read.status).toBe(401);
+			const write = await cp.fetch("/projects/default/orchestrations", {
+				method: "POST",
+				headers: { "content-type": "application/json", ...headers },
+				body: JSON.stringify({ name: "x" }),
+			});
+			expect(write.status).toBe(401);
+		}
+		const shared = await cp.fetch("/projects/default/orchestrations", {
 			headers: bearer("s3cret"),
 		});
-		expect(withShared.status).toBe(200);
-		const wrong = await cp.fetch("/projects/default/orchestrations", { headers: bearer("wrong") });
-		expect(wrong.status).toBe(401);
-		// 写操作：没有昵称仍是 400，共享令牌不是身份。
-		const write = await cp.fetch("/projects/default/orchestrations", {
-			method: "POST",
-			headers: { "content-type": "application/json", ...bearer("s3cret") },
-			body: JSON.stringify({ name: "x" }),
+		expect(await shared.json()).toMatchObject({
+			error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
 		});
-		expect(write.status).toBe(400);
-		expect(await write.json()).toMatchObject({ error: { code: "nickname_required" } });
-		expect(await api.createOrchestration("带昵称")).toBeTruthy();
 	});
 
-	it("配了共享令牌时，Agent 凭据上传产物照样通过：访问检查已经核对过凭据，处理函数不再拿共享令牌比；共享令牌和不带凭据的上传仍按共享令牌", async () => {
+	it("上传产物：Agent 凭据照常；共享令牌和不带凭据的，任务不在以旧方式连接的 Agent 上时 401；别的 Agent 的凭据 404", async () => {
 		const accounts = new TestAccounts(cp.database.url);
 		try {
 			const { task } = await seedTask(cp.asTester(), { agent: "agent-x", status: "running" });
@@ -995,13 +983,138 @@ describe("共享令牌", () => {
 				});
 			const credential = await accounts.agentCredential("default", "agent-x");
 			expect((await upload(bearer(credential), "own.txt")).status).toBe(201);
-			expect((await upload(bearer("s3cret"), "shared.txt")).status).toBe(201);
+			expect((await upload(bearer("s3cret"), "shared.txt")).status).toBe(401);
 			expect((await upload({}, "anonymous.txt")).status).toBe(401);
-			// 别的 Agent 的凭据：访问检查拒绝（任务不是派给它的）。
 			const other = await accounts.agentCredential("default", "agent-y");
 			expect((await upload(bearer(other), "other.txt")).status).toBe(404);
 		} finally {
 			await accounts.close();
 		}
+	});
+});
+
+describe("过渡窗口：以旧方式连接的 Agent 手上的任务还能装包、传产物、在任务里下载产物（ADR 0029「迁移与过渡」，#494）", () => {
+	const SHARED = "legacy-window-shared-token";
+	const DOC = {
+		default_agent: "legacy-a",
+		nodes: [
+			{ id: "entry", kind: "entry" },
+			{ id: "a", kind: "package", package: "stub", node: "echo" },
+		],
+		edges: [{ from: "entry", to: "a", kind: "chain" }],
+		packages: { stub: "1.0.0" },
+	};
+	let cp: TestControlPlane;
+	let db: pg.Client;
+	const agents: FakeAgent[] = [];
+	beforeAll(async () => {
+		cp = await startTestControlPlane({ defaultCredentials: false, agentToken: SHARED });
+		db = new pg.Client({ connectionString: cp.database.url });
+		await db.connect();
+		await publishPackage(cp.asTester(), "stub", "1.0.0", { echo: ["text"] });
+		await publishPackage(cp.asTester(), "stub", "2.0.0", { echo: ["text"] });
+		await publishPackage(cp.asTester(), "other", "1.0.0", { echo: ["text"] });
+	});
+	afterAll(async () => {
+		await Promise.all(agents.splice(0).map((a) => a.disconnect()));
+		await db.end();
+		await cp.close();
+	});
+
+	const archive = (headers: Record<string, string>, name = "stub", version = "1.0.0") =>
+		cp.fetch(`/projects/default/packages/${name}/versions/${version}/archive`, { headers });
+	const upload = (task: string, headers: Record<string, string>, name = "report.txt") =>
+		cp.fetch(`/tasks/${task}/artifacts/${name}`, {
+			method: "PUT",
+			headers: { "content-type": "application/octet-stream", ...headers },
+			body: "x",
+		});
+	const download = (task: string, headers: Record<string, string>, name = "report.txt") =>
+		cp.fetch(`/tasks/${task}/artifacts/${name}`, { headers });
+	/** 以旧方式（共享令牌）连上 legacy-a，触发一次运行，拿到派给它的任务。 */
+	const legacyTask = async (name = "legacy-a") => {
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name, token: SHARED });
+		agents.push(agent);
+		const api = new ApiClient(cp.asTester());
+		const runId = await api.triggerOk(await api.orchestrationWith({ ...DOC, default_agent: name }));
+		return { agent, runId, task: await agent.nextAssign() };
+	};
+
+	it("放行：任务在以旧方式连接的 Agent 上时，不带凭据、带共享令牌的三条通道都通过", async () => {
+		const { agent, task } = await legacyTask();
+		for (const headers of [{}, bearer(SHARED)]) {
+			expect((await archive(headers)).status).toBe(200);
+		}
+		expect((await upload(task.taskId, {})).status).toBe(201);
+		expect((await upload(task.taskId, bearer(SHARED), "shared.txt")).status).toBe(201);
+		expect((await download(task.taskId, {})).status).toBe(200);
+		expect((await download(task.taskId, bearer(SHARED), "shared.txt")).status).toBe(200);
+		await agent.succeed(task);
+	});
+
+	it("不放行：任务要的不是这个版本、这个包；任务结束之后；别的接口一律 401", async () => {
+		const { agent, task } = await legacyTask();
+		// 运行锁定的是 stub@1.0.0：2.0.0 和别的包不是它要的。
+		expect((await archive({}, "stub", "2.0.0")).status).toBe(401);
+		expect((await archive({}, "other", "1.0.0")).status).toBe(401);
+		// 同一个任务的日志、动作不在放行的三条里。
+		expect((await cp.fetch(`/tasks/${task.taskId}/logs`)).status).toBe(401);
+		expect((await upload(task.taskId, {})).status).toBe(201);
+		await agent.succeed(task);
+		// 任务结束了：不再在旧方式连接的 Agent 手上。
+		await eventually(async () => expect((await archive({})).status).toBe(401));
+		expect((await upload(task.taskId, {}, "late.txt")).status).toBe(401);
+		expect((await download(task.taskId, {})).status).toBe(401);
+	});
+
+	it("不放行：任务在带 Agent 凭据连接的 Agent 上时，不带凭据、带共享令牌的都 401（凭据照常）", async () => {
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "modern-a" });
+		agents.push(agent);
+		const api = new ApiClient(cp.asTester());
+		await api.triggerOk(await api.orchestrationWith({ ...DOC, default_agent: "modern-a" }));
+		const task = await agent.nextAssign();
+		for (const headers of [{}, bearer(SHARED)]) {
+			expect((await archive(headers)).status).toBe(401);
+			expect((await upload(task.taskId, headers)).status).toBe(401);
+			expect((await download(task.taskId, headers)).status).toBe(401);
+		}
+		expect((await upload(task.taskId, agent.auth)).status).toBe(201);
+		await agent.succeed(task);
+	});
+
+	it("放行：升级控制面之后，上一版的 Agent 即使用 Agent 凭据连接，手上的任务也照常做完（ADR 0014；它下载归档不带凭据）", async () => {
+		const first = await FakeAgent.connect(cp.grpcUrl, { name: "draining-a" });
+		const api = new ApiClient(cp.asTester());
+		await api.triggerOk(await api.orchestrationWith({ ...DOC, default_agent: "draining-a" }));
+		const task = await first.nextAssign();
+		// 版本一致、带 Agent 凭据：不放行。
+		expect((await archive({})).status).toBe(401);
+		await first.disconnect();
+		// 以另一个版本重连（同一个 Agent 凭据），上报手上的任务：不派新任务，只等它做完。
+		const agent = await FakeAgent.connect(cp.grpcUrl, {
+			name: "draining-a",
+			agentVersion: "0.0.1-previous",
+			runningTasks: [{ taskId: task.taskId, attempt: task.attempt }],
+		});
+		agents.push(agent);
+		await eventually(async () => expect((await archive({})).status).toBe(200));
+		expect((await upload(task.taskId, {})).status).toBe(201);
+		expect((await download(task.taskId, {})).status).toBe(200);
+		await agent.succeed(task);
+		await eventually(async () => expect((await archive({})).status).toBe(401));
+	});
+
+	it("任何一个项目登记了工作台：窗口关上，同样的请求 401", async () => {
+		const { agent, task } = await legacyTask("legacy-b");
+		expect((await upload(task.taskId, {})).status).toBe(201);
+		await db.query("update projects set workbench_agent = 'someone' where id = 'default'");
+		try {
+			expect((await archive({})).status).toBe(401);
+			expect((await upload(task.taskId, {}, "closed.txt")).status).toBe(401);
+			expect((await download(task.taskId, {})).status).toBe(401);
+		} finally {
+			await db.query("update projects set workbench_agent = null where id = 'default'");
+		}
+		await agent.succeed(task);
 	});
 });

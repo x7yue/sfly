@@ -14,6 +14,7 @@ import type { TaskActions } from "../actions/task-actions.js";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentCredentialService } from "../agents/agent-credentials.js";
 import type { AgentHub } from "../agents/agent-hub.js";
+import { createLegacyAgentAccess } from "../agents/legacy-agent-access.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import { AccessGuard } from "../auth/access-guard.js";
 import { DbAccessStore } from "../auth/access-store.js";
@@ -97,8 +98,6 @@ export interface HttpApiDeps {
 	metricQueries: MetricQueries;
 	retention: Retention;
 	artifacts: ArtifactStore;
-	/** Agent 共享注册令牌：设置后上传产物要带上它。 */
-	agentToken?: string;
 	/** 对外公开的地址、版本号和镜像（产物引用、Agent 下载与 install.sh、sfly 索引、文档占位符用）。 */
 	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
@@ -188,7 +187,6 @@ export function buildHttpApi({
 	metricQueries,
 	retention,
 	artifacts,
-	agentToken,
 	publicConfig,
 	sdkWheels,
 	stdIndex,
@@ -253,9 +251,17 @@ export function buildHttpApi({
 	guardHttpContract(app, httpContract);
 	const accessStore = new DbAccessStore(database.db);
 	// 每个契约路由在进处理函数之前先过访问检查（ADR 0029「一处检查」）；装在注册任何契约路由之前。
-	installAccessGuard(app, new AccessGuard({ store: accessStore, clock, loginIdleMs, origins }), {
-		publicHttps,
+	// 以旧方式连接的 Agent 在过渡窗口里还要用的三条通道（#494）：窗口在任何一个项目登记了工作台时关上。
+	const legacy = createLegacyAgentAccess({
+		db: database.db,
+		hub,
+		windowOpen: async () => !(await workbench.credentialRequired()),
 	});
+	installAccessGuard(
+		app,
+		new AccessGuard({ store: accessStore, clock, loginIdleMs, origins, legacy }),
+		{ publicHttps },
+	);
 	// 每个响应都带控制面时间，页面据此修正浏览器时间（ADR 0018）；SSE 另有心跳事件。
 	// 在发出响应时取时间（不是收到请求时），处理耗时不算进页面的误差里。
 	app.addHook("onSend", async (_request, reply) => {
@@ -383,7 +389,7 @@ export function buildHttpApi({
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerActionRoutes(app, { actions, sse });
 	registerSessionRoutes(app, { sessions, service: sessionService, sse });
-	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
+	registerArtifactRoutes(app, { artifacts, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig, stdIndex });
 	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });

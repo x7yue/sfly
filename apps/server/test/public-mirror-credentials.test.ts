@@ -1,9 +1,10 @@
 // 镜像地址带用户名和密码时，不用登录就能读的地方不把它们写出去（#755）：`/install.sh`（正文和 `--help` 的输出）、
-// `/sdk/project-settings`（`sfly init` 写进新节点包的 pyproject.toml）。Agent 握手的 Welcome 照旧原样下发（过渡期没配共享令牌时，
-// 连得上 Agent 网关、又知道旧方式登记的名字的连接也拿得到，#494 之后只给带 Agent 凭据的连接：docs/guide/install-agent.md）。
+// `/sdk/project-settings`（`sfly init` 写进新节点包的 pyproject.toml）。Agent 握手的 Welcome 只给带 Agent 凭据的连接原值；
+// 以旧方式连接的（共享令牌、没有凭据）拿到的也是去掉了用户名和密码的地址（#494）。
 // 没配凭据的地址原样。凭据只写在本文件的常量里，断言逐个检查用户名和密码都没有出现。
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import pg from "pg";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readEnvSettings } from "../src/config/env-settings.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -37,6 +38,53 @@ describe("公开的地方不带镜像地址里的用户名和密码", () => {
 		cp = await startTestControlPlane({ pypiMirror, githubReleaseMirror });
 		return cp;
 	};
+
+	it("Welcome：带 Agent 凭据的连接拿到原值；用共享令牌、不带凭据连接的拿到去掉了用户名和密码的地址（#494）", async () => {
+		const control = await startTestControlPlane({
+			pypiMirror: PYPI_WITH,
+			githubReleaseMirror: GITHUB_WITH,
+			agentToken: "shared-token",
+		});
+		cp = control;
+		const withCredential = await FakeAgent.connect(control.grpcUrl, { name: "agent-credential" });
+		agents.push(withCredential);
+		expect(withCredential.welcome).toMatchObject({
+			pypiMirror: PYPI_WITH,
+			githubReleaseMirror: GITHUB_WITH,
+		});
+		const shared = await FakeAgent.connect(control.grpcUrl, {
+			name: "agent-shared",
+			token: "shared-token",
+		});
+		agents.push(shared);
+		expect(shared.welcome).toMatchObject({
+			pypiMirror: PYPI_PUBLIC,
+			githubReleaseMirror: GITHUB_PUBLIC,
+		});
+		expectNoCredentials(JSON.stringify(shared.welcome), "共享令牌连接的 Welcome");
+		// 没有凭据的旧方式（没配共享令牌、名字已经登记在默认项目里）：同样拿不到。
+		const plain = await startTestControlPlane({
+			pypiMirror: PYPI_WITH,
+			githubReleaseMirror: GITHUB_WITH,
+		});
+		try {
+			const sql = new pg.Client({ connectionString: plain.database.url });
+			await sql.connect();
+			await sql.query(
+				"insert into agents (name, project_id, info, status, registered_at, last_seen_at) values ('agent-none', 'default', '{}', 'offline', now(), now())",
+			);
+			await sql.end();
+			const none = await FakeAgent.connect(plain.grpcUrl, { name: "agent-none", token: "" });
+			expect(none.welcome).toMatchObject({
+				pypiMirror: PYPI_PUBLIC,
+				githubReleaseMirror: GITHUB_PUBLIC,
+			});
+			expectNoCredentials(JSON.stringify(none.welcome), "不带凭据连接的 Welcome");
+			await none.disconnect();
+		} finally {
+			await plain.close();
+		}
+	});
 
 	it("不登录下载的 /install.sh：正文里的两个镜像地址去掉了用户名和密码，主机、端口、路径留着", async () => {
 		const control = await start(PYPI_WITH, GITHUB_WITH);

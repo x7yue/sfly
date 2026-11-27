@@ -96,7 +96,7 @@ describe("跨域：默认允许所有来源", () => {
 		expect(noMethod.status).toBe(404);
 	});
 
-	it("接口响应带允许来源和暴露的响应头：成功、错误、/api 前缀、未知路由都一样", async () => {
+	it("接口响应带允许来源和暴露的响应头：成功、错误（不带凭据的 401）、/api 前缀、未知路由都一样", async () => {
 		cp = await startTestControlPlane();
 		const responses = await Promise.all([
 			cp.fetch("/projects/default/agents", { headers: { origin: PAGE } }),
@@ -110,7 +110,7 @@ describe("跨域：默认允许所有来源", () => {
 			cp.fetch("/no-such-route", { headers: { origin: PAGE } }),
 		]);
 
-		expect(responses.map((res) => res.status)).toEqual([200, 200, 400, 404]);
+		expect(responses.map((res) => res.status)).toEqual([200, 200, 401, 404]);
 		for (const res of responses) {
 			expect(res.headers.get("access-control-allow-origin")).toBe("*");
 			expect(headerNames(res, "access-control-expose-headers")).toEqual(

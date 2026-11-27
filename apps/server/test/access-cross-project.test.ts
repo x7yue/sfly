@@ -13,7 +13,7 @@ import Fastify from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
-import { requiresCredential, routeKey } from "../src/auth/access-rules.js";
+import { routeKey } from "../src/auth/access-rules.js";
 import { requiredScope, writeNeedsPerson } from "../src/auth/scopes.js";
 import { guardHttpContract } from "../src/http/contract-route.js";
 import { ApiClient } from "./support/api-client.js";
@@ -38,7 +38,7 @@ import { diffFootprints, settledFootprint } from "./support/write-footprint.js";
 interface Attacker {
 	name: string;
 	headers: Record<string, string>;
-	expected(def: RouteDef): 403 | 404;
+	expected(def: RouteDef): 401 | 403 | 404;
 }
 
 const isAccessNotFound = async (res: Response) => {
@@ -144,6 +144,8 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		await accounts.member("alpha", dual, "project_admin");
 		await accounts.member("default", dual, "project_admin");
 		attackers = [
+			// 不带凭据的一律 401（#494）：过渡窗口里给旧式 Agent 的三条放行要求那次任务在旧方式连接的 Agent 上，这里没有。
+			{ name: "不带凭据", headers: {}, expected: () => 401 },
 			{ name: "登录 Cookie", headers: loginCookie(cookie), expected: () => 404 },
 			{
 				name: "个人令牌（没有限定项目）",
@@ -299,8 +301,8 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		}, 30_000);
 	}
 
-	// 路径里的项目不存在（#488）：每个 `/projects/:project/…` 的接口一条，平台管理员（在每个项目里都有项目管理员的权限）、
-	// 不带凭据都是访问检查的 404；不带凭据时现在就要求凭据的接口是 401，不透露项目存不存在。
+	// 路径里的项目不存在（#488）：每个 `/projects/:project/…` 的接口一条，平台管理员（在每个项目里都有项目管理员的权限）
+	// 是访问检查的 404；不带凭据的是 401（#494），不透露项目存不存在。
 	for (const def of projectRoutes().filter((d) => d.path.startsWith("/projects/:project/"))) {
 		it(`项目不存在：${routeKey(def)}`, async () => {
 			const request = requestFor(def, { ...victim, project: "no-such-project" });
@@ -310,7 +312,7 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 				["不带凭据", {}],
 			] as const) {
 				const res = await send(def, request, headers);
-				if (name === "不带凭据" && requiresCredential(def)) {
+				if (name === "不带凭据") {
 					expect(res.status, name).toBe(401);
 					continue;
 				}

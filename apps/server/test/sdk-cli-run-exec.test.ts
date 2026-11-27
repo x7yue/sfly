@@ -692,24 +692,19 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 		});
 	});
 
-	describe("记录昵称和经哪个 AI 编程助手", () => {
-		it("经命令行触发、取消的运行上，记录了昵称、x-sfly-client 和检测到的 AI 编程助手", async () => {
+	describe("记录触发人和经哪个 AI 编程助手", () => {
+		it("经命令行触发、取消的运行上，记录了令牌的用户、x-sfly-client 和检测到的 AI 编程助手", async () => {
 			const proxy: RecordingProxy = await startRecordingProxy(cp.httpUrl);
 			proxies.push(proxy);
 			const id = await scenario("记录场景", [echo("a")]);
-			// 测的是命令行发的昵称请求头（不带令牌时才发，#494 一并删除）：不带默认的令牌。
-			const env = { CLAUDECODE: "1", SFLY_API_TOKEN: undefined };
-			const triggered = await sfly(
-				["run", "start", "记录场景", "--server", proxy.url, "--nickname", "dana"],
-				{ env },
-			);
+			// 经代理连控制面：默认凭据认不出代理的地址，自己给 dana 的个人令牌。
+			const token = await cp.users.token("dana");
+			const env = { CLAUDECODE: "1", SFLY_API_TOKEN: token };
+			const triggered = await sfly(["run", "start", "记录场景", "--server", proxy.url], { env });
 			expect(triggered.code, triggered.stderr).toBe(0);
 			const task = await assign();
 			const runId = await runOf(id);
-			const cancelled = await sfly(
-				["run", "cancel", runId, "--server", proxy.url, "--nickname", "dana"],
-				{ env },
-			);
+			const cancelled = await sfly(["run", "cancel", runId, "--server", proxy.url], { env });
 			expect(cancelled.code, cancelled.stderr).toBe(0);
 			await agent.nextCancel();
 			await agent.cancelled(task);
@@ -721,8 +716,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			]);
 			for (const write of writes) {
 				expect(write.headers["x-sfly-client"]).toMatch(/^sfly-cli\/\S+ agent\/claude-code$/);
-				// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
-				expect(write.headers["x-sfly-nickname"]).toBe("dana");
+				expect(write.headers.authorization).toBe(`Bearer ${token}`);
 			}
 			const run = await api.run(runId);
 			expect(run).toMatchObject({

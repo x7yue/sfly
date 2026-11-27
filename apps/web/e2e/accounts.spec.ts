@@ -15,13 +15,13 @@ const { Client } = createRequire(new URL("../../server/package.json", import.met
 	};
 };
 
-// 本地账号与登录（ADR 0029，#490）：初始化页建第一个管理员、登录页、账号菜单（修改密码、登出）、登录之后昵称弹窗不再出现、
-// 写操作的身份来自登录。在 #494 之前不登录也照旧能用（昵称弹窗仍在，里面有「去登录」）。
+// 本地账号与登录（ADR 0029，#490）：初始化页建第一个管理员、登录页、账号菜单（修改密码、登出）、写操作的身份来自登录。
+// #494 起不登录用不了控制台：没有登录打开别的页面都换到登录页，登录之后回到原来的页面。
 
 const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
 const NEW_PASSWORD = "brand-new-password-1";
 
-/** 没有预先写昵称：登录之后昵称弹窗不该出现，没登录时才弹。 */
+/** 从没有登录开始：浏览器里没有登录 Cookie。 */
 test.use({ loginAs: null });
 
 async function login(page: import("@playwright/test").Page, password = ADMIN.password) {
@@ -94,7 +94,7 @@ test.describe("登录与账号菜单", () => {
 	}) => {
 		await page.goto("/login");
 		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
-		// 没有昵称也没有登录：登录页上不弹昵称弹窗（先登录）。
+		// 登录页上没有任何弹窗。
 		await expect(page.getByRole("dialog")).toBeHidden();
 		// 已经有用户：登录页不再指向初始化页。
 		await expect(page.getByRole("link", { name: "用初始化码创建第一个管理员" })).toBeHidden();
@@ -133,7 +133,7 @@ test.describe("登录与账号菜单", () => {
 		await expect(page).toHaveURL(/\/$/);
 	});
 
-	test("账号菜单：显示名、登录名、平台管理员标记；登出回到登录页，之后写操作又要昵称", async ({
+	test("账号菜单：显示名、登录名、平台管理员标记；登出回到登录页，之后打开首页又被带回登录页", async ({
 		page,
 	}) => {
 		await page.goto("/login");
@@ -146,9 +146,12 @@ test.describe("登录与账号菜单", () => {
 
 		await menu.getByRole("menuitem", { name: "登出" }).click();
 		await expect(page).toHaveURL(/\/login$/);
-		// 登出之后：没有登录，页面回到没有昵称的老样子。
+		// 登出之后：没有登录，打开首页被带回登录页（redirect 指回首页）。
 		await page.goto("/");
-		await expect(page.getByRole("dialog", { name: "欢迎使用 sfly" })).toBeVisible();
+		await expect(page).toHaveURL(/\/login\?/);
+		expect(new URL(page.url()).searchParams.get("redirect")).toBe("/");
+		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+		await expect(accountMenu(page)).toBeHidden();
 	});
 
 	test("修改密码：旧密码不对写在弹窗里；改成功后新密码能登录、旧密码不行", async ({ page }) => {
@@ -258,14 +261,15 @@ test.describe("登录与账号菜单", () => {
 		expect(me.status()).toBe(401);
 	});
 
-	test("没有登录也照旧能用：昵称弹窗仍在，里面有「已有账号，去登录」", async ({ page }) => {
+	test("没有登录打开首页：换到登录页，不弹昵称弹窗；登录之后回到首页", async ({ page }) => {
 		await page.goto("/");
-		const dialog = page.getByRole("dialog", { name: "欢迎使用 sfly" });
-		await expect(dialog).toBeVisible();
-		await dialog.getByRole("link", { name: "已有账号，去登录" }).click();
-		await expect(page).toHaveURL(/\/login$/);
+		await expect(page).toHaveURL(/\/login\?/);
+		expect(new URL(page.url()).searchParams.get("redirect")).toBe("/");
 		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
 		await expect(page.getByRole("dialog")).toBeHidden();
+		await login(page);
+		await expect(page).toHaveURL(/\/$/);
+		await expect(accountMenu(page)).toBeVisible();
 	});
 });
 
@@ -369,29 +373,29 @@ test.describe("登录失效之后回到登录页", () => {
 		await expect(page.getByText("登录已失效")).toBeHidden();
 	});
 
-	test.describe("从没登录过的人（昵称模式）", () => {
-		test.use({ nickname: "tester" });
+	test("从没登录过的人打开有事件流的运行页：直接换到登录页（不写「登录已失效」），登录之后回到运行页", async ({
+		page,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await connectAgent({ name: "agent-a" });
+		await publishPackage(controlPlane);
+		const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+		const runId = await triggerRun(controlPlane, scenario);
 
-		test("打开同一个有事件流的页面：不跳转，页面照常在原处（昵称模式在 #494 之前仍然合法）", async ({
-			page,
-			controlPlane,
-			connectAgent,
-		}) => {
-			await connectAgent({ name: "agent-a" });
-			await publishPackage(controlPlane);
-			const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
-			const runId = await triggerRun(controlPlane, scenario);
+		await page.goto(`/runs/${runId}`);
+		await expect(page).toHaveURL(/\/login\?/);
+		// 监控页可能已经在地址后面带上了 ?view=overview：两种都行，原样带回去。
+		expect(new URL(page.url()).searchParams.get("redirect")).toMatch(
+			new RegExp(`^/runs/${runId}(\\?view=overview)?$`),
+		);
+		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+		// 不是登录失效：从来没有登录过。
+		await expect(page.getByText("登录已失效")).toBeHidden();
 
-			await page.goto(`/runs/${runId}`);
-			await expect(page.getByRole("tablist", { name: "运行监控视图" })).toBeVisible();
-			// 库里没有登录可注销；等过几轮重新检查和重连，页面仍然在原处。
-			await revokeLogins(controlPlane);
-			// biome-ignore lint/plugin/e2e-fixed-wait: 确认「没有跳转」这件事没有发生，只能等过几轮重新检查和重连（间隔 0.3 秒）
-			await page.waitForTimeout(3_000);
-			await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?view=overview)?$`));
-			await expect(page.getByRole("tablist", { name: "运行监控视图" })).toBeVisible();
-			await expect(page.getByText("登录已失效")).toBeHidden();
-		});
+		await login(page);
+		await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?view=overview)?$`));
+		await expect(page.getByRole("tablist", { name: "运行监控视图" })).toBeVisible();
 	});
 });
 

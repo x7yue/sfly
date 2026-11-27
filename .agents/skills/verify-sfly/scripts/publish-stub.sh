@@ -12,5 +12,6 @@ PROJECT=${2:-$REPO/testdata/stub-package}
 export TMPDIR=${TMPDIR:-$HOME/.t}
 
 cd "$REPO"
-uv run --locked --quiet sfly publish "$PROJECT" --server "$HTTP_URL" 2>&1 |
+# 不带凭据的发布是 401（#494）：用 up.sh 给命令行存下的登录（SFLY_HOME=$CLI_HOME，管理员的个人令牌）。
+SFLY_HOME="$CLI_HOME" uv run --locked --quiet sfly publish "$PROJECT" --server "$HTTP_URL" 2>&1 |
 	tee -a "$RUN/evidence/publish-$(basename "$PROJECT").txt"

@@ -8,6 +8,7 @@ import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
 import { ApiClient } from "./support/api-client.js";
+import { bearer, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, agentClock, FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -28,6 +29,26 @@ const ORCHESTRATION = {
 	edges: [{ from: "entry", to: "load", kind: "chain" }],
 	packages: { bench: "1.0.0" },
 };
+
+/**
+ * 旧版阶段要建默认项目的项目管理员和他的个人令牌（#494 之后不带凭据的请求一律 401）：启动占位里的 `users` 只有 `id`、`projects` 只有 `id`，
+ * 补上真表的列，再加成员表（`TestAccounts` 写它们）。升级前和启动占位一起删掉，由真正的迁移来建。
+ */
+const SIGNING_STUB_SQL = `ALTER TABLE "users" ADD COLUMN "login_name" text NOT NULL, ADD COLUMN "display_name" text NOT NULL,
+	ADD COLUMN "password_hash" text, ADD COLUMN "disabled_at" timestamp with time zone,
+	ADD COLUMN "is_platform_admin" boolean DEFAULT false NOT NULL, ADD COLUMN "external_identity" text,
+	ADD COLUMN "created_at" timestamp with time zone NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "projects" ADD COLUMN "display_name" text, ADD COLUMN "created_at" timestamp with time zone,
+	ADD COLUMN "workbench_agent" text;
+--> statement-breakpoint
+CREATE TABLE "project_members" (
+	"project_id" text NOT NULL,
+	"user_id" uuid NOT NULL,
+	"role" text NOT NULL,
+	"created_at" timestamp with time zone NOT NULL,
+	PRIMARY KEY ("project_id", "user_id")
+);`;
 
 describe("指标上报与存储", () => {
 	let cp: TestControlPlane;
@@ -593,8 +614,19 @@ describe("迁移前的指标数据", () => {
 		);
 		// 当前代码启动时读写的 agent_credentials：旧迁移里没有，补一个占位，升级前删掉。
 		await appendStartupStubs(dir);
+		// 旧版阶段的请求要带凭据（#494）：把用户的占位补成真表的列、加上成员表，建得出用户、成员和令牌。
+		await writeFile(
+			last,
+			`${await readFile(last, "utf8")}${STATEMENT_BREAKPOINT}\n${SIGNING_STUB_SQL}`,
+		);
 		return dir;
 	};
+	/** 旧版阶段带凭据的 `fetch`：请求都带上占位表里那个项目管理员的个人令牌。 */
+	let oldHeaders: Record<string, string> = {};
+	const oldPhase = () => ({
+		fetch: (path: string, init: RequestInit = {}) =>
+			cp.fetch(path, { ...init, headers: { ...(init.headers as object), ...oldHeaders } }),
+	});
 	const dropLaterColumns = async () => {
 		const client = new pg.Client({ connectionString: cp.database.url });
 		await client.connect();
@@ -603,6 +635,8 @@ describe("迁移前的指标数据", () => {
 				await client.query(`alter table "${table}" drop column "${column}"`);
 			}
 			for (const [table] of LATER_TABLES) await client.query(`drop table "${table}"`);
+			await client.query('drop table "project_members"');
+			await client.query('drop table "sessions"');
 		} finally {
 			await client.end();
 		}
@@ -612,7 +646,28 @@ describe("迁移前的指标数据", () => {
 	beforeEach(async () => {
 		oldMigrations = await migrationsBeforeLabels();
 		cp = await startTestControlPlane({ migrationsDir: oldMigrations });
-		await publishPackage(cp, "bench", "1.0.0", {
+		// 旧版的库里没有用户和令牌（不带凭据的请求是 401，#494）：在补上的占位表里建一个用户和他的个人令牌，
+		// 旧版阶段的请求都带它（升级前占位表和它一起删掉）。
+		// 核对令牌时连带查 `sessions`（旧库里没有；启动时就建会让启动时清理会话的查询撞上缺的列，所以启动之后才建）。
+		// 用默认项目的项目管理员而不是平台管理员：平台管理员写别人的项目要记 `platform_admin_actions`，旧库里也没有。
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			await client.query(
+				'create table "sessions" ("id" uuid primary key, "project_id" text not null, "created_by_user_id" uuid, "status" text not null)',
+			);
+		} finally {
+			await client.end();
+		}
+		const accounts = new TestAccounts(cp.database.url);
+		try {
+			const owner = await accounts.user("old_owner");
+			await accounts.member("default", owner, "project_admin");
+			oldHeaders = bearer(await accounts.personalToken(owner));
+		} finally {
+			await accounts.close();
+		}
+		await publishPackage(oldPhase(), "bench", "1.0.0", {
 			load: { outputs: [], metrics: [{ name: "tps", unit: "req/s", kind: "gauge" }] },
 		});
 	});
@@ -627,7 +682,7 @@ describe("迁移前的指标数据", () => {
 	 * 旧数据的时间列是 Agent 时间）、摘要和任务上的点数；然后升级控制面，Agent 重新连上。
 	 */
 	const upgradeWithLegacyPoints = async (firstS: number) => {
-		const api = new ApiClient(cp);
+		const api = new ApiClient(oldPhase());
 		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
 		agents.push(agent);
 		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
@@ -667,7 +722,8 @@ describe("迁移前的指标数据", () => {
 			const res = await cp.fetch(`/runs/${runId}/metrics/summary`);
 			return metricsApi.summary.response.parse(await res.json()).tasks[0]?.metrics;
 		};
-		const chain = (await api.run(runId)).chains[0]?.id as string;
+		// 升级后旧版的用户和令牌随占位表删掉了，用平常的测试身份。
+		const chain = (await new ApiClient(cp).run(runId)).chains[0]?.id as string;
 		const params = new URLSearchParams({ chain_instance_id: chain, node_id: "load" });
 		const seriesOf = async () =>
 			metricsApi.series.response.parse(
@@ -829,7 +885,8 @@ describe("指标的控制面时间与 Agent 时间（#174，ADR 0018）", () => 
 	};
 	/** tps 的每个桶：[控制面时间, Agent 时间, 最新值]（每秒一个桶）。 */
 	const tpsBuckets = async (runId: string, query: Record<string, string> = {}) => {
-		const chain = (await api.run(runId)).chains[0]?.id as string;
+		// 升级后旧版的用户和令牌随占位表删掉了，用平常的测试身份。
+		const chain = (await new ApiClient(cp).run(runId)).chains[0]?.id as string;
 		const params = new URLSearchParams({
 			chain_instance_id: chain,
 			node_id: "load",

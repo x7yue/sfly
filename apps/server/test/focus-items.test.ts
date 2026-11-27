@@ -116,7 +116,7 @@ describe("关注项的设置", () => {
 			expect((await orchestrationView(api, id)).focus_items).toEqual([]);
 		});
 
-		it("需要昵称；场景不存在时返回 404", async () => {
+		it("不带凭据 401；场景不存在时返回 404", async () => {
 			const id = await scene();
 			const anonymous = await cp.fetch(`/orchestrations/${id}`, {
 				method: "PATCH",
@@ -124,8 +124,11 @@ describe("关注项的设置", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ focus_items: [LOAD_TPS] }),
 			});
-			expect(anonymous.status).toBe(400);
-			expect((await errorOf(anonymous)).code).toBe("nickname_required");
+			expect(anonymous.status).toBe(401);
+			expect(await errorOf(anonymous)).toMatchObject({
+				code: "unauthorized",
+				message: expect.stringContaining("sfly login"),
+			});
 
 			const missing = await putFocusItems(api, "00000000-0000-4000-8000-000000000000", []);
 			expect(missing.status).toBe(404);

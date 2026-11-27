@@ -24,10 +24,11 @@ Preconditions:
 - **列表。** 先 `agent-browser $S open "$HTTP_URL/packages"`，再 `agent-browser $S snapshot -i -c`：`navigation "节点包"` 下面有指向 `sfly-stub 0.1.0` 的链接。
 - **详情。** 点这个链接，URL 变成 `/packages?name=sfly-stub`。`region "sfly-stub 详情"` 里应该有 `0.1.0 最新`，`table "节点类型"` 里有 `echo 回显` 这类行，`dd` 里是 64 位的 sha256，和发布时打印的一致。
 - **重复发布。** 再运行一次 `$V/publish-stub.sh`，应该是非零退出码，并提示版本已存在。列表里还是只有 1 个版本。
-- **证据。** 截图 `pkg-01-list.png`、`pkg-02-detail.png`，再存 `curl -s $HTTP_URL/api/projects/default/packages > $RUN/evidence/pkg-packages.json`。
+- **证据。** 截图 `pkg-01-list.png`、`pkg-02-detail.png`，再存 `curl -s -b "$COOKIES" $HTTP_URL/api/projects/default/packages > $RUN/evidence/pkg-packages.json`。
 
 ## Gotchas
 
 - `sfly publish` 不传 `--server` 时，读的是 `$SFLY_SERVER` 或 `~/.sfly/agent.env`，可能发到开发者自己的控制面。一定要显式传 `--server "$HTTP_URL"`，脚本已经这样做了。
+- 发布要凭据，不带是 401：脚本用 `SFLY_HOME="$CLI_HOME"`，读 `up.sh` 给命令行存下的管理员登录。自己运行 `sfly publish` 时也这样带上，不要用 `~/.sfly` 里开发者自己的登录。
 - 发布成功只说明控制面收下了。Agent 第一次执行这个包里的节点时才安装它，安装结果要到 Agent 管理页或 `/api/projects/default/agents` 的 `installed_packages` 里看。
 - 想发布一个新包又不改 `testdata`，就把项目复制到 `$RUN` 下，用 `uv version --bump patch` 改版本号，再用 `publish-stub.sh "" <副本目录>` 发布。

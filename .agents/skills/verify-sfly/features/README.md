@@ -7,7 +7,7 @@
 - `$V/up.sh` 启动的环境，`$V/doctor.sh` 全部 ok（`V=.agents/skills/verify-sfly/scripts`）。
 - `source ~/.local/state/sfly-verify/current/state.env`，再设 `S="--session $BROWSER_SESSION"`。
 - 已运行 `$V/publish-stub.sh`，`sfly-stub@0.1.0` 已发布，`verify-agent` 在线、有 4 个槽位。
-- 浏览器视口是 1440×900，昵称已填（首次打开会弹「欢迎使用 sfly」）。
+- 浏览器视口是 1440×900，已经用 `$ADMIN_LOGIN`、`$ADMIN_PASSWORD` 登录（首次打开会跳到登录页）。
 - 只操作这次验证启动的环境。
 
 ## 操作约定
@@ -15,7 +15,7 @@
 - 每个步骤都从基线状态开始，除非文件里另有说明。
 - 用 ARIA 角色和中文可访问名称定位，例如 `agent-browser $S find role button click --name "新建场景"`。拿不准时先 `snapshot -i -c` 取 `@ref`。
 - 页面变化后旧的 `@ref` 就失效了，要重新 `snapshot`。
-- 写数据一律走用户路径（页面操作、`sfly publish`）。`curl $HTTP_URL/api/...` 只用来读，作为第二视角。
+- 写数据一律走用户路径（页面操作、`sfly publish`）。`curl -b "$COOKIES" $HTTP_URL/api/...` 只用来读，作为第二视角（不带 Cookie 是 401）。
 
 ## 证据与跳过的报告
 

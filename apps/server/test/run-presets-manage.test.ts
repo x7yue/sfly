@@ -234,7 +234,7 @@ describe("运行预设的维护", () => {
 			).toEqual(["body.params.0.name"]);
 		});
 
-		it("预设不存在或不属于这个场景时 404 preset_not_found；写接口需要昵称", async () => {
+		it("预设不存在或不属于这个场景时 404 preset_not_found；写接口不带凭据 401", async () => {
 			const { id, preset } = await sceneWithPreset();
 			const other = await api.orchestrationWith(scenario(), "other");
 
@@ -257,8 +257,11 @@ describe("运行预设的维护", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "x" }),
 			});
-			expect(anonymous.status).toBe(400);
-			expect((await errorOf(anonymous)).code).toBe("nickname_required");
+			expect(anonymous.status).toBe(401);
+			expect(await errorOf(anonymous)).toMatchObject({
+				code: "unauthorized",
+				message: expect.stringContaining("sfly login"),
+			});
 			expect(await listPresets(api, id)).toEqual([preset]);
 		});
 
@@ -355,7 +358,7 @@ describe("运行预设的维护", () => {
 			expect(await listPresets(api, id)).toHaveLength(2);
 		});
 
-		it("预设不存在或不属于这个场景时 404 preset_not_found；写接口需要昵称", async () => {
+		it("预设不存在或不属于这个场景时 404 preset_not_found；写接口不带凭据 401", async () => {
 			const { id, preset } = await sceneWithPreset();
 			const other = await api.orchestrationWith(scenario(), "other");
 
@@ -377,8 +380,11 @@ describe("运行预设的维护", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "副本" }),
 			});
-			expect(anonymous.status).toBe(400);
-			expect((await errorOf(anonymous)).code).toBe("nickname_required");
+			expect(anonymous.status).toBe(401);
+			expect(await errorOf(anonymous)).toMatchObject({
+				code: "unauthorized",
+				message: expect.stringContaining("sfly login"),
+			});
 			expect(await listPresets(api, id)).toEqual([preset]);
 		});
 	});
@@ -426,7 +432,7 @@ describe("运行预设的维护", () => {
 			}
 		});
 
-		it("预设不存在或不属于这个场景时 404 preset_not_found；写接口需要昵称", async () => {
+		it("预设不存在或不属于这个场景时 404 preset_not_found；写接口不带凭据 401", async () => {
 			const { id, preset } = await sceneWithPreset();
 			const other = await api.orchestrationWith(scenario(), "other");
 
@@ -441,14 +447,15 @@ describe("运行预设的维护", () => {
 				expect(res.status, `${scene} ${presetId}`).toBe(404);
 				expect((await errorOf(res)).code).toBe(code);
 			}
-			expect(
-				(
-					await cp.fetch(`/orchestrations/${id}/presets/${preset.id}`, {
-						method: "DELETE",
-						credentials: "omit",
-					})
-				).status,
-			).toBe(400);
+			const anonymous = await cp.fetch(`/orchestrations/${id}/presets/${preset.id}`, {
+				method: "DELETE",
+				credentials: "omit",
+			});
+			expect(anonymous.status).toBe(401);
+			expect(await errorOf(anonymous)).toMatchObject({
+				code: "unauthorized",
+				message: expect.stringContaining("sfly login"),
+			});
 			expect(await listPresets(api, id)).toEqual([preset]);
 
 			// 删除之后再删除：已经不存在。

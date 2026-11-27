@@ -4,7 +4,6 @@ import type { Readable } from "node:stream";
 import { AGENT_MODIFIED_MS_HEADER, artifactsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
-import { agentTokenMatches, bearerToken } from "../agents/agent-token.js";
 import { type ArtifactRow, type ArtifactStore, artifactUrl } from "../artifacts/artifact-store.js";
 import { isUuid } from "../util/uuid.js";
 import { attachment } from "./content-disposition.js";
@@ -42,7 +41,7 @@ function declaredLength(header: string | string[] | undefined): number | undefin
 
 export function registerArtifactRoutes(
 	app: FastifyInstance,
-	deps: { artifacts: ArtifactStore; agentToken?: string; publicHttpUrl: () => string },
+	deps: { artifacts: ArtifactStore; publicHttpUrl: () => string },
 ): void {
 	const view = (a: ArtifactRow) => ({
 		name: a.name,
@@ -52,8 +51,6 @@ export function registerArtifactRoutes(
 		agent_modified_at: a.agentModifiedAt?.toISOString() ?? null,
 		url: artifactUrl(deps.publicHttpUrl(), a.taskId, a.name),
 	});
-	const authorized = (header: string | undefined) =>
-		agentTokenMatches(deps.agentToken, bearerToken(header));
 
 	// 上传在独立的作用域里：请求体不解析，按原始的字节流写到磁盘（不受全局 bodyLimit 限制，大小由 ArtifactStore 控制）。
 	// **不管 `Content-Type` 写的是什么**都按字节流收（#665）：框架自带的 `text/plain` 和 JSON 解析器会在到达存储之前把请求体读成字符串
@@ -71,11 +68,7 @@ export function registerArtifactRoutes(
 			}
 		});
 		contractRoute(scope, artifactsApi.upload, async ({ params }, reply, request) => {
-			// 带了凭据的请求（Agent 凭据）已经过了访问检查；共享令牌和不带凭据的请求照旧核对共享令牌（#494 之前）。
-			if (!request.access && !authorized(request.headers.authorization)) {
-				request.raw.resume();
-				return sendError(reply, 401, "unauthorized", "invalid agent token");
-			}
+			// 谁能上传由访问检查定：Agent 凭据（派给这台 Agent 的任务），或者过渡窗口里以旧方式连接的 Agent 的任务（#494）。
 			const taskId = params.id;
 			if (!isUuid(taskId)) {
 				request.raw.resume();

@@ -111,16 +111,18 @@ describe("场景", () => {
 			).toHaveLength(1);
 		});
 
-		it("修改需要昵称、非空名称，场景不存在时返回 404", async () => {
+		it("修改不带凭据 401、要非空名称，场景不存在时返回 404", async () => {
 			const id = await api.createOrchestration("校验");
-			const noNick = await cp.fetch(`/orchestrations/${id}`, {
+			const anonymous = await cp.fetch(`/orchestrations/${id}`, {
 				method: "PATCH",
 				credentials: "omit",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "x" }),
 			});
-			expect(noNick.status).toBe(400);
-			expect(await noNick.json()).toMatchObject({ error: { code: "nickname_required" } });
+			expect(anonymous.status).toBe(401);
+			expect(await anonymous.json()).toMatchObject({
+				error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+			});
 			const blank = await patch(`/orchestrations/${id}`, { name: "  " });
 			expect(blank.status).toBe(400);
 			expect(await blank.json()).toMatchObject({ error: { code: "invalid_request" } });
@@ -203,13 +205,16 @@ describe("场景", () => {
 			expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ archived_at: null });
 		});
 
-		it("归档与恢复需要昵称；场景不存在时返回 404；不提供物理删除", async () => {
+		it("归档与恢复不带凭据 401；场景不存在时返回 404；不提供物理删除", async () => {
 			const id = await api.createOrchestration("x");
-			const noNick = await cp.fetch(`/orchestrations/${id}/archive`, {
+			const anonymous = await cp.fetch(`/orchestrations/${id}/archive`, {
 				method: "POST",
 				credentials: "omit",
 			});
-			expect(noNick.status).toBe(400);
+			expect(anonymous.status).toBe(401);
+			expect(await anonymous.json()).toMatchObject({
+				error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+			});
 			expect(
 				(await api.post("/orchestrations/00000000-0000-0000-0000-000000000000/archive", {})).status,
 			).toBe(404);

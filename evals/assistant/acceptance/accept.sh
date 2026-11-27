@@ -180,7 +180,13 @@ print(json.dumps({"document": json.load(open(sys.argv[1]))["document"]}, ensure_
 EOF
 docker cp "$work_dir/scenario.json" "$workbench:/tmp/seed/scenario/demo.json"
 description=$(python3 -c "import sys; sys.path.insert(0, '$evals'); from aeval.tasks.fix import DESCRIPTION; print(DESCRIPTION)")
-docker exec -i -e SFLY_NICKNAME=grader -e DESCRIPTION="$description" -w /tmp/seed "$workbench" bash -e <<'EOF' >"$out/seed.log" 2>&1 ||
+# 不带凭据的请求一律 401（#494）：工作台上的 sfly 命令行先用初始管理员登录（密码经环境变量名交给 docker exec、
+# 经管道交给 --password-stdin，不进命令行参数），准备完就登出（吊销这枚令牌，不留在工作台的卷上：助手的命令读得到它）。
+ADMIN_PASSWORD=$admin_password docker exec -i -e ADMIN_LOGIN="$admin_login" -e ADMIN_PASSWORD -e DESCRIPTION="$description" \
+	-w /tmp/seed "$workbench" bash -e <<'EOF' >"$out/seed.log" 2>&1 ||
+trap 'sfly logout >/dev/null 2>&1 || rm -f ~/.sfly/credentials.json' EXIT
+printf '%s\n' "$ADMIN_PASSWORD" | sfly login --login-name "$ADMIN_LOGIN" --password-stdin >/dev/null
+unset ADMIN_PASSWORD
 sfly init svc-probe
 cd svc-probe
 for part in src tests; do [ -d /tmp/seed/overlay/$part ] && cp -r /tmp/seed/overlay/$part/. $part/; done

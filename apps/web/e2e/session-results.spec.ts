@@ -272,9 +272,8 @@ test("运行卡片：同一次运行从运行中到失败，时间线上的、�
 	});
 	const session = watchRunRequests(page);
 	await page.goto(`/sessions/${id}`);
-	// 运行监控在另一个标签页里同时开着（同一个浏览器，同样的昵称和时间）。
+	// 运行监控在另一个标签页里同时开着（同一个浏览器，同样的登录和时间）。
 	const monitor = await context.newPage();
-	await monitor.addInitScript(() => window.localStorage.setItem("sfly.nickname", "tester"));
 	await monitor.clock.setFixedTime(clock.now());
 	await monitor.goto(`/runs/${runId}`);
 	const banner = monitor.getByRole("banner");
@@ -518,7 +517,6 @@ test("事件流名额只管会话页上的运行卡片：运行监控页自己�
 	// 另一个标签页里打开一个会话页没有给名额的运行（最早的）的运行监控：它自己开一条事件流，不看会话页的名额。
 	const noQuota = runs[0] as string;
 	const monitor = await context.newPage();
-	await monitor.addInitScript(() => window.localStorage.setItem("sfly.nickname", "tester"));
 	await monitor.clock.setFixedTime(clock.now());
 	const own = watchRunRequests(monitor);
 	await monitor.goto(`/runs/${noQuota}`);

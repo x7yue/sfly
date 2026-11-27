@@ -508,7 +508,9 @@ export class Engine implements AgentSessionHandler {
 				for (const t of held) if (t.started) await this.#started(step, conn.name, t);
 				return out;
 			});
-			const environment = await this.deps.agentEnvironment(conn.info);
+			const environment = await this.deps.agentEnvironment(conn.info, {
+				withCredentials: conn.auth.kind === "agent",
+			});
 			conn.welcome(
 				create(ServerMessageSchema, {
 					body: {

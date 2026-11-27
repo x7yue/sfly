@@ -614,26 +614,20 @@ describe("助手没有配置：写接口 503，读接口照常", () => {
 		expect((await api.post(`/sessions/${id}/stop`, {}, "alice")).status).toBe(503);
 	});
 
-	it("写接口先查请求：没有昵称 400、正文不合格 400、项目或会话不存在 404，然后才是 503", async () => {
+	it("写接口先查请求：不带凭据 401、正文不合格 400、项目或会话不存在 404，然后才是 503", async () => {
 		const id = await seedSession(cp.database.url);
-		// 建会话只认用户的凭据：不带凭据是 401（不是 400 缺昵称）；别的会话接口在 #494 之前照旧，没有昵称 400。
-		const noCredential = await cp.fetch("/projects/default/sessions", {
-			method: "POST",
-			credentials: "omit",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ text: "你好" }),
-		});
-		expect(noCredential.status).toBe(401);
-		const noNickname = await cp.fetch(`/sessions/${id}/messages`, {
-			method: "POST",
-			credentials: "omit",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ text: "你好" }),
-		});
-		expect(noNickname.status).toBe(400);
-		expect((await json<{ error: { code: string } }>(noNickname)).error.code).toBe(
-			"nickname_required",
-		);
+		for (const path of ["/projects/default/sessions", `/sessions/${id}/messages`]) {
+			const anonymous = await cp.fetch(path, {
+				method: "POST",
+				credentials: "omit",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ text: "你好" }),
+			});
+			expect(anonymous.status, path).toBe(401);
+			expect(await json(anonymous), path).toMatchObject({
+				error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+			});
+		}
 		for (const text of ["", "   ", "x".repeat(20_001)]) {
 			expect(
 				(await api.post("/projects/default/sessions", { text })).status,
@@ -767,7 +761,7 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 		expect(defaultList.sessions.map((session) => session.id)).toContain(sessionId);
 	});
 
-	it("只有人能建会话、发话、停止：项目令牌范围再够也是 403，读照常；登录的用户、个人令牌、只带昵称的请求走到处理函数", async () => {
+	it("只有人能建会话、发话、停止：项目令牌范围再够也是 403，读照常；登录的用户、个人令牌走到处理函数", async () => {
 		const writes = [
 			["/projects/default/sessions", { text: "你好" }],
 			[`/sessions/${sessionId}/messages`, { text: "你好" }],
@@ -782,8 +776,6 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 			// 人：编辑者的登录和个人令牌，走到处理函数（这里助手没有配置：503）。
 			expect((await call("editor", "POST", path, body)).status, `登录 ${path}`).toBe(503);
 			expect((await call("personal", "POST", path, body)).status, `个人令牌 ${path}`).toBe(503);
-			// 竖切期间只带昵称、不带凭据的请求：照旧（写要昵称，助手没有配置：503）。
-			expect((await api.post(path, body, "dave")).status, `只带昵称 ${path}`).toBe(503);
 		}
 		// 403 之前什么都没写：没有会话建出来，也没有事件。
 		const list = await json<SessionListResponse>(

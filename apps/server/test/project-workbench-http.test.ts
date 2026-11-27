@@ -126,7 +126,7 @@ describe("登记项目的工作台", () => {
 				expect(body.error.code, who).toBeDefined();
 			}
 			await json<ApiError>(await register("wb", {}), 401);
-			await json<ApiError>(await register("wb", bearer(SHARED)), 403);
+			await json<ApiError>(await register("wb", bearer(SHARED)), 401);
 			expect(await column()).toBeNull();
 			// 对照：平台管理员的个人令牌登记得成（项目管理员见下面 #778 那一条）。
 			await json<Registered>(await register("wb"), 200);

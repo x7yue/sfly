@@ -176,7 +176,7 @@ describe("运行预设", () => {
 			}
 		});
 
-		it("写接口需要昵称请求头；场景不存在时 404", async () => {
+		it("写接口不带凭据 401；场景不存在时 404", async () => {
 			const id = await api.orchestrationWith(scenario());
 			const anonymous = await cp.fetch(`/orchestrations/${id}/presets`, {
 				method: "POST",
@@ -184,8 +184,11 @@ describe("运行预设", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "p", params: [{ name: "host", value: "h" }] }),
 			});
-			expect(anonymous.status).toBe(400);
-			expect((await errorOf(anonymous)).code).toBe("nickname_required");
+			expect(anonymous.status).toBe(401);
+			expect(await errorOf(anonymous)).toMatchObject({
+				code: "unauthorized",
+				message: expect.stringContaining("sfly login"),
+			});
 
 			const missing = randomUUID();
 			const created = await createPreset(api, missing, {

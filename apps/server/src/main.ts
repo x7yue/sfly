@@ -202,7 +202,6 @@ const controlPlane = await startControlPlane({
 	http: { host: httpHost, port: httpPort },
 	grpc: { host: grpcHost, port: grpcPort },
 	logger: true,
-	agentToken: env.SFLY_AGENT_TOKEN || undefined,
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
 	clientPackageDir: env.SFLY_CLIENT_DIR || defaults.clientDir,
 	webDir,

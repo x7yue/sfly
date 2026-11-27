@@ -226,7 +226,7 @@ describe("取消运行", () => {
 		expect((await api.run(runId)).status).toBe("cancelled");
 	});
 
-	it("已经结束的运行不能取消；需要昵称；运行不存在为 404", async () => {
+	it("已经结束的运行不能取消；不带凭据 401；运行不存在为 404", async () => {
 		const id = await api.orchestrationWith(chain([{ id: "a" }]));
 		const runId = await api.triggerOk(id);
 		await agent.succeed(await agent.nextAssign());
@@ -238,7 +238,10 @@ describe("取消运行", () => {
 			method: "POST",
 			credentials: "omit",
 		});
-		expect(anonymous.status).toBe(400);
+		expect(anonymous.status).toBe(401);
+		expect(await anonymous.json()).toMatchObject({
+			error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+		});
 		expect((await api.cancel("00000000-0000-4000-8000-000000000000")).status).toBe(404);
 		expect((await api.cancel("nope")).status).toBe(404);
 	});

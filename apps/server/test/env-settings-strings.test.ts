@@ -7,7 +7,11 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { EnvSettingsError, readEnvSettings } from "../src/config/env-settings.js";
+import {
+	AGENT_TOKEN_MIN_LENGTH,
+	EnvSettingsError,
+	readEnvSettings,
+} from "../src/config/env-settings.js";
 
 const run = promisify(execFile);
 
@@ -840,5 +844,34 @@ describe("字符串类和数值类一起：一次报完", () => {
 		expect(message).not.toContain("SFLY_DEV_ORIGINS");
 		// 整份说明里都没有密码：不在哪一条里，也不在拼起来的总说明里。
 		expect(message).not.toContain(SECRET);
+	});
+});
+
+describe("SFLY_AGENT_TOKEN（Agent 共享令牌，#494）", () => {
+	it("没设置、空串：没有共享令牌；32 个字符及以上原样交给控制面", () => {
+		expect(readEnvSettings({}).agentToken).toBeUndefined();
+		expect(readEnvSettings({ SFLY_AGENT_TOKEN: "" }).agentToken).toBeUndefined();
+		const token = "a".repeat(AGENT_TOKEN_MIN_LENGTH);
+		expect(readEnvSettings({ SFLY_AGENT_TOKEN: token }).agentToken).toBe(token);
+		// 按字符数，不按字节：32 个中文字符也够。
+		const wide = "令".repeat(AGENT_TOKEN_MIN_LENGTH);
+		expect(readEnvSettings({ SFLY_AGENT_TOKEN: wide }).agentToken).toBe(wide);
+	});
+
+	it("短于 32 个字符：不启动，写明至少几个字符和 openssl rand -hex 32；不回显填的值", () => {
+		for (const short of ["s3cret", "x".repeat(AGENT_TOKEN_MIN_LENGTH - 1), "SECRET_MARK_x7q9"]) {
+			let error: unknown;
+			try {
+				readEnvSettings({ SFLY_AGENT_TOKEN: short });
+			} catch (e) {
+				error = e;
+			}
+			expect(error).toBeInstanceOf(EnvSettingsError);
+			const message = (error as Error).message;
+			expect(message).toContain("SFLY_AGENT_TOKEN");
+			expect(message).toContain(`至少 ${AGENT_TOKEN_MIN_LENGTH} 个字符`);
+			expect(message).toContain("openssl rand -hex 32");
+			expect(message).not.toContain(short);
+		}
 	});
 });

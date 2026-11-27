@@ -296,9 +296,46 @@ def test_reset_renews_the_credentials_before_the_agents_start(
     _quiet_up(monkeypatch, recorder)
     monkeypatch.setattr(Stack, "_start_control_plane", lambda self: order.append("cp"))
     monkeypatch.setattr(Stack, "_renew_agent_credentials", lambda self: order.append("renew"))
+    monkeypatch.setattr(Stack, "_login_cli", lambda self: order.append("cli-login"))
     monkeypatch.setattr(Stack, "start_agents", lambda self: order.append("agents"))
     Stack(slot=9).reset()
-    assert order == ["cp", "renew", "agents"]
+    # 库重建了，dev 上命令行存的令牌也失效了：Agent 起来、评分用命令行之前重新登录。
+    assert order == ["cp", "renew", "cli-login", "agents"]
+
+
+def test_up_logs_the_cli_in_after_install_before_waiting_for_the_agents(
+    monkeypatch: pytest.MonkeyPatch, recorder: Recorder
+) -> None:
+    """`wait_agents` 用 dev 上的 sfly 命令行（`agent list`）：不带凭据是 401（#494），
+    所以装好（命令行装上了）之后、等 Agent 之前登录。"""
+    order: list[str] = []
+    _quiet_up(monkeypatch, recorder)
+    monkeypatch.setattr(Stack, "_install_agents", lambda self: order.append("install"))
+    monkeypatch.setattr(Stack, "_login_cli", lambda self: order.append("cli-login"))
+    monkeypatch.setattr(Stack, "wait_agents", lambda self, *a, **k: order.append("agents-online"))
+    Stack(slot=9).up(log=lambda _: None)
+    assert order[:3] == ["install", "cli-login", "agents-online"]
+
+
+def test_the_cli_on_dev_logs_in_as_the_admin_with_the_password_on_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """dev 上的命令行（评分、参考答案、臂 A 的助手）用初始管理员登录：
+    `sfly login --password-stdin`，密码不在脚本（命令行参数）里；
+    库重建之后旧令牌已经不存在，先删掉本机的凭据文件再登录。"""
+    shell = Shell()
+    monkeypatch.setattr(d, "sh", shell)
+    stack = Stack(slot=9)
+    stack.admin_password = "p" * 32
+    stack._login_cli()
+    (call,) = shell.calls
+    assert call["container"].endswith("-dev")
+    assert "sfly login --login-name aeval_admin --password-stdin" in call["script"]
+    assert call["script"].startswith("rm -f /root/.sfly/credentials.json && ")
+    assert "p" * 32 not in call["script"]
+    assert call["input_text"] == "p" * 32 + "\n"
+    with pytest.raises(d.DockerError, match="初始管理员的密码"):
+        Stack(slot=9)._login_cli()
 
 
 def test_assistant_container_gets_the_model_file_and_the_secret_by_name(
@@ -572,6 +609,7 @@ def _quiet_up(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> list[int]:
         "_start_control_plane",
         "_install_agents",
         "_renew_agent_credentials",
+        "_login_cli",
         "start_agents",
         "stop_agents",
         "wait_agents",
@@ -650,16 +688,50 @@ def test_the_workbench_is_registered_after_agents_are_online_before_the_assistan
 
 
 def test_old_control_plane_without_sessions_fails_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
+    shell = Shell()
 
-    def sh(*args: Any, **_: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(args[1])
-        return subprocess.CompletedProcess(args, 0, '{"error":{}}\n404', "")
+    def sh(container: str, script: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "/auth/login" in script:
+            return shell(container, script, **kwargs)
+        shell.calls.append({"container": container, "script": script, **kwargs})
+        return subprocess.CompletedProcess((container, script), 0, '{"error":{}}\n404', "")
 
     monkeypatch.setattr(d, "sh", sh)
+    stack = Stack(slot=9, assistant=True)
+    stack.admin_password = "p" * 32
     with pytest.raises(d.DockerError, match="源码构建的控制面镜像"):
-        Stack(slot=9, assistant=True).wait_assistant_ready(timeout=60)
-    assert len(calls) == 1
+        stack.wait_assistant_ready(timeout=60)
+    reads = [c for c in shell.calls if "/projects/default/sessions" in c["script"]]
+    assert len(reads) == 1
+
+
+def test_readiness_is_read_with_the_admin_login_and_the_cookie_goes_by_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """不带凭据读就绪状态是 401（#494）：登录一次，轮询都带这个 Cookie，
+    Cookie 经标准输入给 curl。"""
+    shell = Shell()
+
+    def sh(container: str, script: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "/auth/login" in script:
+            return shell(container, script, **kwargs)
+        shell.calls.append({"container": container, "script": script, **kwargs})
+        ready = len([c for c in shell.calls if "/sessions" in c["script"]]) >= 2
+        body = json.dumps({"readiness": {"ready": ready, "problems": []}})
+        return subprocess.CompletedProcess((container, script), 0, f"{body}\n200", "")
+
+    monkeypatch.setattr(d, "sh", sh)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    stack = Stack(slot=9, assistant=True)
+    stack.admin_password = "p" * 32
+    stack.wait_assistant_ready(timeout=60)
+    logins = [c for c in shell.calls if "/auth/login" in c["script"]]
+    reads = [c for c in shell.calls if "/projects/default/sessions" in c["script"]]
+    assert len(logins) == 1 and len(reads) == 2
+    for read in reads:
+        assert "COOKIE123" not in read["script"]
+        assert "-H @-" in read["script"]
+        assert read["input_text"] == "cookie: sfly_login=COOKIE123\n"
 
 
 class _SseServer:
@@ -667,9 +739,13 @@ class _SseServer:
 
     def __init__(self, events: list[dict[str, Any]], then: str) -> None:
         payload = "".join(f"data: {json.dumps(e)}\n\n" for e in events).encode()
+        # 每个请求的请求头（名字小写）：用例查事件流带没带凭据。
+        self.headers: list[dict[str, str]] = []
+        seen = self.headers
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:
+                seen.append({k.lower(): v for k, v in self.headers.items()})
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.end_headers()
@@ -697,6 +773,7 @@ def test_follow_brings_back_what_it_got_when_the_turn_does_not_end(
     monkeypatch: pytest.MonkeyPatch, then: str, reason: str
 ) -> None:
     server = _SseServer(GOOD[:3], then)
+    monkeypatch.setattr(e2e, "login_cookie", lambda stack: "sfly_login=abc123")
     try:
         stack = Stack(slot=9)
         monkeypatch.setattr(Stack, "cp_url", f"http://127.0.0.1:{server.port}")
@@ -709,10 +786,15 @@ def test_follow_brings_back_what_it_got_when_the_turn_does_not_end(
 
 def test_follow_stops_at_the_turn_end(monkeypatch: pytest.MonkeyPatch) -> None:
     server = _SseServer([*GOOD, _event(9, "assistant_message")], "close")
+    monkeypatch.setattr(e2e, "login_cookie", lambda stack: "sfly_login=abc123")
     try:
         monkeypatch.setattr(Stack, "cp_url", f"http://127.0.0.1:{server.port}")
         events, error = e2e.follow(Stack(slot=9), "s1", time.monotonic() + 5)
         assert (events, error) == (GOOD, None)
+        # 事件流不带凭据是 401（#494）：带初始管理员的登录 Cookie，同源。
+        (headers,) = server.headers
+        assert headers["cookie"] == "sfly_login=abc123"
+        assert headers["sec-fetch-site"] == "same-origin"
     finally:
         server.close()
 

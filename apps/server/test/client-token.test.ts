@@ -1,5 +1,5 @@
 // API 客户端的令牌（ADR 0029，#491）：初始化参数从昵称换成令牌，每个请求（含事件流）带 `Authorization: Bearer`，
-// 身份由令牌决定：有令牌时不发昵称、写操作不再要昵称。昵称参数保留给控制台（没登录的人 #494 之前仍用昵称）。
+// 身份由令牌决定：有令牌时不发昵称、写操作不再要昵称。没有令牌的请求控制面一律 401（#494），昵称参数之后一并删除。
 import { ApiError, createClient } from "@sfly/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestAccounts } from "./support/credentials.js";
@@ -58,8 +58,14 @@ describe("API 客户端带令牌", () => {
 		await client.orchestrations.list({ params: { project: "default" } });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${readOnlyToken}`);
 		current = "   ";
-		await client.orchestrations.list({ params: { project: "default" } });
+		const failure = await client.orchestrations.list({ params: { project: "default" } }).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
 		expect(sent()?.headers.authorization).toBeUndefined();
+		// 空白的令牌等于没带凭据：控制面 401（#494）。
+		expect(failure).toMatchObject({ status: 401, code: "unauthorized" });
+		expect((failure as ApiError).message).toContain("sfly login");
 	});
 
 	it("事件流同样带令牌：订阅时的请求带 Authorization: Bearer，不发昵称", async () => {
@@ -120,17 +126,12 @@ describe("API 客户端带令牌", () => {
 		expect(forbidden).toMatchObject({ status: 403, code: "forbidden" });
 	});
 
-	it("昵称参数还在（控制台没登录的人 #494 之前用它）：有令牌时令牌优先、昵称不发", async () => {
+	it("昵称参数还在（之后一并删除）：有令牌时令牌优先、昵称不发", async () => {
 		const both = createClient({ baseUrl: proxy.url, token, nickname: "冒充的人" });
 		await both.orchestrations.list({ params: { project: "default" } });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
 		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
-		const onlyNickname = createClient({ baseUrl: proxy.url, nickname: "小红" });
-		await onlyNickname.orchestrations.list({ params: { project: "default" } });
-		expect(sent()?.headers.authorization).toBeUndefined();
-		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
-		expect(sent()?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("小红"));
 	});
 });
 

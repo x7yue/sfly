@@ -52,6 +52,8 @@ describe("真实的控制面进程", () => {
 			databaseUrl: database.url,
 			dataDir,
 			env: { SFLY_AGENT_TOKEN: AGENT_TOKEN },
+			// 请求要带凭据（#494）：设初始管理员并登录，`fetch` 带登录 Cookie。
+			admin: true,
 		});
 		return server;
 	};

@@ -59,7 +59,7 @@ docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-versi
 | `mirror` | 镜像站：PyPI 和 GitHub Release，缺的文件从中科大镜像取并缓存在 `~/.local/share/sfly/evals/mirror-cache/`，控制面把它下发给 Agent 和 `sfly init` |
 | `pg` | PostgreSQL，数据在内存里 |
 | `cp` | 控制面，HTTP 映射到宿主机 `127.0.0.1:<18100 + 槽位>`，可以在浏览器里看 |
-| `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`，`--dev --name` 起的名字：评测里不走注册，凭据是给这个名字签发的 Agent 凭据）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi |
+| `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`，`--dev --name` 起的名字：评测里不走注册，凭据是给这个名字签发的 Agent 凭据）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi。`sfly` 命令行用初始管理员登录过（`sfly login`，令牌在 `/root/.sfly/credentials.json`，`up`、`reset` 重新登录）：控制面对不带凭据的请求一律 401（#494），评分、参考答案、臂 A 的助手在 `dev` 上的命令都用这份登录 |
 | `sut` | 被测机：普通的 Agent（`sut-01`），上面常驻一个通用的 HTTP 被测服务（`http://sut:9000`，见 `container/demo_svc.py`） |
 | `assistant` | 只有 `up --assistant` 时：平台的助手服务，见下面「平台的助手」 |
 
@@ -110,7 +110,7 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
   `walkthrough-many`（130 步，看到了上限和往前翻页）。剧本按会话的第一句话选，后面的话不换剧本。
 - **断网和离线包**：`up --isolated --assistant` 能起（模型只能用 `fake`，假的模型端点在网络里），会话经控制面照常走，
   但断网的网络不映射控制面的端口：宿主机上的浏览器和 `e2e` 都连不到，`e2e` 会直接拒绝；要看只能在 `dev` 里
-  `curl http://sfly.internal:8080/…`。离线包（`pack`）不带助手镜像，在不能联网的机器上要另外 `docker save` /
+  `curl http://sfly.internal:8080/…`（要带登录的 Cookie，先 `POST /auth/login`；或者直接用登录过的 `sfly api GET …`）。离线包（`pack`）不带助手镜像，在不能联网的机器上要另外 `docker save` /
   `docker load` 助手镜像和源码构建的控制面镜像（包里的是默认的发布版控制面，没有会话的接口）。
 
 ### 端到端测试
@@ -158,7 +158,7 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
   初始管理员的显示名设成臂 A 的昵称（`SFLY_ADMIN_DISPLAY_NAME=eval`，`aeval/env.py` 的
   `ASSISTANT_NICKNAME`，臂 A 的命令、参考答案、联调的上一次运行、平台臂都引用这一个常量），所以两臂的助手是
   同一个身份：联调副本的名字（「demo 巡检-联调-eval」）、`run show latest` 找自己触发的运行才对得上，真实模型下
-  两臂可比（评测自己的操作用 `grader`，分得开）。**密码经过的地方**：密码是 `reset` 建库时
+  两臂可比。评测自己的操作（`dev` 上的 `sfly`）用的也是初始管理员的登录（#494 之后昵称 `grader` 不再作数），和助手的操作靠「经」（`AI_AGENT=pi`）分开。**密码经过的地方**：密码是 `reset` 建库时
   随机生成的（`stack.admin_password`，也写进只有属主可读的 `~/.local/share/sfly/evals/admin-slot<槽位>.txt`，
   给人登录控制台用）；宿主机起驱动时 `docker exec -e SFLY_ADMIN_PASSWORD`，**参数里只有变量名**，值放在这条
   `docker exec` 进程的环境里（和 `aeval/docker.py` 的 `secret_env` 同一个约定），容器里的驱动从环境变量读；

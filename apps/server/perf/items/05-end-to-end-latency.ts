@@ -41,13 +41,17 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 	const runId = await api.trigger(scenario);
 	const latencies: PushLatency[] = [];
 	// 执行器启动要几百毫秒，节点的第一次上报一定在订阅之后。
-	const sse = await openSse(`${server.httpUrl}/runs/${runId}/events`, (event, receivedAtMs) => {
-		if (event.event !== "metrics") return;
-		const increment = metricIncrement.parse(event.data);
-		if (increment.node_id === NODE_ID) {
-			latencies.push(...pushLatencies(increment, METRIC, receivedAtMs));
-		}
-	});
+	const sse = await openSse(
+		`${server.httpUrl}/runs/${runId}/events`,
+		(event, receivedAtMs) => {
+			if (event.event !== "metrics") return;
+			const increment = metricIncrement.parse(event.data);
+			if (increment.node_id === NODE_ID) {
+				latencies.push(...pushLatencies(increment, METRIC, receivedAtMs));
+			}
+		},
+		api.authHeaders,
+	);
 	ctx.defer(() => sse.close());
 	const { outputs, chainInstanceId } = await api.succeeded<ClockOutputs>(
 		runId,
