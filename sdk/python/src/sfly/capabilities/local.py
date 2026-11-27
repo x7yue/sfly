@@ -143,7 +143,7 @@ class _OpenFile:
         not_file = f"{path} 不是文件" if self._regular else f"{path} 是目录，不能读取"
         try:
             with DeferCancel():
-                self._file = open(local.real(path), "rb")  # noqa: SIM115 — __exit__ 关闭
+                self._file = open(local.real(path), "rb")  # __exit__ 关闭
             mode = os.fstat(self._file.fileno()).st_mode
         except IsADirectoryError:
             raise local.invalid(not_file) from None

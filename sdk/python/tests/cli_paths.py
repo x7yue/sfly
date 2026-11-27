@@ -220,7 +220,7 @@ def _without_server_prefix(
     head, second = node.values[0], node.values[1]
     if (
         isinstance(head, ast.FormattedValue)
-        and scanner._resolve(head.value, env) is None  # noqa: SLF001
+        and scanner._resolve(head.value, env) is None
         and isinstance(second, ast.Constant)
         and _PATH_LIKE.match(str(second.value)) is not None
     ):

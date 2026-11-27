@@ -17,6 +17,7 @@ import psutil
 import pytest
 from helper_nodes import process_monitor
 from named_sleep import NamedSleep, named_sleep_fixture  # noqa: F401 -- fixture
+from polling import wait_for
 
 from sfly.testing import Execution, run_node
 from sfly_std.start_process import start_process
@@ -227,10 +228,10 @@ def test_processes_whose_fds_and_io_cannot_be_read_do_not_report_them(
 
 
 def wait_for_children(pid: int, count: int) -> None:
-    deadline = time.monotonic() + 10
-    while len(psutil.Process(pid).children()) < count:
-        assert time.monotonic() < deadline, f"进程 {pid} 没有启动 {count} 个子进程"
-        time.sleep(0.05)
+    wait_for(
+        lambda: len(psutil.Process(pid).children()) >= count,
+        what=f"进程 {pid} 启动 {count} 个子进程",
+    )
 
 
 def test_waits_for_the_targets_to_appear(tmp_path: Path, spawn: Spawn) -> None:

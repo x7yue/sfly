@@ -74,9 +74,9 @@ def test_wait_for_file_waits_for_the_file_to_exist_and_stop_changing(tmp_path: P
     report = tmp_path / "report.txt"
 
     def write() -> None:
-        time.sleep(0.3)
+        time.sleep(0.3)  # noqa: TID251 造场景：文件分两次写成，被测的等待要先看到前一半
         report.write_text("a")
-        time.sleep(0.3)
+        time.sleep(0.3)  # noqa: TID251 造场景：文件分两次写成，被测的等待要先看到前一半
         report.write_text("abc")
 
     writer = threading.Thread(target=write)

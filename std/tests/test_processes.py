@@ -14,6 +14,7 @@ from pathlib import Path
 import psutil
 import pytest
 from direct_context import DirectRun
+from polling import wait_for
 
 from sfly_std import processes
 from sfly_std._finder import ProcessFinder
@@ -172,7 +173,7 @@ def test_find_processes_by_pid_and_by_command_line(
     tagged: Callable[[], tuple[subprocess.Popen[bytes], str]],
 ) -> None:
     proc, tag = tagged()
-    time.sleep(0.1)
+    wait_for(lambda: find_processes(match=tag) != [], what="进程的命令行带上标记")
 
     assert [p.pid for p in find_processes(pid=proc.pid)] == [proc.pid]
     assert [p.pid for p in find_processes(match=tag)] == [proc.pid]

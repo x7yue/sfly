@@ -15,10 +15,11 @@
 ## 测试
 
 - **异步结果在等待条件里断言。** 触发异步动作（发消息、派发、取消、杀进程、写库）之后，要断言的状态放进等待条件，
-  等它落定再继续：TS 用 `test/support/eventually.ts`，Agent 测试用 `wait_until`/`wait_for`，Python 用文件里的 `wait_for`。
+  等它落定再继续：TS 用 `test/support/eventually.ts`，Agent 测试用 `wait_until`/`wait_for`，Python 用共享的 `sdk/python/tests/polling.py` 的 `wait_for`（SDK 和 sfly-std 的测试都用它，不在测试文件里另写一份）。
   - 不在动作之后立即断言。靠判断：静态看不出前一个调用是不是异步动作。
   - 不先 sleep 固定时长再断言。e2e 里的 `waitForTimeout` 由 `biome-plugins/e2e-fixed-wait.grit` 拦下；确实只能等一段时间、确认某件事没有发生时，
-    在它上一行写 `// biome-ignore lint/plugin/e2e-fixed-wait: <原因>`。
+    在它上一行写 `// biome-ignore lint/plugin/e2e-fixed-wait: <原因>`。Python 测试里的 `time.sleep` 由 ruff 的 TID251 拦下（只查测试目录）；
+    确实要 sleep 的（被测节点模拟耗时、假的服务端、按时间表造场景、确认某件事没有发生），在那一行写 `# noqa: TID251 <原因>`。
   - 耗时只作超时上限，不作断言区间（例如 `0.45 <= elapsed < 2`）。靠判断：耗时的写法不固定（`elapsed`、两次取时间相减……），lint 查不全。
 
   这类写法在 CI 的 2 核 runner 和本机高负载时会偶发失败（#108、#129、#136）。

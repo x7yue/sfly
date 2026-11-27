@@ -93,7 +93,7 @@ def wait_renamed(pid: int, name: str, copies: int) -> list[int]:
             return sorted(p.pid for p in procs)
         assert root.is_running(), f"进程 {pid} 已退出"
         assert time.monotonic() < deadline, f"进程 {pid} 没有在 30 秒内改名为 {name}"
-        time.sleep(0.01)
+        time.sleep(0.01)  # noqa: TID251 这个文件也作为单独的进程运行，用不了 sdk/python/tests 的等待辅助
 
 
 def main() -> None:
@@ -103,7 +103,7 @@ def main() -> None:
     for _ in range(int(os.environ.get("NAMED_SLEEP_COPIES", "1")) - 1):
         if os.fork() == 0:
             break
-    time.sleep(seconds)
+    time.sleep(seconds)  # noqa: TID251 它就是被测的那个一直睡着的进程
 
 
 if __name__ == "__main__":

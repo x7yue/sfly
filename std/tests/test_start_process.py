@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 import signal
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import psutil
 import pytest
+from polling import wait_for
 
 from sfly.testing import run_node
 from sfly_std.start_process import start_process
@@ -20,13 +20,6 @@ def alive(pid: int) -> bool:
         return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
     except psutil.NoSuchProcess:
         return False
-
-
-def wait_for(what: str, check: Callable[[], bool], timeout: float = 10) -> None:
-    deadline = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < deadline, f"等待超时：{what}"
-        time.sleep(0.05)
 
 
 @pytest.fixture
@@ -59,7 +52,7 @@ def test_process_keeps_running_after_the_node_ends_and_logs_to_the_procs_dir(
     log = tmp_path / "procs" / "start_process.log"
     assert result.outputs == {"pid": pid, "log_file": str(log)}
     assert alive(pid)
-    wait_for("日志", lambda: log.exists() and "出错了" in log.read_text(encoding="utf-8"))
+    wait_for(lambda: log.exists() and "出错了" in log.read_text(encoding="utf-8"), what="日志")
     assert log.read_text(encoding="utf-8") == "已启动\n出错了\n"
 
 
@@ -85,7 +78,7 @@ def test_log_file_relative_to_cwd_is_created_and_appended_to(
     log = app / "logs" / "server.log"
     assert result.outputs["log_file"] == str(log)
     expected = f"上一次\n你好 from {app}\n"
-    wait_for("日志", lambda: log.read_text(encoding="utf-8") == expected)
+    wait_for(lambda: log.read_text(encoding="utf-8") == expected, what="日志")
 
 
 def test_process_runs_in_its_own_session_outside_the_task_process_tree(

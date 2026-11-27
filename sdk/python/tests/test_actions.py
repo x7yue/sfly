@@ -32,6 +32,7 @@ from action_nodes import (
     truncation,
     wait_in_action,
 )
+from polling import wait_for
 
 from sfly import Context, TaskInfo
 from sfly.actions import (
@@ -47,13 +48,6 @@ from sfly.actions import (
 )
 from sfly.context import _dumps
 from sfly.testing import ActionRecord, ActionSummary, Execution, run_node
-
-
-def wait_for(check: Callable[[], bool], timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < deadline, "timed out"
-        time.sleep(0.01)
 
 
 def by_name(result: Execution) -> dict[str, ActionRecord]:
@@ -473,7 +467,7 @@ def test_durations_come_from_mono_so_changing_the_system_time_does_not_matter(
     monkeypatch.setattr(time, "time", lambda: clock["now"])
 
     handle = ctx.action.start("改系统时间")
-    time.sleep(0.05)
+    time.sleep(0.05)  # noqa: TID251 让动作真的持续一小段时间，再看改了系统时间之后的耗时
     clock["now"] -= 3600  # 测试把 Agent 的系统时间往回改了一小时
     handle.end()
 
@@ -1155,7 +1149,7 @@ def test_summaries_are_sent_at_most_once_a_second_and_a_late_change_still_arrive
     count = 0
     while time.monotonic() - started < 1.5:
         with ctx.action("下单"):
-            time.sleep(0.002)
+            time.sleep(0.002)  # noqa: TID251 模拟每个动作做事的耗时
         count += 1
     elapsed = time.monotonic() - started
 

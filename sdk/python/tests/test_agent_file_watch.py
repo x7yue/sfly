@@ -10,12 +10,12 @@ from __future__ import annotations
 import os
 import sys
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
+from polling import wait_for
 
 import sfly
 from sfly.testing import Execution, run_node
@@ -30,13 +30,6 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 def package_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.syspath_prepend(str(PACKAGE / "src"))
-
-
-def wait_for(check: Callable[[], bool], timeout: float = 20.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < deadline, "timed out"
-        time.sleep(0.01)
 
 
 class Running:

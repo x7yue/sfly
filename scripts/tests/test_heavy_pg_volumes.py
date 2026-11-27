@@ -18,13 +18,13 @@ import os
 import shutil
 import signal
 import subprocess
-import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from polling import wait_for
 
 ROOT = Path(__file__).resolve().parents[2]
 PG_IMAGE = "postgres:18"
@@ -122,16 +122,19 @@ class Workspace:
             preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
         )
         container = f"sfly-heavy-pg-{self.name}-{proc.pid}"
-        deadline = time.monotonic() + STARTUP_SECONDS
-        while time.monotonic() < deadline:
-            if READY in stderr_file.read_text(errors="ignore"):
-                self.volumes_of(container)
-                return proc, stderr_file, container
-            if proc.poll() is not None:
-                break
-            time.sleep(0.3)
-        proc.kill()
-        pytest.fail(f"数据库没有就绪：\n{stderr_file.read_text(errors='ignore')}")
+        try:
+            wait_for(
+                lambda: READY in stderr_file.read_text(errors="ignore") or proc.poll() is not None,
+                STARTUP_SECONDS,
+                what="数据库就绪",
+            )
+        except AssertionError:
+            proc.kill()
+            pytest.fail(f"数据库没有就绪：\n{stderr_file.read_text(errors='ignore')}")
+        if proc.poll() is not None:
+            pytest.fail(f"数据库没有就绪：\n{stderr_file.read_text(errors='ignore')}")
+        self.volumes_of(container)
+        return proc, stderr_file, container
 
 
 @pytest.fixture

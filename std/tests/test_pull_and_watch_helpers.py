@@ -97,7 +97,7 @@ def test_watch_agent_files_pulls_files_that_appear_once_each_until_duration(
     local = tmp_path / "pulled"
 
     def later() -> None:
-        time.sleep(0.6)
+        time.sleep(0.6)  # noqa: TID251 造场景：被测的拉取已经开始之后再出现新文件
         (source / "app.log.2").write_bytes(b"two\n")
 
     writer = threading.Thread(target=later)

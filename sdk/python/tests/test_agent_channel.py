@@ -13,25 +13,18 @@ import socket
 import subprocess
 import sys
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
+from polling import wait_for
 
 import sfly
 from sfly import Context, TaskInfo
 
 SDK_SRC = Path(__file__).resolve().parents[1] / "src"
 PACKAGE_SRC = Path(__file__).resolve().parents[3] / "testdata" / "agent-files-package" / "src"
-
-
-def wait_for(check: Callable[[], bool], timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < deadline, "timed out"
-        time.sleep(0.01)
 
 
 class FakeAgent:

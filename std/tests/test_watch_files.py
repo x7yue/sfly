@@ -21,6 +21,7 @@ from typing import Any, cast
 
 import pytest
 from helper_nodes import watch_files
+from polling import wait_for
 
 from sfly import Agent, AgentError, AgentUnreachable, Context, FileId, FileInfo
 from sfly.testing import Execution, run_node
@@ -183,7 +184,7 @@ def test_a_file_still_being_written_is_pulled_only_after_it_has_not_changed_for_
             if previous is not None:
                 longest[0] = max(longest[0], time.monotonic() - previous)
             previous = started
-            time.sleep(0.05)
+            time.sleep(0.05)  # noqa: TID251 造场景：每隔一段时间追加一行
 
     local = tmp_path / "pulled" / "app.log"
 
@@ -350,13 +351,6 @@ def test_rejects_invalid_parameters(tmp_path: Path, inputs: dict[str, Any], mess
     assert result.status == "failed"
     assert result.error is not None
     assert message in result.error.message, result.error.message
-
-
-def wait_for(check: Callable[[], bool], timeout: float = 20.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < deadline, "timed out"
-        time.sleep(0.01)
 
 
 # ---- 在 Agent 上：拉取期间改名 ----
