@@ -1109,12 +1109,17 @@ test("Agent 面板：计数分母不含已停用的 Agent，后面写「1 台已
 	await runOnce(controlPlane, agents[0] as FakeAgent);
 	await page.goto("/");
 	const panel = region(page, "Agent");
+	// 侧栏「Agent 管理」旁的数和面板标题同一个口径：已停用的不算在总数里。
+	const sidebarCount = page.getByRole("link", { name: /Agent 管理/ });
 	await expect(panel).toContainText("3 / 3 在线");
+	await expect(sidebarCount).toContainText("3/3");
 	await expect(panel).not.toContainText("已停用");
 
 	await setAgentDisabled(controlPlane, "agent-c", true);
 	// 页面每 5 秒重新读一次 Agent 列表。
 	await expect(panel).toContainText("2 / 2 在线 · 1 台已停用", { timeout: 15_000 });
+	await expect(sidebarCount).toContainText("2/2");
+	await expect(sidebarCount).not.toContainText("2/3");
 	const stopped = panel.getByRole("region", { name: "agent-c", exact: true });
 	await expect(stopped).toContainText("已停用");
 	await expect(stopped).not.toContainText("离线");

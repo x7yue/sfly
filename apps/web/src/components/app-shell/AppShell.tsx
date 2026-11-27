@@ -9,6 +9,7 @@ import {
 	PanelLeftOpenIcon,
 	SearchIcon,
 } from "lucide-react";
+import { agentCounts } from "#/agents/agent-status";
 import { AccountMenu } from "#/components/account/AccountMenu";
 import { OriginNotice } from "#/components/account/OriginNotice";
 import { Keys } from "#/components/page";
@@ -54,12 +55,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 function Sidebar({ collapsed }: { collapsed: boolean }) {
 	const { open } = useOverlays();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
-	const online = agents.data?.agents.filter((a) => a.status === "online").length;
+	// 在线 / 总数，口径和控制台 Agent 面板的标题一样：已停用的不算在总数里（`agentCounts`）。
+	const { online, enabled } = agentCounts(agents.data?.agents ?? []);
 	const counts: Partial<Record<NavItem["to"], string>> = {
-		"/agents":
-			agents.data && agents.data.agents.length > 0
-				? `${online}/${agents.data.agents.length}`
-				: undefined,
+		"/agents": agents.data && agents.data.agents.length > 0 ? `${online}/${enabled}` : undefined,
 	};
 
 	return (
