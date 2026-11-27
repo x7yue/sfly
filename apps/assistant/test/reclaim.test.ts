@@ -152,7 +152,7 @@ describe("闲置回收（时间可控）", () => {
 		const pid = h.sessions.pid(id) as number;
 		// 紧接着说第 2 轮（同一时刻，上一轮留下的 15 分钟计时在 15 分钟后到点）：长时间在做，用时没到 20 分钟的上限。
 		expect((await h.prompt(id, { turn: 2, text: "hang" })).status).toBe(202);
-		await eventually(() => expect(count(h, id, "turn_start")).toBe(1));
+		await eventually(() => expect(count(h, id, "turn_start")).toBe(2));
 		clock.advance(16 * MINUTE);
 		expect(h.sessions.pid(id)).toBe(pid);
 		expect(count(h, id, "fake_stdin_closed")).toBe(0);
@@ -170,7 +170,7 @@ describe("闲置回收（时间可控）", () => {
 		const pid = h.sessions.pid(id) as number;
 		clock.advance(14 * MINUTE);
 		expect((await h.prompt(id, { turn: 2, text: "slow-abort" })).status).toBe(202);
-		await eventually(() => expect(count(h, id, "turn_start")).toBe(1));
+		await eventually(() => expect(count(h, id, "turn_start")).toBe(2));
 		await h.abort(id, 2);
 		expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "stopped" });
 		// 第 1 轮结束之后的 15 分钟到了，但这一轮刚停下：不回收。
@@ -188,7 +188,8 @@ describe("闲置回收（时间可控）", () => {
 		// 紧接着说第 2 轮、马上停止：最后一次收到命令的时刻和第 1 轮结束的时刻是同一刻，到点时已经满 15 分钟没收到命令，
 		// 不回收只是因为会话在停止（abort 刷新了计时的话，这条用例就测不到它）。
 		expect((await h.prompt(id, { turn: 2, text: "deaf" })).status).toBe(202);
-		await eventually(() => expect(count(h, id, "turn_start")).toBe(1));
+		// 第 2 个 turn_start：pi 已经开始做第 2 轮了（第 1 个是上一轮的），这时 abort 才真的是在停止一个在做的轮次。
+		await eventually(() => expect(count(h, id, "turn_start")).toBe(2));
 		await h.abort(id, 2); // 在停止：pi 不报告 agent_settled，要等 60 分钟
 		clock.advance(IDLE_RECLAIM_MS);
 		// 回收会马上把进程从会话上摘下来（`pid` 变成 undefined），stdin 的关闭要稍后才在 pi 那边看得到：两样都看。
