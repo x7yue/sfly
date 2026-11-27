@@ -19,7 +19,7 @@
    记成 `not_ready`，宿主机归环境故障（作废、`--fill` 重跑），不算平台的错；别的拒绝仍是
    `control_plane`。
 3. `GET /sessions/<ID>/events?after=<序号>`（SSE）：每个事件原样写一行到
-   `platform-events.jsonl`（控制面每 15 秒的 `control-plane-time` 心跳不写），等到这一轮带序号的
+   `platform-events.jsonl`（控制面每 15 秒的 `time` 心跳不写），等到这一轮带序号的
    `turn_end`。**事件流断了**（连接出错、结束了、`READ_TIMEOUT_SECONDS` 里一个字节都没有）
    **就从最后一个序号之后重连**，到时限为止。
 4. 过了时限（平台自己的上限再加 60 秒）还没等到：`POST /sessions/<ID>/stop`，再接着等

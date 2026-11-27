@@ -150,16 +150,30 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
   4. 不论结果如何，建了会话就 `POST /sessions/:id/end`，助手服务关掉这个会话的 pi 进程，不靠闲置回收。驱动遇到意外、
      收到 SIGTERM、SIGINT 也照常收尾；宿主机这边被打断或者等过了总的时限，给容器里的驱动发 SIGTERM。
 
-  现在建会话只带昵称 `eval`（控制面不带凭据也放行）；#547、#494 强制鉴权之后改成登录、带个人令牌，
-  代码里在 `platform_driver.py` 的 `Client.request` 留了记号。
+  **登录**（#547：建会话只认用户的凭据，不带是 401）：驱动在第 1 步之前用初始管理员登录
+  （`POST /auth/login`，带 `sec-fetch-site: same-origin`，登录名 `aeval_admin`），拿 `sfly_login` Cookie，
+  之后的每个请求（检查、建会话、事件流、`stop`、`end`）都带它。会话记在这个用户名下，助手命令里的
+  `SFLY_NICKNAME` 是它的显示名（评测自己的操作用 `grader`，分得开）。**密码经过的地方**：密码是 `reset` 建库时
+  随机生成的（`stack.admin_password`，也写进只有属主可读的 `~/.local/share/sfly/evals/admin-slot<槽位>.txt`，
+  给人登录控制台用）；宿主机起驱动时 `docker exec -e SFLY_ADMIN_PASSWORD`，**参数里只有变量名**，值放在这条
+  `docker exec` 进程的环境里（和 `aeval/docker.py` 的 `secret_env` 同一个约定），容器里的驱动从环境变量读；
+  它**不进命令行参数、不进 `platform.json`、`driver-stdout.log`、`platform-events.jsonl`**，Cookie 同样：驱动把
+  写进记录和标准输出的文字里的密码、Cookie 先换成 `******`（`Client.scrub`），测试里让假控制面在错误回应里回显
+  它们、逐个文件和标准输出搜（`test_neither_the_password_nor_the_cookie_reaches_a_file_or_stdout`）。
+  镜像站容器是评测自己的，助手的命令够不着它；密码在它的进程环境里，只有评测自己能读。
+  登录失败（没给密码、连不上、401、没拿到 Cookie）是环境故障（`login`），不建会话。
 - 记录和臂 A 的同样布局，判分、失败分类、`report` 不分臂：
   - `events.jsonl`、`pi-session/`、`pi-stderr.log`、`context.md` 从助手容器里这个会话的目录复制出来，只复制这几样；
     `turn.json` 带着这一轮的环境变量，不复制。
-  - `platform-events.jsonl` 是事件流里收到的每个事件；`platform.json` 是开始前的检查、会话 ID、结局、断开的次数和原因、
-    评测有没有停下它、记下的问题和每个问题的种类（`problem_kinds`：控制面回错、过了时限、停止之后没有结局、评测自己
-    出错、驱动被结束了）、用时。
+  - `platform-events.jsonl` 是事件流里收到的每个事件，**原样一行一个**（心跳不记）：除了会话的事件，连上事件流时控制面
+    补发的一条 `snapshot`（没有序号，重连每次一条：正在输出的文字、在跑的命令、排位）、一轮结束时平台提交工作区的
+    `platform`（`kind: commit`，在 `turn_end` 之前）也在里面，不要把它们当成助手的事件数。`platform.json` 是开始前的
+    检查、会话 ID、结局、断开的次数和原因、评测有没有停下它、记下的问题和每个问题的种类（`problem_kinds`：控制面回错、
+    过了时限、停止之后没有结局、评测自己出错、驱动被结束了、管理员登录失败、建会话时环境没准备好）、用时。
   - `driver.json`：模型调用次数当轮数（臂 A 到上限时也记上限的值）、token 是平台的合计；用时是评测这一侧量的
     （从发出题目到看到结局，不含开始前的检查和结束会话；没等到结局时量到不再等为止），平台结局里的用时另记 `platform_duration_seconds`；工具调用次数从 pi 的原始事件里数。
+    **平台臂的用时包含一轮结束时平台提交工作区的时间**（`turn_end` 之前提交，最多 30 秒，没有改动时很快；
+    臂 A 没有这一步），所以和臂 A 比用时时平台臂会偏高一点；用时不是判定的三条标准之一，报告里写着口径。
   - pi 的内存峰值：评测在助手容器里每秒读一次所有进程名是 `pi` 的进程（pi 启动时改了自己的进程名）的 `VmHWM`，
     取最大值，不为它改产品；每次会话前助手容器重建，里面只有这一次的 pi。一个都没认出来时记成缺（`null`，`report` 写
     「-」），`pi_processes` 记认出了几个。`session.json` 的 `assistant_pi` 是助手镜像里 pi 的版本（和工作台镜像里的分别固定）。
@@ -167,9 +181,11 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
   只提醒。
 - 模型：`--model` 和助手容器现在的模型不一样时，这次会话之前的 `reset` 把助手容器换成这个模型（假的模型端点要在 up 时起着）。
 - **结局的归类**（`aeval/platform.py` 的 `classify_platform`）：每一种情况明确列出归哪一类，不靠兜底。
-  - 环境故障（评测环境的问题）：开始前的检查没过、会话驱动没给出结果、评测自己出错（驱动的异常、写不进自己的事件记录）、
-    驱动被结束了、模型端点的故障。作废（`session.json` 的 `platform_fault` 写明原因），`run` 停下，用 `--fill` 重跑。
-  - **平台故障**（检查过了之后平台这一侧出的问题）：建会话被拒或回应不对、平台在自己的上限上没给结局要评测来停（先于
+  - 环境故障（评测环境的问题）：开始前的检查没过（含管理员登录失败）、会话驱动没给出结果、评测自己出错（驱动的异常、
+    写不进自己的事件记录）、驱动被结束了、**建会话被 503 拒绝而原因是环境没准备好**（`model_unavailable`：助手服务说
+    模型没配置或连不上；`assistant_not_configured`；`assistant_unavailable` 而说明是助手服务的事件流还没连上——
+    检查通过之后环境才变坏的那一瞬）、模型端点的故障。作废（`session.json` 的 `platform_fault` 写明原因），`run` 停下，用 `--fill` 重跑。
+  - **平台故障**（检查过了之后平台这一侧出的问题）：建会话被拒（上面环境没准备好的几种除外）或回应不对、平台在自己的上限上没给结局要评测来停（先于
     「驱动被结束了」判）、停止之后没有结局、`stop` 或 `end` 回错、结局是 `failed`、`interrupted`、评测没有让它停而结局是
     `stopped`。**算有效的失败**：判分多一条没过的「平台这一侧没有出问题」，计入平台臂的通过率和判定，主类「平台故障」，
     `report` 单独一张表逐次列出（哪道题、哪次会话、原始的问题文字）。
