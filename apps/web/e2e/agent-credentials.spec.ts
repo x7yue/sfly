@@ -220,6 +220,40 @@ test.describe("签发、吊销、轮换", () => {
 		expect(posts).toHaveLength(1);
 	});
 
+	test("给新名字签发时请求还没回来：连按 Enter 只发一个请求，Esc 关不掉；响应回来后显示原值", async ({
+		page,
+		context,
+		controlPlane,
+	}) => {
+		await signInAsAdmin(context, controlPlane);
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const posts: string[] = [];
+		await page.route("**/api/agents/worker-5/credentials", async (route) => {
+			if (route.request().method() !== "POST") return route.continue();
+			posts.push(route.request().url());
+			await gate;
+			await route.continue();
+		});
+		await page.goto("/agents");
+		await page.getByRole("button", { name: "为新 Agent 签发凭据" }).click();
+		const name = dialog(page).getByLabel("Agent 名称");
+		await name.fill("worker-5");
+		await name.press("Enter");
+		await expect.poll(() => posts.length).toBe(1);
+		await name.press("Enter");
+		await name.press("Enter");
+		await page.keyboard.press("Escape");
+		await expect(dialog(page)).toBeVisible();
+		await expect(dialog(page).getByRole("button", { name: "取消" })).toBeDisabled();
+		expect(posts).toHaveLength(1);
+		release();
+		await expect(dialog(page)).toContainText("的凭据已签发");
+		expect(posts).toHaveLength(1);
+	});
+
 	test("签发时没有收到响应（控制面其实已经签发了）：写明可能已经签发了一枚没看到原值的凭据，列表刷新后能看到它；明确被拒绝的（403）不写这句", async ({
 		page,
 		context,
