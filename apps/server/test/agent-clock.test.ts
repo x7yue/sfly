@@ -196,7 +196,7 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 		expect(conn.clock.occurredAt(30_000)?.toISOString()).toBe("2025-03-06T23:59:40.000Z");
 	});
 
-	it("同一次连接内折算结果不变：心跳带来新的读数、Agent 时间跳变、控制面时间流逝都不影响", async () => {
+	it("一次心跳晚到 3 秒不改折算（可能只是这一次晚到，连续两次才重新估算，#389）：Agent 时间跳变、控制面时间流逝都不影响", async () => {
 		const agent = await connect({
 			name: "agent-a",
 			...agentClock(START_MS, 50_000),

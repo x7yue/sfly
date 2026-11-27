@@ -83,21 +83,74 @@ export function recordableAgentTimeMs(unixMs: bigint | number): number {
 	return Math.min(MAX_AGENT_TIME_MS, Math.max(MIN_AGENT_TIME_MS, Number(unixMs)));
 }
 
+/** 一次连接里折算的一段：从单调时钟读数 `fromMs` 起用的常量，和这一段折算结果的下限（不倒退）。 */
+interface ClockSegment {
+	fromMs: number;
+	constantMs: number;
+	floorMs: number;
+}
+
+/** 一次连接最多记住几段折算；更早的读数（极少见：连接里很久以前排队的数据）按最早记住的那一段折算。 */
+const MAX_SEGMENTS = 16;
+
+/** 换算偏差（毫秒）：重新估算时写的一行说明，正数表示按原来的换算折算出的时间比控制面时间晚。 */
+export type RecalibrationNote = { driftMs: number };
+
 /**
- * 一次连接的「单调时钟读数 → 控制面时间」对应关系：收到 Hello 时用当时的控制面时间和 Hello 里的单调时钟读数
- * 定下常量（控制面时间 = 单调时钟读数 + 常量），这次连接内不再重新估算，折算出的时间不倒退、间隔不变。
+ * 一次连接的「单调时钟读数 → 控制面时间」对应关系（控制面时间 = 单调时钟读数 + 常量）：收到 Hello 时用当时的控制面时间和
+ * Hello 里的单调时钟读数定下常量；之后每次心跳用心跳里的读数和收到它的控制面时间检查换算偏差（ADR 0018「按连接和心跳时测得的
+ * 时钟偏差折算」，#389），超过 {@link CLOCK_OFFSET_THRESHOLD_MS} 时重新估算（{@link recalibrate}）。
+ * - 心跳只会晚到：按它算出的常量比真实的大（一次网络延迟）。算出的常量比现在的小（折算出的时间比控制面时间晚）不可能是延迟，
+ *   超过阈值就重新估算；比现在的大，可能只是这一次晚到，连续两次心跳都超过阈值才重新估算，取两次里小的那个。
+ * - 新常量只用于这次心跳读数之后的点；之前的读数仍按原来的常量折算，已经写下的点不变。
+ * - 同一连接的折算结果不倒退：新常量让折算结果变早时，之后的点不早于按原来的常量折算出的这次心跳的时刻，等控制面时间追上来以后
+ *   照新常量走。
  * 旧版本 Agent 的 Hello 不带单调时钟读数时没有对应关系。
  */
 export class ConnectionClock {
-	/** 控制面时间（Unix 毫秒）− 单调时钟读数；没有对应关系时为 undefined。 */
-	readonly #constantMs: number | undefined;
+	/** 各段折算，按读数从早到晚；没有对应关系时为空。 */
+	readonly #segments: ClockSegment[] = [];
+	/** 上一次心跳算出的、比现在的常量大得多的常量（等第二次确认）；没有时为 undefined。 */
+	#pendingMs: number | undefined;
 
 	constructor(
 		private readonly clock: Clock,
 		hello: AgentClockReading | undefined,
 		helloReceivedAt: Date,
 	) {
-		this.#constantMs = hello && helloReceivedAt.getTime() - hello.monotonicMs;
+		if (hello) {
+			const constantMs = helloReceivedAt.getTime() - hello.monotonicMs;
+			this.#segments.push({ fromMs: -Infinity, constantMs, floorMs: -Infinity });
+		}
+	}
+
+	/**
+	 * 心跳带来的读数：检查换算偏差，需要时重新估算常量。重新估算了返回换算偏差（调用方写一行日志），否则返回 undefined。
+	 * 读数比当前这一段的起点早（乱序到达）时不处理。
+	 */
+	recalibrate(monotonicMs: number, receivedAt: Date): RecalibrationNote | undefined {
+		const current = this.#segments.at(-1);
+		if (current === undefined || monotonicMs <= current.fromMs) return undefined;
+		const sampleMs = receivedAt.getTime() - monotonicMs;
+		const driftMs = current.constantMs - sampleMs;
+		if (Math.abs(driftMs) < CLOCK_OFFSET_THRESHOLD_MS) {
+			this.#pendingMs = undefined;
+			return undefined;
+		}
+		let constantMs = sampleMs;
+		if (driftMs < 0) {
+			// 折算出的时间比控制面时间早：可能只是这次心跳晚到，等下一次也这样再改。
+			if (this.#pendingMs === undefined) {
+				this.#pendingMs = sampleMs;
+				return undefined;
+			}
+			constantMs = Math.min(this.#pendingMs, sampleMs);
+		}
+		this.#pendingMs = undefined;
+		const floorMs = monotonicMs + current.constantMs;
+		this.#segments.push({ fromMs: monotonicMs, constantMs, floorMs });
+		if (this.#segments.length > MAX_SEGMENTS) this.#segments.shift();
+		return { driftMs: current.constantMs - constantMs };
 	}
 
 	/**
@@ -106,8 +159,10 @@ export class ConnectionClock {
 	 */
 	occurredAt(monotonicMs: bigint | number): Date | undefined {
 		const reading = Number(monotonicMs);
-		if (this.#constantMs === undefined || reading === 0) return undefined;
-		return new Date(reading + this.#constantMs);
+		if (this.#segments.length === 0 || reading === 0) return undefined;
+		const segment =
+			this.#segments.findLast((sg) => sg.fromMs <= reading) ?? (this.#segments[0] as ClockSegment);
+		return new Date(Math.max(reading + segment.constantMs, segment.floorMs));
 	}
 
 	/**
