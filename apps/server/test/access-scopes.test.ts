@@ -35,7 +35,7 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	// 局部编辑（#470）：一组操作存成新版本，就是 ADR 表里「保存版本」那一行（场景 × 写）→ 编辑
 	"POST /orchestrations/:id/edits": "edit",
 	"PATCH /orchestrations/:id": "edit",
-	"POST /orchestrations": "edit",
+	"POST /projects/:project/orchestrations": "edit",
 	"POST /orchestrations/:id/archive": "edit",
 	"POST /orchestrations/:id/unarchive": "edit",
 	// 复制场景（场景，写，creates: scenario）：源场景只被读；新建的是场景 → 编辑
@@ -284,10 +284,10 @@ describe("契约和访问检查的规则对得上", () => {
 			expect.arrayContaining([
 				"GET /projects/:project/agents",
 				"POST /projects/:project/agents/:name/update-now",
-				"GET /dashboard",
-				"GET /runs",
-				"GET /orchestrations",
-				"POST /orchestrations",
+				"GET /projects/:project/dashboard",
+				"GET /projects/:project/runs",
+				"GET /projects/:project/orchestrations",
+				"POST /projects/:project/orchestrations",
 				"GET /projects/:project/packages",
 				"GET /projects/:project/packages/:name/versions/:version/archive",
 				"GET /feishu-bots",
@@ -361,18 +361,18 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 			problems.filter((p) => p.includes("REVOKE_OWN_ROUTES"));
 		try {
 			// 不是账号类的接口。
-			list.add("GET /orchestrations");
+			list.add("GET /projects/:project/orchestrations");
 			expect(mentions(checkAccessRules(httpContract))).toEqual([
-				expect.stringContaining("GET /orchestrations"),
+				expect.stringContaining("GET /projects/:project/orchestrations"),
 			]);
-			list.delete("GET /orchestrations");
+			list.delete("GET /projects/:project/orchestrations");
 			// 账号类，但认的是平台管理员（写进去会悄悄放宽管理账号的接口）。
 			list.add("POST /users");
 			expect(mentions(checkAccessRules(httpContract))).toEqual([
 				expect.stringContaining("POST /users"),
 			]);
 		} finally {
-			list.delete("GET /orchestrations");
+			list.delete("GET /projects/:project/orchestrations");
 			list.delete("POST /users");
 		}
 		// 现在的清单没有问题。
@@ -393,10 +393,10 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 		// 例外清单里写进不是账号类的接口：同样让控制面起不来。
 		const list = REVOKE_OWN_ROUTES as Set<string>;
 		try {
-			list.add("GET /orchestrations");
+			list.add("GET /projects/:project/orchestrations");
 			expect(() => guardHttpContract(Fastify(), httpContract)).toThrow(/REVOKE_OWN_ROUTES/);
 		} finally {
-			list.delete("GET /orchestrations");
+			list.delete("GET /projects/:project/orchestrations");
 		}
 	});
 

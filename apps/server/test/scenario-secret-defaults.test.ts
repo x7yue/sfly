@@ -281,7 +281,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 
 			const responses: Array<[string, Response, { masked: boolean }]> = [
 				["读场景", await api.get(`/orchestrations/${id}`), { masked: false }],
-				["场景列表", await api.get("/orchestrations"), { masked: false }],
+				["场景列表", await api.get("/projects/default/orchestrations"), { masked: false }],
 				["编辑起点", await api.get(`/orchestrations/${id}/head`), { masked: true }],
 				["版本 1", await api.get(`/orchestrations/${id}/versions/1`), { masked: true }],
 				["版本列表", await api.get(`/orchestrations/${id}/versions`), { masked: false }],
@@ -291,10 +291,10 @@ describe("场景版本里 secret 参数的默认值", () => {
 				["复制场景", copied, { masked: false }],
 				["副本的编辑起点", await api.get(`/orchestrations/${copyId}/head`), { masked: true }],
 				["运行视图", await api.get(`/runs/${runId}`), { masked: false }],
-				["运行列表", await api.get("/runs"), { masked: false }],
+				["运行列表", await api.get("/projects/default/runs"), { masked: false }],
 				["场景的运行", await api.get(`/orchestrations/${id}/runs`), { masked: false }],
 				["运行预设", await api.get(`/orchestrations/${id}/presets`), { masked: true }],
-				["首页", await api.get("/dashboard"), { masked: false }],
+				["首页", await api.get("/projects/default/dashboard"), { masked: false }],
 			];
 			for (const [what, res, { masked }] of responses) {
 				expect(res.status, what).toBeLessThan(300);
@@ -828,8 +828,11 @@ describe("场景版本里 secret 参数的默认值", () => {
 			};
 
 			// 新建场景：成功、名称缺失（400）。
-			await record("新建场景", tracked.post("/orchestrations", { name: "另一个" }));
-			await record("新建场景：缺名称", tracked.post("/orchestrations", {}));
+			await record(
+				"新建场景",
+				tracked.post("/projects/default/orchestrations", { name: "另一个" }),
+			);
+			await record("新建场景：缺名称", tracked.post("/projects/default/orchestrations", {}));
 			// 触发：成功；把占位符当成值传回来（400）；传了没有声明的参数（400）；类型不对（400）；场景不存在（404）。
 			const triggered = await tracked.trigger(id);
 			responses.push(["触发", triggered]);

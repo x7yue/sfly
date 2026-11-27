@@ -229,12 +229,14 @@ export interface Api {
 	};
 	dashboard: {
 		/**
-		 * `GET /dashboard`
+		 * `GET /projects/:project/dashboard`
 		 *
 		 * 控制台统计（最近 24 小时）。
 		 */
 		get: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			DashboardView
 		>;
 	};
@@ -514,12 +516,13 @@ export interface Api {
 	};
 	orchestrations: {
 		/**
-		 * `GET /orchestrations`
+		 * `GET /projects/:project/orchestrations`
 		 *
 		 * 场景列表，按新建时间从新到旧；archived_count 是已归档场景的总数（不受其他筛选影响）。
 		 */
 		list: Endpoint<
 			{
+				params: ProjectParams;
 				query?: ListOrchestrationsQuery;
 			},
 			{
@@ -753,12 +756,13 @@ export interface Api {
 			SavedVersionView
 		>;
 		/**
-		 * `POST /orchestrations`
+		 * `POST /projects/:project/orchestrations`
 		 *
 		 * 新建场景（自带入口节点：还没有版本时编辑起点是只含入口节点的初始文档）。
 		 */
 		create: Endpoint<
 			{
+				params: ProjectParams;
 				body: {
 					/** 场景名称。 */
 					name: string;
@@ -1018,13 +1022,14 @@ export interface Api {
 	};
 	runs: {
 		/**
-		 * `GET /runs`
+		 * `GET /projects/:project/runs`
 		 *
 		 * 所有场景的运行，按开始时间从新到旧（最多 limit 条）。counts 是按场景、关键字筛选后
 		 * （不按状态）各状态的运行数，用于状态筛选上的计数。
 		 */
 		list: Endpoint<
 			{
+				params: ProjectParams;
 				query?: RunListQuery;
 			},
 			{
@@ -1472,7 +1477,7 @@ export const routes = {
 		download: { method: "GET", path: "/tasks/:id/artifacts/*", kind: "download" },
 	},
 	dashboard: {
-		get: { method: "GET", path: "/dashboard", kind: "endpoint" },
+		get: { method: "GET", path: "/projects/:project/dashboard", kind: "endpoint" },
 	},
 	feishuBots: {
 		list: { method: "GET", path: "/feishu-bots", kind: "endpoint" },
@@ -1497,7 +1502,7 @@ export const routes = {
 		platform: { method: "GET", path: "/runs/:id/metrics/platform", kind: "endpoint" },
 	},
 	orchestrations: {
-		list: { method: "GET", path: "/orchestrations", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/orchestrations", kind: "endpoint" },
 		get: { method: "GET", path: "/orchestrations/:id", kind: "endpoint" },
 		head: { method: "GET", path: "/orchestrations/:id/head", kind: "endpoint" },
 		saveVersion: { method: "POST", path: "/orchestrations/:id/versions", kind: "endpoint" },
@@ -1508,7 +1513,7 @@ export const routes = {
 		versions: { method: "GET", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		version: { method: "GET", path: "/orchestrations/:id/versions/:number", kind: "endpoint" },
 		restoreVersion: { method: "POST", path: "/orchestrations/:id/versions/:number/restore", kind: "endpoint" },
-		create: { method: "POST", path: "/orchestrations", kind: "endpoint" },
+		create: { method: "POST", path: "/projects/:project/orchestrations", kind: "endpoint" },
 		update: { method: "PATCH", path: "/orchestrations/:id", kind: "endpoint" },
 		copy: { method: "POST", path: "/orchestrations/:id/copy", kind: "endpoint" },
 		archive: { method: "POST", path: "/orchestrations/:id/archive", kind: "endpoint" },
@@ -1528,7 +1533,7 @@ export const routes = {
 		remove: { method: "DELETE", path: "/orchestrations/:id/presets/:presetId", kind: "endpoint" },
 	},
 	runs: {
-		list: { method: "GET", path: "/runs", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/runs", kind: "endpoint" },
 		focus: { method: "GET", path: "/runs/:id/focus", kind: "endpoint" },
 		summary: { method: "GET", path: "/runs/:id/summary", kind: "endpoint" },
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },

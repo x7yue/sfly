@@ -37,7 +37,9 @@ function readThenTrigger(page: Page, baseUrl: string, scenarioId: string) {
 	return page.evaluate(
 		async ({ baseUrl, scenarioId, nickname }) => {
 			const client = window.sfly.createClient({ baseUrl, nickname });
-			const { orchestrations } = await client.orchestrations.list();
+			const { orchestrations } = await client.orchestrations.list({
+				params: { project: "default" },
+			});
 			const run = await client.runs.trigger({ params: { id: scenarioId } });
 			return { scenarios: orchestrations.map((s) => s.name), runId: run.id };
 		},
@@ -106,9 +108,13 @@ test.describe("控制面版本和 API 客户端不一致", () => {
 			{ baseUrl: controlPlane.httpUrl, token: await controlPlane.users.token() },
 		);
 
-		await session.evaluate(({ client }) => client.dashboard.get());
+		await session.evaluate(({ client }) =>
+			client.dashboard.get({ params: { project: "default" } }),
+		);
 		clock.advance(60_000);
-		await session.evaluate(({ client }) => client.dashboard.get());
+		await session.evaluate(({ client }) =>
+			client.dashboard.get({ params: { project: "default" } }),
+		);
 
 		expect(await session.evaluate(({ times }) => times)).toEqual([
 			START_TIME,
@@ -167,7 +173,7 @@ test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 						(error: { code: string }) => error.code,
 					);
 				return {
-					read: await codeOf(() => client.orchestrations.list()),
+					read: await codeOf(() => client.orchestrations.list({ params: { project: "default" } })),
 					write: await codeOf(() => client.runs.trigger({ params: { id: scenarioId } })),
 				};
 			},
@@ -176,7 +182,9 @@ test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 
 		expect(codes).toEqual({ read: "network_error", write: "network_error" });
 		await expect.poll(() => blocked.length).toBeGreaterThanOrEqual(2);
-		const { runs } = (await (await controlPlane.fetch("/runs")).json()) as { runs: unknown[] };
+		const { runs } = (await (await controlPlane.fetch("/projects/default/runs")).json()) as {
+			runs: unknown[];
+		};
 		expect(runs).toEqual([]);
 	});
 

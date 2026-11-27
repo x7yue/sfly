@@ -28,7 +28,7 @@ describe("编排版本", () => {
 	});
 
 	it("新建编排后还没有版本", async () => {
-		const res = await api.post("/orchestrations", { name: "冒烟" }, "alice");
+		const res = await api.post("/projects/default/orchestrations", { name: "冒烟" }, "alice");
 		expect(res.status).toBe(201);
 		const created = (await res.json()) as { id: string };
 		expect(created).toMatchObject({ name: "冒烟", head_version: 0 });
@@ -160,7 +160,7 @@ describe("编排版本", () => {
 			clock.advance(1000);
 			const newer = await localApi.createOrchestration("较新");
 
-			expect(await localApi.getJson("/orchestrations")).toMatchObject({
+			expect(await localApi.getJson("/projects/default/orchestrations")).toMatchObject({
 				orchestrations: [
 					{ id: newer, name: "较新", head_version: 0, created_at: "2026-01-01T00:00:01.000Z" },
 					{ id: older, name: "较早", head_version: 1, created_at: "2026-01-01T00:00:00.000Z" },
@@ -230,7 +230,7 @@ describe("编排版本", () => {
 	});
 
 	it("新建编排需要昵称", async () => {
-		const res = await cp.fetch("/orchestrations", {
+		const res = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			credentials: "omit",
 			headers: { "content-type": "application/json" },
@@ -354,7 +354,7 @@ describe("场景的运行通知设置", () => {
 		expect(await settingsOf(id)).toEqual(OFF);
 		const listed = await api.getJson<{
 			orchestrations: Array<{ id: string; run_notification: unknown }>;
-		}>("/orchestrations");
+		}>("/projects/default/orchestrations");
 		expect(listed.orchestrations.find((o) => o.id === id)?.run_notification).toEqual(OFF);
 	});
 

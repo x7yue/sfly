@@ -126,7 +126,7 @@ def _list(session: Session, args: argparse.Namespace) -> None:
     )
     requested = min(args.limit, _MAX_RUNS)
     listing = client.get(
-        "/runs",
+        client.in_project("/runs"),
         {
             "status": args.status,
             "orchestration_id": scenario["id"] if scenario else None,

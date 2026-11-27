@@ -3394,7 +3394,7 @@
     },
     {
       "method": "GET",
-      "path": "/dashboard",
+      "path": "/projects/:project/dashboard",
       "key": [
         "dashboard",
         "get"
@@ -3405,6 +3405,18 @@
       "resource": {
         "kind": "run",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -7337,7 +7349,7 @@
     },
     {
       "method": "GET",
-      "path": "/orchestrations",
+      "path": "/projects/:project/orchestrations",
       "key": [
         "orchestrations",
         "list"
@@ -7348,6 +7360,18 @@
       "resource": {
         "kind": "scenario",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "query": {
         "type": "object",
@@ -13808,7 +13832,7 @@
     },
     {
       "method": "POST",
-      "path": "/orchestrations",
+      "path": "/projects/:project/orchestrations",
       "key": [
         "orchestrations",
         "create"
@@ -13819,6 +13843,18 @@
       "resource": {
         "kind": "scenario",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "body": {
         "type": "object",
@@ -16986,7 +17022,7 @@
     },
     {
       "method": "GET",
-      "path": "/runs",
+      "path": "/projects/:project/runs",
       "key": [
         "runs",
         "list"
@@ -16997,6 +17033,18 @@
       "resource": {
         "kind": "run",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "query": {
         "type": "object",

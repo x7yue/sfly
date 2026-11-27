@@ -64,17 +64,21 @@ const client = createClient({
 | `dashboard`（控制台统计） | `get` |
 | `system` | `health` |
 
-调用的输入是一个对象：`params` 是路径参数，`query` 是查询参数，`body` 是请求体，和契约声明的一致。路径在项目下的接口（`agents`、`packages` 的方法，`sessions` 的 `list`、`create`）在 `params.project` 里写项目，默认项目是 `default`，例如 `client.agents.list({ params: { project: "default" } })`。返回值是契约的响应类型。下面的例子从上到下是一个连贯的脚本：真实页面里，把它们放进按钮的点击事件或定时刷新里。
+调用的输入是一个对象：`params` 是路径参数，`query` 是查询参数，`body` 是请求体，和契约声明的一致。路径在项目下的接口（`agents`、`packages` 的方法，`orchestrations` 的 `list`、`create`，`runs.list`，`dashboard.get`，`sessions` 的 `list`、`create`）在 `params.project` 里写项目，默认项目是 `default`，例如 `client.agents.list({ params: { project: "default" } })`。返回值是契约的响应类型。下面的例子从上到下是一个连贯的脚本：真实页面里，把它们放进按钮的点击事件或定时刷新里。
 
 ## 查询场景和运行
 
 ```ts
-const { orchestrations } = await client.orchestrations.list({ query: { q: "回归" } });
+const { orchestrations } = await client.orchestrations.list({
+	params: { project: "default" },
+	query: { q: "回归" },
+});
 const scenario = orchestrations.find((s) => s.name === "回归");
 if (!scenario) throw new Error("没有找到场景「回归」");
 console.log(scenario.last_run?.status ?? "还没有运行过", scenario.agents);
 
 const { runs, counts } = await client.runs.list({
+	params: { project: "default" },
 	query: { orchestration_id: scenario.id, limit: 20 },
 });
 console.log(`失败 ${counts.failed} 次`);
@@ -362,7 +366,10 @@ const timedClient = createClient({
 });
 const elapsedMs = (startedAt: string) => Date.now() + clockOffsetMs - Date.parse(startedAt);
 
-const { runs: running } = await timedClient.runs.list({ query: { status: "running" } });
+const { runs: running } = await timedClient.runs.list({
+	params: { project: "default" },
+	query: { status: "running" },
+});
 for (const item of running) console.log(item.id, `已运行 ${Math.round(elapsedMs(item.started_at) / 1000)} 秒`);
 ```
 

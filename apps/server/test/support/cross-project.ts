@@ -110,7 +110,7 @@ function paramValue(def: RouteDef, name: string, victim: Victim): string {
 
 /** 请求体样本：每个有请求体的写接口一个，写成能通过契约校验的样子（测试检查）。上传是原始字节。 */
 const JSON_BODIES: Record<string, unknown> = {
-	"POST /orchestrations": { name: "新场景" },
+	"POST /projects/:project/orchestrations": { name: "新场景" },
 	"POST /orchestrations/:id/versions": {
 		base_version: 1,
 		document: { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },

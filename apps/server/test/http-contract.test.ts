@@ -201,7 +201,7 @@ describe("请求里的 NUL 字符（#212）", () => {
 	});
 
 	it("查询参数与 JSON 请求体里含 NUL 的字符串返回 400 invalid_request", async () => {
-		const create = await cp.fetch("/orchestrations", {
+		const create = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: { "content-type": "application/json", ...actAs("alice") },
 			body: JSON.stringify({ name: "a\u0000b" }),
@@ -209,7 +209,7 @@ describe("请求里的 NUL 字符（#212）", () => {
 		expect(create.status).toBe(400);
 		expect(await create.json()).toMatchObject({ error: { code: "invalid_request" } });
 
-		const list = await cp.fetch("/orchestrations?q=%00", {
+		const list = await cp.fetch("/projects/default/orchestrations?q=%00", {
 			headers: { ...actAs("alice") },
 		});
 		expect(list.status).toBe(400);

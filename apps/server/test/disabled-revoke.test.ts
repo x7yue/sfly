@@ -96,15 +96,15 @@ describe("停用期间吊销自己的凭据", () => {
 		const id = await accounts.tokenId(token);
 		await accounts.disable(alice);
 		// 停用期间用它做别的事照旧 401。
-		expect((await call(bearer(token), "GET", "/orchestrations")).status).toBe(401);
+		expect((await call(bearer(token), "GET", "/projects/default/orchestrations")).status).toBe(401);
 		expect((await call(bearer(token), "GET", "/account/tokens")).status).toBe(401);
 
 		expect((await call(bearer(token), "DELETE", `/account/tokens/${id}`)).status).toBe(204);
 		expect(await revokedTokens(alice)).toBe(1);
 
 		await enable(alice);
-		expect((await call(bearer(token), "GET", "/orchestrations")).status).toBe(401);
-		expect((await call(bearer(other), "GET", "/orchestrations")).status).toBe(200);
+		expect((await call(bearer(token), "GET", "/projects/default/orchestrations")).status).toBe(401);
+		expect((await call(bearer(other), "GET", "/projects/default/orchestrations")).status).toBe(200);
 	});
 
 	it("个人令牌只能吊销它自己：停用期间吊销别的令牌、注销全部登录一律 401（和已吊销的令牌分不出来），那个令牌没动", async () => {
@@ -166,9 +166,9 @@ describe("停用期间吊销自己的凭据", () => {
 					new_password: "a-new-password-1",
 				},
 			],
-			["Cookie 读场景", loginCookie(cookie), "GET", "/orchestrations"],
+			["Cookie 读场景", loginCookie(cookie), "GET", "/projects/default/orchestrations"],
 			["令牌列令牌", bearer(token), "GET", "/account/tokens"],
-			["令牌读场景", bearer(token), "GET", "/orchestrations"],
+			["令牌读场景", bearer(token), "GET", "/projects/default/orchestrations"],
 			// 会话令牌的所有者被停用：不认（也不因为吊销接口放宽而变成 403 之类的另一种说法）。
 			[
 				"会话令牌吊销",

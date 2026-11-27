@@ -117,9 +117,9 @@ const ARTIFACT = "报告/结果 1.json";
 const UNVERIFIED_ARRAYS: Record<string, string> = {
 	"POST /orchestrations/:id/edits/check response diff.annotations.added[]":
 		"局部编辑没有加注释框的操作（#470 这一版不做），这组操作造成的差异里不会有新增的注释框",
-	"GET /dashboard response recent_ended[].focus[].series[]":
+	"GET /projects/:project/dashboard response recent_ended[].focus[].series[]":
 		"控制台汇总只要关注项的最新值：读数用 points=0，序列按设计就是空的（序列的元素由 GET /runs/:id/focus 对照）",
-	"GET /dashboard response recent_ended[].focus[].series[].points[]":
+	"GET /projects/:project/dashboard response recent_ended[].focus[].series[].points[]":
 		"同上：控制台汇总的关注项读数不带序列",
 	"GET /runs/:id/logs response file_problems[]":
 		"seed 里没有日志文件不在了、变短了的任务：只读接口里读日志文件的（下载）在这样的任务上是 410、不是成功的路径，所以不造它；" +

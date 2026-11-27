@@ -94,7 +94,8 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	await expect(drawer.getByRole("button", { name: "取消运行" })).toHaveCount(0);
 
 	// 运行参数：secret 参数已打码。
-	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
+	const runId = (await (await controlPlane.fetch("/projects/default/runs?limit=1")).json()).runs[0]
+		.id as string;
 	const run = await (await controlPlane.fetch(`/runs/${runId}`)).json();
 	expect(run.params).toMatchObject({ host: "10.0.0.8", steps: 5, dry_run: true });
 	expect(run.params.api_token).not.toBe("tok-live");

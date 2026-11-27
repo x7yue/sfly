@@ -292,14 +292,16 @@ describe("契约路由的访问检查", () => {
 			// 对照：同样的凭据请求属于项目的接口，是 401。
 			expect(
 				outcome(
-					await run(route("GET /orchestrations"), { authorization: "Bearer 从没见过的令牌" }),
+					await run(route("GET /projects/:project/orchestrations"), {
+						authorization: "Bearer 从没见过的令牌",
+					}),
 				),
 			).toBe(401);
 		});
 	});
 
 	describe("带了失效的凭据：401，不退回到放行", () => {
-		const get = route("GET /orchestrations");
+		const get = route("GET /projects/:project/orchestrations");
 		const cases: [string, () => Credentials][] = [
 			[
 				"库里没有的 Bearer（带不带前缀都一样）",
@@ -376,7 +378,7 @@ describe("契约路由的访问检查", () => {
 		it("用户被停用或被移出项目：已有的令牌和登录立即失效、失去权限", async () => {
 			const { cookie } = login(USERS.editor);
 			const bearer = personal(USERS.editor);
-			const write = route("POST /orchestrations");
+			const write = route("POST /projects/:project/orchestrations");
 			expect(outcome(await run(write, { cookie }))).toBe("ok");
 			expect(outcome(await run(write, bearer))).toBe("ok");
 
@@ -441,7 +443,9 @@ describe("契约路由的访问检查", () => {
 					scopes: ["read", "run"],
 				},
 			});
-			expect(await run(route("GET /orchestrations"), login(USERS.reader))).toMatchObject({
+			expect(
+				await run(route("GET /projects/:project/orchestrations"), login(USERS.reader)),
+			).toMatchObject({
 				ok: true,
 				access: { credential: "login", tokenName: null, scopes: ["read"] },
 			});
@@ -450,7 +454,10 @@ describe("契约路由的访问检查", () => {
 		it("取令牌的范围和用户此刻的角色的交集：令牌只给了读，编辑者也不能写；令牌给了管理，编辑者也不能管理", async () => {
 			expect(
 				outcome(
-					await run(route("POST /orchestrations"), personal(USERS.editor, { scopes: ["read"] })),
+					await run(
+						route("POST /projects/:project/orchestrations"),
+						personal(USERS.editor, { scopes: ["read"] }),
+					),
 				),
 			).toBe(403);
 			expect(
@@ -468,7 +475,12 @@ describe("契约路由的访问检查", () => {
 			).toBe("ok");
 			// 范围是空的，什么都不能做，连读也不行。
 			expect(
-				outcome(await run(route("GET /orchestrations"), personal(USERS.boss, { scopes: [] }))),
+				outcome(
+					await run(
+						route("GET /projects/:project/orchestrations"),
+						personal(USERS.boss, { scopes: [] }),
+					),
+				),
 			).toBe(403);
 		});
 
@@ -480,7 +492,7 @@ describe("契约路由的访问检查", () => {
 				scopes: ["read", "run"],
 				name: "CI",
 			});
-			expect(outcome(await run(route("GET /runs"), readOnly))).toBe("ok");
+			expect(outcome(await run(route("GET /projects/:project/runs"), readOnly))).toBe("ok");
 			expect(outcome(await run(route("POST /runs/:id/cancel"), readOnly))).toBe(403);
 			const cancel = await run(route("POST /runs/:id/cancel"), runner);
 			expect(cancel).toMatchObject({
@@ -531,9 +543,9 @@ describe("契约路由的访问检查", () => {
 			it("读、触发运行、新建和保存场景（编辑）放行；限定在一个项目里，也和发起人此刻的角色取交集", async () => {
 				const mine = session(USERS.editor);
 				for (const key of [
-					"GET /orchestrations",
+					"GET /projects/:project/orchestrations",
 					"POST /orchestrations/:id/runs",
-					"POST /orchestrations",
+					"POST /projects/:project/orchestrations",
 					"POST /orchestrations/:id/versions",
 					"POST /orchestrations/:id/versions/:number/restore",
 				]) {
@@ -543,7 +555,9 @@ describe("契约路由的访问检查", () => {
 				expect(outcome(await run(route("POST /orchestrations/:id/runs"), mine, "alpha"))).toBe(404);
 				// 发起人不是这个项目的成员：404。
 				const stranger = session(USERS.stranger);
-				expect(outcome(await run(route("GET /orchestrations"), stranger))).toBe(404);
+				expect(outcome(await run(route("GET /projects/:project/orchestrations"), stranger))).toBe(
+					404,
+				);
 				expect(outcome(await run(route("POST /orchestrations/:id/runs"), stranger))).toBe(404);
 			});
 
@@ -624,14 +638,14 @@ describe("契约路由的访问检查", () => {
 				expect(outcome(await run(route("POST /orchestrations/:id/runs"), mine))).toBe("ok");
 				store.setRole("default", USERS.editor, "read_only");
 				expect(outcome(await run(route("POST /orchestrations/:id/runs"), mine))).toBe(403);
-				expect(outcome(await run(route("POST /orchestrations"), mine))).toBe(403);
-				expect(outcome(await run(route("GET /orchestrations"), mine))).toBe("ok");
+				expect(outcome(await run(route("POST /projects/:project/orchestrations"), mine))).toBe(403);
+				expect(outcome(await run(route("GET /projects/:project/orchestrations"), mine))).toBe("ok");
 				store.setRole("default", USERS.editor, undefined);
-				expect(outcome(await run(route("GET /orchestrations"), mine))).toBe(404);
+				expect(outcome(await run(route("GET /projects/:project/orchestrations"), mine))).toBe(404);
 			});
 
 			it("会话令牌取出时联表核对（#547）：用户被停用是 401（读、写都是）；会话已结束、会话在别的项目、发起人对不上、没有发起人、会话不存在：都是 401，当作不认识的令牌；空闲、在做、排队的会话放行", async () => {
-				const get = route("GET /orchestrations");
+				const get = route("GET /projects/:project/orchestrations");
 				const post = route("POST /orchestrations/:id/runs");
 				const disabled = { ...USERS.editor, disabledAt: BEFORE };
 				for (const def of [get, post]) {
@@ -699,7 +713,9 @@ describe("契约路由的访问检查", () => {
 					scopes: GRANTED,
 					sessionId: null,
 				});
-				expect(outcome(await run(route("GET /orchestrations"), broken))).toBe(401);
+				expect(outcome(await run(route("GET /projects/:project/orchestrations"), broken))).toBe(
+					401,
+				);
 			});
 		});
 
@@ -944,7 +960,7 @@ describe("契约路由的访问检查", () => {
 			path: "/projects/:project/packages",
 		};
 		const scenarios: RouteDef = {
-			...route("GET /orchestrations"),
+			...route("GET /projects/:project/orchestrations"),
 			path: "/projects/:project/orchestrations",
 		};
 		const at = (def: RouteDef, project: string, credentials: Credentials) => ({
@@ -1131,7 +1147,7 @@ describe("契约路由的访问检查", () => {
 
 		it("指明 public 不影响别的写：公共项目只有平台管理员能写这条规则对每个写接口都一样", async () => {
 			const future: RouteDef = {
-				...route("POST /orchestrations"),
+				...route("POST /projects/:project/orchestrations"),
 				path: "/projects/:project/orchestrations",
 			};
 			const at = (credentials: Credentials) => ({
@@ -1162,7 +1178,10 @@ describe("契约路由的访问检查", () => {
 				],
 				[
 					"#488 之后的 POST /projects/:project/orchestrations",
-					{ ...route("POST /orchestrations"), path: "/projects/:project/orchestrations" },
+					{
+						...route("POST /projects/:project/orchestrations"),
+						path: "/projects/:project/orchestrations",
+					},
 				],
 			];
 			for (const [name, def] of routes) {
@@ -1203,7 +1222,7 @@ describe("契约路由的访问检查", () => {
 			}
 			// 读公共项目不受影响：不带凭据的读照旧放行。
 			const read: RouteDef = {
-				...route("GET /orchestrations"),
+				...route("GET /projects/:project/orchestrations"),
 				path: "/projects/:project/orchestrations",
 			};
 			expect(await guard.check({ route: read, params: { project: "public" } })).toEqual({
@@ -1224,7 +1243,7 @@ describe("契约路由的访问检查", () => {
 	describe("登录的空闲期限：用着就顺延，不用就过期（PR #555 的独立审查）", () => {
 		const HOUR = 3_600_000;
 		const idle = 12 * HOUR;
-		const get = () => route("GET /orchestrations");
+		const get = () => route("GET /projects/:project/orchestrations");
 		const loginFor = (who: StoredUser) =>
 			login(who, { idleExpiresAt: new Date(clock.now().getTime() + idle) });
 
@@ -1474,7 +1493,7 @@ describe("契约路由的访问检查", () => {
 	describe("令牌的最后使用时间：按令牌节流，一分钟最多写一次", () => {
 		it("第一次使用写；一分钟内不再写；满一分钟再写；失效的令牌不写；登录不走这条", async () => {
 			const bearer = personal(USERS.boss);
-			const get = route("GET /orchestrations");
+			const get = route("GET /projects/:project/orchestrations");
 			expect(outcome(await run(get, bearer))).toBe("ok");
 			expect(store.tokenTouches).toHaveLength(1);
 			clock.advance(59_999);
@@ -1494,8 +1513,8 @@ describe("契约路由的访问检查", () => {
 			expect(store.tokenTouches).toHaveLength(2);
 		});
 
-		it("不带凭据的请求不读库、不写", async () => {
-			await run(route("GET /orchestrations"), {});
+		it("不带凭据的请求不读库、不写（路径里没有项目的接口；带项目的只核对一次项目存在，见上面「照旧放行」）", async () => {
+			await run(route("GET /orchestrations/:id"), {});
 			expect(store.reads).toBe(0);
 			expect(store.tokenTouches).toEqual([]);
 		});
@@ -1516,7 +1535,7 @@ describe("契约路由的访问检查", () => {
 		it("在自己不是成员的项目里的写操作留记录（谁、什么时候、哪个接口、作用在哪个资源上），读不记", async () => {
 			clock.set("2026-06-02T03:04:05.000Z");
 			await run(route("GET /orchestrations/:id"), login(USERS.admin), "alpha");
-			await run(route("GET /orchestrations"), login(USERS.admin));
+			await run(route("GET /projects/:project/orchestrations"), login(USERS.admin));
 			expect(store.adminWrites).toEqual([]);
 
 			await run(route("POST /orchestrations/:id/versions"), login(USERS.admin), "alpha");
@@ -1577,7 +1596,7 @@ describe("契约路由的访问检查", () => {
 		it("是成员、但这次写要靠平台管理员的权限（角色没有这个范围）：照样留记录，读不记", async () => {
 			const readOnly = login(USERS.adminMember);
 			const editor = login(USERS.adminEditor);
-			await run(route("GET /orchestrations"), readOnly);
+			await run(route("GET /projects/:project/orchestrations"), readOnly);
 			// 只读成员写场景、编辑者管理飞书机器人：都超出了他们作为成员的角色。
 			expect(outcome(await run(route("POST /orchestrations/:id/versions"), readOnly))).toBe("ok");
 			expect(outcome(await run(route("POST /feishu-bots"), editor))).toBe("ok");
@@ -1590,11 +1609,13 @@ describe("契约路由的访问检查", () => {
 		});
 
 		it("项目不存在：404；管理员停用之后的凭据 401", async () => {
-			const missing = request(route("GET /orchestrations"), login(USERS.admin));
+			const missing = request(route("GET /projects/:project/orchestrations"), login(USERS.admin));
 			const result = await guard.check({ ...missing, params: { project: "x" } });
-			expect(outcome(result)).toBe("ok"); // 路径里没有项目的接口项目是默认项目，它存在
+			expect(outcome(result)).toBe(404); // 路径里的项目 x 不存在
 			const disabled = { ...USERS.admin, disabledAt: BEFORE };
-			expect(outcome(await run(route("GET /orchestrations"), login(disabled)))).toBe(401);
+			expect(
+				outcome(await run(route("GET /projects/:project/orchestrations"), login(disabled))),
+			).toBe(401);
 		});
 	});
 
@@ -1747,11 +1768,11 @@ describe("契约路由的访问检查", () => {
 		expect(store.reads).toBe(3);
 		// 登录 Cookie：只查登录表（不查令牌表），成员一次。
 		store.reads = 0;
-		await run(route("GET /orchestrations"), login(USERS.editor));
+		await run(route("GET /projects/:project/orchestrations"), login(USERS.editor));
 		expect(store.reads).toBe(2);
 		// 库里没有的 Bearer、共享令牌、Agent 凭据：令牌表没有，再查 Agent 凭据表，一共两次凭据查询。
 		store.reads = 0;
-		await run(route("GET /orchestrations"), { authorization: "Bearer nobody" });
+		await run(route("GET /projects/:project/orchestrations"), { authorization: "Bearer nobody" });
 		expect(store.reads).toBe(2);
 		// Agent 上传产物：两次凭据查询，加任务的归属一次（任务所在的项目和派给了哪台 Agent 是同一行，不查两遍）。
 		const secret = "sfly_agt_reads";

@@ -94,7 +94,7 @@ describe("sfly scenario list / show → 控制面", () => {
 		document?: unknown,
 		description = "",
 	): Promise<string> => {
-		const res = await api.post("/orchestrations", { name, description });
+		const res = await api.post("/projects/default/orchestrations", { name, description });
 		const { id } = (await res.json()) as { id: string };
 		if (document) await api.saveVersion(id, document);
 		clock.advance(1000);
@@ -629,7 +629,9 @@ describe("sfly scenario list 的默认条数上限", () => {
 		cp = await startTestControlPlane({ clock: new ManualClock(SAVED_AT) });
 		const api = new ApiClient(cp);
 		for (let i = 1; i <= 52; i++) {
-			expect((await api.post("/orchestrations", { name: `场景-${i}` })).status).toBe(201);
+			expect(
+				(await api.post("/projects/default/orchestrations", { name: `场景-${i}` })).status,
+			).toBe(201);
 		}
 	}, 120_000);
 	afterAll(async () => {
