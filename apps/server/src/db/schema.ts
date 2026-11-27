@@ -440,6 +440,10 @@ export const runs = pgTable(
 		notificationBot: text("notification_bot"),
 		/** 运行结束时没有把消息写进队列的原因（机器人已不存在，或卡片超过 20 KB）；写进队列了为空。 */
 		notificationNotSent: text("notification_not_sent"),
+		/** 写进库的值在写入时就打了码（#505）：有加密副本，读取时不再打码；之前的运行照旧在读取时打码。 */
+		maskedOnWrite: boolean("masked_on_write").notNull().default(false),
+		/** 写入时打码的运行，secret 值合计太长、写进库的文字整段盖住了（`SecretSet.oversize`）：读取时不再有值集合，记在这里。 */
+		secretsOversize: boolean("secrets_oversize").notNull().default(false),
 	},
 	(t) => [
 		// 运行的项目恒等于它的场景的项目，由这条组合外键保证；更新和删除都不级联（NO ACTION）：有运行的场景改项目

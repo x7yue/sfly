@@ -38,6 +38,7 @@ import { loadClientTarballs } from "./downloads/client-tarballs.js";
 import { createAssignContent } from "./engine/assign-content.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
+import { WriteMasking } from "./engine/write-masking.js";
 import { EngineNotifications } from "./feishu/engine-notifications.js";
 import { FeishuBots } from "./feishu/feishu-bots.js";
 import { FeishuClient } from "./feishu/feishu-client.js";
@@ -61,6 +62,8 @@ import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
+import { RunSecrets } from "./secrets/run-secrets.js";
+import { RunVaults } from "./secrets/run-vault.js";
 import { openVaultKey } from "./secrets/vault-key.js";
 import { AssistantClient } from "./sessions/assistant-client.js";
 import { assistantSetup } from "./sessions/assistant-config.js";
@@ -290,11 +293,12 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		},
 	);
 
+	let runSecrets: RunSecrets;
 	try {
 		await database.migrate();
 		// 钥匙文件对不上就拒绝启动：放在迁移之后、任何别的写库（共享令牌、引擎恢复）之前，失败的启动不改动运行和任务。
 		await mkdir(options.dataDir, { recursive: true });
-		await openVaultKey(options.dataDir, database.db);
+		runSecrets = new RunSecrets(new RunVaults(await openVaultKey(options.dataDir, database.db)));
 		// 共享令牌登记成默认项目的旧式 Agent 凭据（ADR 0029）。
 		await registerSharedAgentToken(database.db, clock, options.agentToken);
 	} catch (error) {
@@ -371,6 +375,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		db: database.db,
 		clock,
 		dataDir: options.dataDir,
+		runSecrets,
 		limitBytes: options.logLimitBytes,
 	});
 	// 控制面直接向飞书机器人的 Webhook 地址发请求（ADR 0020），不经代理。
@@ -400,6 +405,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		retentionDays: options.metricRetentionDays,
 	});
 	const metrics = new TaskMetrics({
+		secrets: (runId) => logs.runSecrets(runId),
 		db: database.db,
 		clock,
 		retention: metricRetention,
@@ -407,6 +413,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	});
 	const metricQueries = new MetricQueries({ db: database.db, clock, metrics });
 	const engine = new Engine({
+		masking: new WriteMasking(runSecrets),
 		db: database.db,
 		clock,
 		mutex,

@@ -2,16 +2,18 @@
 // 要等那个子流程的实例创建才进入名单，在那之前写下的行里如果有后来才成为 secret 的值，文件里是原文。
 // 读日志的每个出口都在读取时按这次运行此刻的 secret 值再打一遍：按任务读、按运行合并读、下载、实时推送、
 // 关注项里「日志」类异常的说明。写入时已经打过码的行不受影响，没有 secret 参数的运行读出来的日志逐字不变。
+// 这里的运行都改成写入时打码（#505）之前的样子（`LegacyRunsApi`）：测的是没有标记的运行在读取时打码；带标记的见 write-masking.test.ts。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type LogLineView, type RunFocus, runFocusApi, runSummaryApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OVERSIZE_NOTICE, secretSetOf } from "../src/logs/secrets.js";
-import { ApiClient } from "./support/api-client.js";
+import type { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { publishBench, putFocusItemsOk } from "./support/focus-items.js";
+import { LegacyRunsApi } from "./support/legacy-run.js";
 import { formsOf } from "./support/secret-forms.js";
 import { withSecretLimits } from "./support/secret-limits.js";
 import { SseClient } from "./support/sse-client.js";
@@ -78,7 +80,7 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
-		api = new ApiClient(cp);
+		api = new LegacyRunsApi(cp);
 		await publishBench(cp);
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
 	});
@@ -403,7 +405,7 @@ describe("值集合太大的运行：任务日志里有一行平台写的说明�
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
-		api = new ApiClient(cp);
+		api = new LegacyRunsApi(cp);
 		await publishBench(cp);
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
 	});
