@@ -148,7 +148,8 @@ test("版本对比显示子流程名称的变化：旧版本以节点 ID 作为�
 	expect(res.status).toBe(201);
 	await page.goto(`/orchestrations/${id}/versions`);
 	const diff = page.getByRole("region", { name: "差异" });
-	await expect(diff).toContainText("sub_entry（子流程入口）");
+	// 改动的节点写修改后的名称和节点 ID（#341）。
+	await expect(diff).toContainText("夜间对账（sub_entry）（子流程入口）");
 	await expect(diff).toContainText("名称 sub_entry → 夜间对账");
 	await expect(
 		page

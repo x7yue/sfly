@@ -1,7 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { describe, expect, it } from "vitest";
 import type { ReferenceChoice } from "./reference-completion";
-import { choicesFor, runStateShown, TYPE_NAMES, valueKind } from "./value-kind";
+import { choicesFor, isNullableString, runStateShown, TYPE_NAMES, valueKind } from "./value-kind";
 
 const choice = (expression: string, kind: ReferenceChoice["kind"]): ReferenceChoice => ({
 	expression,
@@ -78,5 +78,29 @@ describe("「运行状态」类型的输入显示成什么", () => {
 		expect(runStateShown("abc")).toBe("other");
 		expect(runStateShown("x ${{ run.state }}")).toBe("other");
 		expect(runStateShown(0)).toBe("other");
+	});
+});
+
+describe("「字符串或 null」按文本输入（#404 第 6 条）", () => {
+	it("str | None（两种成员顺序）是字符串控件，不是 JSON 编辑框", () => {
+		const optional = { anyOf: [{ type: "string" }, { type: "null" }], default: null };
+		expect(valueKind(optional)).toBe("string");
+		expect(isNullableString(optional)).toBe(true);
+		expect(valueKind({ anyOf: [{ type: "null" }, { type: "string" }] })).toBe("string");
+	});
+
+	it("别的联合、带枚举或扩展类型的成员照旧", () => {
+		expect(valueKind({ anyOf: [{ type: "integer" }, { type: "null" }] })).toBe("json");
+		expect(valueKind({ anyOf: [{ type: "string" }, { type: "integer" }] })).toBe("json");
+		expect(valueKind({ anyOf: [{ type: "string" }, { type: "null" }, { type: "integer" }] })).toBe(
+			"json",
+		);
+		expect(valueKind({ anyOf: [{ enum: ["a", "b"] }, { type: "null" }] })).toBe("json");
+		expect(
+			valueKind({ anyOf: [{ type: "string", "x-sfly-type": "agent" }, { type: "null" }] }),
+		).toBe("agent");
+		expect(isNullableString({ anyOf: [{ type: "string", minLength: 1 }, { type: "null" }] })).toBe(
+			false,
+		);
 	});
 });

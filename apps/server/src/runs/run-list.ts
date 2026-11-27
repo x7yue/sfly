@@ -16,6 +16,8 @@ export interface RunListFilter {
 	triggeredBy?: string;
 	/** 运行编号前缀（不分大小写，调用方保证只有十六进制数字和 `-`）。 */
 	idPrefix?: string;
+	/** 触发它的会话。 */
+	sessionId?: string;
 	limit: number;
 }
 
@@ -42,6 +44,7 @@ export async function listAllRuns(
 	}
 	if (filter.triggeredBy) scope.push(eq(runs.triggeredBy, filter.triggeredBy));
 	if (filter.idPrefix) scope.push(ilike(sql`${runs.id}::text`, `${escapeLike(filter.idPrefix)}%`));
+	if (filter.sessionId) scope.push(eq(runs.sessionId, filter.sessionId));
 	const where = filter.status ? [...scope, eq(runs.status, filter.status)] : scope;
 
 	const page = await db

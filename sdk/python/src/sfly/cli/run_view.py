@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sfly.cli.client import ApiError, Client, segment
+from sfly.cli.client import SESSION_ID_ENV, ApiError, Client, segment
 from sfly.cli.errors import CliError
 from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
 
@@ -359,6 +359,8 @@ def resolve_run(client: Client, ref: str, *, allow_latest: bool = True) -> str:
 
 
 def _latest_run(client: Client) -> str:
+    if client.session_token:
+        return _latest_in_session(client)
     # 「自己」是 `client.owner_name()`：有令牌时是令牌所属用户的显示名（控制面记在运行上的触发人），
     # 没有令牌时是昵称（昵称不校验，谁都能写别人的昵称；强制鉴权之后只剩令牌，#494）。
     owner = client.owner_name()
@@ -375,6 +377,29 @@ def _latest_run(client: Client) -> str:
             "no_recent_run",
             f"没有找到 {owner} 触发过的运行（latest 指自己触发的最近一次；"
             "没有登录时「自己」是昵称，用 --nickname 或 SFLY_NICKNAME 指定，登录之后是登录的用户）",
+            next="sfly run list",
+        )
+    return str(mine[0]["id"])
+
+
+def _latest_in_session(client: Client) -> str:
+    # 会话令牌代发起人干活：「自己触发的」是这个会话触发的（#787）。
+    session = client.session_id
+    if session is None:
+        raise CliError(
+            "session_id_missing",
+            "这是会话令牌，latest 指这个会话触发的最近一次运行，"
+            f"要用环境变量 {SESSION_ID_ENV} 写明是哪个会话（平台的工作台上已经设好）；"
+            "或者给出运行的 id",
+            next="sfly run list",
+        )
+    listing = client.get("/runs", {"session_id": session, "limit": 1})
+    # 比命令行旧的控制面不认 `session_id`，返回的是项目里最近的一次：只认这个会话的。
+    mine = [r for r in listing["runs"] if (r.get("session") or {}).get("id") == session]
+    if not mine:
+        raise CliError(
+            "no_recent_run",
+            f"这个会话（{session}）还没有触发过运行（会话令牌下 latest 指这个会话触发的最近一次）",
             next="sfly run list",
         )
     return str(mine[0]["id"])

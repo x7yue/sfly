@@ -1,6 +1,7 @@
 # 分支、PR 与发版
 
 GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面带「强制」的条目；改动规则集时同步更新本文。
+规则集在 GitHub 的设置里，不在仓库，没有检查对照本文。
 
 ## `main`（强制）
 
@@ -10,6 +11,7 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 - 不要求 PR 基于最新的 `main`：合入后 `main` 上的 CI 仍会运行，发版前要求它通过。
 - 目标是 `main` 的 PR，只在维护者明确说了可以合之后才合入（由维护者自己合，或者他明确让代理合）。没有得到明确的话，
   让 PR 保持打开，在报告里说明它在等维护者。
+- 「维护者说了」靠判断：它在对话里，规则集不要求审批。
 
 ## `dev`（强制）
 
@@ -29,6 +31,8 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
   不能用合并提交把 `main` 合进 `dev`，squash 也不会让 `main` 上的提交成为 `dev` 的祖先。
 - 合入 `dev` 不会自动关闭 issue：GitHub 的 `Closes #N` 只在合入默认分支时生效。PR 合入 `dev` 后手动关闭对应的 issue，
   评论里写明「已合入 `dev`（#PR 编号），随 `dev` 进 `main`」，并加上标签 `merged-to-dev`（含义和何时摘掉见 [triage-labels.md](./triage-labels.md)）。
+- 这一节里哪些 PR 进 `dev`、谁审查、谁合入、何时进 `main`、合入后关 issue，都靠判断：要读 issue 和人的意图，
+  代理和维护者又用同一个 GitHub 身份，规则集分不出是谁审查、谁让合的。规则集管的只有合入的方式和要通过的检查。
 
 ## 分支命名
 
@@ -65,6 +69,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
   CI 里目标分支取自 PR；本地默认和 `origin/main` 比，目标是 `dev` 的分支用 `ADR_BASE_REF=origin/dev pnpm lint:docs`。
 - 标题用祈使句：squash 合入后它就是 `main` 上的提交标题（GitHub 自动追加 ` (#编号)`），各提交的信息成为正文。
 - 加上分类标签，Release 说明按它分组（`.github/release.yml`）：`enhancement` 新功能、`bug` 修复、`documentation` 文档；其余归入「其他」。
+  标题和标签靠判断：中文的祈使语气机器判断不了，分哪一类要读懂改动。
 - 让 API 客户端生成的类型（`packages/client/src/generated/`）出现不兼容变化的 PR，另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改。Release 说明把带这个标签的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。
   - 不兼容的变化：删除或改名领域、方法、字段、事件；请求里新增必填的字段，或者可选的字段变成必填；字段的类型变了，或者响应里的枚举多了值（页面里穷举它的代码要跟着改）；响应里去掉字段，或者字段从总有值变成可能为空。只新增方法、可选的请求字段或响应字段不算。
   - 生成的类型提交在仓库里，看 PR 的 diff 里 `packages/client/src/generated/` 的变化来判断。
@@ -92,7 +97,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - 硬性断言不满足（结论「不通过」）说明有 bug，修好再合入；变差超过 20% 的数值在描述里说明原因。
   机器负载会让吞吐、延迟、CPU 波动，这类数值只有明显变差、复跑仍然如此时才需要处理。
 - 只改了其中一段时可以先用 `pnpm perf --only <项>` 排查（`pnpm perf --list` 列出各项），贴进 PR 的是完整一次的报告。
-- 长时负载测试 `pnpm perf:soak`（默认 1 小时，`--duration` 指定）只在维护者要求时运行，同样贴报告。
+- 长时负载测试 `pnpm perf:soak`（默认 1 小时，`--duration` 指定）只在维护者要求时运行，同样贴报告。要不要跑由维护者定，没有检查。
 
 ### 专项测量
 
@@ -105,6 +110,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
   但报告里写清楚怎么测的（命令、参数、负载），别人照着能重做。
 - 测量的中间文件和结果不放 `/tmp`（小、重启即清，还会挤满）：放在本机的固定目录，例如 `pnpm perf` 的本机结果目录
   `~/.local/share/sfly/perf/` 旁边自建子目录；也不要只留在会被清理的 worktree 里。
+- 这一节靠判断：测量是一次性的，产物在本机和评论里，不经过仓库。
 
 ## 发版
 
@@ -119,7 +125,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 4. `.github/workflows/release.yml` 接手：校验版本号（各处与 tag 一致，`docs/perf/X.Y.Z/report.json` 已提交且版本号一致——没跑性能测试就发不出）、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
    Release 说明里的变更列表从上一个平台版本起算（见下文「变更列表的起点」）。
 
-- 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。
+- 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。格式由 `scripts/release/version.sh` 检查；升哪一位靠判断：要看这一版有没有新功能。
 - 只发布 `main` 上的提交，不维护旧版本的修复分支：有问题就修复后发新的补丁版本。
 - `v*` tag 推送后不能更新或删除（强制），Release 发布后附件与 tag 都不能修改（Immutable releases）。发错版本时，发一个新的补丁版本。
 
@@ -130,6 +136,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 1. 从 `main` 新建 `release/std-X.Y.Z`，改 `std/pyproject.toml` 的版本号（用到新版 SDK 的接口时同时调高
    `[tool.sfly] requires-sdk`，用到新的 Agent 能力时同时调高 `requires-agent`），`uv lock` 后提交并开 PR 合入。
+   用没用到新接口靠判断：要读代码；`std/tests/test_package.py` 只检查声明了下限。
 2. 等 `main` 上这个提交的 CI 通过，打 tag 并推送：`git tag std-vX.Y.Z <提交> && git push origin std-vX.Y.Z`。
 3. `.github/workflows/std-release.yml` 接手：确认提交在 `main` 上且 CI 已通过，运行 `scripts/release/std.sh pack`
    （tag 与版本号一致、节点包元信息检查、构建 `.sflypkg`、`SHA256SUMS` 和含最低 Agent 版本的发布说明），上传到草稿 Release
@@ -177,4 +184,4 @@ Agent 只跟随控制面的版本（ADR 0014）：升级控制面后，旧 Agent
 替换后没有以当前版本握手。这说明当前控制面与已经部署出去的上一个版本的 Agent 不兼容，升级后那些 Agent 会掉线或丢任务：
 修改当前代码，让它继续理解旧 Agent 的消息（proto 只做向后兼容的新增，新增的语义在旧 Agent 不发送时保持原样）。不要跳过或放宽
 这项测试来发版，也不能靠修改已发布的 Release 修复（Release 不可变）。确实需要不兼容的改动时，先与维护者确认，并在 Release 说明里
-写明老 Agent 要手动升级。`fetch:previous-agent` 本身失败（下载或校验不过）时查 `gh` 的登录、网络和那个 Release 的附件。
+写明老 Agent 要手动升级。改测试算不算放宽要读懂改动，靠审查。`fetch:previous-agent` 本身失败（下载或校验不过）时查 `gh` 的登录、网络和那个 Release 的附件。
