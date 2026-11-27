@@ -82,7 +82,7 @@ docker run -d --name sfly-aeval-1-assistant --network sfly-aeval-1 --init --memo
 docker logs sfly-aeval-1-assistant      # 「助手服务在 :8090（pi 1.6.0）」
 ```
 
-`--memory 2g` 的内存里，断线续传的缓冲最多占 64 MiB（`ASSISTANT_REPLAY_BUFFER_BYTES`），其余是 pi 进程；缓冲和 pi 进程的数目无关，不随事件的大小涨。
+容器的内存上限怎么定（pi 进程最多几个、空闲多久回收、断线续传的缓冲占多少）见仓库根目录 `README.md` 的「助手容器的内存」，数字只写在那里；这里的 `--memory 2g` 是同一个上限。
 
 `./aeval.sh --slot 1 down` 不认识这个容器：收尾时先 `docker rm -f sfly-aeval-1-assistant` 再 `down`，不然网络删不掉。助手服务只在容器网络里听 8090；要从宿主机直接调，
 加 `-p 127.0.0.1:8090:8090`。
@@ -124,7 +124,7 @@ for (let buf = ""; ; ) {
   暂存在工作台 `/tmp` 的临时仓库里做，提交成功后把它的索引换到真的 `.git/index`：在工作台上 `git status` 是干净的。换不成只记日志（「把索引换到真的位置没做成」），
   这时 `git status` 会是旧的。
 - 助手容器里：`/work/proj/.agents/skills/` 是同一份（pi 从这里读），别的文件都在工作台上；
-  `/data/sessions/<会话 ID>/` 下是 pi 的原始事件 `events.jsonl`、`pi-stderr.log`、pi 的会话文件 `pi-session/`。
+  `/data/sessions/<会话 ID>/` 下是 pi 的原始事件 `events.jsonl`、`pi-stderr.log`、pi 的会话文件 `pi-session/`、助手服务自己记的对话 `transcript.jsonl`。
 - 发给模型的请求：`docker exec sfly-aeval-1-dev ls /tmp/fm/dump`。
 
 停止：一轮在做时 `POST /sessions/<会话 ID>/abort`，请求体带要结束的轮次 `{"turn": 1}`（没有时 400），轮次不大于它的、在做的那一轮以 `stopped` 结束，工作台上正在跑的命令随连接断开结束；那一轮还没到时记下，它到了直接以 `stopped` 结束；
@@ -133,7 +133,7 @@ for (let buf = ""; ; ) {
 ### 5. 接控制面
 
 评测集的 `./aeval.sh up --server-image <源码构建的控制面> --assistant` 一条命令起好：助手容器、控制面配上
-`SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`、`SFLY_WORKBENCH_AGENT=dev-root-dev`，Agent 在线、助手就绪才结束；
+`SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`，登记 `dev-root-dev` 为工作台（`PUT /projects/default/workbench`），Agent 在线、助手就绪才结束；
 `./aeval.sh e2e` 经控制面的接口跑一道题（见 `evals/assistant/README.md`「平台的助手」）。上面第 1–4 步是不经控制面、
 直接驱动助手服务的做法，查助手服务自己的问题时用。
 
@@ -160,5 +160,6 @@ for (let buf = ""; ; ) {
 - **503 `model_not_configured`、`model_unreachable`**：`curl -H "Authorization: Bearer $SFLY_ASSISTANT_SECRET" http://localhost:8090/health`
   看 `model`：`configured` 是 false 时 `reason` 写缺什么（模型文件、`SFLY_ASSISTANT_MODEL`、引用的变量；只有变量名和路径，没有值），
   `reachable` 是 false 时是模型端点连不上（`endpoint` 是主机和端口，`checked_at` 是上次试连的时间，每 5 分钟一次，连不上时每 30 秒一次）。
-- **503 `process_limit`**：同时活着的 pi 进程到了 8 个、都在做。
+- **503 `process_limit`**：同时活着的 pi 进程到了上限、都在做（空闲的会先被回收）；控制面把这一轮以 `failed` 结束，写「助手服务同时在做的会话太多」。
+- **会话空闲一阵之后再说话变慢了一点、时间线上多了一条「上下文没能从会话文件恢复」**：空闲 15 分钟的会话 pi 进程被回收，下一句话冷启动一个新的（约 1 到 3 秒）、从会话文件恢复；恢复不了（会话文件读不了或坏了、工作目录对不上，pi 不报错、悄悄开一个空会话）时助手服务换新的会话、把之前的对话整理成摘要放在这一句前面，旧的会话目录挪到 `/data/sessions/<会话 ID>/pi-session.broken/`（只留最近一份），助手自己记的对话在同一目录的 `transcript.jsonl`。看日志里「没有接上之前的上下文」。
 - **工作区不是 `/work` 下的目录**：助手容器里要能建同一个路径（镜像里只有 `/work` 归运行用户）。

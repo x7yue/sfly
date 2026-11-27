@@ -164,7 +164,7 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
    ```sh
    SFLY_ASSISTANT_URL=http://sfly-assistant:8090   # compose 里助手服务的服务名；控制面和助手服务读同一个 SFLY_ASSISTANT_SECRET
    SFLY_ASSISTANT_SECRET=<openssl rand -hex 24 的输出>
-   SFLY_WORKBENCH_AGENT=workbench                  # 工作台上那台 Agent 的名字：控制面用它找工作台，工作台容器用它给自己的 Agent 起名
+   SFLY_WORKBENCH_NAME=workbench                   # 工作台容器里那台 Agent 的名字（不写就是 workbench）：下面按这个名字签发凭据、登记
    SFLY_ASSISTANT_MODEL=gateway/<模型 id>          # 模型文件和这几项的写法见下面「助手的模型」
    SFLY_ASSISTANT_MODELS_FILE=./assistant-models.json
    MODEL_API_KEY=<模型的密钥>                      # 模型文件里 "$MODEL_API_KEY" 引用的变量，只传给助手容器
@@ -179,9 +179,26 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
    sfly api POST /agents/workbench/credentials
    ```
 
-   响应里的 `token`（`sfly_agt_` 开头）是原值，**只显示这一次**，填进 `.env` 的 `SFLY_WORKBENCH_TOKEN`（`.env` 里写着凭据，权限设成只有部署的人读得到）。`workbench` 换成你在 `SFLY_WORKBENCH_AGENT` 里写的名字。等价的专用命令是 `sfly agent credentials issue workbench --token-only`（只把原值写到标准输出）。
+   响应里的 `token`（`sfly_agt_` 开头）是原值，**只显示这一次**，填进 `.env` 的 `SFLY_WORKBENCH_TOKEN`（`.env` 里写着凭据，权限设成只有部署的人读得到）。`workbench` 换成你在 `SFLY_WORKBENCH_NAME` 里写的名字。等价的专用命令是 `sfly agent credentials issue workbench --token-only`（只把原值写到标准输出）。
 4. 起助手和工作台：`docker compose --profile assistant up -d`。第一次启动工作台时它从控制面装 Agent、uv 和 sfly 命令行，要一两分钟（下面「工作台容器」）。
-5. 确认：`docker compose --profile assistant ps` 里三个服务都在；控制台的 Agent 页上 `workbench` 在线、「与控制面一致」是「是」；「助手」页顶上的就绪状态是可以用（没有就绪时它写明缺什么：模型没配、工作台不在线……）。
+5. **登记工作台**：工作台在 Agent 页上在线（它用自己的 Agent 凭据连上来过）之后，项目管理员登记它（控制面里没有指名工作台的环境变量，不登记就是「助手」页写「没有登记工作台」）：
+
+   ```sh
+   sfly api PUT /projects/default/workbench --body '{"agent": "workbench"}'
+   ```
+
+   `workbench` 换成工作台那台 Agent 的名字。**登记之后控制面只接受 Agent 凭据，共享令牌（`SFLY_AGENT_TOKEN`）和不带凭据的连接都被拒绝**，对整个部署生效、不只这个项目；条件、被拒绝时怎么办见下面「登记工作台」。
+6. 确认：`docker compose --profile assistant ps` 里三个服务都在；控制台的 Agent 页上 `workbench` 在线、「与控制面一致」是「是」；「助手」页顶上的就绪状态是可以用（没有就绪时它写明缺什么：模型没配、没有登记工作台、工作台不在线……）。
+
+**登记工作台**（`PUT /projects/<项目>/workbench`，请求体 `{"agent": "<Agent 的名字>"}`，项目管理员；用 `sfly login` 登录的个人令牌或控制台的登录，项目令牌、会话令牌不行）：
+
+- **条件**（任何一条不满足就是 409，不改任何东西，响应的 `error.code` 说是哪条）：
+  - 这台 Agent 在这个项目里，而且**用自己的 Agent 凭据连上来过**（最近一次连接用的是 Agent 凭据）、没有被停用：`workbench_agent_unknown`（没有这台 Agent，或它在别的项目里：说法一样）、`workbench_agent_not_on_credential`、`workbench_agent_disabled`；
+  - **部署里没有停用的 Agent 都已经换成 Agent 凭据**：`agents_not_on_credentials`，`error.details.agents` 列出还没换的 Agent 的名字。「换了」按每台 Agent **最近一次连接用的是不是 Agent 凭据**算：只签发过凭据、没用它连上来过的不算换了（要换进它的 `agent.env`、重启，连上来之后才算）；停用的 Agent 不算。**这一条只在第一次登记时查**：控制面已经只接受 Agent 凭据（已经有项目登记过工作台）之后，旧方式的 Agent 反正连不上，换工作台不再查它，只看上面工作台本身的那三条。
+- **被拒绝时怎么办**：对列出的每一台，二选一，然后再登记一次：① 给它换成 Agent 凭据（`sfly agent credentials issue <名字> --token-only` 签发，写进那台机器的 `agent.env` 里的 `SFLY_TOKEN`（`.env` 不是它的配置），重启 Agent，到 Agent 页上看它「最近一次连接用的是 Agent 凭据」；换法见用户文档「安装 Agent」的「Agent 凭据」）；② 不用它了就停用（`sfly api POST /agents/<名字>/disable`），停用的不挡登记，停用的 Agent 连不上也不派发。
+- **登记之后，各种连接的去留**：带 Agent 凭据的 Agent 照常；**共享令牌的连接和不带凭据的连接都被拒绝**（包括以前能连上的、已经登记过的名字），Agent 不退出，标准错误里写着「控制面已经登记了工作台，只接受 Agent 凭据」，换上 Agent 凭据之后它自己连上；已经连着的带 Agent 凭据的连接不受影响。登记不会断开任何已经连着的连接（条件保证登记那一刻没有以旧方式连着的 Agent）；检查和登记在引擎的锁里一起做，和连接的登记互斥，所以登记的那一刻一台旧方式的 Agent 同时连上来，要么登记被拒绝并列出它，要么它被拒绝。这个开关由库里是不是有项目登记了工作台得出，控制面重启之后照旧。**登记只关了 Agent 的 gRPC 连接（Hello）这一侧；Agent 请求控制面的 HTTP（上传产物等）的旧方式——不带凭据、带共享令牌——到 #494 才跟着关**：在那之前，配了共享令牌（`SFLY_AGENT_TOKEN`）时上传产物核对它，没配时不带凭据的上传也放行。所以**登记之后不要删掉 `SFLY_AGENT_TOKEN`**：删了之后共享令牌的核对就不做了，不带凭据的上传全部放行。
+- **换一台工作台**：用另一台 Agent 再登记一次（工作台本身的三条条件照旧，上一条里「部署里都换成 Agent 凭据」不再查）；响应里的 `previous_agent` 是换下来的。登记同一台是幂等的。**换的时候在做的一轮不受影响**：它在原来的工作台上做完（这一轮开始时交给助手服务的是当时的工作台，登记不打断它、不重发）；**下一轮**（对这个会话再说话，或者新建会话）才交给新的工作台，就绪状态和写接口每次读登记的那一台。**新工作台的 `/work` 里没有原来那台的文件**（工作区是每台工作台自己持久卷上的 git 仓库，不会跟着登记搬过去）：换了之后会话在新工作台上从一个空的工作区开始，要留的东西先从原来的工作台拷出来。**没有注销登记的接口**：共享令牌不再接受是有意的单向开关（注销等于重新打开共享令牌的口子）。确实要退回登记之前（例如要退回旧版本的控制面），停掉控制面，在库里 `update projects set workbench_agent = null`，再启动。
+- **名字被占用时**：Agent 带着有效的 Agent 凭据却被拒绝，说「这个名字已经被这个部署里另一个项目的 Agent 登记了」：过渡期里用共享令牌或不带凭据连上来的 Agent 都登记在默认项目里，一个名字在整个部署里只能属于一个项目。没有删除 Agent 的接口（停用不释放名字），所以给这台 Agent 换一个名字：用新名字签发凭据，把 `agent.env` 里的 `SFLY_AGENT_NAME` 和 `SFLY_TOKEN` 换成新的，重启 Agent。**compose 里的工作台容器改的是 `.env`，不是容器里的 `agent.env`**：把 `SFLY_WORKBENCH_NAME` 改成新名字、`SFLY_WORKBENCH_TOKEN` 改成按新名字签发的凭据（入口脚本每次启动都把环境里的这两个交给 Agent，优先于 `agent.env`；名字变了会重装一次），再 `docker compose --profile assistant up -d`，然后用新名字登记工作台。
 
 **工作台容器**（`deploy/workbench/`）：
 
@@ -230,7 +247,7 @@ services:
 
 文件里每个镜像主机一段：`machine <镜像主机>`、`login <用户名>`、`password <密码>`（PyPI 镜像和 GitHub Release 镜像不在同一台主机时各写一段）。**这个文件工作台上的模型读得到**；控制面的镜像地址带用户名密码时，Agent 握手拿到的是带凭据的原值，装节点包依赖时 `uv` 的 `--default-index` 参数里就是它，`ps` 看得到（`agent/src/install.rs`；Agent 写进日志的地址里是 `***`，但进程参数里是原值）。两种配法凭据都在模型够得着的地方：**给工作台单独一个只读、最小权限的镜像账号，不要用别处也在用的账号**。
 
-**助手容器的内存**：助手服务同时最多 8 个 pi 进程（`apps/assistant/src/sessions.ts` 的 `MAX_PROCESSES`，到了上限先关掉最久没用的空闲进程），容器上限 2 GiB（compose 的 `mem_limit: 2g`）。数字按完整会话算：8 个进程 × 约 194 MiB（一个 pi 进程跑完整的一个会话，峰值 191–194 MiB，量的是 `VmHWM`）≈ 1.55 GiB，加上助手服务自己和读写，上限留出约 0.45 GiB 的余量。**这是用假的模型端点量到的下限，不是真实模型的数**：真实模型的上下文更长，每个进程的峰值只会更高；用很短的一轮（探针）量到的每个进程只有约 141 MiB（空闲常驻）到 162 MiB（一轮峰值），也不要拿它定上限。内存紧、会话多时，容器可能被内核杀掉（Docker 按 `restart` 策略重启它，正在做的一轮中断）：这时在 `docker-compose.override.yml` 里调大 `sfly-assistant` 的 `mem_limit`，上线之前用真实模型和真实长度的会话量一次。
+**助手容器的内存**（这一段是数字唯一写的地方，`apps/assistant/README.md`、`deploy/docker-compose.yml`、`apps/assistant/src/sessions.ts` 的 `MAX_PROCESSES` 都引用它）：助手服务同时最多 8 个 pi 进程（`MAX_PROCESSES`），一个会话空闲 15 分钟（`IDLE_RECLAIM_MS`）没有收到命令就回收它的 pi 进程，下一条命令用同一条启动命令从会话文件恢复，所以常驻的进程不会只增不减；到了 8 个、又来了新的会话时，先回收最久没动的空闲进程，8 个都在做时新的一轮得到 503（`process_limit`，控制面把这一轮以 `failed` 结束，写「助手服务同时在做的会话太多」）。被回收的进程退出之前新的进程就可以起（不同会话互不等；同一个会话自己的旧进程要等它退出才起新的），所以同时活着的 pi 可以比上限多出正在退出的那些：健康的空闲进程关 stdin 后约 0.1 秒就退出，卡住的最多 20 秒（10 秒后 SIGTERM、再 10 秒后 SIGKILL），**最坏是上限的两倍**（上限 8 时最多 16 个，其中 8 个在退出、不在做事，比完整会话的峰值轻；探针量到上限 2 时同时有 4 个）。余量按「8 个在做加几个刚被回收的」留，卡住的进程是不该发生的事，发生时看助手服务的日志里「没有退出」。内存按**完整会话的峰值**留：8 个进程 × 约 194 MiB（一个 pi 进程跑完整的一个会话，峰值 191–194 MiB，量的是 `VmHWM`）≈ 1.55 GiB，加上断线续传的缓冲最多 64 MiB（`ASSISTANT_REPLAY_BUFFER_BYTES`，按序列化后的字节算，和进程数无关）、助手服务自己和读写，容器上限 2 GiB（compose 的 `mem_limit: 2g`）留出约 0.4 GiB 的余量。**这是用假的模型端点量到的下限，不是真实模型的数**：真实模型的上下文更长，每个进程的峰值只会更高；用很短的一轮（探针）量到的每个进程只有约 141 MiB（空闲常驻）到 162 MiB（一轮峰值），也不要拿它定上限。内存紧、会话多时，容器可能被内核杀掉（Docker 按 `restart` 策略重启它，正在做的一轮中断）：这时在 `docker-compose.override.yml` 里调大 `sfly-assistant` 的 `mem_limit`，上线之前用真实模型和真实长度的会话量一次。
 
 ### 助手的模型
 
@@ -267,7 +284,7 @@ services:
 - **配得对不对在页面上看得到**：助手服务**不会因为模型没配好而拒绝启动**，而是照常起来，`GET /health` 的 `model.configured` 为 false，`reason` 写明缺的是哪一项（模型文件不在或读不了、不是合法的 JSON、有不支持的写法、`SFLY_ASSISTANT_MODEL` 没设或不在文件里、选中的提供方引用的环境变量没有值）：只写变量名和文件路径，不写任何值（变量名只在像常见的环境变量名——大写字母、数字、下划线——时才写；名字不像的，多半是把密钥本身写在了 `$` 后面，这时只写它在文件里的位置并提示）。引用 `SFLY_ASSISTANT_` 开头的变量（助手服务自己的配置）也算没配好：启动 pi 时不会交给它，换个名字。页面「助手」顶上的就绪状态写「没有配置模型：<缺什么>」，「开始」不可用；改好文件之后不用重启（环境变量要重启容器）。共享密钥太短（少于 32 个字符）仍然拒绝启动。
 - **试连**：助手服务启动时和之后每 5 分钟（上一次连不上时每 30 秒，连上了再回到 5 分钟）对模型端点（`baseUrl` 的主机和端口）建一次连接，https 含 TLS 握手，**只建连接，不发请求、不调模型、不花钱**；`/health` 报连得上还是连不上、上次检查的时间和端点的主机端口（不带路径和参数）。连不上时就绪状态写「连不上模型端点 主机:端口：<原因>（上次检查：N 分钟前）」，新的一轮开始之前被拒绝（503 `model_unavailable`）。证书照默认规则验（pi 调模型时也一样）：验不过时试连失败，原因写「证书验不过」。
 - **模型出故障时**：一轮里模型报错，pi 自己重试（时间线写「模型暂时不可用（429 被限流），正在第 2/3 次重试，4 秒后」），重试用尽或不该重试的错误（密钥被拒绝、额度不足）这一轮以「模型不可用」结束，原因写类别和状态码（上游的错误原文不进事件，只进助手服务的日志，打过码），已经做的步骤和工作区的改动还在。
-- **助手容器的内存**：控制面和助手服务断线时，助手服务在内存里留着断线期间的持久事件，好在重连后补给控制面（#545）：最多 1 万条、合计不超过 64 MiB（按序列化后的字节算），超过就从最早的丢，丢到补不全时重连的 `hello.gap` 为真、控制面在做的会话记一条「事件缺失」的提示。除此之外是 pi 进程的内存（每个在做的会话一个）：给容器的内存上限按「64 MiB + 同时在做的会话数 × 一个 pi 进程」留余量（评测环境用 2 GiB）。
+- **断线续传的缓冲**：控制面和助手服务断线时，助手服务在内存里留着断线期间的持久事件，好在重连后补给控制面（#545）：最多 1 万条、合计不超过 64 MiB（按序列化后的字节算），超过就从最早的丢，丢到补不全时重连的 `hello.gap` 为真、控制面在做的会话记一条「事件缺失」的提示。容器的内存怎么留（和 pi 进程的数目、回收）见上面「助手容器的内存」。
 
 ## 约定
 

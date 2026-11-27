@@ -55,6 +55,7 @@ import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { createStdIndex } from "./packages/std-index.js";
 import { PresetStore } from "./presets/preset-store.js";
+import { ProjectWorkbench } from "./projects/project-workbench.js";
 import { type Mirrors, publicMirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
@@ -179,8 +180,6 @@ export interface ControlPlaneOptions {
 	assistantUrl?: string;
 	/** 和助手服务共用的密钥（`SFLY_ASSISTANT_SECRET`）：短于 32 个字符当作没有配置，原因写进日志和就绪状态。 */
 	assistantSecret?: string;
-	/** 哪台 Agent 是工作台（Agent 的名字，`SFLY_WORKBENCH_AGENT`）；骨架期间由部署者配置，#549 换成项目上的一列、删掉它。 */
-	workbenchAgent?: string;
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
 	/**
@@ -329,6 +328,8 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const agentBinaries = new AgentBinaries(options.agentBinaries ?? {}, version);
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
+	// 项目的工作台（`projects.workbench_agent`，#549）：登记在引擎的锁里和连接的登记互斥；任何项目登记了工作台，Hello 就只认 Agent 凭据。
+	const workbench = new ProjectWorkbench({ db: database.db, mutex });
 	await hub.markAllOffline();
 	// 登录注销、用户停用、令牌吊销都从同一个广播出去：路由层据此关掉受影响的事件流。
 	const revocations = new RevocationBus();
@@ -539,7 +540,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		clock,
 		setup: assistant,
 		client: assistantClient,
-		workbenchAgent: options.workbenchAgent || undefined,
+		workbench,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
 		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
 		// 事件连接连不上时兜底不判中断、也不开始新的一轮；连接还没建好（只有配置了助手服务时才有这个函数）就是没连上。
@@ -595,6 +596,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		accounts,
 		tokens,
 		agentCredentials,
+		workbench,
 		loginIdleMs: options.loginIdleMs,
 		// 登录 Cookie 的跨站检查：配置的公开地址（反向代理后面是浏览器看到的地址），加上开发时 vite 的地址；
 		// 没有配置公开地址时用请求的 Host 兜底。
@@ -669,7 +671,12 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 					return engine.onMessage(conn, limitOutputs(message));
 				},
 			},
-			authenticator: new AgentAuthenticator({ db: database.db, clock }),
+			// 登记工作台之后只接受 Agent 凭据：开关每次从库里得出（`projects.workbench_agent`），控制面重启之后照旧。
+			authenticator: new AgentAuthenticator({
+				db: database.db,
+				clock,
+				requireAgentCredential: () => workbench.credentialRequired(),
+			}),
 			onError: sessionError,
 		});
 	} catch (error) {

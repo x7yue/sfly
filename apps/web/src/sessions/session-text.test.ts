@@ -249,12 +249,12 @@ describe("会话页的文字", () => {
 			workbench: null,
 			problems: [
 				{ kind: "assistant_not_configured", message: "没有配置助手" },
-				{ kind: "workbench_not_set", message: "没有设置工作台" },
+				{ kind: "workbench_not_set", message: "没有登记工作台" },
 			],
 		};
 		expect(readinessItems(none).map((item) => [item.what, item.hint])).toEqual([
 			["没有配置助手", "请部署者在控制面上开启助手"],
-			["没有设置工作台", "请部署者设置这个项目的工作台"],
+			["没有登记工作台", "请项目管理员登记工作台（见部署文档「登记工作台」）"],
 		]);
 		expect(readinessItems({ ready: true, workbench: "bench-1", problems: [] })).toEqual([]);
 	});

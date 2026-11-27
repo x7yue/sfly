@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pg from "pg";
 import { Agent } from "undici";
 import packageJson from "../../package.json" with { type: "json" };
 import type { Clock } from "../../src/clock.js";
@@ -74,6 +75,12 @@ export async function startTestControlPlane(
 		 * 助手服务本来就连不上的用例（地址写错、密钥不对）传 `false`，不等那 10 秒。
 		 */
 		waitForAssistant?: boolean;
+		/**
+		 * 默认项目的工作台（Agent 的名字）：启动之后直接写进库（`projects.workbench_agent`），不经 `PUT /projects/:project/workbench`。
+		 * 真正的登记要求这台 Agent 已经用 Agent 凭据连上来过，而这些测试在控制面起来之后才连假 Agent；要测登记本身的用例
+		 * 不用这个选项，走接口。库里有了登记，控制面就只接受 Agent 凭据（假 Agent 默认用 Agent 凭据，下面的 `registerIssuer`）。
+		 */
+		workbenchAgent?: string;
 	} & Pick<
 		ControlPlaneOptions,
 		| "logLimitBytes"
@@ -101,7 +108,6 @@ export async function startTestControlPlane(
 		| "logger"
 		| "assistantUrl"
 		| "assistantSecret"
-		| "workbenchAgent"
 		| "assistantReconnectMs"
 		| "assistantEventsIdleMs"
 		| "assistantCommandTimeoutMs"
@@ -160,7 +166,6 @@ export async function startTestControlPlane(
 			logger: options.logger,
 			assistantUrl: options.assistantUrl,
 			assistantSecret: options.assistantSecret,
-			workbenchAgent: options.workbenchAgent,
 			assistantReconnectMs: options.assistantReconnectMs,
 			assistantEventsIdleMs: options.assistantEventsIdleMs,
 			assistantCommandTimeoutMs: options.assistantCommandTimeoutMs,
@@ -202,6 +207,19 @@ export async function startTestControlPlane(
 		await database.drop();
 		await rm(dataDir, { recursive: true, force: true });
 		throw error;
+	}
+
+	if (options.workbenchAgent) {
+		const client = new pg.Client({ connectionString: database.url });
+		await client.connect();
+		try {
+			await client.query("update projects set workbench_agent = $1 where id = $2", [
+				options.workbenchAgent,
+				DEFAULT_PROJECT,
+			]);
+		} finally {
+			await client.end();
+		}
 	}
 
 	/** 等事件流连上（见 `waitForAssistant`）：连不上就等到时限、不报错。 */

@@ -119,13 +119,13 @@ SFLY_ASSISTANT_SECRET=$secret docker run -d --init --name "$prefix-assistant" --
 	--network-alias sfly-assistant --memory 2g -v "$work_dir/models.json:/config/models.json:ro" \
 	-e SFLY_ASSISTANT_SECRET -e SFLY_ASSISTANT_MODEL=fake/fake -e FAKE_KEY=k "$assistant_image" >/dev/null
 
-# ---- 控制面：和 compose 一样，助手的地址、共享密钥、工作台的名字；镜像是网络里的镜像站 ----
+# ---- 控制面：和 compose 一样，助手的地址、共享密钥（工作台由项目管理员登记，不在环境变量里）；镜像是网络里的镜像站 ----
 SFLY_ADMIN_PASSWORD=$admin_password SFLY_ASSISTANT_SECRET=$secret docker run -d --init --name "$prefix-cp" \
 	--network "$network" --network-alias sfly \
 	-e DATABASE_URL=postgres://sfly:sfly@"$prefix-pg":5432/sfly -e SFLY_PUBLIC_URL=http://sfly:8080 \
 	-e SFLY_PYPI_MIRROR=http://mirror.internal:8000/pypi/simple \
 	-e SFLY_GITHUB_RELEASE_MIRROR=http://mirror.internal:8000/github-release \
-	-e SFLY_ASSISTANT_URL=http://sfly-assistant:8090 -e SFLY_ASSISTANT_SECRET -e SFLY_WORKBENCH_AGENT="$agent" \
+	-e SFLY_ASSISTANT_URL=http://sfly-assistant:8090 -e SFLY_ASSISTANT_SECRET \
 	-e SFLY_ADMIN_LOGIN="$admin_login" -e SFLY_ADMIN_PASSWORD "$server_image" >/dev/null
 for _ in $(seq 60); do
 	status=$(docker inspect --format '{{.State.Health.Status}}' "$prefix-cp" 2>/dev/null || echo exited)
@@ -148,10 +148,12 @@ token=$(client credential "$agent") || fail "给工作台签发 Agent 凭据"
 start_workbench() {
 	SFLY_WORKBENCH_TOKEN=$token docker run -d --init --name "$prefix-wb" --network "$network" \
 		--network-alias sfly-workbench -v "$prefix-home:/home/workbench" -v "$prefix-work:/work" \
-		-e SFLY_WORKBENCH_URL=http://sfly:8080 -e SFLY_WORKBENCH_AGENT="$agent" \
+		-e SFLY_WORKBENCH_URL=http://sfly:8080 -e SFLY_WORKBENCH_NAME="$agent" \
 		-e SFLY_WORKBENCH_PUBLIC_ADDRESS=sfly-workbench -e SFLY_WORKBENCH_TOKEN "$workbench_image" >/dev/null
 }
 start_workbench
+# 登记工作台（和 README「登记工作台」同一个接口）：等工作台用自己的 Agent 凭据连上来再登记；之后控制面只接受 Agent 凭据。
+client register "$agent" 300 || fail "登记工作台"
 client ready 300 || fail "助手 5 分钟内没有就绪"
 
 # 断网是真的：工作台容器连不上外网（DNS 也解析不了），也到不了宿主机。
@@ -184,13 +186,19 @@ done
 if grep -qF -f <(printf '%s\n' "$token") <<<"$checked"; then fail "凭据出现在会话的工具结果里"; fi
 grep '^结果' <<<"$checked" | head -c 700; echo
 
-# ---- README「助手和工作台」里签发凭据的两条命令照着执行一遍（在工作台上，它有 sfly 命令行；换别的名字，不动工作台自己的凭据）----
+# ---- README「助手和工作台」里签发凭据的两条命令、登记工作台的命令照着执行一遍（在工作台上，它有 sfly 命令行；签发换别的名字，
+#      不动工作台自己的凭据；登记同一台是幂等的）----
 docker exec -i "$prefix-wb" sh -c 'sfly login --server http://sfly:8080 --login-name "$0" --password-stdin' "$admin_login" \
 	<<<"$admin_password" >/dev/null || fail "sfly login（管理员登录）"
 issued=$(workbench sfly api POST /agents/doc-check/credentials) || fail "sfly api POST /agents/<名字>/credentials"
 grep -Eq '"token": *"sfly_agt_' <<<"$issued" || fail "sfly api 的响应里没有 Agent 凭据的 token"
 issued=$(workbench sfly agent credentials issue doc-check-2 --token-only) || fail "sfly agent credentials issue --token-only"
 [[ $issued == sfly_agt_* && $issued != *$'\n'* ]] || fail "--token-only 应当只写一行 Agent 凭据"
+# README 里登记工作台的命令（`sfly api PUT /projects/default/workbench --body '{"agent": "<名字>"}'`）：已经登记过同一台，幂等，没有换。
+registered=$(workbench sfly api PUT /projects/default/workbench --body "{\"agent\": \"$agent\"}") ||
+	fail "sfly api PUT /projects/default/workbench（README 里登记工作台的命令）"
+grep -Eq "\"agent\": *\"$agent\"" <<<"$registered" && grep -Eq '"previous_agent": *null' <<<"$registered" ||
+	fail "登记工作台的响应不对：$registered"
 workbench rm -f /home/workbench/.sfly/credentials.json # 管理员的登录只为这一步，不留在工作台的卷上
 
 # ---- 删掉工作台容器再建：工作区还在，Agent 不重装，助手照样就绪 ----

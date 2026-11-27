@@ -88,8 +88,9 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
 ```
 
 - 多一个容器 `sfly-aeval-<槽位>-assistant`（网络别名 `assistant.internal`），助手镜像用 `--assistant-image` 换。
-  控制面配上 `SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`、`SFLY_WORKBENCH_AGENT=dev-root-dev`（工作台是 `dev` 上的 Agent，
-  竖切的桩，#549 换掉）。共用的密钥每次 `up` 随机生成，只经环境变量带进两个容器，不打印、不写文件。
+  控制面配上 `SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`；工作台是 `dev` 上的 Agent（`dev-root-dev`），`up` 和 `reset` 在
+  两台 Agent 用各自的 Agent 凭据连上来之后，以初始管理员的登录登记它（`PUT /projects/default/workbench`，和部署文档同一个接口，
+  #549；控制面里没有指名工作台的环境变量）。共用的密钥每次 `up` 随机生成，只经环境变量带进两个容器，不打印、不写文件。
 - `up` 完 Agent 在线、控制面说助手能用（`GET /projects/default/sessions` 的 `readiness.ready`）才结束。
   之后这个槽位的 `reset`、`seed`、`e2e` 重建控制面时照着助手容器接着用（镜像、模型、密钥），`reset` 也重建助手容器
   （上一次的会话和 pi 进程不留下）；`up` 不带 `--assistant` 会删掉以前留下的助手容器。
