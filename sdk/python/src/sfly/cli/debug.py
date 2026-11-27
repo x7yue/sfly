@@ -334,8 +334,9 @@ def _report(result: Execution) -> int:
             # 执行器在调用节点之前就拒绝了输入（没有声明的名字）：和其他参数不合法一样，退出码 2。
             print(f"参数不合法：{error.message}", file=sys.stderr)
             return EXIT_INVALID
-        detail = f"\n\n{error.traceback.rstrip()}" if error.traceback else ""
-        # 出错位置在失败原因后面、堆栈前面：不用翻堆栈就知道改哪一行。
+        # 堆栈不再打一遍：执行器已经把它写进标准错误，上面的日志里有完整的一段（#404）。
+        detail = "\n堆栈见上面的日志（标准错误）" if error.traceback else ""
+        # 出错位置在失败原因后面：不用翻堆栈就知道改哪一行。
         place = f"\n出错位置：{error.location}" if error.location else ""
         print(f"节点失败：{error.message}{place}{detail}", file=sys.stderr)
         return EXIT_FAILED
