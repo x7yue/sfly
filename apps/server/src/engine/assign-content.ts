@@ -11,13 +11,13 @@ import {
 } from "@sfly/orchestration";
 import type { AssignTaskSchema } from "@sfly/proto";
 import { DEV_VERSION, type PackageMetadata } from "@sfly/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { artifactLimitForWire } from "../artifacts/artifact-store.js";
 import type { Tx } from "../db/database.js";
 import { type AgentInfo, nodePackages } from "../db/schema.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
-import type { ProjectId } from "../projects/project-id.js";
+import { type ProjectId, readableProjects } from "../projects/project-id.js";
 import type { PackageNode } from "./chain.js";
 import { isAlways } from "./failures.js";
 import { resolveReferencedAgents } from "./referenced-agents.js";
@@ -86,6 +86,8 @@ export function createAssignContent(urls: {
 		}
 
 		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
+		// 只认运行所在的项目和公共项目里的版本（和保存、触发时找包是同一个范围）：别的项目里同名同版本的包和没有发布过一样，
+		// 不拿它的项目、摘要、元信息构造任务（#834 审查）。
 		const [archive] = await tx
 			.select({
 				sha256: nodePackages.sha256,
@@ -93,7 +95,13 @@ export function createAssignContent(urls: {
 				projectId: nodePackages.projectId,
 			})
 			.from(nodePackages)
-			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
+			.where(
+				and(
+					eq(nodePackages.name, node.package),
+					eq(nodePackages.version, packageVersion),
+					inArray(nodePackages.projectId, readableProjects(project)),
+				),
+			);
 		// 开发版本的元信息由加载它的 Agent 上报；不知道节点类型时不校验（Agent 会以 env_error 失败）。
 		const metadata =
 			archive?.metadata ??

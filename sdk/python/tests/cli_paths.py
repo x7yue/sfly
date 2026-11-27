@@ -31,6 +31,9 @@ _CLIENT_CALLS = {"get": 0, "request": 1, "open": 1}
 # 或某个路径（GitHub 发布地址的后缀）。
 NOT_CONTROL_PLANE_FILES = {"wheel.py"}
 NOT_CONTROL_PLANE_PATHS = {"/astral-sh/python-build-standalone/"}
+# 赋值给这些名字的字符串是已经不存在的旧路径（`sfly api` 据此提示新写法，#488），
+# 不是命令行要请求的路径。
+NOT_CONTROL_PLANE_NAMES = {"_MOVED_ROUTES", "_PROJECT_QUERY_ROUTES"}
 
 
 @dataclass(frozen=True)
@@ -105,7 +108,7 @@ class _Scanner:
         for node in _own_nodes(scope):
             if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
                 self._remember(node, env)
-        parts = _string_parts(scope)
+        parts = _string_parts(scope) | _old_paths(scope)
         for node in _own_nodes(scope):
             if isinstance(node, ast.Call):
                 self._call(node, env)
@@ -237,6 +240,17 @@ def _string_parts(scope: ast.AST) -> set[int]:
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             parts.update((id(node.left), id(node.right)))
     return parts
+
+
+def _old_paths(scope: ast.AST) -> set[int]:
+    """赋值给 `NOT_CONTROL_PLANE_NAMES` 里的名字的字符串（连同注解赋值）。"""
+    skipped: set[int] = set()
+    for node in _own_nodes(scope):
+        if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id in NOT_CONTROL_PLANE_NAMES for t in targets):
+                skipped.update(id(n) for n in ast.walk(node.value))
+    return skipped
 
 
 def _direct_children_scopes(scope: ast.AST) -> list[ast.AST]:

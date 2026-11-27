@@ -153,3 +153,41 @@ def test_an_old_path_says_where_it_moved(capsys: pytest.CaptureFixture[str]) -> 
     assert error["code"] == "route_moved"
     assert "/projects/default/agents" in error["message"]
     assert error["next"] == "sfly api GET /projects/default/agents"
+
+
+def _moved(capsys: pytest.CaptureFixture[str], *args: str) -> dict[str, str]:
+    from sfly.cli import main
+
+    assert main(["api", *args, "--server", "http://127.0.0.1:9", "--json"]) == 2
+    error: dict[str, str] = json.loads(capsys.readouterr().err)["error"]
+    return error
+
+
+def test_the_old_project_query_picks_the_project_of_the_new_path(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 旧的 POST /packages?project=public 发布到公共项目：照抄提示还是发到公共项目，
+    # 不能变成默认项目。
+    monkeypatch.delenv("SFLY_PROJECT", raising=False)
+    error = _moved(capsys, "POST", "/packages?project=public")
+    assert error["code"] == "route_moved"
+    assert error["next"] == "sfly api POST /projects/public/packages"
+    assert "?project=" in error["message"]
+    error = _moved(capsys, "POST", "/packages", "--query", "project=public")
+    assert error["next"] == "sfly api POST /projects/public/packages"
+    # 不写 project 时是 SFLY_PROJECT，默认 default。
+    assert _moved(capsys, "POST", "/packages")["next"] == "sfly api POST /projects/default/packages"
+    monkeypatch.setenv("SFLY_PROJECT", "team-a")
+    assert _moved(capsys, "GET", "/agents")["next"] == "sfly api GET /projects/team-a/agents"
+    # 别的查询参数留在新写法里（项目只从发布接口的旧参数里取）。
+    error = _moved(capsys, "GET", "/agents?project=public&x=1")
+    assert error["next"] == "sfly api GET '/projects/team-a/agents?project=public&x=1'"
+
+
+def test_only_routes_that_really_moved_get_the_hint(capsys: pytest.CaptureFixture[str]) -> None:
+    # 加上项目恰好对得上清单的路径，不是 #488 搬过的旧路由，不给 route_moved
+    # （例如本来就没有的 /sessions 列表）。
+    error = _moved(capsys, "GET", "/sessions")
+    assert error["code"] != "route_moved"
+    error = _moved(capsys, "GET", "/workbench")
+    assert error["code"] != "route_moved"

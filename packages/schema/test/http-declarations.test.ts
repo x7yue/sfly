@@ -205,6 +205,32 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			at({ kind: "agent", target: { params: "name" } }, "/projects/:project/things/:name"),
 		).toEqual([]);
 		expect(at({ kind: "run", target: { params: "id" } }, "/things/:id")).toEqual([]);
+		// 名字写在查询参数或请求体里也是按名字定位：路径同样要带项目（#834 审查）。
+		const byName = z.object({ name: z.string() });
+		const viaQuery = { kind: "feishu_bot", target: { query: "name" } };
+		const viaBody = { kind: "feishu_bot", target: { body: "name" } };
+		const post = { method: "POST", effect: "write" };
+		expect(at(viaQuery, "/things", { query: byName }).join()).toContain(message);
+		expect(at(viaBody, "/things", { ...post, body: byName }).join()).toContain(message);
+		expect(
+			at(viaQuery, "/projects/:project/things", {
+				query: byName,
+				params: z.object({ project: z.string() }),
+			}),
+		).toEqual([]);
+		expect(
+			at(viaBody, "/projects/:project/things", {
+				...post,
+				body: byName,
+				params: z.object({ project: z.string() }),
+			}),
+		).toEqual([]);
+		// 按 ID 定位的从查询参数取 ID：路径不带项目，不报。
+		expect(
+			at({ kind: "run", target: { query: "id" } }, "/things", {
+				query: z.object({ id: z.string() }),
+			}),
+		).toEqual([]);
 		expect(at({ kind: "system", target: "global" }, "/projects/:project/things").join()).toContain(
 			"system 不属于项目",
 		);
@@ -258,15 +284,16 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: { kind: "scenario", target: { params: "*" } } }))[0],
 		).toContain("路径参数 * 不在路径");
+		// 用按 ID 定位的类别（运行）：路径里不带项目也合法，只看字段在不在请求里。
 		const withQuery = { query: z.object({ owner: z.string() }) };
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { query: "owner" } } }, withQuery)),
+			problems(broken({ resource: { kind: "run", target: { query: "owner" } } }, withQuery)),
 		).toEqual([]);
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { query: "who" } } }, withQuery))[0],
+			problems(broken({ resource: { kind: "run", target: { query: "who" } } }, withQuery))[0],
 		).toContain("字段 who，它不在 query 里");
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { query: "owner" } } }))[0],
+			problems(broken({ resource: { kind: "run", target: { query: "owner" } } }))[0],
 		).toContain("没有对象形式的 query");
 		const withBody = {
 			method: "POST",
@@ -274,10 +301,10 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			body: z.object({ name: z.string() }).refine(() => true),
 		};
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { body: "name" } } }, withBody)),
+			problems(broken({ resource: { kind: "run", target: { body: "name" } } }, withBody)),
 		).toEqual([]);
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { body: "id" } } }, withBody))[0],
+			problems(broken({ resource: { kind: "run", target: { body: "id" } } }, withBody))[0],
 		).toContain("字段 id，它不在 body 里");
 		// 套了一层包装的对象也认得出
 		const wrapped = {
@@ -286,7 +313,7 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			body: z.object({ name: z.string() }).optional(),
 		};
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { body: "name" } } }, wrapped)),
+			problems(broken({ resource: { kind: "run", target: { body: "name" } } }, wrapped)),
 		).toEqual([]);
 	});
 

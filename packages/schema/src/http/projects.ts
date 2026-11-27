@@ -28,7 +28,7 @@ export const projectWorkbenchApi = {
 	 * - `workbench_agent_disabled`：这台 Agent 被停用了；
 	 * - `workbench_agent_not_on_credential`：这台 Agent 最近一次连接用的不是 Agent 凭据；
 	 * - `agents_not_on_credentials`：部署里还有没有停用的 Agent 最近一次连接用的不是 Agent 凭据（只签发过凭据、没用它连上过的也算没换）；
-	 *   `details.agents` 列出它们的名字：为它们签发 Agent 凭据并换上重新连接，或者停用它们（`POST /agents/:name/disable`），再登记。
+	 *   `details.agents` 列出它们的名字：为它们签发 Agent 凭据并换上重新连接，或者停用它们（`POST /projects/:project/agents/:name/disable`），再登记。
 	 *   **已经有项目登记过工作台（控制面已经只接受 Agent 凭据）时不再检查这一条**：换工作台只看工作台本身的前三条。
 	 */
 	register: endpoint({

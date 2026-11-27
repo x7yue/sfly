@@ -469,7 +469,8 @@ function checkProjectInPath(
 	if (kind === "system" || kind === "account") {
 		return scoped ? [`${kind} 不属于项目，路径里不能有 /projects/:${PROJECT_PARAM}`] : [];
 	}
-	const located = typeof target === "object" && "params" in target;
+	// 按名字定位不管名字写在路径参数、查询参数还是请求体里，项目都要在路径里。
+	const located = typeof target === "object";
 	const needs =
 		target === "collection" || target === "upload" || (located && !ID_LOCATED_KINDS.includes(kind));
 	if (!needs || scoped || label(def) in (rules.projectPathPending ?? {})) return [];

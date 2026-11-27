@@ -7,11 +7,12 @@ import { createHash } from "node:crypto";
 import { create, toBinary } from "@bufbuild/protobuf";
 import type { ResolveScope } from "@sfly/orchestration";
 import { AssignTaskSchema } from "@sfly/proto";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { type AssignRequest, createAssignContent } from "../src/engine/assign-content.js";
 import type { PackageNode } from "../src/engine/chain.js";
-import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
+import { DEFAULT_PROJECT, type ProjectId } from "../src/projects/project-id.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -130,6 +131,58 @@ describe("派发内容", () => {
 				referencedAgents: [],
 				referencedFeishuBots: [],
 			},
+		});
+	});
+
+	it("包版本只在第三个私有项目里：派发视为没有发布（不下发地址和 sha256，不用它的元信息）；公共项目里的照常下发", async () => {
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			await client.query(
+				"insert into projects (id, display_name, created_at) values ('third-team', '第三个', now())",
+			);
+			// 它的元信息里 plain 要求 url：用了这份元信息，下面不给 url 的派发就会以配置错误失败。
+			const insert = (name: string, project: string) =>
+				client.query(
+					`insert into node_packages (name, version, project_id, metadata, file_path, sha256, size, published_at)
+					 values ($1, '2.0.0', $2, $3, $4, 'ffff', 1, now())`,
+					[
+						name,
+						project,
+						JSON.stringify(
+							packageMetadata({
+								name,
+								version: "2.0.0",
+								nodes: [nodeType("plain", { url: { type: "string" } }, ["url"])],
+							}),
+						),
+						`packages/${name}/2.0.0.sflypkg`,
+					],
+				);
+			await insert("elsewhere", "third-team");
+			await insert("shared", "public");
+		} finally {
+			await client.end();
+		}
+		const hidden = await assign({ node: node({ package: "elsewhere" }), packageVersion: "2.0.0" });
+		expect(hidden).toMatchObject({ ok: true, assign: { packageSha256: "", packageUrl: "" } });
+		// 对照：在它自己的项目里派发，拿得到；公共项目里的包任何项目都拿得到。
+		const own = await assign({
+			project: "third-team" as ProjectId,
+			node: node({ package: "elsewhere", inputs: { url: "http://x" } }),
+			packageVersion: "2.0.0",
+		});
+		expect(own).toMatchObject({
+			ok: true,
+			assign: { packageUrl: "http://sfly.test/third-team/elsewhere/2.0.0/archive" },
+		});
+		const fromPublic = await assign({
+			node: node({ package: "shared", inputs: { url: "http://x" } }),
+			packageVersion: "2.0.0",
+		});
+		expect(fromPublic).toMatchObject({
+			ok: true,
+			assign: { packageSha256: "ffff", packageUrl: "http://sfly.test/public/shared/2.0.0/archive" },
 		});
 	});
 

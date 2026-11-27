@@ -164,6 +164,7 @@ describe("登记项目的工作台", () => {
 			expect(blocked.error.code).toBe("agents_not_on_credentials");
 			expect(blocked.error.details?.agents).toEqual(["legacy-shared", "mixed"]);
 			expect(blocked.error.message).toContain("2 台");
+			expect(blocked.error.message).toContain("POST /projects/default/agents/<名字>/disable");
 			expect(await column()).toBeNull();
 
 			// 停用 legacy-shared：不再挡；「mixed」还挡着（签发过凭据不算换了）。
@@ -194,7 +195,10 @@ describe("登记项目的工作台", () => {
 			expect(await code("in-alpha")).toEqual({
 				...(await code("nobody")),
 			});
-			expect((await code("off")).code).toBe("workbench_agent_disabled");
+			const disabled = await code("off");
+			expect(disabled.code).toBe("workbench_agent_disabled");
+			// 说明里恢复它的写法照着做得通（路径带项目，#488）。
+			expect(disabled.message).toContain("POST /projects/default/agents/off/enable");
 			expect((await code("shared-one")).code).toBe("workbench_agent_not_on_credential");
 			expect(await column()).toBeNull();
 		});
