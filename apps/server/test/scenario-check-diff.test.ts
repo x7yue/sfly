@@ -569,24 +569,8 @@ describe("场景的检查接口和版本对比接口", () => {
 					id: "entry",
 					kind: "entry",
 					changes: [
-						{
-							path: "params.env",
-							// 参数声明按保存时补齐的默认值（required、secret）比较
-							before: {
-								name: "env",
-								type: "string",
-								default: "staging",
-								required: false,
-								secret: false,
-							},
-							after: {
-								name: "env",
-								type: "string",
-								default: "prod",
-								required: false,
-								secret: false,
-							},
-						},
+						// 两边都有的参数按字段比较，只写变了的字段（#341）；required、secret 按保存时补齐的默认值比较，没有变
+						{ path: "params.env.default", before: "staging", after: "prod" },
 					],
 				},
 			]);
