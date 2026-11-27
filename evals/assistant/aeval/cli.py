@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         "--arm",
         action="append",
         choices=list(ARMS),
-        help="对照实验的臂：a 工具在本地执行（默认），b 工具经能力端口在开发环境里执行，"
+        help="对照实验的臂：a 工具在本地执行（默认），"
         "p 平台（经控制面的会话接口交给平台内的助手，要 up --assistant）；可以重复",
     )
     run.add_argument("--max-turns", type=int, default=40)
