@@ -90,6 +90,7 @@ describe("事件流长时间没有新事件", () => {
 			// 没有任何新事件，等代理的空闲超时过去四次。
 			await new Promise((resolve) => setTimeout(resolve, 1_700));
 			expect(proxy.requests, "没有重连：还是第一条连接").toHaveLength(1);
+			expect(proxy.inFlight, "连接一直开着").toBe(1);
 			expect(state.opens).toBe(1);
 
 			agent.logs(task, [[2, "二"]]);
@@ -161,6 +162,8 @@ describe("事件流长时间没有新事件", () => {
 			const { seqs, state } = watchLogs(viaProxy, { stallMs: 400 });
 			await eventually(() => expect(state.opens).toBe(1));
 			await new Promise((resolve) => setTimeout(resolve, 1_700));
+			// 连接一直开着：客户端没有把它当成死连接断开（断开之后要等控制面建议的 3 秒才重连，所以看连接还在不在，不看有没有重连）。
+			expect(proxy.inFlight).toBe(1);
 			expect(state.opens).toBe(1);
 			expect(proxy.requests).toHaveLength(1);
 			agent.logs(task, [[1, "一"]]);
