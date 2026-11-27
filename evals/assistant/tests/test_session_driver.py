@@ -2,9 +2,12 @@
 
 import io
 import json
+import os
+from pathlib import Path
 from typing import Any
 
-from session_driver import Usage, split_lines
+import pytest
+from session_driver import Usage, main, split_lines
 
 
 def test_split_only_on_lf() -> None:
@@ -42,3 +45,27 @@ def test_usage_counts_turns_tokens_and_tool_errors() -> None:
     assert summary["tool_errors"] == 1
     assert summary["stop_reasons"] == {"toolUse": 1, "stop": 1}
     assert summary["last_stop_reason"] == "stop"
+
+
+def test_at_the_turn_limit_the_turns_are_the_limit_like_the_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 假的 pi：发 5 次 turn_start（上限是 3），之后等着被结束。
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "pi"
+    fake.write_text(
+        '#!/bin/sh\nfor i in 1 2 3 4 5; do echo \'{"type": "turn_start"}\'; done\nexec sleep 30\n'
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    (tmp_path / "prompt.md").write_text("题目")
+    out = tmp_path / "out"
+    code = main(
+        ["--cwd", str(tmp_path), "--prompt-file", str(tmp_path / "prompt.md")]
+        + ["--provider", "p", "--model", "m", "--max-turns", "3", "--out", str(out)]
+    )
+    summary = json.loads((out / "driver.json").read_text())
+    assert code == 0
+    assert summary["exit_reason"] == "turn_limit"
+    assert summary["turns"] == 3
