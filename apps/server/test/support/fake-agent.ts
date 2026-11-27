@@ -200,6 +200,16 @@ export class FakeAgent {
 	#closed: Promise<void>;
 	#error: unknown;
 	#ended = false;
+	/** Hello 里带的凭据（Agent 凭据或共享令牌；旧方式的没有）。 */
+	#token = "";
+
+	/**
+	 * 这台 Agent 发 HTTP 请求时带的请求头（上传产物、下载节点包归档）：和真实的 Agent 一样带 Hello 里的那个凭据。
+	 * 没有凭据（`token: ""` 的旧方式）时是空的。
+	 */
+	get auth(): Record<string, string> {
+		return this.#token === "" ? {} : { authorization: `Bearer ${this.#token}` };
+	}
 
 	private constructor(
 		readonly name: string,
@@ -258,6 +268,7 @@ export class FakeAgent {
 				}),
 			{ ...options, name: hello.name },
 		);
+		agent.#token = issued ?? hello.token ?? "";
 		// hello 里自己写了单调时钟读数时按它对应（Agent 时间可以另写，与控制面不一致）。
 		if (now !== undefined) {
 			agent.#monotonicShiftMs = Number(hello.monotonicMs ?? SYNCED_MONOTONIC_MS) - now;

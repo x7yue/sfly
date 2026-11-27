@@ -217,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     ci_cmd = sub.add_parser(
         "ci",
-        help="CI 里的评测：平台臂、假的模型端点、四道题各一次，最后扫一遍结果目录里的凭据"
+        help="CI 里的评测：平台臂、假的模型端点、五道题各一次，最后扫一遍结果目录里的凭据"
         "（要 up --assistant；退出码 0 通过，4 没通过，5 扫到凭据）",
     )
     ci_cmd.add_argument("--results", type=Path, required=True, help="结果目录")

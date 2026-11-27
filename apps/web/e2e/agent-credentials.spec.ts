@@ -668,7 +668,9 @@ test.describe("谁看得到这些按钮", () => {
 			0,
 		);
 		// 页面不给看，接口本来就拒绝：不带凭据的请求是 401。
-		const refused = await controlPlane.fetch("/agents/agent-a/credentials");
+		const refused = await controlPlane.fetch("/agents/agent-a/credentials", {
+			credentials: "omit",
+		});
 		expect(refused.status).toBe(401);
 	});
 });

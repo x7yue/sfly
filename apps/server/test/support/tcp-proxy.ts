@@ -1,4 +1,5 @@
 import { createConnection, createServer, type Socket } from "node:net";
+import { aliasCliServer } from "./sfly-cli.js";
 
 export interface TcpProxy {
 	url: string;
@@ -55,6 +56,7 @@ export async function startTcpProxy(target: string): Promise<TcpProxy> {
 	const address = server.address();
 	if (typeof address !== "object" || address === null) throw new Error("proxy has no address");
 
+	aliasCliServer(`http://127.0.0.1:${address.port}`, target);
 	return {
 		url: `http://127.0.0.1:${address.port}`,
 		get streamsOpened() {

@@ -34,6 +34,7 @@ describe("令牌的几处收紧", () => {
 		});
 		// 打开的事件流每 0.2 秒重新检查一次凭据（默认 30 秒）。
 		cp = await startTestControlPlane({
+			defaultCredentials: false,
 			initialAdmin: ADMIN,
 			logger: { stream },
 			streamRecheckMs: 200,
@@ -432,7 +433,7 @@ describe("令牌的几处收紧", () => {
 		const waitEnded = (stream: SseClient) =>
 			vi.waitFor(() => expect(stream.ended).toBe(true), { timeout: 5000 });
 		const open = async (token: string) => {
-			const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
+			const { run } = await seedTask(cp.asTester(), { agent: "agent-a", status: "running" });
 			return SseClient.open(cp, `/runs/${run}/events`, bearer(token));
 		};
 

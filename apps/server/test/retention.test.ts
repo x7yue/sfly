@@ -49,7 +49,7 @@ describe("日志和产物的保留期", () => {
 		await eventually(async () => expect((await logPage(task)).last_seq).toBe(1));
 		const put = await fetch(`${task.artifactUploadUrl}report.txt`, {
 			method: "PUT",
-			headers: { "content-type": "application/octet-stream" },
+			headers: { ...agent.auth, "content-type": "application/octet-stream" },
 			body: "report",
 		});
 		expect(put.status).toBe(201);

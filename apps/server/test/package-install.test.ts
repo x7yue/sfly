@@ -69,7 +69,7 @@ describe("节点包安装", () => {
 
 		const expected = createHash("sha256").update(archive).digest("hex");
 		expect(task.packageSha256).toBe(expected);
-		const res = await fetch(task.packageUrl);
+		const res = await fetch(task.packageUrl, { headers: agent.auth });
 		expect(res.status).toBe(200);
 		const downloaded = new Uint8Array(await res.arrayBuffer());
 		expect(createHash("sha256").update(downloaded).digest("hex")).toBe(expected);
