@@ -73,7 +73,7 @@ test("没有配置助手：就绪状态写明原因，「开始」不可用，�
 	await expect(readiness.getByTestId("readiness-problem")).toHaveCount(2);
 	await expect(readiness.getByTestId("readiness-hint")).toHaveText([
 		"请部署者在控制面上开启助手",
-		"请部署者或项目管理员设置这个项目的工作台",
+		"请部署者设置这个项目的工作台",
 	]);
 
 	const input = assistantInput(page);
@@ -131,7 +131,7 @@ test("就绪：「可以用 · 工作台 X 在线」；工作台不在线时逐�
 	await expect(problems).toHaveCount(2);
 	await expect(problems.nth(0)).toContainText("工作台 bench-1 不在线");
 	await expect(problems.nth(0).getByTestId("readiness-hint")).toHaveText(
-		"请部署者检查工作台的 Agent 有没有在运行、能不能连上控制面",
+		"请部署者检查工作台有没有在运行、能不能连上控制面、能力端口有没有上报",
 	);
 	await expect(problems.nth(1)).toContainText("助手服务连不上");
 	await expect(problems.nth(1).getByTestId("readiness-hint")).toHaveText(
@@ -399,12 +399,8 @@ test("会话列表：在做、排队中（带位置）、被打断、已结束�
 			.getByRole("row")
 			.filter({ has: page.getByRole("link", { name: title, exact: true }) });
 	const rows = page.getByRole("table", { name: "会话列表" }).getByRole("row");
-	// 在做和排队中的在前（最近活动的在前），其余最近活动在前。先等表渲染出来（表头一行加 11 个会话）再读。
-	await expect(rows).toHaveCount(12);
-	const titles = await rows
-		.getByRole("link")
-		.evaluateAll((links) => links.map((link) => link.textContent));
-	expect(titles).toEqual([
+	// 在做和排队中的在前（最近活动的在前），其余最近活动在前。用会重试的断言：列表还没回来时不会读到空的。
+	await expect(rows.getByRole("link")).toHaveText([
 		"正在做的事",
 		"排在第一位的事",
 		"排在第二位的事",

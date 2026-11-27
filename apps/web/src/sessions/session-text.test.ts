@@ -234,7 +234,7 @@ describe("会话页的文字", () => {
 			{
 				kind: "workbench_offline",
 				what: "工作台 bench-1 不在线",
-				hint: "请部署者检查工作台的 Agent 有没有在运行、能不能连上控制面",
+				hint: "请部署者检查工作台有没有在运行、能不能连上控制面、能力端口有没有上报",
 			},
 		]);
 		const named: Readiness = {
@@ -254,7 +254,7 @@ describe("会话页的文字", () => {
 		};
 		expect(readinessItems(none).map((item) => [item.what, item.hint])).toEqual([
 			["没有配置助手", "请部署者在控制面上开启助手"],
-			["没有设置工作台", "请部署者或项目管理员设置这个项目的工作台"],
+			["没有设置工作台", "请部署者设置这个项目的工作台"],
 		]);
 		expect(readinessItems({ ready: true, workbench: "bench-1", problems: [] })).toEqual([]);
 	});

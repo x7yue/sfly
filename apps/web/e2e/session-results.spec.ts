@@ -71,16 +71,33 @@ const box = async (locator: Locator) => {
 	return found;
 };
 
-/** 页面发出的请求：这个运行的事件流（`/api/runs/:id/events`）和读运行（`/api/runs/:id`）。 */
+/**
+ * 页面发出的请求：这个运行的事件流（`/api/runs/:id/events`）和读运行（`/api/runs/:id`）。
+ * `streams` 是发出过的事件流请求（只增不减）；`open()` 是**此刻还开着**的（请求还没结束、没被取消的）：名额让出、页面切走之后的释放要看它，
+ * 只数发出去的请求看不出连接有没有关。
+ */
 function watchRunRequests(page: Page) {
 	const streams: string[] = [];
 	const reads: string[] = [];
+	const live = new Map<unknown, string>();
+	const runOf = (url: string, tail: RegExp) => {
+		const path = new URL(url).pathname;
+		return tail.test(path) ? (path.split("/")[3] ?? "") : null;
+	};
 	page.on("request", (request) => {
-		const path = new URL(request.url()).pathname;
-		if (/^\/api\/runs\/[^/]+\/events$/.test(path)) streams.push(path.split("/")[3] ?? "");
-		else if (/^\/api\/runs\/[^/]+$/.test(path)) reads.push(path.split("/")[3] ?? "");
+		const stream = runOf(request.url(), /^\/api\/runs\/[^/]+\/events$/);
+		if (stream !== null) {
+			streams.push(stream);
+			live.set(request, stream);
+			return;
+		}
+		const read = runOf(request.url(), /^\/api\/runs\/[^/]+$/);
+		if (read !== null) reads.push(read);
 	});
-	return { streams, reads };
+	const closed = (request: unknown) => void live.delete(request);
+	page.on("requestfinished", closed);
+	page.on("requestfailed", closed);
+	return { streams, reads, open: () => [...live.values()].sort() };
 }
 
 /** 会话里的一串运行记录（每个运行一条）和这一轮的结局。 */
@@ -265,8 +282,9 @@ test("运行卡片：同一次运行从运行中到失败，时间线上的、�
 		await expect(cardStatus(card)).toHaveText("运行中");
 		await expect(card.getByTestId("run-card-failure")).toHaveCount(0);
 	}
-	// 时间线上一张、成果栏里一张，同一个运行在会话页上只有一条事件流连接。
-	expect(session.streams).toEqual([runId]);
+	// 时间线上一张、成果栏里一张，同一个运行在会话页上只有一条事件流连接（第一次读到「在跑」之后才开）。
+	await expect.poll(() => session.streams).toEqual([runId]);
+	expect(session.open()).toEqual([runId]);
 	const readsBefore = session.reads.length;
 
 	// 同一次运行失败：三处同时变（卡片是事件流推来的，不等 5 秒一次的重新读）。
@@ -281,6 +299,8 @@ test("运行卡片：同一次运行从运行中到失败，时间线上的、�
 	}
 	expect(session.reads.length).toBe(readsBefore);
 	expect(session.streams).toEqual([runId]);
+	// 运行结束：这条事件流关掉（连接释放，不是只少发请求）。
+	await expect.poll(() => session.open()).toEqual([]);
 });
 
 test("运行卡片：时间线停在底部时，卡片在事件之外变高（读到状态、失败时多出一行原因）也跟到最新；往上翻看的人不被拉回去", async ({
@@ -376,8 +396,10 @@ test("运行卡片：在跑的运行多于事件流名额（2 个）：最近的
 		await expect(cardStatus(sideCard(page, runId))).toHaveText("运行中");
 		await expect(cardStatus(timelineCard(page, runId))).toHaveText("运行中");
 	}
-	// 事件流：最近的两个（事件序号大的），每个运行一条，时间线上的和成果栏里的共用。其余四个读到了，没有开流，状态照样有。
-	expect([...watched.streams].sort()).toEqual(runs.slice(4).sort());
+	// 事件流：第一次读到「在跑」的运行里最近的两个（事件序号大的），每个运行一条，时间线上的和成果栏里的共用。
+	// 其余四个读到了，没有开流，状态照样有。数的是此刻还开着的连接，不只是发出过的请求。
+	await expect.poll(() => [...watched.streams].sort()).toEqual(runs.slice(4).sort());
+	expect(watched.open()).toEqual(runs.slice(4).sort());
 	expect(new Set(watched.reads).size).toBe(6);
 
 	// 名额让出来、下一个接上的时候，那张卡片的状态从轮询换到订阅：同一份缓存，不能闪成「加载中」。
@@ -397,6 +419,8 @@ test("运行卡片：在跑的运行多于事件流名额（2 个）：最近的
 	await expect.poll(() => watched.streams.includes(runs[3] as string)).toBe(true);
 	expect(watched.streams.filter((runId) => runId === runs[3])).toHaveLength(1);
 	expect(watched.streams).toHaveLength(3);
+	// 结束了的那个释放了连接，同时开着的还是两条：新来的第 4 个和没结束的第 5 个。
+	await expect.poll(() => watched.open()).toEqual([runs[3] as string, runs[4] as string].sort());
 	// 接上之后它的状态由事件流推：结束时马上变。
 	await agent.succeed(assigns.get(runs[3] as string) as never);
 	await expect(cardStatus(sideCard(page, runs[3] as string))).toHaveText("成功", {
@@ -415,6 +439,52 @@ test("运行卡片：在跑的运行多于事件流名额（2 个）：最近的
 	await expect(cardStatus(sideCard(page, oldest))).toHaveText("成功", { timeout: 15_000 });
 	await expect(cardStatus(timelineCard(page, oldest))).toHaveText("成功");
 	expect(watched.streams.filter((runId) => runId === oldest)).toHaveLength(0);
+	// 第 4 个也结束了：名额让给更早的第 3 个，同时开着的仍然是两条。
+	await expect.poll(() => watched.open()).toEqual([runs[2] as string, runs[4] as string].sort());
+	// 离开会话页（页面内跳到别处）：所有的运行事件流都关掉。
+	await page
+		.getByRole("navigation", { name: "主导航" })
+		.getByRole("link", { name: "助手" })
+		.click();
+	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect.poll(() => watched.open()).toEqual([]);
+});
+
+test("运行都已结束（或读不到）的会话：打开后一条运行事件流也没有（第一次读到「在跑」才给名额）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 8 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
+	const runs: string[] = [];
+	for (let n = 0; n < 6; n++) {
+		runs.push(await triggerRun(controlPlane, scenario));
+		await agent.succeed(await agent.nextAssign());
+	}
+	// 再加两个读不到的运行（运行已经被清理、或者记录里的运行 ID 在这个库里没有）：状态未知，不占名额。
+	const missing = [randomUUID(), randomUUID()];
+	const id = await seedSession(controlPlane.database.url, {
+		title: TITLE,
+		status: "idle",
+		events: sixRunEvents([...runs, ...missing]),
+	});
+	const watched = watchRunRequests(page);
+	await page.goto(`/sessions/${id}`);
+	for (const runId of runs) {
+		await expect(cardStatus(sideCard(page, runId))).toHaveText("成功");
+		await expect(cardStatus(timelineCard(page, runId))).toHaveText("成功");
+	}
+	for (const runId of missing) {
+		await expect(cardStatus(sideCard(page, runId))).toHaveText("状态未知", { timeout: 15_000 });
+	}
+	// 都读过了（第一次读到的是「已结束」或者读不到），没有一个运行开过事件流；等一会儿也不会有。
+	// biome-ignore lint/plugin/e2e-fixed-wait: 确认一件事没有发生：状态都读到之后再等一会儿，还是没有事件流请求
+	await page.waitForTimeout(1_000);
+	expect(watched.streams).toEqual([]);
+	expect(watched.open()).toEqual([]);
+	expect(new Set(watched.reads).size).toBe(8);
 });
 
 test("事件流名额只管会话页上的运行卡片：运行监控页自己的事件流不受它限制，会话页占满了名额它也实时变", async ({
@@ -442,7 +512,7 @@ test("事件流名额只管会话页上的运行卡片：运行监控页自己�
 	const session = watchRunRequests(page);
 	await page.goto(`/sessions/${id}`);
 	for (const runId of runs) await expect(cardStatus(sideCard(page, runId))).toHaveText("运行中");
-	expect([...session.streams].sort()).toEqual(runs.slice(4).sort());
+	await expect.poll(() => [...session.streams].sort()).toEqual(runs.slice(4).sort());
 
 	// 另一个标签页里打开一个会话页没有给名额的运行（最早的）的运行监控：它自己开一条事件流，不看会话页的名额。
 	const noQuota = runs[0] as string;

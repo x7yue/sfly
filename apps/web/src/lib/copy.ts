@@ -263,13 +263,14 @@ export const SESSION = {
 	workbenchOffline: (workbench: string) => `工作台 ${workbench} 不在线`,
 	/**
 	 * 就绪状态里每一种问题后面写该找谁、做什么（和控制面给的「缺什么」那句分开写：「缺什么」带着具体的变量名、哪一台，由控制面写；
-	 * 找谁由页面按种类写）。部署者是装平台、配置容器和环境变量的人；项目管理员是项目里有管理权限的成员（GLOSSARY「成员」）。
+	 * 找谁由页面按种类写）。部署者是装平台、配置容器和环境变量的人。现在工作台只能由部署者设（`SFLY_WORKBENCH_AGENT`），#549 改成项目登记之后
+	 * 「设置工作台」那一条由 #549 改这句。工作台本身就是一台 Agent（GLOSSARY「工作台」）：「不在线」和「能力端口不可用」是同一种问题（`workbench_offline`）。
 	 */
 	readinessHint: {
 		assistant_not_configured: "请部署者在控制面上开启助手",
 		assistant_unreachable: "请部署者检查助手容器有没有在运行",
-		workbench_not_set: "请部署者或项目管理员设置这个项目的工作台",
-		workbench_offline: "请部署者检查工作台的 Agent 有没有在运行、能不能连上控制面",
+		workbench_not_set: "请部署者设置这个项目的工作台",
+		workbench_offline: "请部署者检查工作台有没有在运行、能不能连上控制面、能力端口有没有上报",
 		model_not_configured: "请部署者在助手容器上配置模型",
 		model_unreachable: "请部署者检查助手容器能不能连上模型",
 	},
