@@ -163,6 +163,62 @@ async function api<T>(page: Page, path: string): Promise<T> {
 	return (await response.json()) as T;
 }
 
+/** 会话的持久事件（`GET /sessions/:id`，按 `before` 往前翻到第一条），序号升序。 */
+type SessionEvent = { seq: number; type: string; at: string; [field: string]: unknown };
+async function sessionEvents(page: Page, sessionId: string): Promise<SessionEvent[]> {
+	const events: SessionEvent[] = [];
+	let before: number | undefined;
+	for (;;) {
+		const query = before === undefined ? "" : `?before=${before}`;
+		const chunk = await api<{ events: SessionEvent[]; has_more: boolean }>(
+			page,
+			`/sessions/${sessionId}${query}`,
+		);
+		events.unshift(...chunk.events);
+		const first = chunk.events[0];
+		if (!chunk.has_more || first === undefined) return events;
+		before = first.seq;
+	}
+}
+
+const sessionIdOf = (page: Page) => page.url().split("/").at(-1) ?? "";
+
+type RunRow = { id: string; status: string };
+/** 这个会话触发的运行（`GET /runs?session_id=`）。 */
+async function sessionRuns(page: Page, sessionId: string): Promise<RunRow[]> {
+	const { runs } = await api<{ runs: RunRow[] }>(page, `/runs?session_id=${sessionId}`);
+	return runs.map(({ id, status }) => ({ id, status }));
+}
+
+/** 这个场景里经这个会话保存的版本号（`GET /orchestrations/:id/versions` 的 `session`），升序。 */
+async function versionsSavedBy(page: Page, scenarioId: string, sessionId: string) {
+	const { versions } = await api<{ versions: { number: number; session?: { id: string } }[] }>(
+		page,
+		`/orchestrations/${scenarioId}/versions`,
+	);
+	return versions
+		.filter((v) => v.session?.id === sessionId)
+		.map((v) => v.number)
+		.sort((a, b) => a - b);
+}
+
+/**
+ * 一轮从排队到开始等了几秒：那句话写进去（`user_message`，排队时照常写，页面随即显示「排在第 n 位」）到这一轮开始
+ * （`turn_started`）。两个时刻都是控制面记的，不含这一轮自己做事的时间。
+ */
+async function queueWait(page: Page, sessionId: string, turn: number) {
+	const events = await sessionEvents(page, sessionId);
+	const started = events.find((e) => e.type === "turn_started" && e.turn === turn);
+	if (started === undefined) throw new Error(`会话 ${sessionId} 没有第 ${turn} 轮的 turn_started`);
+	const said = events.filter((e) => e.type === "user_message" && e.seq < started.seq).at(-1);
+	if (said === undefined) throw new Error(`会话 ${sessionId} 第 ${turn} 轮之前没有用户的话`);
+	return {
+		seconds: (Date.parse(started.at) - Date.parse(said.at)) / 1000,
+		said: said.at,
+		started: started.at,
+	};
+}
+
 let admin: { context: BrowserContext; page: Page };
 
 test.beforeAll(async ({ browser }) => {
@@ -331,7 +387,49 @@ test("一句话之后的十分钟（主流程）", async ({ browser }) => {
 				`应当看到运行中：${seen}`,
 			).toBe(true);
 			await expect(cards.first().getByTestId("run-card-failure")).toBeVisible();
-			return `卡片状态的变化：${seen.join(" → ")}`;
+			// 两条「触发了运行」的平台记录，各对着接口按会话读回的一次运行，卡片的状态和接口一致。
+			const sessionId = sessionIdOf(page);
+			const runs = await sessionRuns(page, sessionId);
+			const runRecords = await page.getByTestId("record-run").evaluateAll((items) =>
+				items.map((item) => {
+					const card = item.querySelector('[data-testid="run-card"]');
+					return {
+						text: item.textContent ?? "",
+						link: item.querySelector('[data-slot="run-id"]')?.getAttribute("href") ?? "",
+						run: card?.getAttribute("data-run") ?? "",
+						status: card?.getAttribute("data-status") ?? "",
+					};
+				}),
+			);
+			// 保存场景版本的平台记录：每条写「保存了场景「副本」的版本 N」，版本号和版本历史里经这个会话保存的一致。
+			const versionRecords = await page.getByTestId("record-version").evaluateAll((items) =>
+				items.map((item) => ({
+					text: item.textContent ?? "",
+					link: item.querySelector('a[href*="/orchestrations/"]')?.getAttribute("href") ?? "",
+				})),
+			);
+			evidence.push(sample("platform-records", { runs, runRecords, versionRecords }));
+			expect(runRecords, "两次触发各一条平台记录").toHaveLength(2);
+			for (const record of runRecords) {
+				expect(record.text).toContain("触发了运行");
+				expect(record.text).toContain(`场景「${COPY}」`);
+				expect(record.link, "记录里的运行编号链到卡片的那次运行").toBe(`/runs/${record.run}`);
+				expect(record.status, `运行 ${record.run} 的状态`).toBe(
+					runs.find((run) => run.id === record.run)?.status,
+				);
+			}
+			expect(runRecords.map((r) => r.run).sort()).toEqual(runs.map((r) => r.id).sort());
+			expect(runRecords.map((r) => r.status)).toEqual(["failed", "success"]);
+			expect(versionRecords.length, "至少一条保存版本的记录").toBeGreaterThan(0);
+			const scenarioId =
+				/\/orchestrations\/([0-9a-f-]{36})\//.exec(versionRecords[0]?.link ?? "")?.[1] ?? "";
+			expect(scenarioId, "版本记录链到场景的版本历史").not.toBe("");
+			const recorded = versionRecords.map((record) => {
+				expect(record.text).toContain(`保存了场景「${COPY}」的`);
+				return Number(/版本 (\d+)/.exec(record.text)?.[1]);
+			});
+			expect(recorded).toEqual(await versionsSavedBy(page, scenarioId, sessionId));
+			return `卡片状态的变化：${seen.join(" → ")}；平台记录「触发了运行」${runRecords.map((r) => `${r.run.slice(0, 8)} ${r.status}`).join("、")}，「保存了场景版本」${recorded.join("、")}，和接口按会话读回的一致`;
 		},
 	);
 	await row(page, "逐字出现：模型的总结一段一段出来", async (evidence) => {
@@ -351,22 +449,69 @@ test("一句话之后的十分钟（主流程）", async ({ browser }) => {
 		const files = await page.getByTestId("commit-file").allTextContents();
 		await expect(page.getByTestId("result-run")).toHaveCount(2);
 		await expect(page.getByTestId("result-commit").first()).toBeVisible();
-		await expect(page.getByTestId("results-scenarios")).toContainText(COPY);
+		const scenario = page.getByTestId("result-scenario").filter({ hasText: COPY });
+		await expect(scenario).toHaveCount(1);
 		evidence.push(await shot(page, "成果栏"));
-		const sessionId = page.url().split("/").at(-1) ?? "";
-		const runs = await api<{ runs: { id: string; status: string; session?: { id: string } }[] }>(
-			page,
-			`/runs?session_id=${sessionId}`,
+		// 成果栏的每一项和接口读回来的逐项相等：场景版本（版本历史里经这个会话保存的）、运行（按会话读回的）、
+		// 工作区的提交（会话事件里的 commit）。
+		const sessionId = sessionIdOf(page);
+		const scenarioId = (await scenario.getAttribute("data-scenario")) ?? "";
+		const savedHere = await versionsSavedBy(page, scenarioId, sessionId);
+		const shownVersions = (await scenario.getByTestId("result-version").allTextContents())
+			.map((text) => Number(text.trim().replace(/^v/, "")))
+			.sort((x, y) => x - y);
+		const runs = await sessionRuns(page, sessionId);
+		const shownRuns = await page.getByTestId("result-run").evaluateAll((items) =>
+			items.map((item) => ({
+				id: item.getAttribute("data-run") ?? "",
+				status: item.querySelector('[data-testid="run-card"]')?.getAttribute("data-status") ?? "",
+			})),
+		);
+		type Commit = {
+			turn: number;
+			hash: string;
+			files: { additions: number | null; deletions: number | null }[];
+		};
+		const commits = (await sessionEvents(page, sessionId)).filter(
+			(e) => e.type === "platform" && e.kind === "commit",
+		) as unknown as Commit[];
+		const sum = (c: Commit, key: "additions" | "deletions") =>
+			c.files.reduce((n, f) => n + (f[key] ?? 0), 0);
+		const expectedCommits = [...commits].reverse().map((c) => ({
+			hash: c.hash,
+			turn: `第 ${c.turn} 轮`,
+			stat: `${c.files.length} 个文件 +${sum(c, "additions")} −${sum(c, "deletions")}`,
+		}));
+		const shownCommits = await page.getByTestId("result-commit").evaluateAll((items) =>
+			items.map((item) => ({
+				hash: item.querySelector('[data-testid="result-commit-hash"]')?.getAttribute("title") ?? "",
+				turn: item.querySelector('[data-testid="result-commit-turn"]')?.textContent ?? "",
+				stat: item.querySelector('[data-testid="result-commit-stat"]')?.textContent ?? "",
+			})),
 		);
 		evidence.push(
-			sample(
-				"session-runs",
-				runs.runs.map(({ id, status }) => ({ id, status })),
-			),
+			sample("results-readback", {
+				scenarioId,
+				versions: { api: savedHere, shown: shownVersions },
+				runs: { api: runs, shown: shownRuns },
+				commits: { api: expectedCommits, shown: shownCommits },
+			}),
 		);
-		expect(runs.runs.map((r) => r.status).sort()).toEqual(["failed", "success"]);
-		const shown = await page.getByTestId("result-run").allTextContents();
-		return `改了 ${files.length} 个文件（${files.join("、").slice(0, 200)}）；成果栏 2 次运行，接口按会话读回 ${runs.runs.map((r) => r.status).join("、")}；${shown.join(" | ").slice(0, 200)}`;
+		expect(savedHere.length, "这个会话保存过版本").toBeGreaterThan(0);
+		expect(shownVersions, "成果栏的版本号").toEqual(savedHere);
+		expect(runs.map((r) => r.status).sort()).toEqual(["failed", "success"]);
+		expect(shownRuns.map((r) => r.id).sort(), "成果栏的运行就是这个会话触发的").toEqual(
+			runs.map((r) => r.id).sort(),
+		);
+		for (const shown of shownRuns) {
+			expect(shown.status, `运行 ${shown.id} 的状态`).toBe(
+				runs.find((run) => run.id === shown.id)?.status,
+			);
+		}
+		expect(commits.length, "会话事件里有工作区的提交").toBeGreaterThan(0);
+		expect(shownCommits, "成果栏的提交（最近的在前）").toEqual(expectedCommits);
+		expect(files.length, "「这一轮改了」列出的文件").toBe(commits[0]?.files.length);
+		return `改了 ${files.length} 个文件（${files.join("、").slice(0, 200)}）；成果栏和接口逐项相等：版本 ${shownVersions.map((v) => `v${v}`).join("、")}，运行 ${shownRuns.map((r) => `${r.id.slice(0, 8)} ${r.status}`).join("、")}，提交 ${shownCommits.map((c) => `${c.hash.slice(0, 7)}（${c.turn}，${c.stat}）`).join("、")}`;
 	});
 	await row(page, "点运行卡片进运行监控、点版本看对比", async (evidence) => {
 		const card = page.getByTestId("record-run").getByTestId("run-card").last();
@@ -479,19 +624,46 @@ test("一轮进行中模型端点不通：重试、写明原因，恢复后接�
 			timeout: TURN,
 		});
 		await ctl("stop", "fake-model");
-		const notice = page.getByTestId("notice").filter({ hasText: "重试" }).first();
-		await expect(notice).toBeVisible({ timeout: TURN });
-		const retry = (await notice.textContent()) ?? "";
+		const retries = page.locator('[data-testid="notice"][data-kind="retry"]');
+		await expect(retries.first()).toBeVisible({ timeout: TURN });
 		evidence.push(await shot(page, "重试"));
 		await expect(turnEnds(page).last()).toContainText("模型不可用", { timeout: TURN });
-		const end = (await turnEnds(page).last().textContent()) ?? "";
 		evidence.push(await shot(page, "模型不可用"));
+		const events = await sessionEvents(page, sessionIdOf(page));
+		const end = events.find((e) => e.type === "turn_end" && e.turn === 1) as
+			| { outcome: string; reason: string; steps?: number }
+			| undefined;
+		const retryEvents = events.filter((e) => e.type === "notice" && e.kind === "retry");
+		const shownRetries = await retries.allTextContents();
+		const exhausted =
+			(await page.locator('[data-testid="notice"][data-kind="retry_end"]').last().textContent()) ??
+			"";
+		const endText = (await turnEnds(page).last().textContent()) ?? "";
+		evidence.push(sample("model-down", { shownRetries, retryEvents, exhausted, endText, end }));
+		// 每次重试一行「正在第 n/3 次重试」，n 从 1 起逐次加一，到 3 为止，和事件里的 attempt 一致。
+		const attempts = shownRetries.map((text) => {
+			const found = /正在第 (\d+)\/(\d+) 次重试/.exec(text);
+			expect(found, `重试的提示要写第几次：${text}`).not.toBeNull();
+			return { n: Number(found?.[1]), max: Number(found?.[2]) };
+		});
+		expect(attempts.map((a) => a.n)).toEqual([1, 2, 3]);
+		expect(attempts.map((a) => a.max)).toEqual([3, 3, 3]);
+		expect(retryEvents.map((e) => e.attempt)).toEqual([1, 2, 3]);
+		// 结局：原因（连不上模型端点）和这一轮已经做了的步骤（只有那一条命令）。
+		expect(end?.outcome).toBe("model_unavailable");
+		expect(end?.reason).toContain("连不上模型端点");
+		expect(end?.steps, "这一轮做了一步：那条命令").toBe(1);
+		expect(exhausted).toBe(`重试用尽：${end?.reason}`);
+		expect(endText).toContain(
+			`模型不可用：${end?.reason}。这一轮做了 1 步，都在上面；工作区的改动已经提交，已触发的运行不受影响。`,
+		);
+		await expect(toolRow(page, "seq 1 15")).toHaveAttribute("data-state", "done");
 		await ctl("start", "fake-model");
 		await waitReadyOn(page);
 		await say(page, "模型好了，接着做");
 		await expect(turnEnds(page)).toHaveCount(2, { timeout: TURN });
 		await expect(turnEnds(page).last()).toContainText("这一轮完成");
-		return `重试的提示「${retry.slice(0, 120)}」；结局「${end.slice(0, 300)}」；恢复后接着做完`;
+		return `重试的提示 ${attempts.map((a) => `${a.n}/${a.max}`).join("、")}（「${shownRetries.at(-1)?.slice(0, 80)}」）；「${exhausted.slice(0, 80)}」；结局「${endText.slice(0, 300)}」；恢复后接着做完`;
 	});
 });
 
@@ -500,13 +672,18 @@ test("两个账号交替说话：排队提示和等待时间", async ({ browser 
 	const b = await signIn(browser, EDITOR);
 	try {
 		await row(a, "两个账号交替：排第几、在等谁，记下等待时间", async (evidence) => {
-			const waits: { who: string; seconds: number; status: string }[] = [];
+			const waits: {
+				who: string;
+				seconds: number;
+				said: string;
+				started: string;
+				status: string;
+			}[] = [];
 			await start(a, "AEVAL-SCRIPT:accept-queue 甲的事");
 			const sessionA = a.url();
 			await expect(toolRow(a, "seq 1 20")).toHaveAttribute("data-state", "running", {
 				timeout: TURN,
 			});
-			let queuedAt = Date.now();
 			await b.page.goto("/sessions");
 			await b.page
 				.getByRole("textbox", { name: "要做什么？" })
@@ -520,10 +697,13 @@ test("两个账号交替说话：排队提示和等待时间", async ({ browser 
 			const shownB = `${await statusB.textContent()}；${await waitingB.textContent()}`;
 			evidence.push(await shot(b.page, "乙排队"));
 			await expect(toolRow(b.page, "seq 1 20")).toBeVisible({ timeout: TURN });
-			waits.push({ who: "乙", seconds: (Date.now() - queuedAt) / 1000, status: shownB });
+			waits.push({
+				who: "乙",
+				...(await queueWait(b.page, sessionIdOf(b.page), 1)),
+				status: shownB,
+			});
 			await a.goto(sessionA);
 			await expect(turnEnds(a).last()).toContainText("这一轮完成", { timeout: TURN });
-			queuedAt = Date.now();
 			await say(a, "甲再说一句");
 			const statusA = a.getByTestId("session-status");
 			await expect(statusA).toContainText("排在第 1 位", { timeout: 60_000 });
@@ -532,10 +712,16 @@ test("两个账号交替说话：排队提示和等待时间", async ({ browser 
 			const shownA = `${await statusA.textContent()}；${await waitingA.textContent()}`;
 			evidence.push(await shot(a, "甲排队"));
 			await expect(turnEnds(a)).toHaveCount(2, { timeout: TURN });
-			waits.push({ who: "甲", seconds: (Date.now() - queuedAt) / 1000, status: shownA });
+			waits.push({ who: "甲", ...(await queueWait(a, sessionIdOf(a), 2)), status: shownA });
 			await expect(turnEnds(b.page).last()).toContainText("这一轮完成", { timeout: TURN });
 			await expect(turnEnds(a).last()).toContainText("这一轮完成", { timeout: TURN });
 			evidence.push(sample("queue-waits", waits));
+			for (const wait of waits) {
+				expect(
+					wait.seconds,
+					`${wait.who}从排队到开始（${wait.said} → ${wait.started}）`,
+				).toBeGreaterThan(0);
+			}
 			return waits
 				.map((w) => `${w.who}排队 ${w.seconds.toFixed(1)} 秒，写着「${w.status.slice(0, 160)}」`)
 				.join("；");
