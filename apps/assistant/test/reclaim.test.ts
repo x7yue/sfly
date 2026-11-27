@@ -555,6 +555,8 @@ describe("恢复不了：换新的会话，之前的话整理成摘要放在第�
 			await eventually(() => expect(count(h, id, "fake_steering_mode")).toBe(3), 10_000);
 			await h.abort(id, 2);
 			expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "stopped" });
+			// 等第 2 轮自己那边的回应回来（它发现已经被停止了，通知留在欠的账上）再说第 3 轮：不然第 3 轮会抢在它前面补发。
+			await new Promise((resolve) => setTimeout(resolve, 1_200));
 			expect(notices(h, id)).toEqual([]);
 			expect(count(h, id, "fake_prompt_text")).toBe(1);
 			await expectOwedDelivered(h, id);
