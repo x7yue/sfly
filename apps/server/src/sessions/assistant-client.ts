@@ -23,7 +23,7 @@ export const ASSISTANT_REJECTION_TEXT: Record<AssistantErrorCode, string> = {
 	no_turn_running: "助手服务说这个会话没有在做的一轮",
 	model_not_configured: "助手服务没有配置模型",
 	model_unreachable: "助手服务连不上模型",
-	process_limit: "助手服务的进程数到了上限：等别的会话停下来再试",
+	process_limit: "助手服务同时在做的会话太多：等别的会话停下来再试",
 	start_failed: "助手服务起不了这一轮的进程",
 };
 

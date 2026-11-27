@@ -1505,6 +1505,8 @@ describe("停止、插话、结束会话、排队", () => {
 				expect((await detail(b.id)).events.at(-1)).toMatchObject({
 					type: "turn_end",
 					outcome: "failed",
+					// 助手服务全都在做（#545）：队首这一轮以 failed 结束，原因是固定的一句。
+					reason: "助手服务同时在做的会话太多：等别的会话停下来再试",
 				});
 				expect(await view(c.id)).toMatchObject({ status: "queued", queue_position: 1 });
 				expect(await view(d.id)).toMatchObject({ status: "queued", queue_position: 2 });

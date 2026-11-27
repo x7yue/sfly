@@ -1,16 +1,42 @@
 // 照 RPC 协议说话的假 pi（pi docs/rpc.md）：读 stdin 的命令，按 prompt 的文字决定这一轮怎么走。
 // 一起动先把自己的环境写成一条记录（测试看助手服务给了它哪些环境变量）；stdin 被关时写一条记录再退出。
 import { execFileSync, spawn } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
+// `batch`：这一句 prompt 的回应和后面的事件攒起来、一次写出（和真的 pi 在一块数据里连着到的情形一样：助手服务收到回应之后，
+// 紧接着同一块数据里的事件先于「收到回应之后的那一步」被处理）。
+let batch;
+const out = (record) => {
+	const line = `${JSON.stringify(record)}\n`;
+	if (batch) batch.push(line);
+	else process.stdout.write(line);
+};
 out({
 	type: "fake_env",
 	env: process.env,
 	argv: process.argv.slice(2),
+	pid: process.pid,
 	agentDir: readdirSync(process.env.PI_CODING_AGENT_DIR),
 	t: Date.now(),
 });
+
+// 会话文件的替身（#545）：`--session-dir` 里的 `fake-session.json` 存着 `{ messages: 条数 }`。起动时读：读不了就当没有、悄悄开一个空会话
+// （和真的 pi 一样，pi 1.6.0 读不了会话文件时不报错退出）；每接受一句 prompt 加两条（用户的、助手的）；`get_state` 回 `messageCount`。
+const argv = process.argv.slice(2);
+const sessionDir = argv[argv.indexOf("--session-dir") + 1];
+let messageCount = 0;
+try {
+	messageCount =
+		Number(JSON.parse(readFileSync(join(sessionDir, "fake-session.json"), "utf8")).messages) || 0;
+} catch {
+	messageCount = 0;
+}
+const persist = () => {
+	if (!sessionDir) return;
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(join(sessionDir, "fake-session.json"), JSON.stringify({ messages: messageCount }));
+};
 
 let pending = "";
 // 插话进了队列之后做什么（这一轮的剧本决定）。
@@ -119,10 +145,38 @@ function handle(command) {
 	}
 	if (command.type === "set_steering_mode") {
 		out({ type: "fake_steering_mode", mode: command.mode });
+		// 会话目录的上一级（会话自己的目录）里有 `fake-slow-steer`：回应慢 800 毫秒（换会话的 pi 起来之后、交 prompt 之前
+		// 有一段时间可以停止这一轮；会话目录会被挪走，标记放在挪不走的地方）。
+		if (sessionDir && existsSync(join(sessionDir, "..", "fake-slow-steer"))) {
+			setTimeout(() => respond(command), 800);
+			return;
+		}
 		return respond(command);
 	}
+	if (command.type === "get_state") {
+		out({ type: "fake_get_state", messageCount });
+		// 会话目录里有 `fake-no-state`：回应里没有 messageCount（认不出）。
+		if (sessionDir && existsSync(join(sessionDir, "fake-no-state"))) return respond(command, {});
+		// 会话目录里有 `fake-slow-state`：回应慢 800 毫秒（让测试能在回应之前停止这一轮）。
+		if (sessionDir && existsSync(join(sessionDir, "fake-slow-state"))) {
+			const answer = { messageCount, sessionId: "fake", isStreaming: false };
+			setTimeout(() => respond(command, answer), 800);
+			return;
+		}
+		return respond(command, { messageCount, sessionId: "fake", isStreaming: false });
+	}
 	if (command.type !== "prompt") return respond(command);
-	let text = String(command.message);
+	const full = String(command.message);
+	let text = full;
+	if (text.startsWith("batch-")) {
+		batch = [];
+		text = text.slice("batch-".length);
+	}
+	// 恢复不了时助手服务把摘要放在第一句前面（#545）：剧本照用户自己的那句话选。
+	const marker = "【以上是之前的对话；下面是用户这一次说的话】\n";
+	if (full.startsWith("【平台说明】") && full.includes(marker)) {
+		text = full.slice(full.lastIndexOf(marker) + marker.length);
+	}
 	if (text.startsWith("reject-late")) {
 		// `reject-late:<毫秒>`：收下这句话过这么久才拒绝，其间不理 stdin 被关和 SIGTERM（只有 SIGKILL 结束得了它）：
 		// 拒绝到的时候助手服务已经在结束进程（#677 复审的探测 R）。
@@ -170,9 +224,13 @@ function handle(command) {
 		success: true,
 		data: { disposition: "started" },
 	});
+	messageCount += 2;
+	persist();
+	// 收到的整句话（含摘要）记一条，测试看放在第一句前面的东西。
+	out({ type: "fake_prompt_text", text: full });
 	out({ type: "agent_start" });
 	out({ type: "turn_start" });
-	out({ type: "message_end", message: { role: "user", content: [{ type: "text", text }] } });
+	out({ type: "message_end", message: { role: "user", content: [{ type: "text", text: full }] } });
 	onSteer = undefined;
 	// 默认：收到 abort 就停下（agent_settled，aborted）。
 	onAbort = () => settle(true);
@@ -228,6 +286,24 @@ function handle(command) {
 		stubborn = true;
 		setInterval(() => {}, 60_000);
 		out(assistant("好的"));
+		settle();
+	} else if (text.startsWith("delay-settle:")) {
+		// `delay-settle:<毫秒>`：做这么久（真的时间）自己做完，其间不需要任何命令（不刷新「最近一次收到命令」）。
+		const ms = Number(text.split(":")[1]?.split(" ")[0] ?? 300);
+		setTimeout(() => {
+			out(assistant("好的"));
+			settle();
+		}, ms);
+	} else if (text.startsWith("settle-ignore-term")) {
+		// 做完这一轮；之后 stdin 被关、SIGTERM 都不退出（只有 SIGKILL 结束得了它）：空闲时被关的卡住的进程。
+		stubborn = true;
+		process.on("SIGTERM", () => out({ type: "fake_ignored_sigterm" }));
+		setInterval(() => {}, 60_000);
+		out(assistant("好的"));
+		settle();
+	} else if (text.startsWith("say:")) {
+		// `say:<助手的话>||<其余>`：做完这一轮，助手说 `||` 之前的话（`||` 之后是用户的话里别的内容，助手不复述）。
+		out(assistant(text.slice("say:".length).split("||")[0]));
 		settle();
 	} else if (text.startsWith("settle-slow-close")) {
 		slowClose = true;
@@ -464,4 +540,8 @@ function handle(command) {
 		settle();
 	}
 	// 其余（hang）：开始了，不结束。
+	if (batch) {
+		process.stdout.write(batch.join(""));
+		batch = undefined;
+	}
 }
