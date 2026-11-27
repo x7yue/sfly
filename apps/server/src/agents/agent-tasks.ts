@@ -1,6 +1,6 @@
 import { nodeOutsideCardText } from "@sfly/orchestration";
 import type { QueuedTaskView, RunningTaskView, StoredOrchestrationDocument } from "@sfly/schema";
-import { asc, eq, inArray, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, type SQL } from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
 import type { Db, Tx } from "../db/database.js";
 import {
@@ -13,7 +13,9 @@ import {
 } from "../db/schema.js";
 import { NO_SECRETS, type SecretSet } from "../logs/secrets.js";
 import { runSecretValues, taskProgressView } from "../logs/task-logs.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { nodeNameIn, subflowNameOf } from "../runs/run-read.js";
+import { isUuid } from "../util/uuid.js";
 
 /**
  * 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）和运行所在的项目：给读者看的时候只给
@@ -146,4 +148,20 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 			return [{ agent: found.agent, project: found.project, view }];
 		}),
 	};
+}
+
+/** `ids` 里属于 `project` 的运行的任务（不是任务编号的、查不到的都不在里面）。 */
+export async function tasksInProject(
+	db: Db | Tx,
+	project: ProjectId,
+	ids: readonly string[],
+): Promise<Set<string>> {
+	const candidates = ids.filter(isUuid);
+	if (candidates.length === 0) return new Set();
+	const rows = await db
+		.select({ id: tasks.id })
+		.from(tasks)
+		.innerJoin(runs, eq(runs.id, tasks.runId))
+		.where(and(inArray(tasks.id, candidates), eq(runs.projectId, project)));
+	return new Set(rows.map((r) => r.id));
 }

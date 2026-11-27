@@ -106,6 +106,35 @@ describe("Agent 列表的任务名单按读者的项目过滤（#500）", () => 
 		expect(JSON.stringify(await hub.find(BETA, "agent-b"))).not.toContain(secret.scenario);
 	});
 
+	it("最近一次安装是为项目甲的任务装的：状态照给，不给任务编号；为项目乙的任务装的照常给", async () => {
+		const installFor = (taskId: string) =>
+			database.pool.query(
+				`update agents set info = jsonb_set(info, '{install}', $1::jsonb) where name = 'agent-b'`,
+				[
+					JSON.stringify({
+						package: "demo",
+						version: "1.0.0",
+						state: "installed",
+						task_id: taskId,
+					}),
+				],
+			);
+		await installFor(secret.taskRunning);
+		const [agent] = await hub.list(BETA);
+		expect(agent?.install).toEqual({
+			package: "demo",
+			version: "1.0.0",
+			state: "installed",
+			task_id: "",
+		});
+		const text = JSON.stringify(await hub.list(BETA));
+		for (const value of Object.values(secret)) expect(text).not.toContain(value);
+		expect(JSON.stringify(await hub.find(BETA, "agent-b"))).not.toContain(secret.taskRunning);
+
+		await installFor(own.task);
+		expect((await hub.list(BETA))[0]?.install?.task_id).toBe(own.task);
+	});
+
 	it("项目甲读不到项目乙的 Agent，也就读不到它上面的任务", async () => {
 		expect(await hub.list(DEFAULT_PROJECT)).toEqual([]);
 	});

@@ -1192,6 +1192,7 @@ export interface InstallProgressView {
 	package: string;
 	version: string;
 	state: "installing" | "installed" | "failed";
+	/** 为哪个任务安装的；确认不了是读者项目里的任务时为空字符串（#500）。 */
 	task_id: string;
 }
 

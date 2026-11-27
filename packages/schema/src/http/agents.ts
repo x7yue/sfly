@@ -14,6 +14,7 @@ export const InstallProgressView = z.object({
 	package: z.string(),
 	version: z.string(),
 	state: z.enum(["installing", "installed", "failed"]),
+	/** 为哪个任务安装的；确认不了是读者项目里的任务时为空字符串（#500）。 */
 	task_id: z.string(),
 });
 

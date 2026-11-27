@@ -39,7 +39,7 @@ import {
 	measureClockOffset,
 } from "./agent-clock.js";
 import { agentEndpoint } from "./agent-endpoint.js";
-import { loadAgentTasks } from "./agent-tasks.js";
+import { loadAgentTasks, tasksInProject } from "./agent-tasks.js";
 
 /** proto 的 DevPackage 转成存储形式：metadata_json 解析为对象（不是 JSON 对象时为 null）。 */
 export function devPackageInfo(p: { name: string; source: string; metadataJson: string }) {
@@ -456,6 +456,12 @@ export class AgentHub {
 				),
 			),
 		);
+		// 最近一次安装是为哪个任务装的：确认不了是读者项目里的任务时不给任务编号，状态照给。
+		const ownInstalls = await tasksInProject(
+			this.deps.db,
+			project,
+			rows.flatMap((row) => (row.info.install ? [row.info.install.task_id] : [])),
+		);
 		return rows.map(
 			({
 				info: { install, dev_packages, update, capabilities, peer, source_address, ...info },
@@ -469,7 +475,9 @@ export class AgentHub {
 				preparing_since: this.preparingSince(row.name)?.toISOString() ?? null,
 				clock_offset: clockOffsetView(row.clockOffsetMs, row.clockOffsetMeasuredAt),
 				installed_packages: info.installed_packages ?? [],
-				install: install ?? null,
+				install: install
+					? { ...install, task_id: ownInstalls.has(install.task_id) ? install.task_id : "" }
+					: null,
 				dev_packages: (dev_packages ?? []).map((p) => ({
 					...p,
 					metadata: devMetadataWithDefaultCharts(p.metadata),
