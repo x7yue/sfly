@@ -314,21 +314,50 @@ def render_extra_sections(summary: Mapping[str, Any]) -> list[str]:
 
 def _log_tail(logs: Sequence[Mapping[str, Any]], shown: Sequence[str]) -> list[str]:
     """最后几行日志。执行器把节点的堆栈同时写进了标准错误（成了日志）和错误信息（上面「错误：」下面已经显示），
-    标准错误里和那段逐行相同的连续几行收成一行说明，同一段堆栈不读两遍（#404）。"""
-    known = {line.rstrip() for line in shown if line.strip()}
+    标准错误里和那段堆栈逐行相同、顺序一致、连续的整段收成一行说明，同一段堆栈不读两遍（#404）。
+    只对上一部分的、偶然有一行相同的，照原样输出。"""
+    stack = _traceback(shown)
     out: list[str] = []
-    skipped = 0
-    for line in logs:
-        if line.get("source") == "stderr" and str(line["text"]).rstrip() in known:
-            skipped += 1
+    i = 0
+    while i < len(logs):
+        end = _stack_end(logs, i, stack)
+        if end is not None:
+            out.append(_skipped_note(end - i))
+            i = end
             continue
-        if skipped:
-            out.append(_skipped_note(skipped))
-            skipped = 0
-        out.append(format_log_line(line, indent="      "))
-    if skipped:
-        out.append(_skipped_note(skipped))
+        out.append(format_log_line(logs[i], indent="      "))
+        i += 1
     return out
+
+
+def _traceback(shown: Sequence[str]) -> list[str]:
+    """错误信息里的堆栈：从 `Traceback (most recent call last):` 那一行起的非空行；没有时为空。"""
+    lines = [line.rstrip() for line in shown]
+    for at, line in enumerate(lines):
+        if line.strip() == "Traceback (most recent call last):":
+            return [x for x in lines[at:] if x.strip()]
+    return []
+
+
+def _stack_end(logs: Sequence[Mapping[str, Any]], start: int, stack: Sequence[str]) -> int | None:
+    """从 `start` 起的标准错误逐行是整段 `stack`（夹在中间的空行算在里面）时返回这段之后的位置，
+    对不上返回 None。"""
+    if not stack:
+        return None
+    k = 0
+    i = start
+    while i < len(logs) and logs[i].get("source") == "stderr":
+        text = str(logs[i]["text"]).rstrip()
+        if text == stack[k]:
+            k += 1
+            i += 1
+            if k == len(stack):
+                return i
+        elif k > 0 and not text.strip():
+            i += 1
+        else:
+            return None
+    return None
 
 
 def _skipped_note(count: int) -> str:
