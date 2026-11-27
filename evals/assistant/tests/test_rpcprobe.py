@@ -868,7 +868,8 @@ def test_render_warns_when_the_two_pi_versions_differ() -> None:
 
 def test_render_warns_when_the_assistant_pi_version_is_unknown() -> None:
     versions = {"pi": "1.6.0", "assistant_image": "sfly-assistant:test"}
-    assert len(rpcprobe.version_warnings(versions)) == 1
+    warnings = rpcprobe.version_warnings(versions)
+    assert len(warnings) == 1 and "没有读到助手镜像里 pi 的版本" in warnings[0]
 
 
 def test_render_without_the_product_info_is_unchanged() -> None:
