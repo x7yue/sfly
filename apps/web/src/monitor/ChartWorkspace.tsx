@@ -27,7 +27,7 @@ import {
 	noDataLabel,
 	PROGRESS_LABEL,
 } from "#/lib/copy";
-import { formatDuration } from "#/lib/format";
+import { formatDuration, formatProgress } from "#/lib/format";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { useElementWidth } from "#/lib/use-element-width";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -810,8 +810,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 				<div className="min-w-45">
 					<div className="text-xs text-fg-3">{PROGRESS_LABEL}</div>
 					<div className="font-mono text-xs">
-						{progress.current}
-						{progress.total === null ? "" : ` / ${progress.total}`}
+						{formatProgress(progress.current, progress.total)}
 						{progress.message && (
 							<span className="ml-2 font-sans text-fg-2">
 								<UntrustedText text={progress.message} />
