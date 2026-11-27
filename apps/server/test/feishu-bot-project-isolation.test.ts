@@ -340,6 +340,36 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 		]);
 	});
 
+	it("积压条数按消息所属的项目算：同名的旧机器人留在原项目的消息不算进新机器人的列表和单个响应；没有运行的消息照旧算在这个名字上", async () => {
+		await api.createFeishuBot("ops-count", feishu.webhookUrl("count-old"));
+		expect((await api.delete("/projects/default/feishu-bots/ops-count")).status).toBe(204);
+		await api.createFeishuBot("ops-count", feishu.webhookUrl("count-new"));
+		await moveBot("ops-count", "alpha");
+		// 两条都还在排队：下一次尝试排在一小时之后，发送器不会动它们。
+		const later = { nextAttemptAt: new Date(clock().now().getTime() + 3_600_000) };
+		await enqueue("ops-count", await fakeRun("default"), "原项目留下的", later);
+		await enqueue("ops-count", await fakeRun("alpha"), "新项目自己的", later);
+		const listed = async () =>
+			(
+				(await (await api.get("/projects/alpha/feishu-bots")).json()) as {
+					bots: { name: string; backlog: number }[];
+				}
+			).bots.find((b) => b.name === "ops-count")?.backlog;
+		expect(await listed()).toBe(1);
+		// 没有运行的消息是机器人自己的项目发的：算在这个名字上（和改之前一样）。
+		await enqueue("ops-count", null, "没有运行的", later);
+		expect(await listed()).toBe(2);
+		// 单个响应：换地址会让排队的消息马上重试（原项目那条被丢弃，不发请求）；新地址十秒后才回，
+		// 这期间新项目自己的和没有运行的两条都还在排队。
+		feishu.replyTo("count-new", { delayMs: 10_000 });
+		const replaced = await api.patch("/projects/alpha/feishu-bots/ops-count", {
+			webhook_url: feishu.webhookUrl("count-new"),
+		});
+		expect(replaced.status).toBe(200);
+		expect(((await replaced.json()) as { backlog: number }).backlog).toBe(2);
+		expect(await listed()).toBe(2);
+	});
+
 	it("请求在途时机器人被删除、同名的在别的项目重新登记：响应回来后不回写到新机器人的「最近一次投递」，消息仍是已丢弃", async () => {
 		await api.createFeishuBot("ops-race", feishu.webhookUrl(RACE_OLD));
 		feishu.replyTo(RACE_OLD, { delayMs: 2500 });

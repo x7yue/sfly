@@ -28,7 +28,10 @@ export function registerFeishuBotRoutes(
 	{ bots, client, db }: { bots: FeishuBots; client: FeishuClient; db: Db },
 ): void {
 	contractRoute(app, feishuBotsApi.list, async ({ params }) => {
-		const [list, backlogs] = await Promise.all([bots.list(pathProject(params)), bots.backlogs()]);
+		const [list, backlogs] = await Promise.all([
+			bots.list(pathProject(params)),
+			bots.backlogs(pathProject(params)),
+		]);
 		return { bots: list.map((bot) => toFeishuBotView(bot, backlogs.get(bot.name) ?? 0)) };
 	});
 
@@ -38,14 +41,16 @@ export function registerFeishuBotRoutes(
 		if (result.kind === "name_taken") {
 			return sendError(reply, 409, "name_taken", `飞书机器人「${body.name}」已存在，名称不能重复`);
 		}
-		return reply.code(201).send(toFeishuBotView(result.bot, await bots.backlog(result.bot.name)));
+		return reply
+			.code(201)
+			.send(toFeishuBotView(result.bot, await bots.backlog(pathProject(params), result.bot.name)));
 	});
 
 	contractRoute(app, feishuBotsApi.replaceWebhook, async ({ params, body }, reply, raw) => {
 		if (!requireNickname(raw, reply)) return reply;
 		const bot = await bots.replaceWebhookUrl(pathProject(params), params.name, body.webhook_url);
 		return bot
-			? toFeishuBotView(bot, await bots.backlog(params.name))
+			? toFeishuBotView(bot, await bots.backlog(pathProject(params), params.name))
 			: notFound(reply, params.name);
 	});
 
