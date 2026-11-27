@@ -145,6 +145,12 @@ function handle(command) {
 	}
 	if (command.type === "set_steering_mode") {
 		out({ type: "fake_steering_mode", mode: command.mode });
+		// 会话目录的上一级（会话自己的目录）里有 `fake-slow-steer`：回应慢 800 毫秒（换会话的 pi 起来之后、交 prompt 之前
+		// 有一段时间可以停止这一轮；会话目录会被挪走，标记放在挪不走的地方）。
+		if (sessionDir && existsSync(join(sessionDir, "..", "fake-slow-steer"))) {
+			setTimeout(() => respond(command), 800);
+			return;
+		}
 		return respond(command);
 	}
 	if (command.type === "get_state") {
