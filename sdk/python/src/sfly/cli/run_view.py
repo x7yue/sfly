@@ -194,7 +194,8 @@ def _holder_label(holder: Mapping[str, Any]) -> str:
 
 def queue_wait_text(wait: Mapping[str, Any], queued_at: str) -> str:
     """排队中的节点在等什么（运行视图里排队中尝试的 `queue_wait`；时间按它的 `now`，控制面时间）：
-    `等 agent-a（不在线，已离线 2m00s）· 排队 3m05s · 6m55s 后超时`；被管理员停用的 Agent 写 `已停用 2m00s`。
+    `等 agent-a（不在线，已离线 2m00s）· 排队 3m05s · 6m55s 后超时`；
+    被管理员停用的 Agent 括号里写 `已停用 2m00s`（不写「不在线」）。
 
     和界面写法一致（apps/web/src/lib/copy.ts 的 `QUEUE_WAIT`，`test_cli_run_view.py` 检查）：
     括号里是这台 Agent 现在的情况；槽位占满时后面接占着槽位的任务（最多 3 个）；最后是排了多久
