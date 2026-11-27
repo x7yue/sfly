@@ -105,6 +105,24 @@ export function useTimelineScroll({ head, tail }: { head: string | null; tail: s
 		};
 	}, [measureAnchor]);
 
+	// 滚动区域自己的高度变了（窗口变矮；窄窗口里「成果」收在下面，它的内容变高，时间线的可视高度就小了）：内容没变、滚动位置也没变，
+	// 在底部（跟随）的人底下几行被切掉了。还在底部的要重新贴到最底；往上翻看的人不动。观察的是这个区域自己的盒子，不是里面的内容：
+	// 在底部展开一个靠上的行不会触发它（那样会把人拉到底，见 `follow` 的说明）。变矮时没有滚动事件，`stuck` 还是变矮之前的状态。
+	useEffect(() => {
+		const el = scroller.current;
+		if (!el) return;
+		let height = el.clientHeight;
+		const observer = new ResizeObserver(() => {
+			if (el.clientHeight === height) return;
+			height = el.clientHeight;
+			if (!stuck.current) return;
+			el.scrollTop = el.scrollHeight;
+			lastTop.current = el.scrollTop;
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+
 	// 内容变了：排好版之后（浏览器画出来之前）决定滚到哪里。
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在最前和最后一行的状态变了才需要重新决定
 	useLayoutEffect(() => {

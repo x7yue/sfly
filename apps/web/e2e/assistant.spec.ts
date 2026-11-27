@@ -39,6 +39,11 @@ const timeline = (page: Page) => page.getByRole("list", { name: "会话的时间
 const assistantInput = (page: Page) => page.getByRole("textbox", { name: "要做什么？" });
 const composer = (page: Page) => page.getByRole("textbox", { name: "接着说" });
 const toolRows = (page: Page) => page.getByTestId("tool-row");
+const box = async (locator: Locator) => {
+	const found = await locator.boundingBox();
+	if (found === null) throw new Error("元素没有占位置");
+	return found;
+};
 
 // ---------------------------------------------------------------- 导航
 
@@ -64,8 +69,12 @@ test("没有配置助手：就绪状态写明原因，「开始」不可用，�
 	await expect(readiness).toHaveAttribute("data-ready", "false");
 	await expect(readiness).toContainText("现在不能用：");
 	await expect(readiness).toContainText("助手没有开启");
-	// 缺的每一条都写出来，不只认某一种。
-	await expect(readiness.getByRole("listitem")).toHaveCount(2);
+	// 缺的每一条都写出来，不只认某一种；每一条后面写该找谁。
+	await expect(readiness.getByTestId("readiness-problem")).toHaveCount(2);
+	await expect(readiness.getByTestId("readiness-hint")).toHaveText([
+		"请部署者在控制面上开启助手",
+		"请项目管理员登记工作台（见部署文档「登记工作台」）",
+	]);
 
 	const input = assistantInput(page);
 	await input.fill("给 http_check 加一个超时参数");
@@ -91,6 +100,15 @@ test("就绪：「可以用 · 工作台 X 在线」；工作台不在线时逐�
 	await stubSessionList(page, READY);
 	await page.goto("/sessions");
 	await expect(page.getByTestId("readiness")).toHaveText("可以用 · 工作台 bench-1 在线");
+	// 可以用时是「开始」旁边的一行小字：同一行、在按钮右边。
+	const form = page.getByRole("form", { name: "要做什么？" });
+	await expect(form.getByTestId("readiness")).toBeVisible();
+	const button = await box(page.getByRole("button", { name: "开始" }));
+	const line = await box(page.getByTestId("readiness"));
+	expect(line.x).toBeGreaterThanOrEqual(button.x + button.width);
+	expect(Math.abs(line.y + line.height / 2 - (button.y + button.height / 2))).toBeLessThanOrEqual(
+		button.height / 2,
+	);
 	await expect(page.getByRole("button", { name: "开始" })).toBeDisabled(); // 还没写话
 	await assistantInput(page).fill("做点事");
 	await expect(page.getByRole("button", { name: "开始" })).toBeEnabled();
@@ -109,10 +127,22 @@ test("就绪：「可以用 · 工作台 X 在线」；工作台不在线时逐�
 	});
 	await page.reload();
 	const readiness = page.getByTestId("readiness");
-	await expect(readiness.getByRole("listitem")).toHaveText([
-		"工作台 bench-1 不在线",
-		"助手服务连不上",
-	]);
+	const problems = readiness.getByTestId("readiness-problem");
+	await expect(problems).toHaveCount(2);
+	await expect(problems.nth(0)).toContainText("工作台 bench-1 不在线");
+	await expect(problems.nth(0).getByTestId("readiness-hint")).toHaveText(
+		"请部署者检查工作台有没有在运行、能不能连上控制面、能力端口有没有上报",
+	);
+	await expect(problems.nth(1)).toContainText("助手服务连不上");
+	await expect(problems.nth(1).getByTestId("readiness-hint")).toHaveText(
+		"请部署者检查助手容器有没有在运行",
+	);
+	// 缺什么写在输入框和「开始」之间。
+	const input = await box(assistantInput(page));
+	const list = await box(readiness);
+	const start = await box(page.getByRole("button", { name: "开始" }));
+	expect(list.y).toBeGreaterThanOrEqual(input.y + input.height);
+	expect(list.y + list.height).toBeLessThanOrEqual(start.y);
 	await assistantInput(page).fill("做点事");
 	await expect(page.getByRole("button", { name: "开始" })).toBeDisabled();
 });
@@ -126,13 +156,14 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 		problems: [{ kind, message }],
 	});
 	const start = page.getByRole("button", { name: "开始" });
-	const states: Array<[ReturnType<typeof problem>, RegExp]> = [
+	const states: Array<[ReturnType<typeof problem>, RegExp, string]> = [
 		[
 			problem(
 				"model_not_configured",
 				"没有配置模型：没有模型文件 /config/models.json（SFLY_ASSISTANT_MODELS）",
 			),
 			/没有配置模型：没有模型文件 \/config\/models\.json/,
+			"请部署者在助手容器上配置模型",
 		],
 		[
 			problem(
@@ -140,6 +171,7 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 				"没有配置模型：模型文件引用了环境变量 ACME_KEY，助手服务的环境里没有值",
 			),
 			/没有配置模型：模型文件引用了环境变量 ACME_KEY，助手服务的环境里没有值/,
+			"请部署者在助手容器上配置模型",
 		],
 		[
 			problem(
@@ -147,6 +179,7 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 				"没有配置模型：SFLY_ASSISTANT_MODEL 选的模型不在模型文件 /config/models.json 里",
 			),
 			/SFLY_ASSISTANT_MODEL 选的模型不在模型文件/,
+			"请部署者在助手容器上配置模型",
 		],
 		[
 			problem(
@@ -154,15 +187,18 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 				"连不上模型端点 llm.internal:8177：连接被拒绝（上次检查：3 分钟前）",
 			),
 			/连不上模型端点 llm\.internal:8177：连接被拒绝（上次检查：3 分钟前）/,
+			"请部署者检查助手容器能不能连上模型",
 		],
 	];
-	for (const [readiness, text] of states) {
+	for (const [readiness, text, hint] of states) {
 		await stubSessionList(page, readiness);
 		await page.goto("/sessions");
 		const line = page.getByTestId("readiness");
 		await expect(line).toHaveAttribute("data-ready", "false");
 		await expect(line).toContainText("现在不能用：");
 		await expect(line).toContainText(text);
+		// 缺什么后面写该找谁、做什么。
+		await expect(line.getByTestId("readiness-hint")).toHaveText(hint);
 		await assistantInput(page).fill("做点事");
 		await expect(assistantInput(page)).toHaveValue("做点事");
 		await expect(start).toBeDisabled();
@@ -177,7 +213,7 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 	await expect(start).toBeEnabled();
 });
 
-test("会话页：模型有问题时空闲的会话顶上写缺什么，「发送」不可用、输入框照常可以写；模型好了页面自己恢复；在做的会话不受影响", async ({
+test("会话页：模型有问题时空闲的会话在输入框旁写缺什么和该找谁，「发送」不可用、输入框照常可以写；模型好了页面自己恢复；在做的会话不受影响", async ({
 	page,
 }) => {
 	const down = {
@@ -206,6 +242,14 @@ test("会话页：模型有问题时空闲的会话顶上写缺什么，「发�
 	await expect(line).toContainText(
 		"连不上模型端点 llm.internal:8177：连接被拒绝（上次检查：2 分钟前）",
 	);
+	await expect(line.getByTestId("readiness-hint")).toHaveText("请部署者检查助手容器能不能连上模型");
+	// 写在输入框旁（输入框所在的表单里，输入框和「发送」之间），不在页面顶上。
+	await expect(page.getByRole("form", { name: "接着说" }).getByTestId("readiness")).toBeVisible();
+	const field = await box(composer(page));
+	const where = await box(line);
+	const sendBox = await box(page.getByRole("button", { name: "发送" }));
+	expect(where.y).toBeGreaterThanOrEqual(field.y + field.height);
+	expect(where.y + where.height).toBeLessThanOrEqual(sendBox.y);
 	await composer(page).fill("再来一次");
 	await expect(composer(page)).toHaveValue("再来一次");
 	const send = page.getByRole("button", { name: "发送" });
@@ -268,6 +312,131 @@ test("会话列表：本项目的会话，在做的在前、其余最近活动�
 	await expect(page).toHaveURL(new RegExp(`/sessions/${idle}$`));
 	await expect(page.getByRole("heading", { level: 1, name: "给 http_check 加超时" })).toBeVisible();
 	expect([running, ended]).toHaveLength(2);
+});
+
+/** 一个已经说过话、一轮已经有结局的会话的事件（会话列表上「上一轮」的结局取自最近一条 `turn_end`）。 */
+const endedTurn = (
+	outcome: "completed" | "stopped" | "limit" | "model_unavailable" | "interrupted" | "failed",
+	extra: Partial<Extract<SessionEventBody, { type: "turn_end" }>> = {},
+): SessionEventBody[] => [
+	{
+		type: "user_message",
+		message_id: randomUUID(),
+		text: "做点事",
+		steer: false,
+		author: "alice",
+		author_user_id: null,
+	},
+	{ type: "turn_started", turn: 1 },
+	{ type: "turn_end", turn: 1, outcome, reason: "原因", duration_ms: 1000, ...extra },
+];
+
+test("会话列表：在做、排队中（带位置）、被打断、已结束各显示正确；在做和排队的在前；上一轮的结局不是完成时标出来（真的控制面）", async ({
+	page,
+	controlPlane,
+}) => {
+	const db = controlPlane.database.url;
+	const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second));
+	// 在做的会话，上一轮是被打断的（这一轮是在那之后开的）。
+	await seedSession(db, {
+		title: "正在做的事",
+		createdBy: "bob",
+		status: "running",
+		createdAt: at(1),
+		lastActivityAt: at(60),
+		events: [...endedTurn("interrupted"), { type: "turn_started", turn: 2 }],
+	});
+	// 排队中的两个：按排队的先后排第 1、2 位。
+	await seedSession(db, {
+		title: "排在第一位的事",
+		createdBy: "alice",
+		status: "queued",
+		createdAt: at(10),
+		lastActivityAt: at(50),
+	});
+	await seedSession(db, {
+		title: "排在第二位的事",
+		createdBy: "carol",
+		status: "queued",
+		createdAt: at(20),
+		lastActivityAt: at(40),
+	});
+	const idleSession = (title: string, outcome: Parameters<typeof endedTurn>[0], second: number) =>
+		seedSession(db, {
+			title,
+			createdBy: "alice",
+			status: "idle",
+			createdAt: at(1),
+			lastActivityAt: at(second),
+			events: endedTurn(outcome, outcome === "limit" ? { limit_kind: "model_calls" } : {}),
+		});
+	await idleSession("做完了的事", "completed", 30);
+	await idleSession("被打断的事", "interrupted", 25);
+	await idleSession("到了上限的事", "limit", 24);
+	await idleSession("出错的事", "failed", 23);
+	await idleSession("模型不可用的事", "model_unavailable", 22);
+	await idleSession("被停止的事", "stopped", 21);
+	await seedSession(db, {
+		title: "已经结束的事",
+		createdBy: "dave",
+		status: "ended",
+		createdAt: at(1),
+		lastActivityAt: at(20),
+		events: [...endedTurn("completed"), { type: "session_ended", by: "dave" }],
+	});
+	await seedSession(db, {
+		title: "还没说过话的事",
+		createdBy: "alice",
+		status: "idle",
+		createdAt: at(1),
+		lastActivityAt: at(5),
+	});
+
+	await page.goto("/sessions");
+	const row = (title: string) =>
+		page
+			.getByRole("table", { name: "会话列表" })
+			.getByRole("row")
+			.filter({ has: page.getByRole("link", { name: title, exact: true }) });
+	const rows = page.getByRole("table", { name: "会话列表" }).getByRole("row");
+	// 在做和排队中的在前（最近活动的在前），其余最近活动在前。用会重试的断言：列表还没回来时不会读到空的。
+	await expect(rows.getByRole("link")).toHaveText([
+		"正在做的事",
+		"排在第一位的事",
+		"排在第二位的事",
+		"做完了的事",
+		"被打断的事",
+		"到了上限的事",
+		"出错的事",
+		"模型不可用的事",
+		"被停止的事",
+		"已经结束的事",
+		"还没说过话的事",
+	]);
+
+	// 状态：在做、排队中第 N 位、空闲、已结束。
+	await expect(row("正在做的事").getByTestId("list-status")).toHaveText("在做");
+	await expect(row("排在第一位的事").getByTestId("list-status")).toHaveText("排队中 · 排在第 1 位");
+	await expect(row("排在第二位的事").getByTestId("list-status")).toHaveText("排队中 · 排在第 2 位");
+	await expect(row("做完了的事").getByTestId("list-status")).toHaveText("空闲");
+	await expect(row("已经结束的事").getByTestId("list-status")).toHaveText("已结束");
+	// 发起人是显示名。
+	await expect(row("正在做的事")).toContainText("bob");
+	await expect(row("排在第二位的事")).toContainText("carol");
+
+	// 上一轮的结局不是完成时标出来；完成的和还没有结束过一轮的不标。
+	const flag = (title: string) => row(title).getByTestId("list-last-turn");
+	await expect(flag("被打断的事")).toHaveText("上一轮被打断");
+	await expect(flag("到了上限的事")).toHaveText("上一轮到了上限");
+	await expect(flag("出错的事")).toHaveText("上一轮出错");
+	await expect(flag("模型不可用的事")).toHaveText("上一轮模型不可用");
+	await expect(flag("被停止的事")).toHaveText("上一轮已停止");
+	// 在做的会话标的是这一轮之前的那一轮。
+	await expect(flag("正在做的事")).toHaveText("上一轮被打断");
+	await expect(flag("正在做的事")).toHaveAttribute("data-outcome", "interrupted");
+	for (const title of ["做完了的事", "已经结束的事", "还没说过话的事", "排在第一位的事"]) {
+		await expect(flag(title)).toHaveCount(0);
+	}
 });
 
 test("会话多于接口一次给的个数：只列最近活动的 200 个，列表下面写一句（真的控制面）", async ({
