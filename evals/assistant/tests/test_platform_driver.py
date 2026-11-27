@@ -56,6 +56,8 @@ class FakeControlPlane:
     - `odd-outcome`：turn_end 的结局不是契约里的值；
     - `empty`：事件流只发一个心跳就结束（每次重连都这样），stop 之后发 `stopped` 的 turn_end。
     - `login-401`、`login-no-cookie`：登录被拒绝（回应体里回显了密码）、登录成功但没有 Cookie；
+    - `precheck-echo`：开始前的检查回 500、回应体里回显了密码和 Cookie；
+    - `create-500-model-unavailable`：建会话回 500（不是 503）、错误码是 `model_unavailable`；
     - `model-unavailable`、`events-not-connected`、`assistant-start-failed`：建会话回 503，
       错误码和说明照真实控制面（回应体里回显了密码和 Cookie，看记录里有没有）。
     **和 dev 上的控制面一样要登录**：`POST /auth/login` 要 `sec-fetch-site: same-origin` 和对的
@@ -134,6 +136,10 @@ class FakeControlPlane:
                     assert json.loads(body or "{}") == {"text": "写一个节点"}
                     if mode == "create-503":
                         return self._json(503, {"code": "assistant_unavailable"})
+                    if mode == "create-500-model-unavailable":
+                        # 不是 503：就算错误码对，也不是「环境没准备好」的拒绝。
+                        body = {"error": {"code": "model_unavailable", "message": "x"}}
+                        return self._json(500, body)
                     echo = f"（回显：{PASSWORD} {COOKIE}）"
                     for name, code, message in (
                         ("model-unavailable", "model_unavailable", "没有配置模型：缺 MODEL_KEY"),
@@ -172,6 +178,9 @@ class FakeControlPlane:
                     return
                 if self.path == "/projects/default/sessions":
                     time.sleep(owner.slow)
+                    if owner.mode == "precheck-echo":
+                        # 开始前的检查出错、回应体里回显了凭据。
+                        return self._json(500, {"error": {"message": f"炸了 {PASSWORD} {COOKIE}"}})
                     ready = owner.mode != "not-ready"
                     problems = [] if ready else [{"message": "工作台不在线"}]
                     return self._json(200, {"readiness": {"ready": ready, "problems": problems}})
@@ -717,8 +726,22 @@ def test_a_create_rejected_for_another_reason_stays_a_platform_fault(tmp_path: P
     assert fault is not None and fault[0] == PLATFORM
 
 
+def test_only_a_503_can_be_an_environment_not_ready_rejection(tmp_path: Path) -> None:
+    record = drive("create-500-model-unavailable", tmp_path)
+    assert record["problem_kinds"] == ["control_plane"]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == PLATFORM
+
+
 @pytest.mark.parametrize(
-    "mode", ["login-401", "model-unavailable", "events-not-connected", "assistant-start-failed"]
+    "mode",
+    [
+        "login-401",
+        "precheck-echo",
+        "model-unavailable",
+        "events-not-connected",
+        "assistant-start-failed",
+    ],
 )
 def test_neither_the_password_nor_the_cookie_reaches_a_file_or_stdout(
     mode: str, tmp_path: Path
