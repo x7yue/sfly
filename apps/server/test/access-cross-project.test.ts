@@ -212,9 +212,12 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		method = request.method,
 	) => {
 		const controller = new AbortController();
+		// 一个凭据也没有的请求要明说不带（cp.fetch 默认带测试用户的个人令牌，#830）。
+		const anonymous = !("authorization" in headers) && !("cookie" in headers);
 		const res = await cp.fetch(request.path, {
 			method,
 			headers: { ...request.headers, ...headers },
+			...(anonymous ? { credentials: "omit" as const } : {}),
 			...(request.body === undefined || method === "HEAD" ? {} : { body: request.body }),
 			signal: controller.signal,
 		});
