@@ -183,9 +183,10 @@ def test_the_credential_goes_to_the_installer_and_the_agent_by_environment_only(
 
 
 def test_a_shared_token_in_the_container_environment_is_never_used(harness: Harness) -> None:
-    # 工作台的安装命令里没有共享令牌（#549）：容器环境里就算有共享令牌（SFLY_AGENT_TOKEN）或别的 SFLY_TOKEN，
-    # 安装脚本和 Agent 的 `SFLY_TOKEN` 也只是 SFLY_WORKBENCH_TOKEN 交进来的那枚 Agent 凭据，共享令牌不出现在参数和输出里
-    # （compose 不把共享令牌传给工作台，见 test_deploy_compose.py；这里是入口脚本自己不去用它）。
+    # 工作台的安装命令里没有共享令牌（#549）：容器环境里就算有共享令牌（SFLY_AGENT_TOKEN）或别的
+    # SFLY_TOKEN，安装脚本和 Agent 的 `SFLY_TOKEN` 也只是 SFLY_WORKBENCH_TOKEN 交进来的那枚
+    # Agent 凭据，共享令牌不出现在参数和输出里（compose 不把共享令牌传给工作台，见
+    # test_deploy_compose.py；这里是入口脚本自己不去用它）。
     shared = "shared-agent-token-value-0123456789"
     result = harness.run(SFLY_AGENT_TOKEN=shared, SFLY_TOKEN=shared)
 

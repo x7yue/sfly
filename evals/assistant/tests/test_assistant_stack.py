@@ -201,8 +201,9 @@ def test_agent_credentials_are_issued_by_the_admin_and_secrets_go_by_stdin(
 def test_the_workbench_is_registered_with_the_admin_login_and_the_cookie_goes_by_stdin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """工作台是 dev 上的 Agent，由初始管理员登记（`PUT /projects/default/workbench`，#549）：和部署文档里的
-    登记是同一个接口；Cookie 经标准输入给 curl，不在命令行参数里；请求体只有 Agent 的名字。"""
+    """工作台是 dev 上的 Agent，由初始管理员登记（`PUT /projects/default/workbench`，#549）：
+    和部署文档里的登记是同一个接口；Cookie 经标准输入给 curl，不在命令行参数里；
+    请求体只有 Agent 的名字。"""
     shell = Shell()
     monkeypatch.setattr(d, "sh", shell)
     stack = Stack(slot=9)
@@ -597,11 +598,11 @@ def test_reset_rebuilds_the_assistant_container(
     assert started == [9]
 
 
-def test_the_workbench_is_registered_once_the_agents_are_online_and_before_waiting_for_the_assistant(
+def test_the_workbench_is_registered_after_agents_are_online_before_the_assistant_is_ready(
     monkeypatch: pytest.MonkeyPatch, recorder: Recorder
 ) -> None:
-    """登记要工作台先用自己的 Agent 凭据连上来（#549），所以在 Agent 在线之后；助手就绪要登记之后才会成立。
-    `up` 和 `reset`（库重建、登记没了）都是；没有助手时不登记。"""
+    """登记要工作台先用自己的 Agent 凭据连上来（#549），所以在 Agent 在线之后；
+    助手就绪要登记之后才会成立。`up` 和 `reset`（库重建、登记没了）都是；没有助手时不登记。"""
     _quiet_up(monkeypatch, recorder)
     steps: list[str] = []
     monkeypatch.setattr(Stack, "wait_agents", lambda self, *a, **k: steps.append("agents-online"))

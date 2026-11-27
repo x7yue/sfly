@@ -112,8 +112,9 @@ def test_the_workbench_credential_goes_to_the_workbench_only(tmp_path: Path) -> 
 
 
 def test_the_shared_agent_token_never_reaches_the_workbench(tmp_path: Path) -> None:
-    # 登记工作台之后控制面不再接受共享令牌（#549），工作台本来也不用它：共享令牌（SFLY_AGENT_TOKEN）能冒充任何一台
-    # Agent，工作台上的模型读得到工作台的环境，所以它只给控制面，不给工作台和助手服务。
+    # 登记工作台之后控制面不再接受共享令牌（#549），工作台本来也不用它：
+    # 共享令牌（SFLY_AGENT_TOKEN）能冒充任何一台 Agent，工作台上的模型读得到工作台的环境，
+    # 所以它只给控制面，不给工作台和助手服务。
     shared = "shared-agent-token-value-0123456789"
     services = render(tmp_path, {**REQUIRED, **ASSISTANT, "SFLY_AGENT_TOKEN": shared}, "assistant")[
         "services"
@@ -152,8 +153,9 @@ def test_the_workbench_is_named_by_its_own_variable_and_the_control_plane_reads_
 ) -> None:
     services = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"]
 
-    # 哪台 Agent 是工作台由项目管理员登记（PUT /projects/:project/workbench，#549），不是控制面的环境变量：
-    # 控制面的环境里没有 SFLY_WORKBENCH_AGENT（也没有任何 SFLY_WORKBENCH_ 开头的变量）。
+    # 哪台 Agent 是工作台由项目管理员登记（PUT /projects/:project/workbench，#549），
+    # 不是控制面的环境变量：控制面的环境里没有 SFLY_WORKBENCH_AGENT，
+    # 也没有任何 SFLY_WORKBENCH_ 开头的变量。
     control_plane = environment(services["sfly"])
     assert "SFLY_WORKBENCH_AGENT" not in control_plane
     assert not [name for name in control_plane if name.startswith("SFLY_WORKBENCH")]

@@ -476,7 +476,8 @@ class Stack:
         env["SFLY_ADMIN_LOGIN"] = ADMIN_LOGIN
         secret_env: dict[str, str] = {ADMIN_PASSWORD_ENV: self.admin_password}
         if self.assistant:
-            # 控制面把会话交给助手服务；工作台是 dev 上的 Agent，由 register_workbench 登记（#549，存在库里，不是环境变量）。
+            # 控制面把会话交给助手服务；工作台是 dev 上的 Agent，由 register_workbench 登记
+            # （#549，存在库里，不是环境变量）。
             env["SFLY_ASSISTANT_URL"] = self.assistant_url
             secret_env[ASSISTANT_SECRET_ENV] = self._secret()
         self._run(
@@ -675,10 +676,11 @@ class Stack:
         return str(json.loads(out.stdout)["token"])
 
     def register_workbench(self) -> None:
-        """登记 dev 上的 Agent 为默认项目的工作台（`PUT /projects/default/workbench`，#549）：和部署文档里的
-        `sfly api PUT …` 是同一个接口，这里用初始管理员的登录。登记要这台 Agent 已经用自己的 Agent 凭据连上来过
-        （两台 Agent 的凭据都是上面签发的），所以放在 `wait_agents` 之后；登记之后控制面只接受 Agent 凭据，
-        共享令牌和不带凭据的连接都被拒绝（评测环境里本来就没有）。Cookie 经标准输入给 curl，不在命令行参数里。"""
+        """登记 dev 上的 Agent 为默认项目的工作台（`PUT /projects/default/workbench`，#549）：
+        和部署文档里的 `sfly api PUT …` 是同一个接口，这里用初始管理员的登录。登记要这台 Agent
+        已经用自己的 Agent 凭据连上来过（两台 Agent 的凭据都是上面签发的），所以放在 `wait_agents`
+        之后；登记之后控制面只接受 Agent 凭据，共享令牌和不带凭据的连接都被拒绝
+        （评测环境里本来就没有）。Cookie 经标准输入给 curl，不在命令行参数里。"""
         cookie = self._admin_cookie(self.dev)
         d.sh(
             self.dev,

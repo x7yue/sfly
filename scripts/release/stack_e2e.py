@@ -7,8 +7,10 @@
 
 用法（环境变量：CP_URL 控制面的地址，ADMIN_LOGIN、ADMIN_PASSWORD 初始管理员）：
   stack_e2e.py credential <Agent 名字>   登录，给这台 Agent 签发 Agent 凭据，原值只写到标准输出一行
-  stack_e2e.py register <Agent 名字> [秒数]  登记这台 Agent 为默认项目的工作台（README「登记工作台」的 PUT /projects/default/workbench）：
-                                         工作台第一次启动要装 Agent，用自己的 Agent 凭据连上来之前登记是 409，等它连上再登记
+  stack_e2e.py register <Agent 名字> [秒数]  登记这台 Agent 为默认项目的工作台（README
+                                         「登记工作台」的 PUT /projects/default/workbench）：
+                                         工作台第一次启动要装 Agent，用自己的 Agent 凭据
+                                         连上来之前登记是 409，等它连上再登记
   stack_e2e.py ready [秒数]              等控制面说助手可以用（助手服务连得上、工作台在线、
                                          能力端口有地址）
   stack_e2e.py session <剧本> [--results]  用假的模型端点的剧本（`AEVAL-SCRIPT:<名字>`）建一个会话，
@@ -65,13 +67,14 @@ def issue_credential(name: str) -> int:
     return 0
 
 
-# 登记时「工作台还没连上来」的两个 409 错误码：等它连上再试；别的错误（部署里还有没换成 Agent 凭据的 Agent、被停用……）直接失败。
+# 登记时「工作台还没连上来」的两个 409 错误码：等它连上再试；
+# 别的错误（部署里还有没换成 Agent 凭据的 Agent、被停用……）直接失败。
 REGISTER_WAIT_CODES = ("workbench_agent_unknown", "workbench_agent_not_on_credential")
 
 
 def register_workbench(name: str, seconds: float) -> int:
-    """登记工作台（和 README「登记工作台」同一个接口）：工作台要先用自己的 Agent 凭据连上来过，之前的 409 等一等再试，
-    等到时限还不行才失败。登记之后控制面只接受 Agent 凭据。"""
+    """登记工作台（和 README「登记工作台」同一个接口）：工作台要先用自己的 Agent 凭据连上来过，
+    之前的 409 等一等再试，等到时限还不行才失败。登记之后控制面只接受 Agent 凭据。"""
     s = stack()
     deadline = time.monotonic() + seconds
     while True:
