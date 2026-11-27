@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
 	createWriteStream,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -17,6 +19,7 @@ import {
 	type AssistantEvent,
 	type ErrorClass,
 	type PromptCommandBody,
+	SessionId,
 	type SteerCommandBody,
 	type TurnLimit,
 	type TurnOutcome,
@@ -33,6 +36,7 @@ import { RecordedCommits } from "./recorded-commits.js";
 import { forLog, Redactor } from "./redact.js";
 import { mirrorSkillsLocally, workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
 import { quote, type Steer, SteerBook } from "./steers.js";
+import { summarize, Transcript } from "./transcript.js";
 import { TurnTranslator } from "./translate.js";
 import type { TurnConfig } from "./turn-config.js";
 import type { UpstreamError } from "./upstream-error.js";
@@ -58,6 +62,19 @@ import {
  * - 同时活着的 pi 进程数有上限（{@link MAX_PROCESSES}）。到了上限时，先关掉最久没用的**空闲**进程（关 stdin：
  *   它没有在做的一轮，#539 第 8 题）；没有空闲的就拒绝（503 `process_limit`，控制面把这一轮记成 `failed`）。
  *   为了回收而关 stdin 只对空闲的进程做（一轮进行中关了，pi 不等这一轮做完）。
+ * - **闲置回收**（#545）：会话没有在做的一轮（没有在做、在停止的，也没有排队的插话：它们都属于一轮，`turn_end` 发出之前这一轮就还在）、
+ *   {@link IDLE_RECLAIM_MS} 没有收到发给它的命令（`prompt`、`steer`、`abort`、`end` 都算，最后一轮结束的时刻也算）就关掉它的 pi 进程，
+ *   走和「到了上限关最久没用的空闲进程」同一条路（{@link SessionManager.#close}：关 stdin，10 秒后 SIGTERM，再 10 秒后 SIGKILL）。
+ *   关到一半（stdin 已关、进程还没退出）来了新的命令：`prompt` 登记之后等旧进程退出再用同一条启动命令起新的（不往关掉的 stdin 写，
+ *   不同时有两个 pi 写同一个会话文件），最多等 {@link ASSISTANT_STOP_WAIT_MS}，等不到这一轮以 `failed` 结束；别的命令照常回应
+ *   （`steer` 因为没有一轮在做回 409）。
+ * - **恢复**（#545）：下一条 `prompt` 到来、没有活着的进程时用同一条启动命令（`--session-dir` + `--session-id`）起 pi，pi 从会话文件
+ *   恢复上下文。**pi 1.6.0 读不了会话文件时不报错退出，而是悄悄开一个空会话**（会话文件读不了、头部坏了、工作目录对不上、目录没了
+ *   都是，#545 P 在真的 pi 上逐种试过），模型丢了上下文、人不知道。所以起来之后问一次 `get_state`：这个会话之前说过话
+ *   （{@link Transcript}：助手服务自己记的对话）而 pi 的 `messageCount` 是 0，就算恢复不了：关掉这个 pi，把 `pi-session/` 挪到
+ *   `pi-session.broken/`（只留最近一份，排查用），起一个新的会话，把之前的话整理成摘要放在这一轮第一句前面（{@link summarize}），
+ *   时间线补一条 `notice`（`context_reset`，**只写条数，没有对话原文**）。**摘要只进 pi：不进任何事件、日志，不发给控制面。**
+ *   只认「一条也没恢复」；pi 自己跳过坏行、恢复了一部分时认不出来（pi 不告诉我们丢了几行）。
  * - secret 环境变量的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（redact.ts）。
  * - 工作区的提交（#546，workspace.ts）：一轮开始、把 `prompt` 交给 pi 之前，保证工作区是 git 仓库（不是就初始化），这一轮之前留下的
  *   改动（会话开始之前就在的、上一轮被打断或提交没做成的）先单独提交；一轮以任何结局结束时（`turn_end` 之前）提交这一轮的改动，
@@ -73,12 +90,18 @@ export const TURN_LIMITS = {
 } as const;
 
 /**
- * 同时活着的 pi 进程数的上限。容量按完整会话的数算：评测集平台臂的一轮（经控制面交给助手、假的模型端点照参考答案
- * 做完一道题），pi 进程的峰值 191–194 MiB（VmHWM，每秒取一次；真实模型的上下文更长，只会更高），8 个约 1.55 GiB。
- * 探针（rpcprobe 第 9 题，很短的一轮）量的是下限：空闲常驻约 141 MiB、峰值约 162 MiB。助手容器的内存上限定 2 GiB，
- * 给助手服务自己和读写留出余量（按完整会话的数，余量比按探针算的小）。
+ * 同时活着的 pi 进程数的上限：最多 8 个，空闲 {@link IDLE_RECLAIM_MS} 的会被回收。助手容器的内存按完整会话的峰值留、
+ * 再加续传缓冲，**数字只写在一处**：仓库根目录 `README.md` 的「助手容器的内存」；这里、`apps/assistant/README.md`、
+ * `deploy/docker-compose.yml` 都引用它，不另写。
  */
 export const MAX_PROCESSES = 8;
+
+/**
+ * 一个会话没有在做的一轮、这么久没有收到发给它的命令，就回收它的 pi 进程（#545，15 分钟）：空闲的 pi 进程常驻不少内存，
+ * 会话是一直开着的，不回收的话助手容器的内存只增不减。下一条命令用同一条启动命令从会话文件恢复，冷启动比一个模型请求短得多
+ * （#539 第 9 题），回收的代价很小。
+ */
+export const IDLE_RECLAIM_MS = 15 * 60 * 1000;
 
 /**
  * 中止记号（协议「一轮的状态」）：每个会话一个只增不减的轮次，轮次不大于它的 `prompt` 都以 `stopped` 结束。十分钟没有被提高就过期，
@@ -224,13 +247,31 @@ interface Session {
 	closing: Promise<void> | undefined;
 	/** SIGKILL 之后还没退出、不再复用的旧进程（硬上限到了的那一轮的）：之后的一轮等它退出再起新的。 */
 	stuck: PiProcess | undefined;
+	/** 这个会话自己正在关的进程（回收、换工作区、`end`）：新的一轮要等它们退出再起 pi，所以算上限时和要起的新进程算一个。 */
+	closingOwn: Set<PiProcess>;
+	/**
+	 * 新起的、**恢复检查还没做完**的 pi（检查做完之前这一轮就被结束了留下的）：下一轮复用它之前先把检查补做完，不能直接交
+	 * `prompt`。检查做完（或者没有什么可检查的）就清成 undefined。
+	 */
+	unverified: PiProcess | undefined;
+	/**
+	 * 恢复不了、换了新会话之后**欠着**的东西：`text` 是还没交给 pi 的摘要（只有 pi 接受了带它的 `prompt` 才清掉，没清掉之前
+	 * 每一轮都带着），`notice` 是还没发出的 `context_reset` 通知（发一次就清掉）。跟着会话走、不跟着进程：欠着的时候 pi 被关了、
+	 * 起了新的，新的也是空会话，照样要交。
+	 */
+	owed: { text: string | undefined; notice: string | undefined } | undefined;
 	/** 现在这个 pi 进程的临时目录（`TMPDIR`）。 */
 	tmpDir: string | undefined;
 	/** 「在做」的一轮（协议「一轮的状态」）；{@link stopping} 也在时它是「在等」的第 k 轮，还没开始。 */
 	turn: Turn | undefined;
 	/** 「在停止」的一轮（第 m 轮）。 */
 	stopping: Turn | undefined;
+	/** 最近一次收到发给这个会话的命令、或者最近一轮结束的时刻：回收空闲进程的依据（{@link IDLE_RECLAIM_MS}），也是「最久没用」的排序。 */
 	lastActive: number;
+	/** 闲置回收的计时（只在有活着的进程、没有一轮的时候挂着）。 */
+	idleTimer: Timer | undefined;
+	/** 这个会话的对话记录（见 transcript.ts）。 */
+	transcript: Transcript;
 }
 
 export type CommandResult =
@@ -344,7 +385,13 @@ export class SessionManager {
 	 * 503 只在登记之前决定（模型有问题、进程数满了）。
 	 */
 	prompt(sessionId: string, body: PromptCommandBody): CommandResult {
+		// 会话 ID 拼进会话目录的路径（里面有 pi 的会话文件、对话记录）：HTTP 那一层已经按 UUID 检查过，这里再核对一次，
+		// 直接调用也不会跳出 `<数据目录>/sessions/`。
+		if (!SessionId.safeParse(sessionId).success) {
+			return { ok: false, status: 400, code: "invalid_request", message: "会话 ID 不是 UUID" };
+		}
 		const session = this.#session(sessionId);
+		this.#touch(session);
 		if (body.turn <= this.#mark(sessionId)) {
 			const turn = this.#newTurn(session, body);
 			this.options.log(
@@ -362,12 +409,14 @@ export class SessionManager {
 		const blocked = this.options.modelGate?.();
 		if (blocked) return { ok: false, ...blocked };
 		const needsProcess = !session.stopping && (!session.process || session.process.exited);
-		if (needsProcess && this.activeProcesses >= this.#maxProcesses && !this.#evictIdle()) {
+		// 这个会话自己正在关的旧进程算在 `activeProcesses` 里，但新的进程要等它退出才起（`#waitClosed`），两个不会同时活着：算一个。
+		const own = session.closingOwn.size;
+		if (needsProcess && this.activeProcesses - own >= this.#maxProcesses && !this.#evictIdle()) {
 			return {
 				ok: false,
 				status: 503,
 				code: "process_limit",
-				message: `同时活着的 pi 进程已经有 ${this.#maxProcesses} 个，都在做`,
+				message: `同时活着的 pi 进程已经有 ${this.#maxProcesses} 个，都在做（或者正在关）`,
 			};
 		}
 		session.redactor.add(Object.values(body.secret_env));
@@ -386,7 +435,6 @@ export class SessionManager {
 		}
 		const turn = this.#newTurn(session, body);
 		session.turn = turn;
-		session.lastActive = this.#clock.now();
 		turn.timer = this.#clock.setTimeout(
 			() =>
 				this.#stop(session, turn, {
@@ -437,6 +485,7 @@ export class SessionManager {
 	 */
 	steer(sessionId: string, body: SteerCommandBody): CommandResult {
 		const session = this.#sessions.get(sessionId);
+		if (session) this.#touch(session);
 		const turn = session?.turn;
 		if (!session || !turn || turn.number !== body.turn || turn.stop || turn.ended) {
 			return {
@@ -460,6 +509,7 @@ export class SessionManager {
 	end(sessionId: string): void {
 		const session = this.#sessions.get(sessionId);
 		if (!session) return;
+		this.#touch(session);
 		const ending: Ending = { outcome: "stopped", reason: "会话结束了" };
 		if (session.stopping) {
 			if (session.stopping.stop) session.stopping.stop.closeAfter = true;
@@ -519,6 +569,7 @@ export class SessionManager {
 	abort(sessionId: string, turn: number): void {
 		this.#raiseMark(sessionId, turn);
 		const session = this.#sessions.get(sessionId);
+		if (session) this.#touch(session);
 		const current = session?.turn;
 		if (!session || !current || current.number > turn) return;
 		// 这一轮已经结束、提交还在进行：停止的期限从现在起算，提交的期限不能超过它。
@@ -532,6 +583,10 @@ export class SessionManager {
 	async shutdown(): Promise<void> {
 		// 退出时不提交（容器停止只给十几秒）：留给下一轮开始前。
 		this.#shuttingDown = true;
+		for (const session of this.#sessions.values()) {
+			this.#clock.clearTimeout(session.idleTimer);
+			session.idleTimer = undefined;
+		}
 		const ending: Ending = { outcome: "interrupted", reason: "助手服务停止了" };
 		const concluding: Array<Promise<void>> = [];
 		for (const session of this.#sessions.values()) {
@@ -570,7 +625,12 @@ export class SessionManager {
 				turn: undefined,
 				stopping: undefined,
 				stuck: undefined,
+				closingOwn: new Set(),
+				unverified: undefined,
+				owed: undefined,
 				lastActive: this.#clock.now(),
+				idleTimer: undefined,
+				transcript: new Transcript(join(dir, "transcript.jsonl")),
 			};
 			this.#sessions.set(id, session);
 		}
@@ -644,8 +704,8 @@ export class SessionManager {
 					return;
 				}
 			}
-			await session.closing;
-			if (turn.ended || turn.stop) return;
+			// 回收到一半的进程（关了 stdin、还没退出）也一样：等它退出再起新的，不往关掉的 stdin 写。
+			if (!(await this.#waitClosed(session, turn))) return;
 			if (!session.process || session.process.exited) {
 				const { name, address } = body.workbench;
 				const agent = this.options.connect(address, (line) =>
@@ -666,15 +726,10 @@ export class SessionManager {
 				if (turn.ended || turn.stop) return;
 				this.#spawn(session, wanted);
 				spawned = true;
-				// 连着发的几句插话一次送完（协议「插话」，rpcprobe 第 14 题）。
-				const mode = await session.process?.request({ type: "set_steering_mode", mode: "all" });
-				// 写不进去（进程没了）不记：读着像 pi 拒绝了；进程退出的那条路自己会记、会收尾。
-				if (mode && mode.success !== true && mode.gone !== true) {
-					this.options.log(
-						`会话 ${session.id}：设插话的模式失败：${this.#forLog(session, String(mode.error ?? ""))}`,
-					);
-				}
-			} else {
+				// 新起的进程在恢复检查做完之前是「没验过」的：这一轮在检查做完之前被结束时它留在会话上，下一轮复用它时补做。
+				session.unverified = session.process;
+				await this.#setSteeringMode(session);
+			} else if (session.unverified !== session.process) {
 				const cleared = await session.process.request({ type: "clear_queue" });
 				const left = queued(cleared);
 				if (left > 0) {
@@ -683,6 +738,9 @@ export class SessionManager {
 					);
 				}
 			}
+			// 恢复：这个会话之前说过话，pi 却没有接上（悄悄开了个空会话）时，换新的会话、欠一份摘要（见文件头）。
+			// 新起的、或者上一轮没来得及检查的进程都在这里检查；没检查完的不会直接交 `prompt`。
+			if (!(await this.#restoreContext(session, turn, wanted))) return;
 			// 交给 pi 之前：工作区是 git 仓库（不是就初始化），上一轮没能提交的改动先单独提交。
 			await this.#prepareWorkspace(session, turn);
 			const process = session.process;
@@ -690,7 +748,16 @@ export class SessionManager {
 			turn.prompted = true;
 			// 这一轮开始改工作区了：做完提交之前它不算干净。
 			this.#setClean(turn, false);
-			const response = await process.request({ type: "prompt", message: body.text });
+			// 欠着摘要的：放在这一轮第一句前面，pi 接受了才算交出去（下面）。
+			const owed = session.owed?.text;
+			const response = await process.request({
+				type: "prompt",
+				message: owed === undefined ? body.text : `${owed}\n${body.text}`,
+			});
+			// pi 接受了：摘要交出去了，不再欠。停止、结束的那一轮也算（pi 已经收下它，上下文在它那里）。
+			if (response.success === true && owed !== undefined && session.owed?.text === owed) {
+				session.owed = undefined;
+			}
 			if (spawned) {
 				// 冷启动：从收到这句话到新起的 pi 接受它（写 skill、起进程、加载扩展、恢复会话）。
 				this.options.log(
@@ -735,6 +802,201 @@ export class SessionManager {
 				reason: `开始这一轮失败：${session.redactor.redact(shown)}`,
 			});
 		}
+	}
+
+	/** 连着发的几句插话一次送完（协议「插话」，rpcprobe 第 14 题）。每个新起的 pi 都要设。 */
+	async #setSteeringMode(session: Session): Promise<void> {
+		const mode = await session.process?.request({ type: "set_steering_mode", mode: "all" });
+		// 写不进去（进程没了）不记：读着像 pi 拒绝了；进程退出的那条路自己会记、会收尾。
+		if (mode && mode.success !== true && mode.gone !== true) {
+			this.options.log(
+				`会话 ${session.id}：设插话的模式失败：${this.#forLog(session, String(mode.error ?? ""))}`,
+			);
+		}
+	}
+
+	/**
+	 * 等这个会话被关掉的进程退出（回收、换工作区、`end`）：返回 true 才能起新的 pi。返回 false：这一轮已经被结束或停止了，或者等了
+	 * {@link ASSISTANT_STOP_WAIT_MS} 旧进程还没退出（SIGKILL 之后也没有，只有卡在不可中断的状态才会），这一轮以 `failed` 结束。
+	 * 没有被关掉的进程时马上返回 true。
+	 */
+	async #waitClosed(session: Session, turn: Turn): Promise<boolean> {
+		const closing = session.closing;
+		if (!closing) return !(turn.ended || turn.stop);
+		let timer: Timer | undefined;
+		const gaveUp = await Promise.race([
+			closing.then(() => false),
+			new Promise<boolean>((resolve) => {
+				timer = this.#clock.setTimeout(() => resolve(true), this.#stopWaitMs);
+			}),
+		]);
+		this.#clock.clearTimeout(timer);
+		if (turn.ended || turn.stop) return false;
+		if (gaveUp) {
+			this.#end(session, turn, {
+				outcome: "failed",
+				reason: "上一个 pi 进程（正在关闭）没有退出，所以这一轮没有开始",
+			});
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * 这个进程有没有接上这个会话之前的上下文（见文件头「恢复」），做完检查之前不能交 `prompt`。返回 false：这一轮已经结束了
+	 * （被停止、进程退出、换不了新的会话），调用方什么也不做——**没检查完的进程留在 `session.unverified` 上，欠着的摘要留在
+	 * `session.owed` 上**，下一轮接着做，不会悄悄丢上下文。
+	 * - 已经验过的进程（`session.unverified` 不是它）：什么也不做；
+	 * - 已经欠着摘要的（上一次换了新会话、摘要没交出去）：新会话是空的是已知的，不再检查，也不再挪目录；
+	 * - 这个会话之前没有任何痕迹（对话记录里没有话、`pi-session/` 里没有文件）：没有可恢复的；
+	 * - 否则问 pi 的 `get_state`：回了 `messageCount` 而且不是 0：恢复好了；回得认不出：照常往下做、记日志（不能因为认不出
+	 *   就丢掉一个好好的会话）；是 0：换新的会话——关掉这个进程、挪开 `pi-session/`、再起一个，把之前的话整理成摘要记成
+	 *   `owed`（`pi` 接受带它的 `prompt` 才清），**得出结论时**发一次 `context_reset`（只写条数；这一轮此刻已经停了就记在
+	 *   `owed.notice` 上，下一轮补发），之后一定交出去。
+	 * 「之前有痕迹」看三样：对话记录里有话、读到的只是末尾一段（更早的没读，不能说没有）、`pi-session/` 里有文件（这个版本之前
+	 * 就有的会话没有对话记录：摘要是空的，也要让人知道上下文没了）。
+	 */
+	async #restoreContext(
+		session: Session,
+		turn: Turn,
+		startedFor: { workbench: string; workdir: string },
+	): Promise<boolean> {
+		const process = session.process;
+		if (session.unverified !== process) return this.#flushNotice(session, turn);
+		const history = session.transcript.read();
+		const traces =
+			history.entries.length > 0 || !history.complete || this.#hasPiSessionFiles(session);
+		if (!traces || session.owed !== undefined) {
+			session.unverified = undefined;
+			return this.#flushNotice(session, turn);
+		}
+		const state = await process?.request({ type: "get_state" });
+		if (turn.ended || turn.stop) return false;
+		// 进程没了：这一轮按进程退出的那条路收尾（interrupted）。
+		if (!state || state.gone === true) return true;
+		const count = (state.data as { messageCount?: unknown } | undefined)?.messageCount;
+		if (state.success !== true || typeof count !== "number") {
+			this.options.log(
+				`会话 ${session.id} 第 ${turn.number} 轮：pi 的 get_state 没有给出 messageCount，认不出有没有接上之前的上下文，照常往下做`,
+			);
+			session.unverified = undefined;
+			return true;
+		}
+		if (count > 0) {
+			session.unverified = undefined;
+			return true;
+		}
+		// 之前说过话（或者留下过会话文件）、pi 起来之后会话却是空的：pi 读不了会话文件时不报错、悄悄开一个空会话。
+		this.options.log(
+			`会话 ${session.id} 第 ${turn.number} 轮：这个会话之前留下过 ${history.entries.length} 条话${history.complete ? "" : "（还有更早的没读）"}，pi 起来之后会话是空的（没有接上之前的上下文），换新的会话、带摘要`,
+		);
+		this.#close(session);
+		if (!(await this.#waitClosed(session, turn))) return false;
+		try {
+			this.#quarantine(session);
+		} catch (error) {
+			throw new StartError("之前的上下文没能恢复，也换不了一个新的会话文件", error);
+		}
+		this.#spawn(session, startedFor);
+		// 新起的这个是空会话，已经知道了：不用再验；欠着摘要和通知，之后一定交出去（见 `owed`）。
+		session.unverified = undefined;
+		const summary = summarize(history, turn.number);
+		session.owed = {
+			text: summary?.text,
+			notice: summary
+				? `上下文没能从会话文件恢复，换成了之前对话的摘要（放进了最近的 ${summary.kept} 条话${summary.truncated ? "，更早的省略了" : ""}）；工作区里的文件不受影响，但助手看不到之前的工具调用和结果`
+				: "上下文没能从会话文件恢复，换成了一个新的会话（之前没有留下对话记录，没有摘要可放）；工作区里的文件不受影响，但助手看不到之前的对话、工具调用和结果",
+		};
+		await this.#setSteeringMode(session);
+		return this.#flushNotice(session, turn);
+	}
+
+	/**
+	 * 欠着的 `context_reset` 通知：这一轮还在做就发出去（发一次），已经结束了（或者在停止了）就留着，下一轮补发。
+	 * 返回这一轮还能不能往下做。没有欠着通知的、欠着的只是摘要的也一样返回。
+	 */
+	#flushNotice(session: Session, turn: Turn): boolean {
+		if (turn.ended || turn.stop) return false;
+		const owed = session.owed;
+		if (owed?.notice !== undefined) {
+			this.#emit(session, turn, { type: "notice", kind: "context_reset", message: owed.notice });
+			owed.notice = undefined;
+			// 没有摘要可交，也没有通知可发了：不再欠什么。
+			if (owed.text === undefined) session.owed = undefined;
+		}
+		return true;
+	}
+
+	/** `pi-session/` 里有没有东西（这个会话以前存过会话文件）。目录不存在是没有；读不了、不是目录都算有。 */
+	#hasPiSessionFiles(session: Session): boolean {
+		try {
+			return readdirSync(join(session.dir, "pi-session")).length > 0;
+		} catch (error) {
+			return (error as NodeJS.ErrnoException).code !== "ENOENT";
+		}
+	}
+
+	/**
+	 * 把 pi 的会话目录挪到 `pi-session.broken/`（排查用，只留最近一份，挪的时候上一份删掉）：pi 起来时在里面找不到这个会话
+	 * （读不了、坏了、工作目录对不上），之后它再起也是新的；挪开之后新的会话文件在干净的目录里。目录本来就不在：什么也不做。
+	 */
+	#quarantine(session: Session): void {
+		const dir = join(session.dir, "pi-session");
+		const aside = join(session.dir, "pi-session.broken");
+		// 没有东西可挪（目录不在）时不动上一份：上一份是排查用的，不能被一次什么也没挪的「换会话」删掉。
+		try {
+			lstatSync(dir);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			throw error;
+		}
+		rmSync(aside, { recursive: true, force: true });
+		renameSync(dir, aside);
+	}
+
+	/** 记一条模型见过的话（恢复不了时的摘要用）。写不了（磁盘满）只记日志（只有错误，没有话），不影响这一轮。 */
+	#record(session: Session, turn: number, role: "user" | "assistant", text: string): void {
+		try {
+			session.transcript.append({ turn, role, text: session.redactor.redact(text) });
+		} catch (error) {
+			this.options.log(`会话 ${session.id}：写对话记录失败：${describeError(error)}`);
+		}
+	}
+
+	/** 这个会话收到了一条命令（或者一轮结束了）：空闲计时从这一刻重新算，也是「最久没用」的依据。 */
+	#touch(session: Session): void {
+		session.lastActive = this.#clock.now();
+	}
+
+	/** 有活着的 pi 进程、没有在做的、在停止的一轮：可以回收。 */
+	#isIdle(session: Session): boolean {
+		return !!session.process && !session.process.exited && !session.turn && !session.stopping;
+	}
+
+	/**
+	 * 空闲的进程挂上回收的计时（一轮结束时调用）：`lastActive` 加 {@link IDLE_RECLAIM_MS} 到点。之后收到命令时不动计时，到点时
+	 * {@link SessionManager.#idleDue} 看 `lastActive`：新了就按剩下的时间再挂。
+	 */
+	#armIdle(session: Session): void {
+		this.#clock.clearTimeout(session.idleTimer);
+		session.idleTimer = undefined;
+		if (this.#shuttingDown || !this.#isIdle(session)) return;
+		const wait = Math.max(0, session.lastActive + IDLE_RECLAIM_MS - this.#clock.now());
+		session.idleTimer = this.#clock.setTimeout(() => this.#idleDue(session), wait);
+	}
+
+	/** 回收的计时到了：还空闲、也确实有 {@link IDLE_RECLAIM_MS} 没收到命令才回收；有一轮在做或者来过命令的，不动或者按剩下的时间再挂。 */
+	#idleDue(session: Session): void {
+		session.idleTimer = undefined;
+		if (this.#shuttingDown || !this.#isIdle(session)) return;
+		if (this.#clock.now() - session.lastActive < IDLE_RECLAIM_MS) {
+			this.#armIdle(session);
+			return;
+		}
+		this.options.log(
+			`会话 ${session.id}：${IDLE_RECLAIM_MS / 60_000} 分钟没有收到命令，回收 pi 进程（下一条命令从会话文件恢复）`,
+		);
+		this.#close(session);
 	}
 
 	#spawn(session: Session, startedFor: { workbench: string; workdir: string }): void {
@@ -911,9 +1173,17 @@ export class SessionManager {
 	#delivered(session: Session, turn: Turn): boolean {
 		if (!turn.promptSeen) {
 			turn.promptSeen = true;
+			// 模型见到了这一轮自己的话：记进对话记录（恢复不了时的摘要用；记的是用户原来的话，不含摘要）。按 pi 的事件流的先后记，
+			// 在助手回答它之前；`prompt` 的回应和后面的事件可能在同一块数据里到，回应之后的那一步不一定先于它们执行。
+			this.#record(session, turn.number, "user", turn.body.text);
 			return false;
 		}
-		if (turn.steers.deliverNext()) return true;
+		const delivered = turn.steers.deliverNext();
+		if (delivered) {
+			// 送到了：模型见到了这句话。
+			this.#record(session, turn.number, "user", delivered.text);
+			return true;
+		}
 		this.options.log(
 			`会话 ${session.id} 第 ${turn.number} 轮：pi 出现了一条用户消息，但没有交出去还没送到的插话`,
 		);
@@ -945,9 +1215,13 @@ export class SessionManager {
 		signal: NodeJS.Signals | null,
 	): void {
 		this.#closing.delete(process);
+		session.closingOwn.delete(process);
+		if (session.unverified === process) session.unverified = undefined;
 		// 被关掉的进程（空闲、换了工作区）退出：和这个会话现在的一轮无关。
 		if (session.process !== process) return;
 		session.process = undefined;
+		this.#clock.clearTimeout(session.idleTimer);
+		session.idleTimer = undefined;
 		if (session.stopping && !session.stopping.ended) {
 			this.#finish(session, session.stopping);
 			return;
@@ -1047,6 +1321,7 @@ export class SessionManager {
 			const process = session.process;
 			session.process = undefined;
 			this.#closing.add(process);
+			session.closingOwn.add(process);
 			session.stuck = process;
 			session.closing = process.wait().finally(() => {
 				if (session.stuck === process) session.stuck = undefined;
@@ -1154,7 +1429,8 @@ export class SessionManager {
 			// 这一轮命令的完整输出已经传到工作台上了：助手容器里的临时文件清掉（不占所有会话共用的磁盘）。
 			if (session.tmpDir) emptyDir(session.tmpDir);
 		}
-		session.lastActive = this.#clock.now();
+		this.#touch(session);
+		this.#armIdle(session);
 		after?.();
 	}
 
@@ -1337,7 +1613,10 @@ export class SessionManager {
 
 	#emit(session: Session, turn: Turn, event: AssistantEvent): void {
 		// 先打码，再把 NUL 和不成对的代理字符换掉（控制面的数据库存不进去，存不进去这条事件就丢了）。
-		this.options.bus.emit(session.id, turn.number, storable(session.redactor.redactValue(event)));
+		const out = storable(session.redactor.redactValue(event));
+		this.options.bus.emit(session.id, turn.number, out);
+		// 助手的整条消息也记进对话记录（发出去的就是打过码的那份）。
+		if (out.type === "assistant_message") this.#record(session, turn.number, "assistant", out.text);
 	}
 
 	/** 还没送到的插话的完整列表（每次变化发一条）；决定结束这一轮之后不再发。 */
@@ -1366,14 +1645,18 @@ export class SessionManager {
 	}
 
 	/**
-	 * 关掉这个会话的 pi 进程：**只用于空闲的进程**（关 stdin，#539 第 8 题；宽限之后 SIGKILL）；它不再是这个会话的进程，
-	 * 退出之前算进上限。
+	 * 关掉这个会话的 pi 进程：**只用于空闲的进程**（关 stdin，#539 第 8 题；宽限之后 SIGTERM，再宽限之后 SIGKILL）；它不再是
+	 * 这个会话的进程，退出之前算进上限。闲置回收、到了上限关最久没用的空闲进程、换工作区、结束会话都走这一条。
 	 */
 	#close(session: Session): void {
+		this.#clock.clearTimeout(session.idleTimer);
+		session.idleTimer = undefined;
 		const process = session.process;
 		if (!process || process.exited) return;
 		session.process = undefined;
+		if (session.unverified === process) session.unverified = undefined;
 		this.#closing.add(process);
+		session.closingOwn.add(process);
 		const closed = process.close(this.options.killGraceMs ?? KILL_GRACE_MS);
 		session.closing = closed.finally(() => {
 			if (session.closing === closed) session.closing = undefined;
