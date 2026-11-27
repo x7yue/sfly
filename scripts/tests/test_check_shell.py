@@ -72,6 +72,8 @@ def has_shellcheck() -> bool:
 def scratch() -> Iterator[Path]:
     """仓库里的临时目录：docker 只挂载了仓库。"""
     path = Path(tempfile.mkdtemp(prefix=".check-shell-", dir=REPO))
+    # mkdtemp 建的目录只有自己读得到；容器里的 shellcheck 用的是别的用户。
+    path.chmod(0o755)
     yield path
     shutil.rmtree(path)
 
