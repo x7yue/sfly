@@ -8,7 +8,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from aeval.classify import INFRA, PLATFORM_FAULT, UNCLASSIFIED
@@ -24,6 +24,7 @@ from aeval.platform import (
     copy_session_files,
     driver_argv,
     driver_budget,
+    driver_env,
     driver_pattern,
     driver_summary,
     exit_reason,
@@ -36,6 +37,9 @@ from aeval.platform import (
 from aeval.platform import UNCLASSIFIED as UNCLASSIFIED_KIND
 from aeval.session import judge
 from aeval.tasks import GOAL, Check
+
+if TYPE_CHECKING:
+    from aeval.env import Stack
 
 END = {"type": "turn_end", "seq": 9}
 OK: dict[str, Any] = {
@@ -61,6 +65,24 @@ DEADLINE = ("deadline", "在时限内没有等到 turn_end")
         ({}, (ENVIRONMENT, "会话驱动没有给出结果")),
         ({"precheck": "助手此刻不能用：工作台不在线"}, (ENVIRONMENT, "开始前的检查没过")),
         ({**OK, **told(SIGNAL)}, (ENVIRONMENT, "评测自己的问题：会话驱动被结束了")),
+        # 管理员登录失败：开始前的检查里先判了环境故障。
+        (
+            {
+                "precheck": "管理员登录失败：管理员登录返回 401：x",
+                **told(("login", "管理员登录失败：管理员登录返回 401：x")),
+            },
+            (ENVIRONMENT, "开始前的检查没过：管理员登录失败"),
+        ),
+        # 建会话被 503 拒绝、原因是环境没准备好（模型、助手服务的事件流）：环境故障，不是平台的错。
+        (
+            {
+                **OK,
+                "session": None,
+                "turn_end": None,
+                **told(("not_ready", "POST … 返回 503：model_unavailable")),
+            },
+            (ENVIRONMENT, "建会话时环境没有准备好：POST … 返回 503"),
+        ),
         (
             {**OK, "turn_end": None, **told(("evaluator", "会话驱动出错：KeyError: 'x'"))},
             (ENVIRONMENT, "评测自己的问题：会话驱动出错"),
@@ -251,9 +273,13 @@ def test_read_driver_stops_the_driver_when_the_total_time_is_up() -> None:
 def test_the_driver_pattern_finds_this_drivers_command_line_and_no_other() -> None:
     argv = driver_argv("mirror", "/r/run-7/prompt.md", "/r/run-7", 1260.0)
     pattern = re.compile(driver_pattern("/r/run-7"))
+
     # pkill -f 对着容器里驱动的命令行（`python3 <驱动> …`）匹配。
-    assert pattern.search(" ".join(argv[3:]))
-    assert not pattern.search(" ".join(driver_argv("mirror", "/r/run-8/p.md", "/r/run-8", 1)[3:]))
+    def command(parts: list[str]) -> str:
+        return " ".join(parts[parts.index("python3") :])
+
+    assert pattern.search(command(argv))
+    assert not pattern.search(command(driver_argv("mirror", "/r/run-8/p.md", "/r/run-8", 1)))
     # 发 pkill 的那个 shell 自己的命令行里有这个模式本身，不能匹配上。
     assert not pattern.search(f"sh -c pkill -TERM -f '{driver_pattern('/r/run-7')}'")
 
@@ -300,6 +326,50 @@ def test_run_driver_returns_what_the_driver_said() -> None:
         start=lambda argv: _Driver(iter([done])),  # type: ignore[arg-type,return-value]
     )
     assert found["session"] == "s1" and ended == []
+
+
+class _AdminOnly:
+    """`driver_env` 只读 `admin_password`。"""
+
+    def __init__(self, admin_password: str | None) -> None:
+        self.admin_password = admin_password
+
+
+def test_the_admin_password_goes_to_the_driver_through_the_environment_not_the_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aeval.env import ADMIN_LOGIN, ADMIN_PASSWORD_ENV
+
+    password = "pw-0123456789abcdef-should-not-appear-in-arguments"
+    env = driver_env(cast("Stack", _AdminOnly(password)))
+    assert env == {ADMIN_PASSWORD_ENV: password}
+    argv = driver_argv("mirror", "/r/p.md", "/r/run", 1200.0)
+    # `docker exec -e 名字`：参数里只有名字，没有值；登录名（不是秘密）是参数。
+    assert argv[argv.index("-e") + 1] == ADMIN_PASSWORD_ENV
+    assert password not in " ".join(argv)
+    assert argv[argv.index("--login-name") + 1] == ADMIN_LOGIN
+    # 起 docker exec 进程时把它放进这个进程的环境（`ps` 看得到的是参数，不是环境）。
+    seen: dict[str, Any] = {}
+
+    class Popen:
+        def __init__(self, argv: list[str], **kwargs: Any) -> None:
+            seen["argv"], seen["env"] = argv, kwargs.get("env")
+            self.stdout = iter([json.dumps({"event": "done"}) + "\n"])
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", Popen)
+    run_driver(argv, 5, lambda: None, env=env)
+    assert seen["env"][ADMIN_PASSWORD_ENV] == password
+    assert password not in " ".join(seen["argv"])
+
+
+def test_without_the_admin_password_the_host_stops_before_starting_the_driver() -> None:
+    from aeval import docker as d
+
+    with pytest.raises(d.DockerError, match="初始管理员的密码"):
+        driver_env(cast("Stack", _AdminOnly(None)))
 
 
 def test_the_driver_waits_past_the_platforms_own_limit() -> None:

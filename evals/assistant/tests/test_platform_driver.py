@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import signal
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,12 @@ from typing import Any
 import platform_driver
 import pytest
 from aeval.platform import ENVIRONMENT, PLATFORM, UNCLASSIFIED, classify_platform
-from platform_driver import HEARTBEAT_EVENT, Client, run, sse_events
+from platform_driver import ADMIN_PASSWORD_ENV, HEARTBEAT_EVENT, Client, run, sse_events
 
 DRIVER = Path(platform_driver.__file__)
+LOGIN_NAME = "aeval_admin"
+PASSWORD = "pw-3f9a-this-must-never-reach-a-file-or-stdout"
+COOKIE = "sfly_login=ck-8d21-neither-may-the-cookie"
 TURN_END = {"type": "turn_end", "seq": 4, "turn": 1, "outcome": "completed", "reason": "完成了"}
 STOPPED = {"type": "turn_end", "seq": 9, "turn": 1, "outcome": "stopped", "reason": "停"}
 CONTRACT = Path(__file__).resolve().parents[3] / "packages/schema/src/http/contract.ts"
@@ -51,6 +55,12 @@ class FakeControlPlane:
     - `self-stopped`：没有收到 stop，平台自己给了 `stopped` 的 turn_end；
     - `odd-outcome`：turn_end 的结局不是契约里的值；
     - `empty`：事件流只发一个心跳就结束（每次重连都这样），stop 之后发 `stopped` 的 turn_end。
+    - `login-401`、`login-no-cookie`：登录被拒绝（回应体里回显了密码）、登录成功但没有 Cookie；
+    - `model-unavailable`、`events-not-connected`、`assistant-start-failed`：建会话回 503，
+      错误码和说明照真实控制面（回应体里回显了密码和 Cookie，看记录里有没有）。
+    **和 dev 上的控制面一样要登录**：`POST /auth/login` 要 `sec-fetch-site: same-origin` 和对的
+    登录名密码，回 `Set-Cookie: sfly_login=…`；别的请求没有这个 Cookie 一律 401（建会话在 dev 上就是
+    这样）。
     `stop_code`、`end_code`：stop、end 回什么状态码；`slow`：开始前的检查和 end 各慢这么多秒。"""
 
     def __init__(
@@ -61,6 +71,8 @@ class FakeControlPlane:
         self.end_code = end_code
         self.slow = slow
         self.calls: list[tuple[str, str]] = []
+        # 每个请求带的凭据：（方法、路径、cookie、sec-fetch-site）。
+        self.seen: list[tuple[str, str, str | None, str | None]] = []
         self.stopped = threading.Event()
         self.closing = threading.Event()
         self.streams = 0
@@ -80,15 +92,66 @@ class FakeControlPlane:
                 self.end_headers()
                 self.wfile.write(data)
 
+            def _unauthorized(self) -> bool:
+                """没有登录 Cookie 的请求回 401（和 dev 上的控制面一样）；记下每个请求带了什么。"""
+                cookie = self.headers.get("cookie")
+                same = self.headers.get("sec-fetch-site")
+                owner.seen.append((self.command, self.path, cookie, same))
+                if cookie == COOKIE and same == "same-origin":
+                    return False
+                self._json(401, {"error": {"code": "unauthorized", "message": "要登录"}})
+                return True
+
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers.get("content-length") or 0)
                 body = self.rfile.read(length).decode() if length else None
                 owner.calls.append(("POST", self.path))
                 mode = owner.mode
+                if self.path == "/auth/login":
+                    owner.seen.append(("POST", self.path, None, self.headers.get("sec-fetch-site")))
+                    sent = json.loads(body or "{}")
+                    good = sent == {"login_name": LOGIN_NAME, "password": PASSWORD}
+                    if self.headers.get("sec-fetch-site") != "same-origin" or not good:
+                        # 回应体里回显了请求的密码：看驱动写记录之前有没有把它换掉。
+                        text = f"登录名或密码不对：{sent.get('password')}"
+                        return self._json(401, {"error": {"code": "unauthorized", "message": text}})
+                    if mode == "login-401":
+                        return self._json(401, {"error": {"message": f"拒绝了 {PASSWORD}"}})
+                    data = b"{}"
+                    self.send_response(200)
+                    self.send_header("content-type", "application/json")
+                    if mode != "login-no-cookie":
+                        self.send_header(
+                            "set-cookie", f"{COOKIE}; Path=/; HttpOnly; SameSite=Strict"
+                        )
+                    self.send_header("content-length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                if self._unauthorized():
+                    return
                 if self.path == "/projects/default/sessions":
                     assert json.loads(body or "{}") == {"text": "写一个节点"}
                     if mode == "create-503":
                         return self._json(503, {"code": "assistant_unavailable"})
+                    echo = f"（回显：{PASSWORD} {COOKIE}）"
+                    for name, code, message in (
+                        ("model-unavailable", "model_unavailable", "没有配置模型：缺 MODEL_KEY"),
+                        (
+                            "events-not-connected",
+                            "assistant_unavailable",
+                            "助手服务的事件流还没有连上（控制面刚启动或正在重新连接），过几秒再试",
+                        ),
+                        (
+                            "assistant-start-failed",
+                            "assistant_unavailable",
+                            "助手服务起不了这一轮的进程",
+                        ),
+                    ):
+                        if mode == name:
+                            return self._json(
+                                503, {"error": {"code": code, "message": message + echo}}
+                            )
                     if mode == "create-no-id":
                         return self._json(201, {"status": "running"})
                     if mode == "create-not-json":
@@ -105,6 +168,8 @@ class FakeControlPlane:
 
             def do_GET(self) -> None:  # noqa: N802
                 owner.calls.append(("GET", self.path))
+                if self._unauthorized():
+                    return
                 if self.path == "/projects/default/sessions":
                     time.sleep(owner.slow)
                     ready = owner.mode != "not-ready"
@@ -189,18 +254,31 @@ def quick(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(platform_driver, "RECONNECT_PAUSE_SECONDS", 0.05)
 
 
-def drive(mode: str, tmp_path: Path, max_seconds: float = 10, **codes: Any) -> dict[str, Any]:
+def drive(
+    mode: str,
+    tmp_path: Path,
+    max_seconds: float = 10,
+    client: Callable[[str], Client] | None = None,
+    **codes: Any,
+) -> dict[str, Any]:
     cp = FakeControlPlane(mode, **codes)
     said: list[dict[str, Any]] = []
     try:
         started = time.monotonic()
         record = run(
-            Client(cp.url, "eval"), "default", "写一个节点", max_seconds, tmp_path, said.append
+            client(cp.url) if client else Client(cp.url, "eval", LOGIN_NAME, PASSWORD),
+            "default",
+            "写一个节点",
+            max_seconds,
+            tmp_path,
+            said.append,
         )
         record["took"] = time.monotonic() - started
     finally:
         cp.close()
     record["calls"] = cp.calls
+    record["seen"] = cp.seen
+    record["said"] = said
     # 不论怎么结束：都写了 platform.json、说了 done。
     assert json.loads((tmp_path / "platform.json").read_text())["problems"] == record["problems"]
     assert [s["event"] for s in said] == ["done"]
@@ -208,7 +286,12 @@ def drive(mode: str, tmp_path: Path, max_seconds: float = 10, **codes: Any) -> d
 
 
 def kinds(record: dict[str, Any]) -> list[str]:
-    return [f"{method} {path.split('?')[0]}" for method, path in record["calls"]]
+    """会话相关的请求（登录不算：它另有用例）。"""
+    return [
+        f"{method} {path.split('?')[0]}"
+        for method, path in record["calls"]
+        if path != "/auth/login"
+    ]
 
 
 def gets(record: dict[str, Any]) -> int:
@@ -470,10 +553,13 @@ def test_a_signal_ends_the_session_writes_the_record_and_is_an_environment_fault
     (tmp_path / "prompt.md").write_text("写一个节点")
     proc = subprocess.Popen(
         [sys.executable, str(DRIVER), "--cp", cp.url, "--nickname", "eval"]
+        + ["--login-name", LOGIN_NAME]
         + ["--prompt-file", str(tmp_path / "prompt.md"), "--max-seconds", "60"]
         + ["--out", str(tmp_path / "run")],
         stdout=subprocess.PIPE,
         text=True,
+        # 密码只经环境变量，不在命令行参数里。
+        env={**os.environ, ADMIN_PASSWORD_ENV: PASSWORD},
     )
     try:
         deadline = time.monotonic() + 10
@@ -509,9 +595,177 @@ def test_a_deadline_that_passes_while_connecting_still_cuts_the_connection(
     try:
         started = time.monotonic()
         with (tmp_path / "events.jsonl").open("w") as sink:
-            client = Client(cp.url, "eval")
+            client = Client(cp.url, "eval", LOGIN_NAME, PASSWORD)
+            client.login()
             why = client.stream_once("s1", 0, time.monotonic() + 0.3, sink, [])
         took = time.monotonic() - started
     finally:
         cp.close()
     assert why is not None and took < 1.5, (why, took)
+
+
+def test_every_request_after_the_login_carries_the_cookie_and_the_same_origin_header(
+    tmp_path: Path,
+) -> None:
+    record = drive("ok", tmp_path)
+    assert record["problems"] == [] and classify_platform(record) is None
+    # 登录先于一切，用对的登录名和密码、带 sec-fetch-site: same-origin；
+    # 之后的每个请求（检查、建会话、事件流、结束）都带 Cookie。
+    assert record["calls"][0] == ("POST", "/auth/login")
+    assert record["seen"][0] == ("POST", "/auth/login", None, "same-origin")
+    after = record["seen"][1:]
+    assert [m for m, *_ in after] == ["GET", "POST", "GET", "POST"]
+    assert all(cookie == COOKIE and same == "same-origin" for _, _, cookie, same in after)
+
+
+def test_a_create_without_the_login_cookie_is_refused_like_on_dev() -> None:
+    from platform_driver import ControlPlaneError
+
+    # 假控制面和 dev 上的一样：没有 Cookie 的建会话回 401
+    # （驱动没登录时就会这样，被记成控制面回错）。
+    cp = FakeControlPlane("ok")
+    try:
+        with pytest.raises(ControlPlaneError, match="返回 401"):
+            Client(cp.url, "eval").request(
+                "POST", "/projects/default/sessions", {"text": "写一个节点"}
+            )
+        # 登录之后同一个请求成功。
+        client = Client(cp.url, "eval", LOGIN_NAME, PASSWORD)
+        client.login()
+        assert (
+            client.request("POST", "/projects/default/sessions", {"text": "写一个节点"})["id"]
+            == "s1"
+        )
+    finally:
+        cp.close()
+
+
+def test_a_refused_login_is_an_environment_fault_and_nothing_else_is_sent(tmp_path: Path) -> None:
+    record = drive("login-401", tmp_path)
+    assert record["session"] is None and record["seconds"] is None
+    assert record["precheck"].startswith("管理员登录失败：管理员登录返回 401")
+    assert record["problem_kinds"] == ["login"]
+    assert [c for c in record["calls"]] == [("POST", "/auth/login")]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == ENVIRONMENT and "管理员登录失败" in fault[1]
+
+
+def test_a_wrong_password_is_an_environment_fault_and_the_password_is_not_recorded(
+    tmp_path: Path,
+) -> None:
+    record = drive(
+        "ok", tmp_path, client=lambda url: Client(url, "eval", LOGIN_NAME, PASSWORD + "-wrong")
+    )
+    assert record["problem_kinds"] == ["login"]
+    assert "-wrong" not in json.dumps(record["problems"]) + record["precheck"]
+    assert "******" in record["precheck"]
+    assert classify_platform(record)[0] == ENVIRONMENT  # type: ignore[index]
+
+
+def test_login_that_gives_no_cookie_is_an_environment_fault(tmp_path: Path) -> None:
+    record = drive("login-no-cookie", tmp_path)
+    assert record["problem_kinds"] == ["login"]
+    assert "没有拿到登录 Cookie" in record["precheck"]
+    assert classify_platform(record)[0] == ENVIRONMENT  # type: ignore[index]
+
+
+def test_login_that_cannot_reach_the_control_plane_is_an_environment_fault(
+    tmp_path: Path,
+) -> None:
+    said: list[dict[str, Any]] = []
+    record = run(
+        Client("http://127.0.0.1:1", "eval", LOGIN_NAME, PASSWORD),
+        "default",
+        "写一个节点",
+        5,
+        tmp_path,
+        said.append,
+    )
+    assert record["problem_kinds"] == ["login"] and record["session"] is None
+    assert "连不上控制面" in record["precheck"]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == ENVIRONMENT
+
+
+def test_no_admin_password_is_an_environment_fault_and_says_which_variable(tmp_path: Path) -> None:
+    record = drive("ok", tmp_path, client=lambda url: Client(url, "eval", LOGIN_NAME, None))
+    assert record["problem_kinds"] == ["login"]
+    assert ADMIN_PASSWORD_ENV in record["precheck"]
+    assert record["calls"] == []
+
+
+@pytest.mark.parametrize("mode", ["model-unavailable", "events-not-connected"])
+def test_a_create_rejected_because_the_environment_is_not_ready_is_an_environment_fault(
+    mode: str, tmp_path: Path
+) -> None:
+    record = drive(mode, tmp_path)
+    assert record["session"] is None and record["turn_end"] is None
+    assert record["problem_kinds"] == ["not_ready"]
+    assert "返回 503" in record["problems"][0]
+    # 不发 stop、end（没有建成会话）。
+    assert kinds(record) == ["GET /projects/default/sessions", "POST /projects/default/sessions"]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == ENVIRONMENT
+    assert "建会话时环境没有准备好" in fault[1]
+
+
+def test_a_create_rejected_for_another_reason_stays_a_platform_fault(tmp_path: Path) -> None:
+    # 助手服务起不了这一轮的进程：同样是 503 `assistant_unavailable`，但不是环境没准备好。
+    record = drive("assistant-start-failed", tmp_path)
+    assert record["problem_kinds"] == ["control_plane"]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == PLATFORM
+
+
+@pytest.mark.parametrize(
+    "mode", ["login-401", "model-unavailable", "events-not-connected", "assistant-start-failed"]
+)
+def test_neither_the_password_nor_the_cookie_reaches_a_file_or_stdout(
+    mode: str, tmp_path: Path
+) -> None:
+    # 假控制面在错误回应里回显密码和 Cookie：驱动写进记录、标准输出之前把它们换成 ******。
+    record = drive(mode, tmp_path)
+    written = "".join(p.read_text() for p in tmp_path.rglob("*") if p.is_file())
+    stdout = json.dumps(record["said"], ensure_ascii=False)
+    for text in (written, stdout, json.dumps(record["problems"], ensure_ascii=False)):
+        assert PASSWORD not in text
+        assert COOKIE not in text and COOKIE.removeprefix("sfly_login=") not in text
+    if mode != "login-401":
+        assert "******" in written
+
+
+def test_the_driver_process_takes_the_password_from_the_environment_only(tmp_path: Path) -> None:
+    cp = FakeControlPlane("ok")
+    (tmp_path / "prompt.md").write_text("写一个节点")
+    argv = [sys.executable, str(DRIVER), "--cp", cp.url, "--nickname", "eval"]
+    argv += ["--login-name", LOGIN_NAME, "--prompt-file", str(tmp_path / "prompt.md")]
+    argv += ["--max-seconds", "30", "--out", str(tmp_path / "run")]
+    try:
+        # 密码不在参数里，也不是参数的一部分：环境里有它，这次会话成功；
+        done = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, ADMIN_PASSWORD_ENV: PASSWORD},
+        )
+        assert PASSWORD not in " ".join(argv)
+        assert done.returncode == 0, done.stdout + done.stderr
+        record = json.loads((tmp_path / "run" / "platform.json").read_text())
+        assert record["problems"] == [] and record["turn_end"] is not None
+        assert PASSWORD not in done.stdout and PASSWORD not in done.stderr
+        # 没有这个环境变量：登录失败，记成环境故障，退出码不是 0，照样写记录、说 done。
+        env = {k: v for k, v in os.environ.items() if k != ADMIN_PASSWORD_ENV}
+        missing = subprocess.run(
+            [*argv[:-1], str(tmp_path / "run2")],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+    finally:
+        cp.close()
+    assert missing.returncode == 1
+    lost = json.loads((tmp_path / "run2" / "platform.json").read_text())
+    assert lost["problem_kinds"] == ["login"] and ADMIN_PASSWORD_ENV in lost["precheck"]
+    assert json.loads(missing.stdout.strip().splitlines()[-1])["event"] == "done"

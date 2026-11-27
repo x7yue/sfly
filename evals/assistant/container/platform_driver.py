@@ -3,10 +3,21 @@
 在评测网络里的镜像站容器（`mirror`）里运行：断网的槽位（`--isolated`）不映射控制面的端口，
 宿主机直接连不上控制面。镜像站容器不是工作台，助手的命令够不着它，这个脚本和它的输出不会被助手看到。
 
+0. **登录**（#547：建会话只认用户的凭据）：用初始管理员登录（`POST /auth/login`，带
+   `sec-fetch-site: same-origin`），拿 `sfly_login` Cookie，之后每个请求都带它。登录名经
+   `--login-name`，**密码经环境变量 `SFLY_ADMIN_PASSWORD`**（宿主机 `docker exec -e
+   SFLY_ADMIN_PASSWORD` 只写名字、值在 docker 命令行进程的环境里，不在命令行参数里）；
+   密码和 Cookie 不写进任何文件、不打印：写进记录、标准输出的文字先把它们换成 `******`
+   （`Client.scrub`）。登录失败（没给密码、连不上、401……）是评测环境没准备好，记成 `login`，
+   宿主机归环境故障。
 1. **开始前的检查**：`GET /projects/<项目>/sessions` 的 `readiness`（控制面可达、助手服务连上了、
    工作台在线）。没过就不建会话：这是评测环境没准备好（环境故障），不是平台的问题。
 2. `POST /projects/<项目>/sessions`，请求体是题目的那句话：建会话、开始第一轮。回应的 `status` 是
    `queued` 时记下来（每次会话前环境都重建，不该排队；排了就按时限处理，原因写明是排队）。
+   **建会话被 503 拒绝、而且原因是环境没准备好**（`model_unavailable`：助手服务说模型没配置
+   或连不上；`assistant_not_configured`；`assistant_unavailable` 并且说明是事件流还没连上）
+   记成 `not_ready`，宿主机归环境故障（作废、`--fill` 重跑），不算平台的错；别的拒绝仍是
+   `control_plane`。
 3. `GET /sessions/<ID>/events?after=<序号>`（SSE）：每个事件原样写一行到
    `platform-events.jsonl`（控制面每 15 秒的 `control-plane-time` 心跳不写），等到这一轮带序号的
    `turn_end`。**事件流断了**（连接出错、结束了、`READ_TIMEOUT_SECONDS` 里一个字节都没有）
@@ -29,6 +40,8 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
+import re
 import signal
 import socket
 import sys
@@ -52,12 +65,24 @@ HEARTBEAT_EVENT = "time"
 # （aeval/platform.py 的 `classify_platform`）：
 # - `control_plane`：控制面的接口回了错误、回应不对、连不上（建会话、停止、结束）；
 # - `deadline`：时限内没有等到结局；`no_outcome_after_stop`：停止之后也没有等到；
-# - `evaluator`：评测自己的问题（驱动出错、写不进自己的事件记录）；`signal`：驱动被结束了。
+# - `evaluator`：评测自己的问题（驱动出错、写不进自己的事件记录）；`signal`：驱动被结束了；
+# - `login`：管理员登录失败；`not_ready`：建会话被 503 拒绝、原因是环境没准备好
+#   （模型、助手服务的事件流……）。
 CONTROL_PLANE = "control_plane"
 DEADLINE = "deadline"
 NO_OUTCOME_AFTER_STOP = "no_outcome_after_stop"
 EVALUATOR = "evaluator"
 SIGNAL = "signal"
+LOGIN = "login"
+NOT_READY = "not_ready"
+# 初始管理员的密码经这个环境变量交进来（和 aeval/env.py 的 `ADMIN_PASSWORD_ENV` 同一个名字）。
+ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
+# 建会话被 503 拒绝时，哪些原因是「环境没准备好」（控制面在写任何东西之前挡掉的：
+# `SessionService.#ready`）：错误码是 `model_unavailable`、`assistant_not_configured`，或者
+# `assistant_unavailable` 而说明里说事件流还没连上（`EVENTS_NOT_CONNECTED_MESSAGE`，控制面刚起、
+# 助手服务的事件流在退避重连）。
+NOT_READY_CODES = ("model_unavailable", "assistant_not_configured")
+EVENTS_NOT_CONNECTED_TEXT = "事件流还没有连上"
 
 
 def shut(sock: socket.socket | None) -> None:
@@ -70,7 +95,16 @@ def shut(sock: socket.socket | None) -> None:
 
 
 class ControlPlaneError(RuntimeError):
-    """控制面的接口回了错误（状态码和返回的内容在消息里），回应不对，或者连不上。"""
+    """控制面的接口回了错误（状态码和返回的内容在消息里），回应不对，或者连不上。
+    `not_ready`：建会话被 503 拒绝、原因是环境没准备好（见 `NOT_READY_CODES`）。"""
+
+    def __init__(self, message: str, not_ready: bool = False) -> None:
+        super().__init__(message)
+        self.not_ready = not_ready
+
+
+class LoginError(ControlPlaneError):
+    """管理员登录没成：没给密码、连不上、被拒绝、没拿到 Cookie。"""
 
 
 class RecordError(Exception):
@@ -107,21 +141,98 @@ def is_turn_end(event: dict[str, Any]) -> bool:
     return event.get("type") == "turn_end" and isinstance(event.get("seq"), int)
 
 
+def not_ready_rejection(body: str) -> bool:
+    """503 的回应体（`{"error": {"code": …, "message": …}}`）说的是环境没准备好？
+    见 `NOT_READY_CODES`。"""
+    try:
+        error = json.loads(body).get("error") or {}
+    except (ValueError, AttributeError):
+        return False
+    code = error.get("code")
+    if code in NOT_READY_CODES:
+        return True
+    return code == "assistant_unavailable" and EVENTS_NOT_CONNECTED_TEXT in str(
+        error.get("message")
+    )
+
+
 class Client:
-    def __init__(self, base: str, nickname: str) -> None:
+    def __init__(
+        self,
+        base: str,
+        nickname: str,
+        login_name: str | None = None,
+        password: str | None = None,
+    ) -> None:
         parsed = urllib.parse.urlsplit(base)
         self.host = parsed.hostname or "localhost"
         self.port = parsed.port or 80
         self.nickname = nickname
+        self.login_name = login_name
+        self._password = password
+        # 登录拿到的 Cookie（`sfly_login=…`）：一个会话凭据，和密码一样不写进任何文件、不打印。
+        self._cookie: str | None = None
 
     def _connection(self, timeout: float) -> http.client.HTTPConnection:
         return http.client.HTTPConnection(self.host, self.port, timeout=timeout)
 
+    def scrub(self, text: str) -> str:
+        """写进记录、标准输出之前，把密码和 Cookie 的值换成 `******`（控制面的错误回应、
+        异常消息里不该有，但不靠它们不回显）。"""
+        for secret in (self._password, self._cookie):
+            if secret:
+                text = text.replace(secret, "******")
+                text = text.replace(secret.removeprefix("sfly_login="), "******")
+        return text
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"x-sfly-nickname": self.nickname}
+        if self._cookie:
+            # 登录 Cookie 只对同源的请求有效（和控制台页面自己发的请求一样）。
+            headers["cookie"] = self._cookie
+            headers["sec-fetch-site"] = "same-origin"
+        return headers
+
+    def login(self) -> None:
+        """用初始管理员登录（没有配登录名时什么也不做，给对着旧控制面的测试用）。
+        失败抛 `LoginError`，消息里不带密码。"""
+        if not self.login_name:
+            return
+        if not self._password:
+            raise LoginError(f"没有管理员密码（环境变量 {ADMIN_PASSWORD_ENV} 是空的）")
+        data = json.dumps(
+            {"login_name": self.login_name, "password": self._password}, ensure_ascii=False
+        ).encode()
+        conn = self._connection(30)
+        try:
+            conn.request(
+                "POST",
+                "/auth/login",
+                body=data,
+                headers={"content-type": "application/json", "sec-fetch-site": "same-origin"},
+            )
+            response = conn.getresponse()
+            raw = response.read()
+            cookies = response.msg.get_all("set-cookie") or []
+        except (OSError, http.client.HTTPException) as error:
+            raise LoginError(f"管理员登录连不上控制面：{self.scrub(str(error))}") from error
+        finally:
+            conn.close()
+        if response.status >= 300:
+            detail = self.scrub(raw.decode(errors="replace")[:500])
+            raise LoginError(f"管理员登录返回 {response.status}：{detail}")
+        for cookie in cookies:
+            match = re.match(r"(sfly_login=[^;\s]+)", cookie)
+            if match:
+                self._cookie = match.group(1)
+                return
+        raise LoginError("管理员登录没有拿到登录 Cookie")
+
     def request(self, method: str, path: str, body: Any = None) -> Any:
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
-        # 鉴权（#547、#494）：现在建会话、停止、结束只要昵称（控制面不带凭据也放行）；
-        # 强制鉴权之后改成用初始管理员登录、签个人令牌，带上它。
-        headers = {"x-sfly-nickname": self.nickname}
+        # 鉴权：建会话只认用户的凭据（#547），所以先登录（`login`），之后每个请求都带 Cookie；
+        # 别的接口在 #494 之前不要凭据，一次带上省得到时再改。
+        headers = self._headers()
         if data is not None:
             headers["content-type"] = "application/json"
         conn = self._connection(30)
@@ -135,7 +246,10 @@ class Client:
             conn.close()
         if response.status >= 300:
             detail = raw.decode(errors="replace")[:500]
-            raise ControlPlaneError(f"{method} {path} 返回 {response.status}：{detail}")
+            raise ControlPlaneError(
+                f"{method} {path} 返回 {response.status}：{detail}",
+                not_ready=response.status == 503 and not_ready_rejection(detail),
+            )
         try:
             return json.loads(raw or b"null")
         except ValueError as error:
@@ -170,7 +284,7 @@ class Client:
             conn.request(
                 "GET",
                 f"/sessions/{session_id}/events?after={after}",
-                headers={"accept": "text/event-stream", "x-sfly-nickname": self.nickname},
+                headers={"accept": "text/event-stream", **self._headers()},
             )
             with lock:
                 held[0] = conn.sock
@@ -266,7 +380,8 @@ def run(
     }
 
     def problem(kind: str, text: str) -> None:
-        record["problems"].append(text)
+        # 记下来的文字先把密码和 Cookie 的值换掉：记录和标准输出里不该有凭据。
+        record["problems"].append(client.scrub(text))
         record["problem_kinds"].append(kind)
 
     events: list[dict[str, Any]] = []
@@ -275,8 +390,15 @@ def run(
     out.mkdir(parents=True, exist_ok=True)
     with (out / "platform-events.jsonl").open("w") as sink:
         try:
-            failed = precheck(client, project)
-            record["precheck"] = "ok" if failed is None else failed
+            failed: str | None = None
+            try:
+                client.login()
+            except LoginError as error:
+                failed = f"管理员登录失败：{error}"
+                problem(LOGIN, failed)
+            if failed is None:
+                failed = precheck(client, project)
+            record["precheck"] = "ok" if failed is None else client.scrub(failed)
             if failed is None:
                 asked = time.monotonic()
                 session = client.request("POST", f"/projects/{project}/sessions", {"text": prompt})
@@ -303,7 +425,7 @@ def run(
                     if not got:
                         problem(NO_OUTCOME_AFTER_STOP, "停止之后没有等到结局")
         except ControlPlaneError as error:
-            problem(CONTROL_PLANE, str(error))
+            problem(NOT_READY if error.not_ready else CONTROL_PLANE, str(error))
         except RecordError as error:
             problem(EVALUATOR, str(error))
         except Interrupted:
@@ -332,6 +454,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cp", default="http://sfly.internal:8080")
     parser.add_argument("--project", default="default")
     parser.add_argument("--nickname", required=True)
+    parser.add_argument(
+        "--login-name",
+        help=f"初始管理员的登录名；密码只经环境变量 {ADMIN_PASSWORD_ENV} 交进来，不经命令行参数",
+    )
     parser.add_argument("--prompt-file", required=True)
     parser.add_argument("--max-seconds", type=float, required=True)
     parser.add_argument("--out", required=True)
@@ -347,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(line, ensure_ascii=False), flush=True)
 
     record = run(
-        Client(args.cp, args.nickname),
+        Client(args.cp, args.nickname, args.login_name, os.environ.get(ADMIN_PASSWORD_ENV)),
         args.project,
         Path(args.prompt_file).read_text(),
         args.max_seconds,

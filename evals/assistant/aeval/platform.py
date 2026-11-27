@@ -13,8 +13,9 @@
   内存峰值由评测自己在助手容器里取样（`PeakSampler`），不为它改产品。
 
 **三类结局**（`classify_platform`、`session.judge`）：
-- 环境故障：开始前的检查没过（控制面连不上、助手服务没连上控制面、工作台不在线）、
-  会话驱动没给出结果或被结束了、模型端点的故障（`classify` 从 pi 的事件里认）。作废，`--fill` 重跑。
+- 环境故障：开始前的检查没过（管理员登录失败、控制面连不上、助手服务没连上控制面、工作台不在线）、
+  会话驱动没给出结果或被结束了、建会话被 503 拒绝而原因是环境没准备好（模型没配置或连不上、
+  助手服务的事件流还没连上）、模型端点的故障（`classify` 从 pi 的事件里认）。作废，`--fill` 重跑。
 - 平台故障：检查过了之后平台这一侧出的问题（建会话被拒或回应不对、
   平台在自己的上限上没给结局要评测来停、停止之后没有结局、`stop`/`end` 回错、结局是 `failed`、
   `interrupted`）。**有效的失败**：算进平台臂的通过率和判定，主类是「平台故障」，`report` 逐次列出。
@@ -28,6 +29,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shlex
 import subprocess
@@ -40,7 +42,7 @@ from typing import Any
 
 from aeval import docker as d
 from aeval.classify import read_events
-from aeval.env import Stack
+from aeval.env import ADMIN_LOGIN, ADMIN_PASSWORD_ENV, Stack
 from aeval.models import Model, load_models
 from aeval.tasks import REFERENCE_DIR, Task, stage_reference
 
@@ -52,8 +54,9 @@ DEADLINE_SLACK_SECONDS = 60.0
 # 会话驱动停下之后等结局的时间（platform_driver.STOP_WAIT_SECONDS），宿主机在它之外再留的余量。
 DRIVER_STOP_WAIT_SECONDS = 40.0
 HOST_SLACK_SECONDS = 120.0
-# 发话的人：和臂 A 的命令一样记成 eval（控制面给助手的命令带上 SFLY_NICKNAME=eval、AI_AGENT=pi），
-# 判分时分得开评测自己（grader）的操作。
+# 请求里带的昵称头。建会话只认用户的凭据（#547），驱动用初始管理员登录，会话和助手的命令
+# （`SFLY_NICKNAME`、`AI_AGENT=pi`）记在这个用户的显示名下，昵称头对带了凭据的请求不起作用；
+# 判分里评测自己的操作用 `grader` 这个昵称，和助手的分得开。
 NICKNAME = "eval"
 DRIVER = "/aeval/container/platform_driver.py"
 DRIVER_OUT = "/tmp/aeval-platform"
@@ -85,6 +88,17 @@ PROBLEM_CLASSES = {
     "no_outcome_after_stop": PLATFORM,
     "evaluator": ENVIRONMENT,
     "signal": ENVIRONMENT,
+    # 管理员登录失败（开始前的检查里先判了，这里列出来是为了「认得出」）；建会话被 503 拒绝、
+    # 原因是环境没准备好（模型没配置或连不上、助手服务的事件流还没连上）：环境故障，不是平台的错。
+    "login": ENVIRONMENT,
+    "not_ready": ENVIRONMENT,
+}
+# 环境故障里每种问题怎么称呼（写进原因）。
+ENVIRONMENT_LABELS = {
+    "evaluator": "评测自己的问题",
+    "signal": "评测自己的问题",
+    "login": "管理员登录失败",
+    "not_ready": "建会话时环境没有准备好",
 }
 
 
@@ -92,8 +106,9 @@ def classify_platform(platform: dict[str, Any]) -> tuple[str, str] | None:
     """这次会话里平台和评测环境有没有出问题：（`ENVIRONMENT`、`PLATFORM` 或 `UNCLASSIFIED`，原因），
     都没有是 None。每一种情况明确列出来归哪一类，不靠兜底：
 
-    - 环境故障：会话驱动没给出结果、开始前的检查没过、评测自己的问题（驱动出错、
-      写不进自己的事件记录、驱动被结束了）；
+    - 环境故障：会话驱动没给出结果、开始前的检查没过（含管理员登录失败）、评测自己的问题
+      （驱动出错、写不进自己的事件记录、驱动被结束了）、建会话被 503 拒绝而原因是环境没准备好
+      （`model_unavailable`、事件流还没连上……）；
     - 平台故障：评测停下了它（平台在自己的上限上没给结局；先于「驱动被结束了」判，不被它盖掉）、
       建会话或停止、结束回了错误、没有等到结局、结局是 `failed`、`interrupted`，或者平台自己给了
       `stopped` 而评测没有让它停；
@@ -113,9 +128,13 @@ def classify_platform(platform: dict[str, Any]) -> tuple[str, str] | None:
         return UNCLASSIFIED, f"认不出的问题：{problems}"
     if platform.get("deadline_passed"):
         return PLATFORM, f"平台在自己的上限上没有给出结局，评测停下了它：{problems}"
-    evaluator = [p for p, k in zip(listed, kinds, strict=True) if PROBLEM_CLASSES[k] == ENVIRONMENT]
-    if evaluator:
-        return ENVIRONMENT, f"评测自己的问题：{'；'.join(evaluator)}"
+    environment = [
+        (ENVIRONMENT_LABELS[k], p)
+        for p, k in zip(listed, kinds, strict=True)
+        if PROBLEM_CLASSES[k] == ENVIRONMENT
+    ]
+    if environment:
+        return ENVIRONMENT, "；".join(f"{label}：{text}" for label, text in environment)
     if not platform.get("session"):
         return PLATFORM, f"没有建成会话：{problems}"
     turn_end = platform.get("turn_end")
@@ -399,15 +418,20 @@ def platform_record(platform: dict[str, Any], summary: dict[str, Any]) -> dict[s
 
 
 def driver_argv(mirror: str, prompt: str, run_dir: str, budget: float) -> list[str]:
-    """宿主机起会话驱动的命令（在镜像站容器里）。"""
+    """宿主机起会话驱动的命令（在镜像站容器里）。管理员密码**不在参数里**：`-e 名字` 只写名字，
+    值在运行这条命令的进程的环境里（`driver_env`），`ps` 看得到的参数里没有它。"""
     return [
         "docker",
         "exec",
+        "-e",
+        ADMIN_PASSWORD_ENV,
         mirror,
         "python3",
         DRIVER,
         "--nickname",
         NICKNAME,
+        "--login-name",
+        ADMIN_LOGIN,
         "--prompt-file",
         prompt,
         "--max-seconds",
@@ -415,6 +439,17 @@ def driver_argv(mirror: str, prompt: str, run_dir: str, budget: float) -> list[s
         "--out",
         run_dir,
     ]
+
+
+def driver_env(stack: Stack) -> dict[str, str]:
+    """起会话驱动的进程要加的环境变量：初始管理员的密码（每次 `reset` 随机生成，在
+    `stack.admin_password` 里）。经 `docker exec -e 名字` 交给容器里的驱动；不进命令行参数、
+    `platform.json`、`driver-stdout.log`。"""
+    if not stack.admin_password:
+        raise d.DockerError(
+            "不知道初始管理员的密码：控制面不是这一次进程起的（先 ./aeval.sh up，或 stack.reset()）"
+        )
+    return {ADMIN_PASSWORD_ENV: stack.admin_password}
 
 
 def driver_pattern(run_dir: str) -> str:
@@ -428,10 +463,12 @@ def run_driver(
     timeout: float,
     end_driver: Callable[[], None],
     start: Callable[[list[str]], subprocess.Popen[str]] | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """起会话驱动，读它的输出（总时限 `timeout`，到了结束容器里的驱动）。
-    宿主机这边被打断（Ctrl-C）时也结束容器里的驱动，不让它和 pi 在工作台上接着做。"""
-    proc = (start or _popen_driver)(argv)
+    """起会话驱动，读它的输出（总时限 `timeout`，到了结束容器里的驱动）。`env`：加给
+    `docker exec` 进程的环境变量（管理员密码，`driver_env`）。宿主机这边被打断（Ctrl-C）时也
+    结束容器里的驱动，不让它和 pi 在工作台上接着做。"""
+    proc = (start or (lambda argv: _popen_driver(argv, env)))(argv)
     try:
         return read_driver(proc.stdout or [], timeout, end_driver)
     except BaseException:
@@ -444,8 +481,14 @@ def run_driver(
             proc.kill()
 
 
-def _popen_driver(argv: list[str]) -> subprocess.Popen[str]:
-    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+def _popen_driver(argv: list[str], env: dict[str, str] | None = None) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env={**os.environ, **env} if env else None,
+    )
 
 
 def driver_budget() -> float:
@@ -518,12 +561,15 @@ def run_platform_session(
         # docker exec 断开不会结束容器里的驱动：直接给它发 SIGTERM，它照常收尾（写记录、发 end）。
         d.sh(mirror, f"pkill -TERM -f {shlex.quote(driver_pattern(run_dir))}", check=False)
 
+    # 管理员的密码在 `reset` 之后才有（每次建库换一个）；取不到就在起驱动之前报错，不让取样先开始。
+    env = driver_env(stack)
     sampler = PeakSampler(stack.assistant_container)
     try:
         platform, log = run_driver(
             driver_argv(mirror, prompt, run_dir, budget),
             budget + DRIVER_STOP_WAIT_SECONDS + HOST_SLACK_SECONDS,
             end_driver,
+            env=env,
         )
     finally:
         memory = sampler.stop()
