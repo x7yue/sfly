@@ -331,7 +331,7 @@ describe("改密码、平台管理员管理账号", () => {
 	beforeEach(async () => {
 		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		adminCookie = (await login(cp, "root", ADMIN.password)).cookie;
-		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		await publishPackage(cp.asTester(), "stub", "1.0.0", { echo: ["v"] });
 	});
 	afterEach(async () => {
 		await cp.close();
@@ -596,7 +596,7 @@ describe("登出和停用关掉打开的事件流", () => {
 	};
 	/** 打开一条事件流（运行的事件流，运行存在即可；带着这个登录 Cookie）。 */
 	const openStream = async (cookie: string) => {
-		const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
+		const { run } = await seedTask(cp.asTester(), { agent: "agent-a", status: "running" });
 		return SseClient.open(cp, `/runs/${run}/events`, loginCookie(cookie));
 	};
 

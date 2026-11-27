@@ -42,7 +42,7 @@ describe("带凭据的请求", () => {
 		await db.connect();
 		editor = await accounts.user("xiaoming", { displayName: "小明" });
 		await accounts.member("default", editor, "editor");
-		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		await publishPackage(cp.asTester(), "stub", "1.0.0", { echo: ["v"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
 	});
 	afterEach(async () => {
@@ -83,7 +83,7 @@ describe("带凭据的请求", () => {
 		});
 
 		it("个人令牌：保存版本、触发、取消、运行预设、关注项记下用户 ID 和令牌的名称，显示名取用户的（昵称请求头不作数）", async () => {
-			await publishBench(cp);
+			await publishBench(cp.asTester());
 			const token = await accounts.personalToken(editor, { name: "ci-token" });
 			const headers = {
 				...bearer(token),
@@ -385,7 +385,7 @@ describe("带凭据的请求", () => {
 
 			const first = await publish(token, "plain", "", "1.0");
 			const second = await publish(token, "plain", "", "1.0.0");
-			const third = await publish({}, "plain", "", "1.0.0.0");
+			const third = await publish(token, "plain", "", "1.0.0.0");
 
 			expect([first.status, second.status, third.status]).toEqual([201, 201, 201]);
 			expect(await versionsOf("plain")).toEqual(["1.0", "1.0.0", "1.0.0.0"]);
@@ -396,7 +396,7 @@ describe("带凭据的请求", () => {
 			const token = bearer(await accounts.personalToken(admin));
 
 			// 默认项目里先有了 x@2.0，平台管理员再往公共项目发同一个版本。
-			expect((await publish({}, "elsewhere", "", "2.0")).status).toBe(201);
+			expect((await publish(token, "elsewhere", "", "2.0")).status).toBe(201);
 			const toPublic = await publish(token, "elsewhere", "?project=public", "2.0");
 			expect(toPublic.status).toBe(409);
 			expect((await error(toPublic)).message).toBe(
@@ -406,7 +406,7 @@ describe("带凭据的请求", () => {
 
 			// 反过来：公共项目里先有，默认项目再发同一个版本。
 			expect((await publish(token, "shared-first", "?project=public", "3.0")).status).toBe(201);
-			const toDefault = await publish({}, "shared-first", "", "3.0");
+			const toDefault = await publish(token, "shared-first", "", "3.0");
 			expect(toDefault.status).toBe(409);
 			expect((await error(toDefault)).message).toBe(
 				"节点包 shared-first@3.0 已存在（在公共项目里），不能覆盖已发布的版本",
@@ -430,7 +430,7 @@ describe("带凭据的请求", () => {
 
 			for (const [where, headers, query] of [
 				["往公共项目发", token, "?project=public"],
-				["往默认项目发", {}, ""],
+				["往默认项目发", token, ""],
 			] as const) {
 				const res = await publish(headers, "hidden", query, "4.0");
 				expect(res.status, where).toBe(409);
@@ -589,7 +589,7 @@ describe("带凭据的请求", () => {
 
 		it("事件流（SSE）也走同一处检查：拒绝的是 JSON 错误，不会打开流", async () => {
 			const stranger = await accounts.user("stranger");
-			const api = new ApiClient(cp);
+			const api = new ApiClient(cp.asTester());
 			const run = await api.triggerOk(await api.orchestrationWith(DOCUMENT));
 			const denied = await call(
 				bearer(await accounts.personalToken(stranger)),
@@ -880,7 +880,7 @@ describe("开发 Agent 的凭据随用户停用失效（真库）", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ defaultCredentials: false });
 		accounts = new TestAccounts(cp.database.url);
-		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		await publishPackage(cp.asTester(), "stub", "1.0.0", { echo: ["v"] });
 	});
 	afterAll(async () => {
 		await accounts.close();
@@ -938,7 +938,7 @@ describe("共享令牌", () => {
 	it("配了共享令牌时，Agent 凭据上传产物照样通过：访问检查已经核对过凭据，处理函数不再拿共享令牌比；共享令牌和不带凭据的上传仍按共享令牌", async () => {
 		const accounts = new TestAccounts(cp.database.url);
 		try {
-			const { task } = await seedTask(cp, { agent: "agent-x", status: "running" });
+			const { task } = await seedTask(cp.asTester(), { agent: "agent-x", status: "running" });
 			const upload = (headers: Record<string, string>, name: string) =>
 				cp.fetch(`/tasks/${task}/artifacts/${name}`, {
 					method: "PUT",

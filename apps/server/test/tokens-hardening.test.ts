@@ -433,7 +433,7 @@ describe("令牌的几处收紧", () => {
 		const waitEnded = (stream: SseClient) =>
 			vi.waitFor(() => expect(stream.ended).toBe(true), { timeout: 5000 });
 		const open = async (token: string) => {
-			const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
+			const { run } = await seedTask(cp.asTester(), { agent: "agent-a", status: "running" });
 			return SseClient.open(cp, `/runs/${run}/events`, bearer(token));
 		};
 

@@ -48,6 +48,8 @@ export interface TestControlPlane {
 	fetch(path: string, init?: RequestInit): Promise<Response>;
 	/** 默认带的凭据：每个昵称一个用户和他的个人令牌（{@link TestUsers}）。 */
 	readonly users: TestUsers;
+	/** 同一个控制面，`fetch` 总是带 tester 的个人令牌：`defaultCredentials: false` 的文件做准备步骤用。 */
+	asTester(): TestControlPlane;
 	/**
 	 * 停掉当前实例，在同一个数据库、同样的 HTTP / gRPC 端口上重新启动（模拟控制面重启；
 	 * 端口不变，真实 Agent 才能按原地址重连、继续下载和上传）；
@@ -271,7 +273,19 @@ export async function startTestControlPlane(
 	// 已被旧实例关闭的 keep-alive 连接（全局 fetch 的连接池会复用，偶发 ECONNRESET）。
 	let dispatcher = new Agent();
 
-	return {
+	const plane: TestControlPlane = {
+		asTester() {
+			const signed = Object.create(plane) as TestControlPlane;
+			Object.defineProperty(signed, "fetch", {
+				value: async (path: string, init: RequestInit = {}) =>
+					fetch(`${current.httpUrl}${path}`, {
+						...init,
+						headers: await users.sign(init),
+						dispatcher,
+					} as RequestInit),
+			});
+			return signed;
+		},
 		get current() {
 			return current;
 		},
@@ -314,4 +328,5 @@ export async function startTestControlPlane(
 			await rm(dataDir, { recursive: true, force: true });
 		},
 	};
+	return plane;
 }
