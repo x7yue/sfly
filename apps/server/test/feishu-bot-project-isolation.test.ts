@@ -345,8 +345,9 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 		expect((await api.delete("/projects/default/feishu-bots/ops-count")).status).toBe(204);
 		await api.createFeishuBot("ops-count", feishu.webhookUrl("count-new"));
 		await moveBot("ops-count", "alpha");
-		// 两条都还在排队：下一次尝试排在一小时之后，发送器不会动它们。
-		const later = { nextAttemptAt: new Date(clock().now().getTime() + 3_600_000) };
+		// 消息都还在排队：下一次尝试排在 50 秒之后（控制面时钟是手动的，这个测试里不走），发送器不会动它们。
+		// 不能排得更远：超过最长的退避间隔（60 秒）会被当成时钟往回跳，马上重试（delivery-policy.ts 的 isRetryDue）。
+		const later = { nextAttemptAt: new Date(clock().now().getTime() + 50_000) };
 		await enqueue("ops-count", await fakeRun("default"), "原项目留下的", later);
 		await enqueue("ops-count", await fakeRun("alpha"), "新项目自己的", later);
 		const listed = async () =>
@@ -359,9 +360,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 		// 没有运行的消息是机器人自己的项目发的：算在这个名字上（和改之前一样）。
 		await enqueue("ops-count", null, "没有运行的", later);
 		expect(await listed()).toBe(2);
-		// 单个响应：换地址会让排队的消息马上重试（原项目那条被丢弃，不发请求）；新地址十秒后才回，
-		// 这期间新项目自己的和没有运行的两条都还在排队。
-		feishu.replyTo("count-new", { delayMs: 10_000 });
+		// 单个响应：换地址的响应里的条数同样只算这个项目的（换地址不动排队的消息）。
 		const replaced = await api.patch("/projects/alpha/feishu-bots/ops-count", {
 			webhook_url: feishu.webhookUrl("count-new"),
 		});
