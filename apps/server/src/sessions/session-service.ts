@@ -870,7 +870,7 @@ export class SessionService {
 				text: message.text,
 				session: { title: session.title, created_by: session.createdBy },
 				workbench: ready.target,
-				...commandEnv(message.actor, message.token),
+				...commandEnv(message.actor, session.id, message.token),
 			});
 		} catch (error) {
 			// 下面三步是同步的，中间没有别的请求插进来：摘下留着插话的地方（之后新来的插话直接转发）、取走已经留着的、结果未知的标成正在停止。
