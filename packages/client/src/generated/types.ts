@@ -2093,16 +2093,17 @@ export interface QueueWaitView {
 	/** 读取这一刻的控制面时间：排了多久、离线了多久、多久后排队超时都按它算（命令行不用自己的时钟）。 */
 	now: Timestamp;
 	/**
+	 * disabled：管理员停用了这台 Agent（停用的 Agent 不能连接、不参与派发；排在其余状态之前：停用到连接真的关掉之间还在线也是这个）；
 	 * offline：Agent 不在线（从没连上过，或已经断开）；preparing：在线，还在准备环境，不接任务；
 	 * version_mismatch：版本与控制面不一致，不派新任务；slots_full：在线、已准备好，槽位都被占着（`holders`）；
 	 * dispatching：在线、有空闲槽位，正在派发，马上会开始。
 	 */
-	state: "offline" | "preparing" | "version_mismatch" | "slots_full" | "dispatching";
-	/** offline：Agent 最后在线的时间（从没连上过时为 null）；preparing：开始准备环境的时间；其余状态为 null。 */
+	state: "disabled" | "offline" | "preparing" | "version_mismatch" | "slots_full" | "dispatching";
+	/** disabled：停用 Agent 的时间；offline：Agent 最后在线的时间（从没连上过时为 null）；preparing：开始准备环境的时间；其余状态为 null。 */
 	since: Timestamp | null;
 	/** 排队超时的时间（超过它仍没有派发，任务以 env_error 失败）；没有设置排队超时时为 null。 */
 	expires_at: Timestamp | null;
-	/** Agent 的槽位总数；Agent 不在线时为 null。 */
+	/** Agent 的槽位总数；Agent 已停用或不在线时为 null。 */
 	slots: number | null;
 	/** slots_full：占着槽位的任务，按派发顺序；其余状态为空数组。只列读这个运行的人所在项目里的任务。 */
 	holders: SlotHolderView[];

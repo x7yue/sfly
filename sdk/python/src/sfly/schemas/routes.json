@@ -3577,6 +3577,7 @@
                               "state": {
                                 "type": "string",
                                 "enum": [
+                                  "disabled",
                                   "offline",
                                   "preparing",
                                   "version_mismatch",
@@ -19810,6 +19811,7 @@
                                     "state": {
                                       "type": "string",
                                       "enum": [
+                                        "disabled",
                                         "offline",
                                         "preparing",
                                         "version_mismatch",
@@ -20761,6 +20763,7 @@
                                     "state": {
                                       "type": "string",
                                       "enum": [
+                                        "disabled",
                                         "offline",
                                         "preparing",
                                         "version_mismatch",
@@ -21642,6 +21645,7 @@
                                     "state": {
                                       "type": "string",
                                       "enum": [
+                                        "disabled",
                                         "offline",
                                         "preparing",
                                         "version_mismatch",
@@ -22521,6 +22525,7 @@
                                       "state": {
                                         "type": "string",
                                         "enum": [
+                                          "disabled",
                                           "offline",
                                           "preparing",
                                           "version_mismatch",

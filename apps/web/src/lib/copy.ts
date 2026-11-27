@@ -637,8 +637,26 @@ export const FEISHU_BOT_SETUP = {
 	noSignature: "sfly 不支持签名校验，机器人的安全设置请用关键词或 IP 白名单。",
 } as const;
 
-/** Agent 的连接状态：Agent 管理页、控制台、场景列表和检查器的 Agent 选择都写这两个词。 */
-export const AGENT_STATUS_LABEL = { online: "在线", offline: "离线" } as const;
+/**
+ * Agent 的连接状态：Agent 管理页、控制台、场景列表和检查器的 Agent 选择都写在线、离线；
+ * 管理员停用的 Agent 写「已停用」（不是掉线，和「离线」分开说；排队说明里同一个词，`QUEUE_WAIT.disabled`）。
+ */
+export const AGENT_STATUS_LABEL = { online: "在线", offline: "离线", disabled: "已停用" } as const;
+
+/**
+ * Agent 最近一次连接用的凭据的提示（Agent 管理页每台 Agent 的头部，ADR 0029「迁移与过渡」，#492）：
+ * `label` 是状态后面的一句话，`hint` 是怎么办。共享令牌是旧的连接方式（GLOSSARY「令牌」），Agent 凭据按台签发。
+ */
+export const AGENT_AUTH = {
+	shared: {
+		label: "用共享令牌连接",
+		hint: "请换成这台 Agent 自己的凭据",
+	},
+	none: {
+		label: "没有凭据",
+		hint: "本版本内仍可连接，下一个版本起拒绝",
+	},
+} as const;
 
 /** 已请求取消、还在等待任务结束与清理的运行（故事 70：不显示成「运行中」）。 */
 export const CANCELLING_LABEL = "取消中";
@@ -743,12 +761,15 @@ export const queuedLabel = (count: number) => `${QUEUED_LABEL} ${count}`;
 
 /**
  * 排队中的节点在等什么（运行视图里排队中的尝试的 `queue_wait`）：「等 agent-a（不在线，已离线 2m 10s）· 排队 3m 05s · 6m 55s 后超时」。
- * 括号里是这台 Agent 现在的情况；槽位占满时再列出占着槽位的任务。后面的「排队 …」「… 后超时」「即将超时」是
+ * 括号里是这台 Agent 现在的情况（被停用的写「已停用 2m 10s」）；槽位占满时再列出占着槽位的任务。后面的「排队 …」「… 后超时」「即将超时」是
  * Agent 管理页排队行的写法（`agents/queue-timing.ts`）。命令行写同样的话（`sfly run show`、`sfly run start --wait`，
  * 用词由 `sdk/python/tests/test_cli_run_view.py` 检查）。
  */
 export const QUEUE_WAIT = {
 	waitingFor: "等",
+	/** 管理员停用了这台 Agent：「已停用 2m 10s」（停用了多久；和 Agent 页状态同一个词，不写「不在线」）。 */
+	disabled: (since: string | null) =>
+		since === null ? AGENT_STATUS_LABEL.disabled : `${AGENT_STATUS_LABEL.disabled} ${since}`,
 	offline: (since: string | null) => (since === null ? "不在线" : `不在线，已离线 ${since}`),
 	preparing: (since: string | null) => (since === null ? "准备环境中" : `准备环境中 ${since}`),
 	versionMismatch: "版本与控制面不一致，不派新任务",

@@ -1,5 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
+import { setAgentDisabled } from "./agent-admin-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import { metricPackage } from "./monitor-scenario";
 import { readouts } from "./overview-support";
@@ -1093,4 +1094,36 @@ test("脉冲：每个运行只在运行块的状态标签上脉冲一处；线�
 			),
 	);
 	expect(pulses).toEqual(["运行中", "运行中"]);
+});
+
+test("Agent 面板：计数分母不含已停用的 Agent，后面写「1 台已停用」；停用的 Agent 写「已停用」，不画空闲槽（#492）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agents = [];
+	for (const name of ["agent-a", "agent-b", "agent-c"]) {
+		agents.push(await connectAgent({ name, agentVersion: controlPlane.version, slots: 2 }));
+	}
+	// 环境里出现过一个运行，控制台才是实况墙（之前是「开始使用」）。
+	await runOnce(controlPlane, agents[0] as FakeAgent);
+	await page.goto("/");
+	const panel = region(page, "Agent");
+	// 侧栏「Agent 管理」旁的数和面板标题同一个口径：已停用的不算在总数里。
+	const sidebarCount = page.getByRole("link", { name: /Agent 管理/ });
+	await expect(panel).toContainText("3 / 3 在线");
+	await expect(sidebarCount).toContainText("3/3");
+	await expect(panel).not.toContainText("已停用");
+
+	await setAgentDisabled(controlPlane, "agent-c", true);
+	// 页面每 5 秒重新读一次 Agent 列表。
+	await expect(panel).toContainText("2 / 2 在线 · 1 台已停用", { timeout: 15_000 });
+	await expect(sidebarCount).toContainText("2/2");
+	await expect(sidebarCount).not.toContainText("2/3");
+	const stopped = panel.getByRole("region", { name: "agent-c", exact: true });
+	await expect(stopped).toContainText("已停用");
+	await expect(stopped).not.toContainText("离线");
+	// 停用的 Agent 不接任务：不画空闲槽。
+	await expect(stopped.getByRole("list")).toHaveCount(0);
+	await expect(panel.getByRole("region", { name: "agent-b", exact: true })).toContainText("在线");
 });

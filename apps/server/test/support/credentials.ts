@@ -149,6 +149,18 @@ export class TestAccounts {
 		return token;
 	}
 
+	/**
+	 * 把一台 Agent 最近一次连接用的凭据记成这个样子（`agents.last_auth_kind`）：造「用共享令牌连接」「没有凭据」的 Agent
+	 * 不必真的配共享令牌、或让一台已有 Agent 凭据的名字用旧方式连接（控制面不接受）。
+	 */
+	async agentAuthKind(name: string, kind: "agent" | "shared" | "none" | null): Promise<void> {
+		const { rowCount } = await this.#pool.query(
+			"update agents set last_auth_kind = $2 where name = $1",
+			[name, kind],
+		);
+		if (rowCount === 0) throw new Error(`没有这台 Agent：${name}`);
+	}
+
 	/** Agent 凭据行的 ID（`agent_credentials.id`）：按原值的哈希找。 */
 	async agentCredentialId(token: string): Promise<string> {
 		const { rows } = await this.#pool.query(

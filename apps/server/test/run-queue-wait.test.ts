@@ -1,8 +1,10 @@
 // 切入点 A（#457）：排队中的尝试在等什么。运行视图里排队中的尝试带 `queue_wait`：等的 Agent 是不是在线、
 // 离线了多久（最后在线的时间）、还在准备环境、版本不一致，或者槽位被哪些任务占着，以及排队超时的时间；
 // 都由控制面在读取的这一刻按派发的条件判断，页面和命令行不自己推算。
+import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { bearer, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
@@ -38,17 +40,32 @@ describe("排队中的尝试在等什么", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	const agents: FakeAgent[] = [];
+	/** 停用、恢复 Agent 要登录的管理员（项目管理员的个人令牌）。 */
+	let accounts: TestAccounts;
+	let admin: Record<string, string>;
 
 	beforeEach(async () => {
 		clock = new ManualClock();
 		cp = await startTestControlPlane({ clock });
 		api = new ApiClient(cp);
+		accounts = new TestAccounts(cp.database.url);
+		const boss = await accounts.user("boss");
+		await accounts.member("default", boss, "project_admin");
+		admin = bearer(await accounts.personalToken(boss));
 		await publishPackage(cp, "stub", "1.0.0", { echo: [] });
 	});
 	afterEach(async () => {
 		await Promise.all(agents.splice(0).map((a) => a.disconnect()));
+		await accounts.close();
 		await cp.close();
 	});
+	const setDisabled = async (name: string, disabled: boolean) => {
+		const response = await cp.fetch(`/agents/${name}/${disabled ? "disable" : "enable"}`, {
+			method: "POST",
+			headers: admin,
+		});
+		expect(response.status).toBe(204);
+	};
 
 	const connect = async (hello: HelloInit, opts: { preparing?: boolean } = {}) => {
 		const agent = await FakeAgent.connect(cp.grpcUrl, hello, opts);
@@ -89,6 +106,80 @@ describe("排队中的尝试在等什么", () => {
 			slots: null,
 			holders: [],
 			other_project_holders: 0,
+		});
+	});
+
+	it("Agent 被管理员停用：写「已停用」和停用的时间（不写离线）；恢复之后照常（#492）", async () => {
+		// 停用之后触发会被预检拒绝（引用了停用的 Agent）：这是触发时还没停用、排着队的运行。
+		const gone = await connect({ name: "agent-a" });
+		await disconnect(gone);
+		const runId = await api.triggerOk(await api.orchestrationWith(scenario("agent-a")));
+		expect((await attemptOf(runId))?.queue_wait?.state).toBe("offline");
+
+		clock.advance(30 * SECOND);
+		await setDisabled("agent-a", true);
+		const disabledAt = clock.now().toISOString();
+		clock.advance(2 * MINUTE);
+
+		const wait = (await attemptOf(runId))?.queue_wait;
+		expect(wait).toEqual({
+			agent: "agent-a",
+			now: clock.now().toISOString(),
+			state: "disabled",
+			since: disabledAt,
+			expires_at: expect.any(String),
+			slots: null,
+			holders: [],
+			other_project_holders: 0,
+		});
+
+		// 恢复之后照常：Agent 重新连上就会接这个排着的任务。
+		await setDisabled("agent-a", false);
+		const back = await connect({ name: "agent-a" });
+		await back.nextAssign();
+	});
+
+	it("恢复之后、还没重连：写不在线，since 是最后在线的时间（不是停用的时间）", async () => {
+		const gone = await connect({ name: "agent-a" });
+		clock.advance(30 * SECOND);
+		const lastSeen = clock.now().toISOString();
+		await disconnect(gone);
+		const runId = await api.triggerOk(await api.orchestrationWith(scenario("agent-a")));
+		clock.advance(30 * SECOND);
+		await setDisabled("agent-a", true);
+		clock.advance(MINUTE);
+		expect((await attemptOf(runId))?.queue_wait?.state).toBe("disabled");
+
+		await setDisabled("agent-a", false);
+		expect((await attemptOf(runId))?.queue_wait).toMatchObject({
+			state: "offline",
+			since: lastSeen,
+			slots: null,
+		});
+	});
+
+	it("已停用排在连接状态之前：停用到连接真的关掉之间还在线的 Agent，槽位占满也写已停用", async () => {
+		const agent = await connect({ name: "agent-a", slots: 1 });
+		const id = await api.orchestrationWith(scenario("agent-a"));
+		await api.triggerOk(id);
+		await agent.nextAssign();
+		const waitingRun = await api.triggerOk(id);
+		expect((await attemptOf(waitingRun))?.queue_wait?.state).toBe("slots_full");
+
+		// 只写库、不关连接：造出「已经停用、连接还没关」的那一瞬。
+		const db = new pg.Client({ connectionString: cp.database.url });
+		await db.connect();
+		try {
+			await db.query("update agents set disabled_at = $1 where name = 'agent-a'", [clock.now()]);
+		} finally {
+			await db.end();
+		}
+		const wait = (await attemptOf(waitingRun))?.queue_wait;
+		expect(wait).toMatchObject({
+			state: "disabled",
+			since: clock.now().toISOString(),
+			slots: null,
+			holders: [],
 		});
 	});
 

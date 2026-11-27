@@ -1,6 +1,7 @@
 import type { AgentView, RunFocusItem } from "@sfly/schema";
-import { acceptsTasks, agentStatusView } from "#/agents/agent-status";
+import { acceptsTasks, agentCounts, agentStatusView } from "#/agents/agent-status";
 import { countAttention, type FocusPreview, focusPreview } from "#/focus/focus-preview";
+import { AGENT_STATUS_LABEL } from "#/lib/copy";
 
 /**
  * 实况墙在数量变多时的退化规则（外壳页方案 4.2）。长链折叠在线路组件里（`components/run-lines` 的 `foldStations`）。
@@ -69,8 +70,8 @@ export function readoutPlan<T extends Pick<RunFocusItem, "anomaly">>(
 const AGENT_LIST_MAX = 5;
 
 /**
- * 控制台右栏的 Agent：不超过 5 台时全列；更多时只列忙碌（有执行中或排队的任务）、接不了新任务（离线、准备环境中、版本不一致、
- * 更新中，`acceptsTasks`）和其余不是「在线」状态（安装节点包中）的 Agent，其余在线、空闲、能接任务的合并成一个数。
+ * 控制台右栏的 Agent：不超过 5 台时全列；更多时只列忙碌（有执行中或排队的任务）、接不了新任务（已停用、离线、准备环境中、
+ * 版本不一致、更新中，`acceptsTasks`）和其余不是「在线」状态（安装节点包中）的 Agent，其余在线、空闲、能接任务的合并成一个数。
  * 完整的列表在 Agent 管理页。
  */
 export function agentColumn(agents: readonly AgentView[]): { listed: AgentView[]; idle: number } {
@@ -83,4 +84,14 @@ export function agentColumn(agents: readonly AgentView[]): { listed: AgentView[]
 			agent.queued_tasks.length > 0,
 	);
 	return { listed, idle: agents.length - listed.length };
+}
+
+/**
+ * 控制台右栏 Agent 面板标题旁的计数：「2 / 3 在线」。分母不含已停用的 Agent（管理员停用它是决定，不是掉线了，
+ * 不该让「在线」的比例看起来像出了问题）；有停用的再接「· 1 台已停用」。
+ */
+export function agentCountLabel(agents: readonly AgentView[]): string {
+	const { online, enabled, disabled } = agentCounts(agents);
+	const base = `${online} / ${enabled} ${AGENT_STATUS_LABEL.online}`;
+	return disabled === 0 ? base : `${base} · ${disabled} 台${AGENT_STATUS_LABEL.disabled}`;
 }
