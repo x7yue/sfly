@@ -79,7 +79,7 @@ test("失败原因、出错位置、日志里的警告：概览、详情的各�
 	await expectNoUnsafeText(page, page.getByRole("banner"), "顶栏：");
 
 	// 控制台：运行块里正在做的节点。
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("region", { name: "正在运行" })).toBeVisible();
 	await expectNoUnsafeText(page, undefined, "控制台：");
 });
@@ -265,7 +265,7 @@ test("Agent 的名称、版本、系统：控制台的 Agent 列、Agent 管理�
 	await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
 	await expectNoUnsafeText(page, undefined, "Agent 管理页：");
 	await expectWrittenOut(page, BIDI);
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("heading", { name: "Agent", exact: false }).first()).toBeVisible();
 	await expectNoUnsafeText(page, undefined, "控制台：");
 });

@@ -723,7 +723,7 @@ test.describe("没有「管理」范围的人看到的文字", () => {
 		controlPlane,
 	}) => {
 		await signInAs(context, controlPlane, { login: "ed", role: "editor" });
-		await page.goto("/");
+		await page.goto("/dashboard");
 		const step = page.locator('[data-step="agent"]');
 		await expect(step).toContainText(ASK);
 		await expect(step).not.toContainText("管理页为它的名字签发凭据");

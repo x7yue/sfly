@@ -301,7 +301,7 @@ for (const viewport of VIEWPORTS) {
 		test("快捷键面板：每一行的名称不折行、和按键之间至少隔 12px，每一行一样高；1440×900 整个面板放得下，放不下时刚打开就有「还能往下滚」的提示，滚到底最后一行完整露出", async ({
 			page,
 		}) => {
-			await page.goto("/");
+			await page.goto("/dashboard");
 			await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 			await page.keyboard.press("?");
 			const dialog = page.getByRole("dialog", { name: "快捷键" });

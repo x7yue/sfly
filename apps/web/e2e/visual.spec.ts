@@ -844,7 +844,7 @@ test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
 	]);
 	// 页面在外壳里滚动，整页截图截不到：窗口加高，让失败行的最终值也在画面里。
 	await page.setViewportSize({ width: 1440, height: 1100 });
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(
 		page.getByRole("region", { name: "最近结束", exact: true }).locator("li[data-run-status]"),
 	).toHaveCount(2);
@@ -877,7 +877,7 @@ test("控制台：关注项读数按运行块的宽度放 3 格，有异常的�
 	await focusWallRun(controlPlane, agent, clock);
 	await page.clock.setFixedTime(clock.now());
 	await page.setViewportSize({ width: 1280, height: 800 });
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const readout = page.getByRole("list", { name: "关注项读数" });
 	await expect(readout.getByRole("link")).toHaveCount(4);
 	await expect(readout).toContainText("还有 4 个关注项");
@@ -887,7 +887,7 @@ test("控制台：关注项读数按运行块的宽度放 3 格，有异常的�
 });
 
 test("控制台：全新环境的「开始使用」", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("region", { name: "开始使用", exact: true })).toContainText(
 		"还没有 Agent 连接",
 	);
@@ -901,7 +901,7 @@ test("控制台：「开始使用」第 1、2 步已完成，白色按钮在第 
 }) => {
 	await connectAgent({ name: "verify-agent", slots: 2 });
 	await publishPackage(controlPlane);
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.locator('[data-step="scenario"]')).toHaveAttribute("data-state", "next");
 	await expect(page).toHaveScreenshot("dashboard-empty-progress.png");
 });
@@ -921,7 +921,7 @@ test("控制台：多个运行时换成紧凑行，点开一行展开成运行�
 	await publishPackage(controlPlane);
 	await manyRuns(controlPlane, agent, clock, 7);
 	await page.clock.setFixedTime(clock.now());
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const left = page.getByRole("region", { name: "正在运行", exact: true });
 	await left.getByRole("button", { name: /浸泡 06/ }).click();
 	await expect(left.getByRole("region", { name: "浸泡 06", exact: true })).toBeVisible();
@@ -949,7 +949,7 @@ test("控制台：30 个节点的长链只画当前站附近几站，其余折�
 	await publishPackage(controlPlane);
 	await longChainRun(controlPlane, agent, clock);
 	await page.clock.setFixedTime(clock.now());
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const lines = page.getByRole("list", { name: "各链进度" });
 	await expect(lines).toContainText("已完成 15 个");
 	await expect(lines).toContainText("还有 13 个");
@@ -2686,7 +2686,7 @@ test("助手页：会话列表（在做、排队中第几位、空闲、被打�
 			last_activity_at: at(10),
 		}),
 	]);
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("list-status")).toHaveText([
 		"在做",
 		"排队中 · 排在第 1 位",

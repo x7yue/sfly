@@ -47,16 +47,28 @@ const box = async (locator: Locator) => {
 
 // ---------------------------------------------------------------- 导航
 
-test("导航里有「助手」，快捷键 G I 能跳过去，面包屑写助手", async ({ page }) => {
-	await page.goto("/");
+test("助手是首页：导航第一项是「助手」，快捷键 G I 能跳过去，面包屑写助手", async ({ page }) => {
+	await page.goto("/dashboard");
+	await expect(page.getByRole("heading", { level: 1, name: "控制台" })).toBeVisible();
 	const nav = page.getByRole("navigation", { name: "主导航" });
-	await expect(nav.getByRole("link", { name: "助手" })).toBeVisible();
+	await expect(nav.getByRole("link").first()).toHaveAccessibleName(/^助手/);
 	await page.keyboard.press("g");
 	await page.keyboard.press("i");
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 	await expect(page.getByRole("heading", { level: 1, name: "助手" })).toBeVisible();
 	await expect(nav.getByRole("link", { name: "助手" })).toHaveAttribute("aria-current", "page");
 	await expect(page.getByRole("navigation", { name: "面包屑" })).toContainText("助手");
+});
+
+test("原来的 /sessions 跳到首页；会话页里导航的「助手」仍是当前项", async ({ page }) => {
+	await page.goto("/sessions");
+	await expect(page).toHaveURL(/\/$/);
+	await expect(page.getByRole("heading", { level: 1, name: "助手" })).toBeVisible();
+
+	await openSession(page, { status: "idle" }, [userMessage(1)]);
+	const nav = page.getByRole("navigation", { name: "主导航" });
+	await expect(nav.getByRole("link", { name: "助手" })).toHaveAttribute("aria-current", "page");
+	await expect(nav.getByRole("link", { name: "控制台" })).not.toHaveAttribute("aria-current");
 });
 
 // ---------------------------------------------------------------- 助手页
@@ -64,7 +76,7 @@ test("导航里有「助手」，快捷键 G I 能跳过去，面包屑写助手
 test("没有配置助手：就绪状态写明原因，「开始」不可用，输入框照常可以写；没有会话时一句说明", async ({
 	page,
 }) => {
-	await page.goto("/sessions");
+	await page.goto("/");
 	const readiness = page.getByTestId("readiness");
 	await expect(readiness).toHaveAttribute("data-ready", "false");
 	await expect(readiness).toContainText("现在不能用：");
@@ -98,7 +110,7 @@ test("就绪：「可以用 · 工作台 X 在线」；工作台不在线时逐�
 	page,
 }) => {
 	await stubSessionList(page, READY);
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("readiness")).toHaveText("可以用 · 工作台 bench-1 在线");
 	// 可以用时是「开始」旁边的一行小字：同一行、在按钮右边。
 	const form = page.getByRole("form", { name: "要做什么？" });
@@ -192,7 +204,7 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 	];
 	for (const [readiness, text, hint] of states) {
 		await stubSessionList(page, readiness);
-		await page.goto("/sessions");
+		await page.goto("/");
 		const line = page.getByTestId("readiness");
 		await expect(line).toHaveAttribute("data-ready", "false");
 		await expect(line).toContainText("现在不能用：");
@@ -207,7 +219,7 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 	}
 	// 模型好了：就绪，「开始」可点。
 	await stubSessionList(page, READY);
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("readiness")).toHaveText("可以用 · 工作台 bench-1 在线");
 	await assistantInput(page).fill("做点事");
 	await expect(start).toBeEnabled();
@@ -291,7 +303,7 @@ test("会话列表：本项目的会话，在做的在前、其余最近活动�
 		status: "ended",
 		lastActivityAt: new Date("2026-01-01T00:00:20Z"),
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	const rows = page.getByRole("table", { name: "会话列表" }).getByRole("row");
 	// 表头一行；在做的在前，其余最近活动在前。
 	await expect(rows).toHaveCount(4);
@@ -392,7 +404,7 @@ test("会话列表：在做、排队中（带位置）、被打断、已结束�
 		lastActivityAt: at(5),
 	});
 
-	await page.goto("/sessions");
+	await page.goto("/");
 	const row = (title: string) =>
 		page
 			.getByRole("table", { name: "会话列表" })
@@ -457,7 +469,7 @@ test("会话多于接口一次给的个数：只列最近活动的 200 个，列
 			),
 		);
 	}
-	await page.goto("/sessions");
+	await page.goto("/");
 	const rows = page.getByRole("table", { name: "会话列表" }).getByRole("row");
 	await expect(rows).toHaveCount(SESSION_LIST_LIMIT + 1); // 加表头一行
 	const hint = page.getByTestId("list-truncated");
@@ -500,7 +512,7 @@ test("开始：成功后跳到会话页；请求里是写好的话", async ({ pa
 		const { events: _events, has_more: _hasMore, ...view } = detail;
 		await fulfillJson(route, 201, view);
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await assistantInput(page).fill("给 http_check 加一个超时参数");
 	await page.getByRole("button", { name: "开始" }).click();
 	await expect(page).toHaveURL(new RegExp(`/sessions/${id}$`));
@@ -515,14 +527,14 @@ test("开始失败（503）：留住写好的话，写明原因；就绪状态�
 	await stubSessionList(page, READY, [], async (route) => {
 		await apiError(route, 503, "assistant_unavailable", "助手服务连不上");
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await assistantInput(page).fill("要做的事");
 	await page.getByRole("button", { name: "开始" }).click();
 	await expect(
 		page.getByRole("alert").filter({ hasText: "无法开始会话：助手服务连不上" }),
 	).toBeVisible();
 	await expect(assistantInput(page)).toHaveValue("要做的事");
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 });
 
 // ---------------------------------------------------------------- 会话页：历史
@@ -1477,7 +1489,7 @@ test("会话已经没有了（新建会话等第一轮结局期间点了停止�
 		apiError(route, 404, "not_found", "session not found"),
 	);
 	await page.getByRole("button", { name: "停止" }).click();
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 	await expect(
 		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
 	).toBeVisible();
@@ -1493,7 +1505,7 @@ test("会话已经没有了：结束遇到 404 回到列表，确认框关掉，
 		.getByRole("dialog", { name: "结束这个会话？" })
 		.getByRole("button", { name: "结束会话" })
 		.click();
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 	await expect(
 		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
 	).toBeVisible();
@@ -1505,7 +1517,7 @@ test("会话已经没有了：事件流遇到 404（真的控制面里没有这�
 	const ghost = sessionView({ status: "idle" });
 	await stubSessionDetail(page, ghost, [userMessage(1), turnStarted(2), turnEnd(3, "completed")]);
 	await page.goto(`/sessions/${ghost.id}`);
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 });
 
 // ---------------------------------------------------------------- #713 第一次审查之后
@@ -1586,7 +1598,7 @@ test("别人写的文字都经公共的不可信文字组件：页头的标题�
 	expect(await isolated(page.getByTestId("session-ended").locator("bdi"))).toBe(true);
 	expect(await isolated(row(page, "كلام المستخدم").locator("bdi").first())).toBe(true);
 	await stubSessionList(page, READY, [{ ...view, status: "running" }]);
-	await page.goto("/sessions");
+	await page.goto("/");
 	const rowOfSession = page.locator(`[data-session="${view.id}"]`);
 	await expect(rowOfSession).toBeVisible();
 	const cells = rowOfSession.locator("td");
@@ -1817,7 +1829,7 @@ test("会话已经没有了：说话遇到 404 回到列表，写一句", async 
 	);
 	await composer(page).fill("接着说");
 	await page.getByRole("button", { name: "发送" }).click();
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 	await expect(
 		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
 	).toBeVisible();
@@ -1837,7 +1849,7 @@ test("会话列表的重新查询：没有在做或排队的会话时不轮询�
 			lists += 1;
 		}
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("list-status")).toHaveText("空闲");
 	const first = lists;
 	expect(first).toBeGreaterThanOrEqual(1);
@@ -1861,7 +1873,7 @@ test("会话列表的重新查询：有在做的会话时每 5 秒查一次（�
 			lists += 1;
 		}
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("list-status")).toHaveText("在做");
 	const first = lists;
 	await expect.poll(() => lists, { timeout: 8_000 }).toBeGreaterThan(first);
@@ -2139,7 +2151,7 @@ test("Ctrl/⌘+Enter 只在输入框里发送：焦点在页面上别的地方�
 		const { events: _events, has_more: _hasMore, ...view } = detail;
 		await fulfillJson(route, 201, view);
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await assistantInput(page).fill("还没写完的话");
 	await page.getByRole("heading", { level: 1 }).focus();
 	await page.keyboard.press("ControlOrMeta+Enter");
@@ -2293,7 +2305,7 @@ test("助手页：「开始」失败时焦点在输入框里，写好的话还�
 	await stubSessionList(page, READY, [], async (route) => {
 		await apiError(route, 503, "assistant_unavailable", "助手服务连不上");
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await assistantInput(page).fill("要做的事");
 	await page.getByRole("button", { name: "开始" }).click();
 	await expect(page.getByRole("alert").filter({ hasText: "助手服务连不上" })).toBeVisible();
@@ -2342,7 +2354,7 @@ test("输入法选字时的 Ctrl/⌘+Enter 不发送（isComposing，或 Safari 
 		posted.push(body);
 		await apiError(route, 503, "assistant_unavailable", "助手服务连不上");
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await assistantInput(page).fill("选字中的话");
 	await compose(assistantInput(page), { isComposing: true, keyCode: 13 });
 	await compose(assistantInput(page), { isComposing: false, keyCode: 229 });
@@ -2368,7 +2380,7 @@ test("助手页：Ctrl/⌘+Enter 开始会话（和「开始」按钮一样的�
 		const { events: _events, has_more: _hasMore, ...view } = detail;
 		await fulfillJson(route, 201, view);
 	});
-	await page.goto("/sessions");
+	await page.goto("/");
 	await assistantInput(page).fill("给 http_check 加一个超时参数");
 	await assistantInput(page).press("Control+Enter");
 	await expect(page).toHaveURL(new RegExp(`/sessions/${id}$`));

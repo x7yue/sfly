@@ -424,7 +424,7 @@ for (const viewport of [
 			const runId = await triggerRun(controlPlane, scenarioId);
 			await page.clock.setFixedTime(clock.now());
 			// 控制台的运行块。
-			await page.goto("/");
+			await page.goto("/dashboard");
 			await expect(page.getByRole("region", { name: "正在运行" })).toBeVisible();
 			const lines = { 控制台: await firstLine(page) };
 			// 监控的概览。

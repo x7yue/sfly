@@ -446,7 +446,7 @@ test("运行卡片：在跑的运行多于事件流名额（2 个）：最近的
 		.getByRole("navigation", { name: "主导航" })
 		.getByRole("link", { name: "助手" })
 		.click();
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 	await expect.poll(() => watched.open()).toEqual([]);
 });
 
@@ -1014,7 +1014,7 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 	await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(longTitle);
 	await expect(longLink).toHaveAttribute("href", `/sessions/${longSessionId}`);
 
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const block = page
 		.getByRole("region", { name: "正在运行", exact: true })
 		.getByRole("region", { name: "巡检", exact: true })

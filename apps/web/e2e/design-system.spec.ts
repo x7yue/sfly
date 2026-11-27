@@ -24,7 +24,7 @@ test("状态形状每种状态一个，默认静止；强制颜色模式下用�
 	clock,
 }) => {
 	await seedWall({ page, controlPlane, connectAgent, clock });
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const running = page
 		.getByRole("region", { name: "正在运行", exact: true })
 		.locator('[data-status-dot="running"]')
@@ -147,7 +147,7 @@ test("暂停动效是全站的：命令面板里切换，控制台与列表页�
 	clock,
 }) => {
 	await runningScenario(controlPlane, connectAgent, clock);
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 	const running = page
 		.getByRole("region", { name: "正在运行", exact: true })

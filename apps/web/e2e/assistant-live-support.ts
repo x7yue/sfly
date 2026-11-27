@@ -71,7 +71,7 @@ export const toolRows = (page: Page) => page.getByTestId("tool-row");
 
 /** 在助手页写一句话、点「开始」，等到会话页打开；返回会话 ID。 */
 export async function startSession(page: Page, text: string): Promise<string> {
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("readiness")).toHaveAttribute("data-ready", "true");
 	await page.getByRole("textbox", { name: "要做什么？" }).fill(text);
 	await page.getByRole("button", { name: "开始" }).click();

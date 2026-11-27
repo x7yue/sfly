@@ -100,7 +100,7 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
 - **浏览器**：打开 `http://127.0.0.1:<18100 + 槽位>`（槽位 1 是 `http://127.0.0.1:18101`）。**建会话要先登录**（#547：会话令牌代发起人干活，
   会话要有发起人的用户）：第一次打开时登录页用初始管理员登录，登录名和密码在 `~/.local/share/sfly/evals/admin-slot<槽位>.txt`
   （`AEVAL_HOME` 改目录；`up` 结束时打印这个路径，只有你能读；每次 `up`、`reset` 密码都换一个，`down` 删掉这个文件，密码不打印到终端）。
-  点侧边栏的「助手」（`/sessions`）：上面是助手此刻能不能用，输入框里说一句话就开始一个会话，
+  首页就是「助手」（`/`，侧边栏第一项）：上面是助手此刻能不能用，输入框里说一句话就开始一个会话，
   点进一个会话看它的时间线（`/sessions/<ID>`），在做时可以停止。也可以经接口（`POST /projects/default/sessions` 要带登录的 Cookie（`POST /auth/login`）或个人令牌（`POST /account/tokens`），
   不带是 401；`GET /sessions/<ID>`）或下面的 `e2e` 看会话（`e2e` 自己用初始管理员登录）。
   在被测机上起着的被测服务、`seed` 准备好的节点包和场景都照常在。

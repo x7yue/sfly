@@ -58,7 +58,7 @@ test("从侧边栏进入开发文档，Markdown 渲染成标题、列表、表�
 });
 
 test("从命令面板进入开发文档", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 	await page.keyboard.press("Control+k");
 	const palette = page.getByRole("dialog", { name: "命令面板" });

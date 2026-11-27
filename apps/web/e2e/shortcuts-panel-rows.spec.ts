@@ -21,7 +21,7 @@ for (const viewport of [
 		page,
 	}) => {
 		await page.setViewportSize(viewport);
-		await page.goto("/");
+		await page.goto("/dashboard");
 		await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 		await page.locator("body").press("?");
 		const dialog = page.getByRole("dialog", { name: "快捷键" });
