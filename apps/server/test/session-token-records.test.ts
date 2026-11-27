@@ -559,7 +559,11 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			for (const [method, path, body] of [
 				["POST", `/orchestrations/${id}/archive`, {}],
 				["DELETE", `/orchestrations/${id}/presets/${crypto.randomUUID()}`, undefined],
-				["POST", "/feishu-bots", { name: "x", webhook_url: "https://example.com/hook" }],
+				[
+					"POST",
+					"/projects/default/feishu-bots",
+					{ name: "x", webhook_url: "https://example.com/hook" },
+				],
 				["POST", "/projects/default/tokens", { name: "x", scopes: ["read"] }],
 				["POST", "/projects/default/sessions", { text: "你好" }],
 				[`POST`, `/sessions/${sessionId}/messages`, { text: "你好" }],

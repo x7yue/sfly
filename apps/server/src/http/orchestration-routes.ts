@@ -24,7 +24,7 @@ const notFound = (reply: FastifyReply) =>
 /**
  * 场景与场景版本：新建、改名称、说明、运行通知设置和关注项、归档与恢复、复制、场景列表（契约见 @sfly/schema 的
  * orchestrationsApi）；保存（追加）版本、查询版本。版本不可修改，场景不物理删除。
- * 列表和新建的路径还不带项目（#488）：都在默认项目里。
+ * 列表和新建的项目从路径取（`/projects/:project/orchestrations`，#488）；按 ID 定位的从场景得出。
  */
 export function registerOrchestrationRoutes(
 	app: FastifyInstance,

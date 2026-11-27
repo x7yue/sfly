@@ -7,7 +7,7 @@
 // - 发送队列（别的项目的消息先于退避和限速的判断被丢弃；机器人换项目、删了又在别的项目登记、请求在途时被删，
 //   都不会发给别的项目的地址、不会回写到别的机器人上）；
 // - 管理接口按名字操作别的项目的机器人，和不存在的整份响应相同。
-// 真实控制面和数据库，假的飞书 Webhook 服务；HTTP 接口现在还只认默认项目（#488），别的项目的资源用库里的一条 `update` 造出来。
+// 真实控制面和数据库，假的飞书 Webhook 服务；请求都发在默认项目的路径下，别的项目的资源用库里的一条 `update` 造出来。
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ProjectId } from "../src/projects/project-id.js";
@@ -325,7 +325,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 
 	it("机器人删除后同名的在别的项目重新登记，原项目的运行留下的消息（并发入队漏掉的）：只丢弃它，新机器人自己的消息照常发，原地址和新地址都收不到它", async () => {
 		await api.createFeishuBot("ops-re", feishu.webhookUrl(RE_OLD));
-		expect((await api.delete("/feishu-bots/ops-re")).status).toBe(204);
+		expect((await api.delete("/projects/default/feishu-bots/ops-re")).status).toBe(204);
 		await api.createFeishuBot("ops-re", feishu.webhookUrl(RE_NEW));
 		await moveBot("ops-re", "alpha");
 		const defaultRun = await fakeRun("default");
@@ -346,7 +346,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 		const defaultRun = await fakeRun("default");
 		const seq = await enqueue("ops-race", defaultRun, "在途的消息");
 		await eventually(async () => expect(requestsTo(RACE_OLD).length).toBe(1));
-		expect((await api.delete("/feishu-bots/ops-race")).status).toBe(204);
+		expect((await api.delete("/projects/default/feishu-bots/ops-race")).status).toBe(204);
 		await api.createFeishuBot("ops-race", feishu.webhookUrl(RACE_NEW));
 		await moveBot("ops-race", "alpha");
 		await new Promise((r) => setTimeout(r, 3500));
@@ -359,7 +359,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 	});
 
 	it("机器人管理接口（默认项目）：别的项目的机器人和不存在的整份响应相同；列表里没有它", async () => {
-		const list = await api.get("/feishu-bots");
+		const list = await api.get("/projects/default/feishu-bots");
 		const listText = await list.text();
 		noAlphaSecret("列表", listText);
 		expect(listText).not.toContain(FOREIGN_BOT);
@@ -370,7 +370,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 				noAlphaSecret(`${label}(${bot})`, text);
 				out[label] = `${res.status} ${norm(text, bot)}`;
 			};
-			const path = `/feishu-bots/${encodeURIComponent(bot)}`;
+			const path = `/projects/default/feishu-bots/${encodeURIComponent(bot)}`;
 			await keep("references", await api.get(`${path}/references`));
 			await keep(
 				"replace",

@@ -217,7 +217,7 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 	it("任务派发之后机器人被删除：不发送，任务日志里写 warning，任务和运行不受影响", async () => {
 		const { runId, task } = await start();
 		expect(task.referencedFeishuBots).toEqual(["ops"]);
-		const res = await cp.fetch("/feishu-bots/ops", {
+		const res = await cp.fetch("/projects/default/feishu-bots/ops", {
 			method: "DELETE",
 			headers: { ...actAs("tester") },
 		});

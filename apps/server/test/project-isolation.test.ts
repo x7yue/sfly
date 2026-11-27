@@ -380,7 +380,7 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 			counts: { running: 0, success: 0, failed: 0, cancelled: 0 },
 		});
 		expect((await json("/projects/default/packages")).packages).toEqual([]);
-		expect((await json("/feishu-bots")).bots).toEqual([]);
+		expect((await json("/projects/default/feishu-bots")).bots).toEqual([]);
 		// 按项目乙的场景筛选运行：路径里的项目是默认项目，筛出来是空的（运行记着自己的项目）。
 		expect(
 			(await json("/projects/default/runs?orchestration_id=00000000-0000-4000-8000-0000000000b1"))
@@ -395,6 +395,11 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 		expect(
 			((await json(`/projects/${OTHER}/runs`)).runs as { id: string }[]).map((x) => x.id),
 		).toEqual(["00000000-0000-4000-8000-0000000000b3"]);
+		expect(
+			((await json(`/projects/${OTHER}/feishu-bots`)).bots as { name: string }[]).map(
+				(x) => x.name,
+			),
+		).toEqual(["bot-b"]);
 		const theirDashboard = (await json(`/projects/${OTHER}/dashboard`)) as {
 			runs: { running: number };
 			agents: { online: number; offline: number };
@@ -433,13 +438,15 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 			api.get("/projects/default/packages/pkg-b/versions/1.0.0/archive"),
 			"package archive",
 		);
-		await notFound(api.get("/feishu-bots/bot-b/references"), "bot references");
+		await notFound(api.get("/projects/default/feishu-bots/bot-b/references"), "bot references");
 		await notFound(
-			api.patch("/feishu-bots/bot-b", { webhook_url: "https://open.feishu.cn/hook/x" }),
+			api.patch("/projects/default/feishu-bots/bot-b", {
+				webhook_url: "https://open.feishu.cn/hook/x",
+			}),
 			"bot replace",
 		);
-		await notFound(api.postEmpty("/feishu-bots/bot-b/test"), "bot test");
-		await notFound(api.delete("/feishu-bots/bot-b"), "bot remove");
+		await notFound(api.postEmpty("/projects/default/feishu-bots/bot-b/test"), "bot test");
+		await notFound(api.delete("/projects/default/feishu-bots/bot-b"), "bot remove");
 	});
 
 	it("在默认项目里新建的东西属于默认项目：登记机器人、新建场景，库里的 project_id 是 default", async () => {
@@ -459,9 +466,9 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 		} finally {
 			await client.end();
 		}
-		expect(((await json("/feishu-bots")).bots as { name: string }[]).map((x) => x.name)).toEqual([
-			"bot-a",
-		]);
+		expect(
+			((await json("/projects/default/feishu-bots")).bots as { name: string }[]).map((x) => x.name),
+		).toEqual(["bot-a"]);
 		// 在默认项目下新建的场景不出现在项目乙的列表里。
 		const theirs = (await json(`/projects/${OTHER}/orchestrations`)).orchestrations as {
 			id: string;
