@@ -63,8 +63,7 @@ services:
     image: ghcr.io/x7yue/sfly-assistant:${SFLY_VERSION:-latest}
     restart: unless-stopped
     init: true
-    # 同时活着的 pi 进程最多 8 个，每个约 194 MiB（完整会话、假模型的量，是下限，真实模型的上下文更长，只会更高），
-    # 加上助手服务自己和读写：上限 2 GiB。数字的来由见 README「助手和工作台」。
+    # 内存上限怎么定（最多几个 pi 进程、空闲多久回收、按什么算）：见 README「助手容器的内存」，数字只写在那里。
     mem_limit: 2g
     environment:
       # 和控制面共用的密钥（控制面读同一个 .env 变量）：至少 32 个字符，短了或没设置时助手服务拒绝启动，日志里写明原因。

@@ -930,6 +930,34 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(JSON.stringify(detail.events.at(-1))).not.toMatch(/10\.9\.8\.7|\/srv\/assistant/);
 			expect(detail.status).toBe("idle");
 		});
+
+		it("助手服务的进程数到了上限、都在做（503 process_limit，#545）：这一轮以 failed 结束，原因是固定的一句「助手服务同时在做的会话太多」，用户的话还在历史里，会话回到空闲；助手服务写的那句话（带内部地址）不对外", async () => {
+			const view = await json<SessionView>(await create());
+			assistant.emit(view.id, 1, turnEnd(1));
+			await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
+			assistant.promptReply = () => ({
+				status: 503,
+				code: "process_limit",
+				message: "同时活着的 pi 进程已经有 8 个，都在做：10.9.8.7:4000 /srv/assistant/x",
+			});
+			const res = await api.post(`/sessions/${view.id}/messages`, { text: "再来一次" });
+			expect(res.status).toBe(503);
+			expect((await json<{ error: { code: string } }>(res)).error.code).toBe(
+				"assistant_unavailable",
+			);
+			const detail = await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`));
+			expect(detail.events.at(-1)).toMatchObject({
+				type: "turn_end",
+				turn: 2,
+				outcome: "failed",
+				reason: "助手服务同时在做的会话太多：等别的会话停下来再试",
+			});
+			expect(JSON.stringify(detail.events.at(-1))).not.toMatch(/10\.9\.8\.7|\/srv\/assistant/);
+			expect(detail.events.filter((e) => e.type === "user_message").at(-1)).toMatchObject({
+				text: "再来一次",
+			});
+			expect(detail.status).toBe("idle");
+		});
 	});
 
 	it("助手服务连不上时建会话：503 assistant_unavailable，库里没有这个会话", async () => {

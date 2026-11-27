@@ -289,6 +289,7 @@ import {
  * | 中止记号 | 已做（544-B）：只增不减，轮次不大于记号的 `prompt` 都挡住、不取走记号，`abort` 一律提到 N（过期、总数上限不变）；#618 固定旧行为的那条测试跟着改了 | 已做（#625）：假助手服务和这里一致 |
  * | 旧的一轮还在停止时来了新的一轮 | 已做（544-B）：登记、202、等旧的一轮结束再起，等不到以 `failed` 结束 | 已做（#625）：不用为此多等 |
  * | 排队 | 不知道项目，不排队 | 已做（#625）：同一个项目一次只把一轮交给助手服务，其余在控制面排队 |
+ * | 闲置回收、恢复、`context_reset` | 已做（#545 P，`apps/assistant/src/sessions.ts`、`transcript.ts`）：空闲 15 分钟没有收到命令就回收 pi 进程，下一条 `prompt` 用同一条启动命令从会话文件恢复；pi 悄悄开了个空会话（读不了会话文件）时换新的会话、把之前的对话整理成摘要放在第一句前面、发 `notice`（`context_reset`，只写条数）；协议本身没有变（`context_reset`、`process_limit` 本来就在），控制面不用为它改 | 已做：`process_limit` 的 503 把这一轮以 `failed` 结束（`ASSISTANT_REJECTION_TEXT`），`context_reset` 和别的助手事件一样落库、发布 |
  * | 一轮结束时提交工作区 | 已做（#546）：`apps/assistant/src/workspace.ts`、`sessions.ts` 的 `#prepareWorkspace`、`#commitTurn` | 已做：`platform`（`commit`）和别的助手事件一样落库、发布（`apps/server/test/assistant-connection.test.ts`）；页面一行见 `apps/web/src/sessions/` |
  */
 

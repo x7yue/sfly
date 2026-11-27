@@ -772,7 +772,9 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 
 	it("两句固定的说明告诉用户该怎么办：上一轮还在做（先停止再说）、进程数到了上限（等别的会话停下来）", () => {
 		expect(ASSISTANT_REJECTION_TEXT.turn_running).toContain("停止");
-		expect(ASSISTANT_REJECTION_TEXT.process_limit).toContain("再试");
+		expect(ASSISTANT_REJECTION_TEXT.process_limit).toBe(
+			"助手服务同时在做的会话太多：等别的会话停下来再试",
+		);
 	});
 
 	it("命令有没有可能已经送到：只有请求一个字节都没发出去（连接被拒绝、域名解析不了、没有路由、建立连接就超时）才是一定没送到；超时、发出请求之后连接被重置或关闭是未知；认不出的错也是未知", () => {
