@@ -84,7 +84,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 （默认 `~/.local/share/sfly/perf/<时间>/report.md`，命令结束时打印路径），每份报告同时与两份基准对比：
 本机上一次（任何 worktree 里跑的都算），以及仓库里 `docs/perf/` 下最近一个版本的发版报告（发版基线）。
 
-关键路径的清单（名称、范围、文件）在 `docs/agents/perf-critical-paths.json`：PR 改了清单里的文件时，CI 的「PR 信息」给出提醒（只警告，不失败：只改注释也会命中）。关键路径的范围变了（拆分、挪文件）时改这份清单，`scripts/tests/test_pr_checks.py` 检查清单里的文件都还在。
+关键路径的清单（名称、范围、文件）在 `docs/agents/perf-critical-paths.json`：PR 改了清单里的文件时，CI 的「PR 信息」给出提醒（只警告，不失败：只改注释也会命中）。关键路径的范围变了（拆分、挪文件）时改这份清单，`scripts/tests/test_pr_checks.py` 检查清单里的文件都还在。「PR 信息」用的检查脚本和清单取目标分支上的版本，PR 里对它们的修改合入之后才生效，所以 PR 关不掉对自己的检查。
 
 - 与发版基线的变化包含上次发版以来所有已合入的改动。要分清哪些来自这个 PR，在改动前（例如 `main` 上）先跑一次，
   再看改动后与本机上一次的对比。

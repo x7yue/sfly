@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -98,3 +99,30 @@ def test_command_line(
     )
     assert done.returncode == code
     assert shown in done.stdout
+
+
+def test_the_list_is_read_next_to_the_script(tmp_path: Path) -> None:
+    # 工作流运行的是目标分支检出到 rules/ 的脚本：它读的是同一份检出里的清单，不是 PR 改过的那份。
+    rules = tmp_path / "rules"
+    (rules / "scripts").mkdir(parents=True)
+    (rules / "docs/agents").mkdir(parents=True)
+    (rules / "scripts/pr_checks.py").write_bytes(SCRIPT.read_bytes())
+    listed = {"paths": [{"name": "只在目标分支的清单里", "detail": "", "paths": ["x.rs"]}]}
+    (rules / "docs/agents/perf-critical-paths.json").write_text(json.dumps(listed), "utf-8")
+    (tmp_path / "files").write_text("x.rs\n", encoding="utf-8")
+    (tmp_path / "labels").write_text("", encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, "rules/scripts/pr_checks.py", "files", "labels"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert "只在目标分支的清单里" in done.stdout
+
+
+def test_the_workflow_runs_the_target_branch_rules() -> None:
+    workflow = (REPO / ".github/workflows/pr-checks.yml").read_text(encoding="utf-8")
+    assert "ref: ${{ github.event.pull_request.base.ref }}\n          path: rules" in workflow
+    assert "if: hashFiles('rules/scripts/pr_checks.py') == ''" in workflow
+    runs = [line.strip() for line in workflow.splitlines() if 'pr_checks.py "' in line]
+    assert runs == ['python3 rules/scripts/pr_checks.py "$RUNNER_TEMP/files" "$RUNNER_TEMP/labels"']
