@@ -150,9 +150,12 @@ export const EVENTS_LOST_MESSAGE = "控制面和助手服务断开太久，这�
 export const EVENTS_NOT_CONNECTED_MESSAGE =
 	"助手服务的事件流还没有连上（控制面刚启动或正在重新连接），过几秒再试";
 
-/** 项目没有登记工作台时的就绪状态说明（`workbench_not_set`，会话页原样显示）。 */
-export const NO_WORKBENCH_MESSAGE =
-	"没有登记工作台：让项目管理员登记一台 Agent 作为这个项目的工作台（部署文档「助手和工作台」的「登记工作台」一节）";
+/**
+ * 项目没有登记工作台时的就绪状态说明（`workbench_not_set`）：只说缺什么。该找谁、怎么登记由会话页按种类写
+ * （`apps/web/src/lib/copy.ts` 的 `SESSION.readinessHint.workbench_not_set`：请项目管理员登记，见部署文档「登记工作台」），
+ * 这里不重复一遍。
+ */
+export const NO_WORKBENCH_MESSAGE = "没有登记工作台";
 
 /** 关闭时最多等后台的事收尾多久（毫秒）：它们在放弃等待，只有正在发出去的命令要等它回来或超时。 */
 export const CLOSE_DRAIN_MS = 500;
