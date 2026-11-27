@@ -74,6 +74,7 @@ class FakeControlPlane:
     - `*-straddle`：回显的凭据**跨过驱动截断的那一个字符**（登录 401 的回应体 500、建会话 503 的
       500、建会话回应不是 JSON 的 200、建会话回应没有 ID 的 200、就绪状态没过的 200、开始前的检查
       500）：先截断后打码时前半截会留下；
+    - `readiness-missing-straddle`：就绪状态的回应里没有 `readiness`，回显跨过 200；
     - `assistant-not-configured`：建会话回 503 `assistant_not_configured`；
     - `snapshot-commit`：每次连上先发一条不带序号的 `snapshot`，第一次连接发到 seq 3 就断，
       重连之后补
@@ -173,7 +174,8 @@ class FakeControlPlane:
                         # 判「环境没准备好」看整个（打过码的）回应体，不看被截断的。
                         value = COOKIE.removeprefix("sfly_login=")
                         head = '{"error": {"code": "model_unavailable", "message": "'
-                        body = straddle(head, value, 12, 500)
+                        # 凭据之后还有很长的话：打码之后整个回应体仍比 500 个字符长，截断确实发生。
+                        body = straddle(head, value, 12, 500, "B" * 300 + '"}}')
                         return self._json(503, None, raw=body.encode())
                     if mode == "create-not-json-straddle":
                         body = straddle("<html>", PASSWORD, 20, 200, "</html>")
@@ -228,6 +230,9 @@ class FakeControlPlane:
                         head = '{"ready": false, "problems": [], "echo": "'
                         echo = straddle(head, PASSWORD, 20, 200, '"}')
                         return self._json(200, None, raw=('{"readiness": ' + echo + "}").encode())
+                    if owner.mode == "readiness-missing-straddle":
+                        echo = straddle('{"echo": "', PASSWORD, 20, 200, '"}')
+                        return self._json(200, None, raw=echo.encode())
                     if owner.mode == "precheck-straddle":
                         body = straddle('{"error": {"message": "', PASSWORD, 31, 500)
                         return self._json(500, None, raw=body.encode())
@@ -877,6 +882,7 @@ STRADDLES = [
     ("login-straddle", PASSWORD, 500),
     ("precheck-straddle", PASSWORD, 500),
     ("readiness-straddle", PASSWORD, 200),
+    ("readiness-missing-straddle", PASSWORD, 200),
     ("create-503-straddle", COOKIE.removeprefix("sfly_login="), 500),
     ("create-503-not-ready-straddle", COOKIE.removeprefix("sfly_login="), 500),
     ("create-not-json-straddle", PASSWORD, 200),
@@ -914,7 +920,6 @@ def test_scrub_masks_every_way_the_credentials_are_written() -> None:
     client = Client("http://127.0.0.1:1", "eval", LOGIN_NAME, PASSWORD)
     client._cookie = COOKIE
     value = COOKIE.removeprefix("sfly_login=")
-    tricky = PASSWORD.replace("-", "\\u002d")
     for text in (
         f"密码 {PASSWORD} 结束",
         f"Cookie {COOKIE} 结束",
@@ -927,12 +932,22 @@ def test_scrub_masks_every_way_the_credentials_are_written() -> None:
         scrubbed = client.scrub(text)
         assert fragments(PASSWORD, scrubbed) == [] and fragments(value, scrubbed) == [], text
         assert "******" in scrubbed
-    del tricky
     # 不认的写法不动：没有凭据的文字原样返回；`sfly_login=` 这几个字本身不是秘密。
     assert client.scrub("没有凭据 sfly_login= 的文字") == "没有凭据 sfly_login= 的文字"
     # 只认完整的出现：前半截不换（按它们能一位一位试出值），所以要截断的文字先打码后截断。
     assert client.scrub(PASSWORD[:20]) == PASSWORD[:20]
     assert client.clip(f"{'A' * 490}{PASSWORD}", 500) == "A" * 490 + "******"
+
+
+def test_scrub_masks_the_json_escaped_writing_of_a_credential() -> None:
+    # 回应体是 JSON：值里有引号、反斜杠时，回显出来的是转义之后的写法，和原文不一样。
+    password = 'pa"ss\\word-0123456789'
+    client = Client("http://127.0.0.1:1", "eval", LOGIN_NAME, password)
+    escaped = json.dumps({"echo": password})
+    assert password not in escaped
+    scrubbed = client.scrub(escaped)
+    assert fragments(password, scrubbed, 6) == []
+    assert "******" in scrubbed
 
 
 def test_stream_break_reasons_are_scrubbed_before_they_are_recorded(

@@ -344,9 +344,10 @@ class Client:
             why = self.stream_once(session_id, last_seq(received), deadline, sink, received)
             if why is None:
                 return True, breaks
-            # 到了时限是计时器关的连接，不算一次断开。断开的原因里有异常的文字，记下之前也打码。
+            # 到了时限是计时器关的连接，不算一次断开。（原因里有异常的文字，`run` 记下来之前打码；
+            # 这里不截断，所以不存在「先截断后打码」。）
             if time.monotonic() < deadline:
-                breaks.append(self.clip(why, 500))
+                breaks.append(why)
             pause = min(RECONNECT_PAUSE_SECONDS, deadline - time.monotonic())
             if pause > 0:
                 time.sleep(pause)
