@@ -289,14 +289,12 @@ test.describe("Agent 凭据和停用", () => {
 		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport?.width ?? 0);
 		expect(box?.y ?? -1).toBeGreaterThanOrEqual(0);
 		expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 0);
+		// 弹窗、主体、表格、命令块里的 `pre`（整条安装命令折行显示，不横向滚动）都没有撑出横向滚动。
 		const overflow = await dialog(page).evaluate((el) =>
 			[
 				el,
-				...el.querySelectorAll('[data-slot="dialog-body"], table, [data-slot="code-block"]'),
-			].some(
-				(node) =>
-					node.scrollWidth > node.clientWidth + 1 && !node.matches('[data-slot="code-block"]'),
-			),
+				...el.querySelectorAll('[data-slot="dialog-body"], table, [data-slot="code-block"] pre'),
+			].some((node) => node.scrollWidth > node.clientWidth + 1),
 		);
 		expect(overflow, "弹窗里有东西撑出了横向滚动").toBe(false);
 	}

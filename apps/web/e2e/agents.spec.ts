@@ -715,7 +715,7 @@ test.describe("接入命令", () => {
 	// 控制面配置了对外地址：命令里用它，而不是浏览器访问的地址。
 	test.use({ controlPlaneOptions: { publicHttpUrl: "http://sfly.internal:8080" } });
 	const command =
-		"read -rs SFLY_TOKEN && export SFLY_TOKEN\ncurl -fsSL http://sfly.internal:8080/install.sh | sh -s -- --name <名称>";
+		"(read -rs SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL http://sfly.internal:8080/install.sh | sh -s -- --name <名称>)";
 
 	test("没有 Agent 时显示空状态和填好控制面地址的 install.sh 命令", async ({ page }) => {
 		await page.goto("/agents");

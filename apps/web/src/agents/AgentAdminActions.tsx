@@ -9,9 +9,9 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRoundIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { AdminErrorText } from "#/agents/admin-error";
 import { CredentialsDialog } from "#/agents/credentials/CredentialsDialog";
 import { useCanAdminAgents } from "#/agents/use-agent-admin";
-import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
 import { UntrustedText } from "#/components/untrusted-text";
 import { callApi } from "#/lib/api";
@@ -144,6 +144,12 @@ function DisableDialog({
 							<li data-slot="disable-running">
 								{running > 0 ? AGENT_DISABLE.disable.running(running) : AGENT_DISABLE.disable.idle}
 							</li>
+							<li data-slot="disable-task-credentials">{AGENT_DISABLE.disable.taskCredentials}</li>
+							{agent.queued_tasks.length > 0 && (
+								<li data-slot="disable-queued">
+									{AGENT_DISABLE.disable.queued(agent.queued_tasks.length)}
+								</li>
+							)}
 							{agent.referencing_orchestrations > 0 && (
 								<li>{AGENT_DISABLE.disable.referenced(agent.referencing_orchestrations)}</li>
 							)}
@@ -155,7 +161,7 @@ function DisableDialog({
 					{toggle.isError && (
 						<FormAlert>
 							{disabled ? "恢复" : "停用"}失败：
-							<ErrorMessage error={toggle.error} />
+							<AdminErrorText error={toggle.error} />
 						</FormAlert>
 					)}
 				</DialogBody>

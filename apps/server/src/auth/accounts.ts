@@ -427,7 +427,7 @@ export class AccountService {
 	}
 
 	/**
-	 * 这个用户此刻在一个项目里有的范围（默认项目：登录 Cookie 本来就只落在默认项目），`CurrentUser.scopes` 用它：
+	 * 这个用户此刻在一个项目里有的范围（默认项目：控制台的页面现在都在默认项目里），`CurrentUser.scopes` 用它：
 	 * 算法是 {@link userScopes}，访问检查用的是同一个，页面和接口的判断不会分叉。每次现查成员的角色，不缓存。
 	 */
 	async scopesIn(user: UserRecord, project: ProjectId = DEFAULT_PROJECT): Promise<Scope[]> {

@@ -69,6 +69,16 @@ export async function signInAs(
 	}
 }
 
+/** 停用一个用户：他的登录和令牌立即失效（页面再发请求拿到 401）。 */
+export async function disableUser(controlPlane: TestControlPlane, login: string): Promise<void> {
+	const accounts = new TestAccounts(controlPlane.database.url);
+	try {
+		await accounts.disable(await accounts.userNamed(login));
+	} finally {
+		await accounts.close();
+	}
+}
+
 /** 页面以项目管理员登录。 */
 export const signInAsAdmin = (context: BrowserContext, controlPlane: TestControlPlane) =>
 	signInAs(context, controlPlane, { login: "agentadmin", role: "project_admin" });

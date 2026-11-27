@@ -2,7 +2,8 @@ import { type AgentCredentialView, agentsApi, domainKey } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
 import { CopyIcon } from "lucide-react";
-import { useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { AdminErrorText, mayHaveIssued } from "#/agents/admin-error";
 import { useInstallUrl } from "#/agents/connect-command";
 import { agentNameProblem, installCommand } from "#/agents/credentials/credential-command";
 import {
@@ -12,7 +13,6 @@ import {
 	startFlow,
 } from "#/agents/credentials/credential-flow";
 import { writeClipboard } from "#/components/feedback/clipboard";
-import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock } from "#/components/page";
@@ -21,7 +21,6 @@ import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery, callApi } from "#/lib/api";
 import { AGENT_CREDENTIAL, MESSAGE } from "#/lib/copy";
 import { formatDateTimeWithYear } from "#/lib/format";
-import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -55,6 +54,7 @@ import { Truncate } from "@/components/ui/truncate";
  * 原值不进：URL、localStorage 与 sessionStorage、通知、日志、安装命令（命令里是 `read -rs`，运行时粘贴）、列表接口的响应。
  * 清掉的时刻：点「我已保存，完成」（回到列表）；弹窗关掉、过渡动画结束（`onOpenChangeComplete`，回到起点）。显示原值的时候 Esc、点遮罩、
  * 右上角的关闭按钮都不关（`pointerDismiss="never"`），免得手滑把只显示一次的原值丢了，也免得原值在没人看的时候留在页面上。
+ * **签发请求还在路上的时候同样不能关**（`useIssue` 的 `pending`）：响应回来才会把原值放进状态，关了的弹窗里没人看，下次打开就直接显示了。
  * 剪贴板里的那一份页面清不掉（浏览器不让清别的程序放进去的、或用户自己改过的内容）：弹窗里写明「粘贴完之后复制点别的」。
  */
 export function CredentialsDialog({
@@ -75,14 +75,23 @@ export function CredentialsDialog({
 		name,
 		startFlow,
 	);
+	const issuing = useIssue(dispatch);
+	const { clearError } = issuing;
+	// 显示原值、吊销确认的时候不带着上一次签发的错误：回到列表时不会冒出过期的「签发失败」。
+	useEffect(() => {
+		if (flow.view === "issued" || flow.view === "revoke") clearError();
+	}, [flow.view, clearError]);
+	// 显示原值、或者签发的请求还在路上（响应回来会带来原值）的时候不能关：关掉之后原值会留在没人看的状态里，
+	// 下次打开直接显示；关了马上重开再签，还会签出第二枚。
 	const showing = flow.view === "issued";
+	const locked = showing || issuing.pending;
 	return (
 		<Dialog
 			open={open}
-			pointerDismiss={showing ? "never" : "pristine"}
+			pointerDismiss={locked ? "never" : "pristine"}
 			onOpenChange={(next, details) => {
-				// 显示原值的时候：Esc、点遮罩都不关，只能点「我已保存，完成」。
-				if (!next && showing) {
+				// Esc、点遮罩、右上角的关闭按钮都不关：显示原值的时候只能点「我已保存，完成」，签发中要等响应回来。
+				if (!next && locked) {
 					details.cancel();
 					return;
 				}
@@ -90,19 +99,25 @@ export function CredentialsDialog({
 			}}
 			// 过渡动画结束之后才清：关的时候不让内容先变成别的样子。
 			onOpenChangeComplete={(isOpen) => {
-				if (!isOpen) dispatch({ type: "closed" });
+				if (!isOpen) {
+					dispatch({ type: "closed" });
+					// 上一次签发的错误不带到下次打开。
+					clearError();
+				}
 			}}
 		>
 			<DialogContent
-				showCloseButton={!showing}
+				showCloseButton={!locked}
 				finalFocus={returnFocus}
 				className="w-[760px]"
 				data-credential-dialog={flow.view}
 			>
 				{flow.view === "name" && (
-					<NameStep onCancel={() => onOpenChange(false)} dispatch={dispatch} />
+					<NameStep onCancel={() => onOpenChange(false)} issuing={issuing} dispatch={dispatch} />
 				)}
-				{flow.view === "list" && <ListStep name={flow.name} dispatch={dispatch} />}
+				{flow.view === "list" && (
+					<ListStep name={flow.name} issuing={issuing} dispatch={dispatch} />
+				)}
 				{flow.view === "issued" && (
 					<IssuedStep
 						name={flow.name}
@@ -122,39 +137,66 @@ export function CredentialsDialog({
 /**
  * 签发一个凭据（两处用：列表里的「签发新凭据」、新名字的名称表单）：成功时把原值交给弹窗的状态。
  * 不用 `useMutation`：它的结果会在 TanStack 的 mutation 缓存里多留一份（默认 5 分钟），原值只该在弹窗的状态里。
+ * 在 `CredentialsDialog` 里调用（不在步骤组件里）：`pending` 要管着整个弹窗能不能关。
+ *
+ * 出错时也刷新凭据列表：没有收到响应（网络断了）的话控制面可能已经签发了一枚、浏览器没拿到原值（{@link mayHaveIssued}），
+ * 列表里能看到它；给新名字签发时这种情况进到这个名字的列表（`unseen`），提醒去吊销。
  */
 function useIssue(dispatch: React.Dispatch<FlowAction>) {
 	const queryClient = useQueryClient();
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<unknown>(null);
-	const issue = async (name: string) => {
+	// 同一时刻只有一个签发请求：连点、连按 Enter 不会签出两枚。
+	const inFlight = useRef(false);
+	const issue = async (name: string, fromNameStep = false) => {
+		if (inFlight.current) return;
+		inFlight.current = true;
 		setPending(true);
 		setError(null);
 		try {
 			const created = await callApi(agentsApi.issueCredential, { params: { name } });
 			dispatch({ type: "issued", name, credential: created.credential, token: created.token });
-			void queryClient.invalidateQueries({ queryKey: domainKey(agentsApi.listCredentials) });
 		} catch (caught) {
 			setError(caught);
+			if (fromNameStep && mayHaveIssued(caught)) dispatch({ type: "unseen", name });
 		} finally {
+			inFlight.current = false;
 			setPending(false);
+			void queryClient.invalidateQueries({ queryKey: domainKey(agentsApi.listCredentials) });
 		}
 	};
-	return { issue, pending, error, clearError: () => setError(null) };
+	const clearError = useCallback(() => setError(null), []);
+	return { issue, pending, error, clearError };
+}
+
+type Issuing = ReturnType<typeof useIssue>;
+
+/** 签发失败的提示：控制面的话（没有「管理」范围时写明原因）；可能已经签发了一枚没看到原值的凭据时再加一句。 */
+function IssueFailure({ error }: { error: unknown }) {
+	return (
+		<FormAlert>
+			签发失败：
+			<AdminErrorText error={error} />
+			{mayHaveIssued(error) && (
+				<span data-slot="issue-maybe-issued"> {AGENT_CREDENTIAL.issueMayHaveSucceeded}</span>
+			)}
+		</FormAlert>
+	);
 }
 
 /** 还没连过的名字：填名称，提交就是签发。 */
 function NameStep({
 	onCancel,
-	dispatch,
+	issuing,
 }: {
 	onCancel: () => void;
+	issuing: Issuing;
 	dispatch: React.Dispatch<FlowAction>;
 }) {
 	const [value, setValue] = useState("");
 	const [submitted, setSubmitted] = useState(false);
 	const input = useRef<HTMLInputElement>(null);
-	const { issue, pending, error } = useIssue(dispatch);
+	const { issue, pending, error } = issuing;
 	const problem = agentNameProblem(value);
 	return (
 		<form
@@ -163,7 +205,7 @@ function NameStep({
 				event.preventDefault();
 				setSubmitted(true);
 				if (problem) return input.current?.focus();
-				void issue(value);
+				void issue(value, true);
 			}}
 		>
 			<DialogHeader>
@@ -193,15 +235,10 @@ function NameStep({
 						/>
 					)}
 				</FormField>
-				{error !== null && (
-					<FormAlert>
-						签发失败：
-						<ErrorMessage error={error} />
-					</FormAlert>
-				)}
+				{error !== null && <IssueFailure error={error} />}
 			</DialogBody>
 			<DialogFooter>
-				<Button variant="ghost" onClick={onCancel}>
+				<Button variant="ghost" disabled={pending} onClick={onCancel}>
 					取消
 				</Button>
 				<Button
@@ -221,9 +258,17 @@ function NameStep({
 const newestFirst = (credentials: readonly AgentCredentialView[]) =>
 	[...credentials].sort((a, b) => b.created_at.localeCompare(a.created_at));
 
-function ListStep({ name, dispatch }: { name: string; dispatch: React.Dispatch<FlowAction> }) {
+function ListStep({
+	name,
+	issuing,
+	dispatch,
+}: {
+	name: string;
+	issuing: Issuing;
+	dispatch: React.Dispatch<FlowAction>;
+}) {
 	const credentials = useQuery(apiQuery(agentsApi.listCredentials, { params: { name } }));
-	const { issue, pending, error } = useIssue(dispatch);
+	const { issue, pending, error } = issuing;
 	const active = credentials.data?.credentials.filter((c) => c.revoked_at === null).length ?? 0;
 	return (
 		<>
@@ -257,12 +302,7 @@ function ListStep({ name, dispatch }: { name: string; dispatch: React.Dispatch<F
 					)}
 				</QueryView>
 				{active > 0 && <RotateGuide />}
-				{error !== null && (
-					<FormAlert>
-						签发失败：
-						<ErrorMessage error={error} />
-					</FormAlert>
-				)}
+				{error !== null && <IssueFailure error={error} />}
 			</DialogBody>
 			<DialogFooter>
 				<Button variant="primary" disabled={pending} onClick={() => void issue(name)}>
@@ -428,7 +468,7 @@ function IssuedStep({
 				<section aria-label="装到这台 Agent 上" className="flex flex-col gap-1.5">
 					<h3 className="m-0 text-xs font-medium text-fg-1">{AGENT_CREDENTIAL.install.title}</h3>
 					<p className="m-0 text-xs text-fg-2">{AGENT_CREDENTIAL.install.intro}</p>
-					<CodeBlock code={installCommand(installUrl, name)} />
+					<CodeBlock code={installCommand(installUrl, name)} wrap="mono" />
 					<p className="m-0 text-xs text-fg-3">{AGENT_CREDENTIAL.install.note}</p>
 				</section>
 				<section aria-label="换掉已装好的 Agent 的凭据" className="flex flex-col gap-1.5">
@@ -493,7 +533,10 @@ function RevokeStep({
 			</DialogHeader>
 			<DialogBody>
 				<p className="m-0 text-xs text-fg-3">
-					这台 Agent：<span className="font-mono text-fg-2">{untrustedPlain(name)}</span>
+					这台 Agent：
+					<span className="font-mono text-fg-2">
+						<UntrustedText text={name} />
+					</span>
 				</p>
 				{onlyActive && (
 					<p data-slot="revoke-only-active" className="m-0 text-sm text-warn-fg">
@@ -503,7 +546,7 @@ function RevokeStep({
 				{revoke.isError && (
 					<FormAlert>
 						吊销失败：
-						<ErrorMessage error={revoke.error} />
+						<AdminErrorText error={revoke.error} />
 					</FormAlert>
 				)}
 			</DialogBody>

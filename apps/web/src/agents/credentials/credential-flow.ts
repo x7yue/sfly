@@ -20,6 +20,8 @@ export type Flow =
 export type FlowAction =
 	/** 签发成功：收到原值（给新名字签发时，名称就是填的那个，也从这里进入这个名字）。 */
 	| { type: "issued"; name: string; credential: AgentCredentialView; token: string }
+	/** 给新名字签发时没有收到响应（控制面可能已经签发了一枚、浏览器没拿到原值）：进这个名字的列表，那一枚在列表里。 */
+	| { type: "unseen"; name: string }
 	/** 点「我已保存，完成」：回到列表，原值清掉。 */
 	| { type: "done" }
 	/** 列表里点某个凭据的「吊销」。 */
@@ -42,6 +44,11 @@ export function flowReducer(flow: Flow, action: FlowAction, start: string | null
 				credential: action.credential,
 				token: action.token,
 			};
+		case "unseen":
+			// 只在填名称和列表里发起签发：显示原值、吊销确认的时候没有签发请求在路上。
+			return flow.view === "name" || flow.view === "list"
+				? { view: "list", name: action.name }
+				: flow;
 		case "done":
 			return "name" in flow ? { view: "list", name: flow.name } : startFlow(start);
 		case "askRevoke":

@@ -6,13 +6,13 @@ import { useRef, useState } from "react";
 import { AgentRack } from "#/agents/AgentRack";
 import { useConnectCommand } from "#/agents/connect-command";
 import { CredentialsDialog } from "#/agents/credentials/CredentialsDialog";
-import { useCanAdminAgents, useRefreshIdentityOnOpen } from "#/agents/use-agent-admin";
+import { useCanAdminAgents } from "#/agents/use-agent-admin";
 import { useSlotFocus } from "#/agents/use-slot-focus";
 import { DocPageLink } from "#/components/doc-page-link";
 import { EmptyState, QueryView, RackSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { MESSAGE, PAGE, TERM } from "#/lib/copy";
+import { AGENT_ADMIN, MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +31,7 @@ export const Route = createFileRoute("/_shell/agents")({
 });
 
 function AgentsPage() {
-	useRefreshIdentityOnOpen();
+	const canAdmin = useCanAdminAgents();
 	const command = useConnectCommand();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
 	const runFocus = useSlotFocus(agents.data?.agents ?? []);
@@ -47,9 +47,14 @@ function AgentsPage() {
 				<EmptyState
 					icon={<ServerIcon />}
 					title={MESSAGE.noAgents}
-					description="每台 Agent 用自己的凭据连接：先点页头的「为新 Agent 签发凭据」，弹窗里有写好名字的安装命令；在测试机上运行它，Agent 会主动连接控制面并出现在这里。首次启动会自动准备 uv、共享 venv 和 SDK 运行时。下面是命令的样子（名称换成签发凭据时的名字，凭据运行时粘贴）。"
+					description={
+						(canAdmin
+							? "每台 Agent 用自己的凭据连接：先点页头的「为新 Agent 签发凭据」，弹窗里有写好名字的安装命令；"
+							: `每台 Agent 用自己的凭据连接：${AGENT_ADMIN.askAdmin}，拿到凭据之后，`) +
+						"在测试机上运行下面的命令，Agent 会主动连接控制面并出现在这里。首次启动会自动准备 uv、共享 venv 和 SDK 运行时。下面是命令的样子（名称换成签发凭据时的名字，凭据在命令运行之后粘贴）。"
+					}
 				>
-					<CodeBlock code={command} className="mx-auto w-fit" />
+					<CodeBlock code={command} wrap="mono" className="mx-auto max-w-3xl" />
 				</EmptyState>
 			}
 		>
@@ -75,7 +80,7 @@ function AgentsPage() {
 				actions={
 					<>
 						<IssueForNewAgent />
-						{hasAgents && <ConnectHelp command={command} />}
+						{hasAgents && <ConnectHelp command={command} canAdmin={canAdmin} />}
 					</>
 				}
 			/>
@@ -102,7 +107,7 @@ function IssueForNewAgent() {
 	);
 }
 
-function ConnectHelp({ command }: { command: string }) {
+function ConnectHelp({ command, canAdmin }: { command: string; canAdmin: boolean }) {
 	return (
 		<Dialog>
 			<DialogTrigger render={<Button variant="ghost" />}>
@@ -114,19 +119,19 @@ function ConnectHelp({ command }: { command: string }) {
 					<DialogTitle>接入 Agent</DialogTitle>
 					<DialogDescription>
 						在测试机上运行下面的命令：识别架构、下载并校验 Agent，写入配置并注册 systemd 服务。
-						Agent 按名称注册，同名重新连接会替换旧连接。每台 Agent
-						用自己的凭据连接：先在这个页面按台签发， 已经连上过的 Agent
-						点它面板上的「凭据」，还没连过的点页头的「为新 Agent 签发凭据」，
-						签发之后弹窗里的命令已经写好了名字。凭据经环境变量{" "}
-						<code className="font-mono">SFLY_TOKEN</code> 传给安装命令（第一行{" "}
-						<code className="font-mono">read -rs</code>{" "}
-						运行时粘贴，不放在命令行参数里）。开发机、配置和自动更新见开发文档的「
+						Agent 按名称注册，同名重新连接会替换旧连接。每台 Agent 用自己的凭据连接：
+						{canAdmin
+							? "先在这个页面按台签发，已经连上过的 Agent 点它面板上的「凭据」，还没连过的点页头的「为新 Agent 签发凭据」，签发之后弹窗里的命令已经写好了名字。"
+							: `${AGENT_ADMIN.askAdmin}，签发之后命令里的名字要和凭据的名字一致。`}
+						凭据经环境变量 <code className="font-mono">SFLY_TOKEN</code>{" "}
+						传给安装命令：命令运行之后在提示处粘贴凭据（<code className="font-mono">read -rs</code>
+						，输入不显示，也不放在命令行参数里）。开发机、配置和自动更新见开发文档的「
 						<DocPageLink page="install-agent" />
 						」。
 					</DialogDescription>
 				</DialogHeader>
 				<DialogBody>
-					<CodeBlock code={command} />
+					<CodeBlock code={command} wrap="mono" />
 				</DialogBody>
 			</DialogContent>
 		</Dialog>

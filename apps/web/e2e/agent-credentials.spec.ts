@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { FakeAgent } from "../../server/test/support/fake-agent.js";
-import { setAuthKind, signInAs, signInAsAdmin } from "./agent-admin-support";
+import { disableUser, setAuthKind, signInAs, signInAsAdmin } from "./agent-admin-support";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
@@ -16,6 +16,20 @@ const RAW = /sfly_agt_[0-9a-f]{20,}/;
 const dialog = (page: Page) => page.getByRole("dialog");
 const rack = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
 const issuedToken = (page: Page) => dialog(page).locator("[data-issued-credential]");
+
+/**
+ * 签发的请求控制面处理了、浏览器没拿到响应：放行请求等它做完，再把响应丢掉（网络在响应回来之前断了）。
+ * 登录 Cookie 只对同源的请求有效：`route.fetch` 是测试进程发的，不带浏览器的 `Sec-Fetch-Site`，这里补上。
+ */
+async function dropIssueResponse(page: Page, agent: string) {
+	await page.route(`**/api/agents/${agent}/credentials`, async (route) => {
+		if (route.request().method() !== "POST") return route.continue();
+		await route.fetch({
+			headers: { ...route.request().headers(), "sec-fetch-site": "same-origin" },
+		});
+		await route.abort("failed");
+	});
+}
 
 /** 页面此刻（DOM 全文、标题、地址、两种浏览器存储）里有没有这一段文字。 */
 async function pageHolds(page: Page, text: string): Promise<boolean> {
@@ -62,11 +76,13 @@ test.describe("签发、吊销、轮换", () => {
 		const raw = await issuedToken(page).inputValue();
 		expect(raw).toMatch(RAW);
 
-		// 写好名字的安装命令：先 read -rs 读入凭据，再运行安装脚本；原值不在命令里，不在命令行参数里。
+		// 写好名字的安装命令：一行、放在子 shell 里（两行一起粘贴时没有括号粘贴的终端会把凭据当成命令执行）；
+		// read -rs 读入凭据，原值不在命令里，不在命令行参数里。
 		const command = dialog(page).locator('[data-slot="code-block"]');
-		await expect(command).toHaveText(
-			"read -rs SFLY_TOKEN && export SFLY_TOKEN\ncurl -fsSL http://sfly.internal:8080/install.sh | sh -s -- --name agent-a",
-		);
+		const oneLine =
+			"(read -rs SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL http://sfly.internal:8080/install.sh | sh -s -- --name agent-a)";
+		await expect(command).toHaveText(oneLine);
+		expect(await command.innerText()).not.toContain("\n");
 		expect(await command.innerText()).not.toContain(raw.slice(0, 16));
 		expect(await command.innerText()).not.toContain("--token");
 
@@ -74,9 +90,7 @@ test.describe("签发、吊销、轮换", () => {
 		await dialog(page).getByRole("button", { name: "复制凭据原值" }).click();
 		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(raw);
 		await command.getByRole("button", { name: "复制" }).click();
-		await expect
-			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
-			.toContain("read -rs SFLY_TOKEN");
+		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(oneLine);
 		expect(await page.evaluate(() => navigator.clipboard.readText())).not.toContain(raw);
 
 		// 显示原值的时候：没有右上角的关闭按钮，Esc、点遮罩都不关。
@@ -153,6 +167,103 @@ test.describe("签发、吊销、轮换", () => {
 		expect(requests.filter((url) => url.includes(secret))).toEqual([]);
 	});
 
+	test("签发请求还没回来时不能关弹窗：Esc、点遮罩都不关、没有关闭按钮；响应回来后显示原值；完成、关掉再打开都没有原值，也没有多签一枚", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await signInAsAdmin(context, controlPlane);
+		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+		// 把签发的请求拦住，放行之前页面拿不到响应（控制面照常处理；审查的探针 P1、P2）。
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const posts: string[] = [];
+		await page.route("**/api/agents/agent-a/credentials", async (route) => {
+			if (route.request().method() !== "POST") return route.continue();
+			posts.push(route.request().url());
+			await gate;
+			await route.continue();
+		});
+		await page.goto("/agents");
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await expect(dialog(page).locator("[data-credential-state]")).toHaveCount(1);
+		const issue = dialog(page).getByRole("button", { name: "签发新凭据" });
+		await issue.click();
+		await expect.poll(() => posts.length).toBe(1);
+
+		// 签发中：签发按钮禁用（连点不会签第二枚），没有右上角的关闭按钮，Esc 和点遮罩都不关。
+		await expect(issue).toBeDisabled();
+		await expect(dialog(page).getByRole("button", { name: "关闭" })).toHaveCount(0);
+		await page.keyboard.press("Escape");
+		await expect(dialog(page)).toBeVisible();
+		await page.mouse.click(8, 8);
+		await expect(dialog(page)).toBeVisible();
+		await issue.click({ force: true }).catch(() => undefined);
+		expect(posts).toHaveLength(1);
+
+		// 响应回来：显示原值（关不掉的状态接着是「已签发」）。
+		release();
+		await expect(dialog(page)).toContainText("的凭据已签发");
+		const raw = await issuedToken(page).inputValue();
+		expect(raw).toMatch(RAW);
+		await dialog(page).getByRole("button", { name: "我已保存，完成" }).click();
+		await dialog(page).getByRole("button", { name: "关闭" }).click();
+		await expect(dialog(page)).toBeHidden();
+		// 关掉再打开：没有原值（整个页面里都找不到），列表里是两个凭据（原来的一个加刚签发的这一个，没有多签）。
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await expect(dialog(page).locator("[data-credential-state]")).toHaveCount(2);
+		expect(await pageHolds(page, raw.slice(10))).toBe(false);
+		await expect(dialog(page).locator("[data-issued-credential]")).toHaveCount(0);
+		expect(posts).toHaveLength(1);
+	});
+
+	test("签发时没有收到响应（控制面其实已经签发了）：写明可能已经签发了一枚没看到原值的凭据，列表刷新后能看到它；明确被拒绝的（403）不写这句", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await signInAsAdmin(context, controlPlane);
+		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+		await dropIssueResponse(page, "agent-a");
+		await page.goto("/agents");
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await expect(dialog(page).locator("[data-credential-state]")).toHaveCount(1);
+		await dialog(page).getByRole("button", { name: "签发新凭据" }).click();
+		const alert = dialog(page).getByRole("alert");
+		await expect(alert).toContainText("签发失败");
+		await expect(alert.locator('[data-slot="issue-maybe-issued"]')).toContainText(
+			"控制面可能已经签发了一枚你没看到原值的凭据",
+		);
+
+		// 列表刷新了：能看到那一枚（最后使用为空），可以吊销它。
+		await expect(dialog(page).locator("[data-credential-state]")).toHaveCount(2);
+		// 出错之后弹窗能关（没有请求在路上，也没有原值）。
+		await dialog(page).getByRole("button", { name: "关闭" }).click();
+		await expect(dialog(page)).toBeHidden();
+	});
+
+	test("给新名字签发时没有收到响应：进到这个名字的列表，提醒可能签发了一枚没看到原值的凭据，列表里有它", async ({
+		page,
+		context,
+		controlPlane,
+	}) => {
+		await signInAsAdmin(context, controlPlane);
+		await dropIssueResponse(page, "worker-7");
+		await page.goto("/agents");
+		await page.getByRole("button", { name: "为新 Agent 签发凭据" }).click();
+		await dialog(page).getByLabel("Agent 名称").fill("worker-7");
+		await dialog(page).getByRole("button", { name: "签发凭据" }).click();
+		await expect(dialog(page).locator('[data-slot="issue-maybe-issued"]')).toContainText(
+			"控制面可能已经签发了一枚你没看到原值的凭据",
+		);
+		await expect(dialog(page).locator("[data-credential-state]")).toHaveCount(1);
+		await expect(dialog(page).locator("[data-credential-state]")).toContainText("从未使用");
+	});
+
 	test("给还没连过的名字签发：名称过和控制面同一条规则（空的、看不见的字符、超过 64 个字符都不行，不发请求），签发之后能用它连上来，Agent 页出现这台", async ({
 		page,
 		context,
@@ -177,6 +288,14 @@ test.describe("签发、吊销、轮换", () => {
 		await expect(dialog(page)).toContainText("第 2 个字符是 U+200B");
 		await name.fill("x".repeat(65));
 		await expect(dialog(page)).toContainText("Agent 的名称不能超过 64 个字符");
+		await expect(submit).toBeDisabled();
+		// 首尾有空白的不行：Agent 读 agent.env 时会去掉两侧的空白，Hello 报的名字和凭据对不上，永远连不上。
+		await name.fill(" worker-9");
+		await expect(dialog(page)).toContainText("名称首尾不能有空白");
+		await name.fill("worker-9 ");
+		await expect(dialog(page)).toContainText(
+			"名称首尾不能有空白（Agent 读 agent.env 时会去掉，连接时对不上）",
+		);
 		await expect(submit).toBeDisabled();
 		expect(posts).toEqual([]);
 
@@ -231,6 +350,9 @@ test.describe("签发、吊销、轮换", () => {
 
 		await expect(dialog(page)).toContainText("吊销后立即失效");
 		await expect(dialog(page)).toContainText("用它连着的连接会断开");
+		// 那台 Agent 手上的任务按失联处理（租约到期前没有重新连上，以 agent_lost 失败）。
+		await expect(dialog(page)).toContainText("手上的任务按失联处理");
+		await expect(dialog(page)).toContainText("agent_lost");
 		await expect(dialog(page)).toContainText("不能撤销");
 		await expect(dialog(page).locator('[data-slot="revoke-only-active"]')).toContainText(
 			"这是这个名字唯一有效的凭据",
@@ -310,19 +432,20 @@ test.describe("停用和恢复", () => {
 		const agent = await connectAgent({
 			name: "agent-a",
 			agentVersion: "1.2.3",
-			slots: 2,
+			slots: 1,
 			installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
 		});
-		await triggerRun(
-			controlPlane,
-			await createScenario(controlPlane, "巡检", scenarioUsing("agent-a")),
-		);
+		// 一个任务占着唯一的槽位，另一个排队等这台 Agent。
+		const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+		await triggerRun(controlPlane, scenario);
 		await agent.nextAssign();
+		await triggerRun(controlPlane, scenario);
 		await page.goto("/agents");
 		const status = rack(page, "agent-a").locator("header [data-status]");
 		await expect(status).toHaveText("在线");
-		// 页面每 5 秒重新读一次 Agent 列表：读到这个任务占着槽位之后再打开确认框。
-		await expect(rack(page, "agent-a")).toContainText("1 / 2 占用", { timeout: 15_000 });
+		// 页面每 5 秒重新读一次 Agent 列表：读到这个任务占着槽位、另一个在排队之后再打开确认框。
+		await expect(rack(page, "agent-a")).toContainText("1 / 1 占用", { timeout: 15_000 });
+		await expect(rack(page, "agent-a")).toContainText("排队 1");
 
 		await rack(page, "agent-a").getByRole("button", { name: "停用 agent-a" }).click();
 		await expect(dialog(page)).toContainText("停用后它立即断开连接");
@@ -331,8 +454,23 @@ test.describe("停用和恢复", () => {
 		);
 		await expect(dialog(page).locator('[data-slot="disable-running"]')).toContainText("agent_lost");
 		await expect(dialog(page).locator('[data-slot="disable-running"]')).toContainText("重试");
+		// 任务凭据立即不认（节点里下载产物会 401）；排队等它的任务停用期间一直排队，到排队超时失败。
+		await expect(dialog(page).locator('[data-slot="disable-task-credentials"]')).toContainText(
+			"任务凭据立即不认",
+		);
+		await expect(dialog(page).locator('[data-slot="disable-task-credentials"]')).toContainText(
+			"401",
+		);
+		await expect(dialog(page).locator('[data-slot="disable-queued"]')).toContainText(
+			"排队等它的 1 个任务停用期间一直排队",
+		);
+		await expect(dialog(page).locator('[data-slot="disable-queued"]')).toContainText("排队超时");
 		await expect(dialog(page).locator('[data-slot="disable-not-stopped"]')).toContainText(
 			"停用不会停下那台机器上正在跑的任务",
+		);
+		// 「结果留在 Agent 里」说准：恢复之后重连时租约已经过期的尝试会被放弃。
+		await expect(dialog(page).locator('[data-slot="disable-not-stopped"]')).toContainText(
+			"租约已经过期的尝试会被放弃",
 		);
 		await expect(dialog(page).locator('[data-slot="disable-not-stopped"]')).toContainText(
 			"systemctl --user stop sfly-agent",
@@ -419,7 +557,7 @@ test.describe("谁看得到这些按钮", () => {
 		});
 	}
 
-	test("范围跟着身份走：打开 Agent 页时重新问一次，管理员被降级之后再打开就看不到按钮了", async ({
+	test("管理员被降级之后：页面上的按钮还在（范围只在页面打开时读到，不另外刷新），点了得到 403 并在对话框里写明原因；刷新页面按钮就没了", async ({
 		page,
 		context,
 		controlPlane,
@@ -429,14 +567,55 @@ test.describe("谁看得到这些按钮", () => {
 		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
 		await page.goto("/agents");
 		await expect(page.getByRole("button", { name: "agent-a 的凭据" })).toBeVisible();
-		// 管理员在别处被降成编辑者：控制面里的角色变了，页面还开着，按钮还在（点了服务端拒绝）。
+		// 管理员在别处被降成编辑者：控制面里的角色变了，页面还开着，按钮还在。
 		await signInAs(context, controlPlane, { login: "pa", role: "editor" });
-		// 换一个页面再回来：身份重新读，按钮没了。
-		await page.getByRole("link", { name: /^节点包/ }).click();
-		await page.getByRole("link", { name: /Agent 管理/ }).click();
+		await expect(page.getByRole("button", { name: "agent-a 的凭据" })).toBeVisible();
+
+		// 停用：服务端拒绝（403），确认框里写明原因，Agent 没有被停用。
+		await rack(page, "agent-a").getByRole("button", { name: "停用 agent-a" }).click();
+		await dialog(page).getByRole("button", { name: "停用", exact: true }).click();
+		await expect(dialog(page).getByRole("alert")).toContainText("你没有这个项目的「管理」范围");
+		await expect(dialog(page).getByRole("alert")).toContainText("刷新页面后按钮会消失");
+		await dialog(page).getByRole("button", { name: "取消" }).click();
+		// 凭据：列出只要「读」，编辑者还能看到列表；签发被拒绝，同样写明原因。
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await expect(dialog(page).locator("[data-credential-state]")).toHaveCount(1);
+		await dialog(page).getByRole("button", { name: "签发新凭据" }).click();
+		await expect(dialog(page).getByRole("alert")).toContainText("你没有这个项目的「管理」范围");
+		// 明确被拒绝（403）的签发一定没有签发：不写「可能已经签发了一枚」。
+		await expect(dialog(page).getByRole("alert")).not.toContainText("可能已经签发");
+		// 吊销：同样。
+		await dialog(page)
+			.getByRole("button", { name: /^吊销 sfly_agt_/ })
+			.click();
+		await dialog(page).getByRole("button", { name: "吊销", exact: true }).click();
+		await expect(dialog(page).getByRole("alert")).toContainText("你没有这个项目的「管理」范围");
+		await page.keyboard.press("Escape");
+
+		// 刷新页面：身份重新读，按钮没了。
+		await page.reload();
 		await expect(rack(page, "agent-a")).toBeVisible();
 		await expect(page.getByRole("button", { name: "agent-a 的凭据" })).toHaveCount(0);
 		await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
+	});
+
+	test("登录失效之后从别的页面点进 Agent 页：回到登录页，不悄悄掉进昵称模式（进页面时不另外刷新身份）", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		test.setTimeout(90_000);
+		await signInAsAdmin(context, controlPlane);
+		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+		await page.goto("/packages");
+		await expect(
+			page.getByRole("banner").getByRole("button", { name: /agentadmin/ }),
+		).toBeVisible();
+		// 管理员账号被停用：他的登录立即失效。
+		await disableUser(controlPlane, "agentadmin");
+		await page.getByRole("link", { name: /Agent 管理/ }).click();
+		await expect(page).toHaveURL(/\/login\?/, { timeout: 30_000 });
 	});
 
 	test("没有登录（昵称模式）的人看不到凭据、停用的按钮，也看不到「为新 Agent 签发凭据」；接口也要登录", async ({
@@ -457,6 +636,74 @@ test.describe("谁看得到这些按钮", () => {
 		// 页面不给看，接口本来就拒绝：不带凭据的请求是 401。
 		const refused = await controlPlane.fetch("/agents/agent-a/credentials");
 		expect(refused.status).toBe(401);
+	});
+});
+
+test.describe("没有「管理」范围的人看到的文字", () => {
+	const ASK = "请项目管理员为这台 Agent 签发凭据";
+
+	test("Agent 页的空状态：编辑者看到「请项目管理员…」，没有「为新 Agent 签发凭据」按钮也不叫他点它；管理员看到的还是点页头按钮", async ({
+		page,
+		context,
+		controlPlane,
+	}) => {
+		await signInAs(context, controlPlane, { login: "ed", role: "editor" });
+		await page.goto("/agents");
+		const empty = page.getByRole("region", { name: "还没有 Agent 连接" });
+		await expect(empty).toContainText(ASK);
+		await expect(empty).not.toContainText("先点页头的");
+		await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
+
+		await signInAsAdmin(context, controlPlane);
+		await page.reload();
+		await expect(empty).toContainText("先点页头的「为新 Agent 签发凭据」");
+		await expect(empty).not.toContainText(ASK);
+	});
+
+	test("「接入 Agent」弹窗：编辑者看到「请项目管理员…」，不叫他去点看不到的按钮；管理员看到按台签发的步骤", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+		await signInAs(context, controlPlane, { login: "ed", role: "editor" });
+		await page.goto("/agents");
+		await page.getByRole("button", { name: "如何接入 Agent" }).click();
+		let help = page.getByRole("dialog", { name: "接入 Agent" });
+		await expect(help).toContainText(ASK);
+		await expect(help).not.toContainText("点页头的「为新 Agent 签发凭据」");
+		await help.getByRole("button", { name: "关闭" }).click();
+
+		await signInAsAdmin(context, controlPlane);
+		await page.reload();
+		await page.getByRole("button", { name: "如何接入 Agent" }).click();
+		help = page.getByRole("dialog", { name: "接入 Agent" });
+		await expect(help).toContainText("点页头的「为新 Agent 签发凭据」");
+		await expect(help).not.toContainText(ASK);
+	});
+
+	test("控制台的「开始使用」：编辑者看到「请项目管理员…」；管理员看到「先在 Agent 管理页为它的名字签发凭据」；中文标点后面没有多出来的空格", async ({
+		page,
+		context,
+		controlPlane,
+	}) => {
+		await signInAs(context, controlPlane, { login: "ed", role: "editor" });
+		await page.goto("/");
+		const step = page.locator('[data-step="agent"]');
+		await expect(step).toContainText(ASK);
+		await expect(step).not.toContainText("管理页为它的名字签发凭据");
+
+		await signInAsAdmin(context, controlPlane);
+		await page.reload();
+		await expect(step).toContainText(
+			"先在 Agent 管理页为它的名字签发凭据，在测试机上运行下面这一行命令",
+		);
+		await expect(step).not.toContainText(ASK);
+		// 中文标点后面不留空格（JSX 换行拼接会多出一个）。
+		const text = (await step.innerText()).replace(/\s+/g, " ").split("(read")[0]?.trim() ?? "";
+		expect(text).toContain("先在 Agent 管理页");
+		expect(text).not.toMatch(/[，。；：、（]\s/u);
 	});
 });
 

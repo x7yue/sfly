@@ -53,7 +53,7 @@ test("每完成一步，白色按钮移到下一步；出现第一个运行后�
 	);
 	await expect(step(page, "agent")).toContainText("还没有 Agent 连接");
 	const command =
-		"read -rs SFLY_TOKEN && export SFLY_TOKEN\ncurl -fsSL http://sfly.example:8080/install.sh | sh -s -- --name <名称>";
+		"(read -rs SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL http://sfly.example:8080/install.sh | sh -s -- --name <名称>)";
 	await expect(step(page, "agent")).toContainText(command);
 	await step(page, "agent").getByRole("button", { name: "复制安装命令" }).click();
 	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(command);

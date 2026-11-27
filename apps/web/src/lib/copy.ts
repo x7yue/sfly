@@ -658,6 +658,13 @@ export const AGENT_AUTH = {
 	},
 } as const;
 
+/** Agent 管理操作（签发、吊销、停用、恢复）被控制面拒绝（403）时对话框里写的话：页面上的按钮是按打开页面时的范围显示的。 */
+export const AGENT_ADMIN = {
+	forbidden: "你没有这个项目的「管理」范围（可能刚被调整了角色），刷新页面后按钮会消失。",
+	/** 没有「管理」范围的人在页面上看到的、本来叫人去点签发凭据的地方：改成请管理员做。 */
+	askAdmin: "请项目管理员为这台 Agent 签发凭据",
+} as const;
+
 /**
  * 一台 Agent 的「凭据」弹窗和「停用 / 恢复」确认里的话（Agent 管理页，#492）。凭据原值只显示一次、安装命令不带原值，
  * 吊销、停用会发生什么都写准：和 `docs/guide/install-agent.md` 的「Agent 凭据」「被控制面拒绝」同一套说法。
@@ -669,14 +676,14 @@ export const AGENT_CREDENTIAL = {
 	install: {
 		title: "装到一台新机器上",
 		intro:
-			"在那台机器上运行下面的命令：先用 read -rs 读入凭据（粘贴上面复制的原值后回车，输入不显示），再运行安装脚本。",
-		note: "凭据经环境变量 SFLY_TOKEN 传给安装脚本，不放在命令行参数里，所以不会出现在进程列表和 shell 历史里。--name 要和签发凭据的名字一致，不一致控制面拒绝连接。",
+			"在那台机器上（bash）运行下面这一行命令：它会停下来等你粘贴凭据（粘贴上面复制的原值后回车，输入不显示），然后运行安装脚本。",
+		note: "凭据经环境变量 SFLY_TOKEN 传给安装脚本，不放在命令行参数里，所以不会出现在进程列表和 shell 历史里；整条命令在括号里运行，装完之后你的 shell 里不留 SFLY_TOKEN，读不到凭据（比如不是 bash）时不会安装。用 sudo 安装的话，把命令里的 sh 换成 sudo --preserve-env=SFLY_TOKEN sh（sudo 默认不传环境变量）。--name 要和签发凭据的名字一致，不一致控制面拒绝连接。",
 	},
 	replace: {
 		title: "换掉已装好的 Agent 的凭据",
 		steps: [
 			"打开那台机器上的 agent.env（默认在 ~/.sfly/agent.env；用 sudo 安装的在 root 的家目录下）。",
-			"把 SFLY_TOKEN= 那一行的值换成上面复制的凭据。",
+			"把 SFLY_TOKEN= 那一行的值换成上面复制的凭据（原来没有凭据的 agent.env 里没有这一行，在末尾加一行 SFLY_TOKEN=<凭据>）。",
 			"重启 Agent：systemctl --user restart sfly-agent（用 sudo 安装的：sudo systemctl restart sfly-agent）。",
 			"确认它连上之后，回到凭据列表吊销旧的。",
 		],
@@ -689,9 +696,12 @@ export const AGENT_CREDENTIAL = {
 			"看到新凭据的「最后使用」有了时间（它用新凭据连上了），再回到这里吊销旧的。",
 		],
 	},
+	/** 签发的请求出错（没有收到响应）时的提醒：控制面可能已经签发了一枚、浏览器没拿到原值。 */
+	issueMayHaveSucceeded:
+		"控制面可能已经签发了一枚你没看到原值的凭据：在列表里找最新的、「最后使用」为空的那一枚，吊销它再重新签发。",
 	revoke: {
 		effect:
-			"吊销后立即失效：用它连着的连接会断开，那台 Agent 手上任务的任务凭据也立刻不认；不能撤销，要再用只能重新签发。Agent 不会退出，会一直重试连接，直到换上有效的凭据。",
+			"吊销后立即失效：用它连着的连接会断开，那台 Agent 手上任务的任务凭据也立刻不认；那台 Agent 手上的任务按失联处理：租约到期之前它没有用别的有效凭据重新连上，这些任务以 agent_lost 失败，配置了重试的节点重新排队。不能撤销，要再用只能重新签发。Agent 不会退出，会一直重试连接，直到换上有效的凭据。",
 		onlyActive:
 			"这是这个名字唯一有效的凭据：吊销之后用它的那台 Agent 连不上控制面。要换凭据，先签发新的、换进它的 agent.env 并重启，确认连上之后再来吊销旧的。吊销之后这个名字没有有效凭据，过渡期里共享令牌和不带凭据的连接又能用这个名字（登记工作台之后不再接受）。",
 	},
@@ -705,9 +715,13 @@ export const AGENT_DISABLE = {
 		running: (count: number) =>
 			`它现在有 ${count} 个任务在执行：连接断开后这些任务按 Agent 失联处理，租约到期后以 agent_lost 失败，配置了重试的节点重新排队，等这台 Agent 恢复，排队超时的节点失败。`,
 		idle: "它现在没有任务在执行。",
+		taskCredentials:
+			"它手上任务的任务凭据立即不认：节点里下载产物会收到 401（任务凭据只对下载本项目任务的产物有效）。",
+		queued: (count: number) =>
+			`已经排队等它的 ${count} 个任务停用期间一直排队，恢复之前不会派发，到排队超时（节点的 queue_timeout）失败。`,
 		referenced: (count: number) => `被 ${count} 个场景引用，停用期间这些场景触发时预检会拦下。`,
 		notStopped:
-			"停用不会停下那台机器上正在跑的任务：Agent 被断开之后，手上的任务仍在机器上执行，结果留在 Agent 里。要停下那台机器上的工作，得停 Agent 服务：systemctl --user stop sfly-agent（用 sudo 安装的：sudo systemctl stop sfly-agent）。",
+			"停用不会停下那台机器上正在跑的任务：Agent 被断开之后，手上的任务仍在机器上执行；它们在控制面那边已经按失联处理，恢复之后 Agent 重新连上时，控制面按握手决定继续还是放弃，租约已经过期的尝试会被放弃，结果不会被收下。要停下那台机器上的工作，得停 Agent 服务：systemctl --user stop sfly-agent（用 sudo 安装的：sudo systemctl stop sfly-agent）。",
 	},
 	enable: {
 		title: "恢复",

@@ -74,30 +74,60 @@ describe("CurrentUser.scopes：登录和 GET /auth/me", () => {
 			if (role !== null) await accounts.member("default", id, role);
 			return cookieFor(id);
 		};
+		// 每种人页面显示与否（范围里有没有「管理」）和管理类接口的状态码：确切的，不是「403 或 404」。
 		const cases = [
 			{
 				who: "项目管理员",
 				cookie: await mk("pa", "project_admin"),
 				scopes: ROLE_SCOPES.project_admin,
+				status: 204,
 			},
-			{ who: "编辑者", cookie: await mk("ed", "editor"), scopes: ROLE_SCOPES.editor },
-			{ who: "只读成员", cookie: await mk("ro", "read_only"), scopes: ROLE_SCOPES.read_only },
+			{
+				who: "编辑者",
+				cookie: await mk("ed", "editor"),
+				scopes: ROLE_SCOPES.editor,
+				status: 403,
+			},
+			{
+				who: "只读成员",
+				cookie: await mk("ro", "read_only"),
+				scopes: ROLE_SCOPES.read_only,
+				status: 403,
+			},
 			{
 				who: "平台管理员（不是成员）",
 				cookie: await mk("plat", null, true),
 				scopes: PLATFORM_ADMIN_SCOPES,
+				status: 204,
 			},
-			{ who: "不是成员也不是平台管理员", cookie: await mk("nobody", null), scopes: [] },
+			// 不是成员：什么范围都没有，接口不给确认这台 Agent 存不存在（404）。
+			{
+				who: "不是成员也不是平台管理员",
+				cookie: await mk("nobody", null),
+				scopes: [],
+				status: 404,
+			},
 		];
-		for (const { who, cookie, scopes } of cases) {
+		for (const { who, cookie, scopes, status } of cases) {
 			const current = await me(await cookie);
 			expect(current.scopes, who).toEqual([...scopes]);
-			const shows = current.scopes.includes("manage");
-			const status = await manageStatus(await cookie);
-			// 页面显示按钮的（范围里有「管理」）接口不拒绝；不显示的，接口也拒绝（403，不是成员是 404）。
-			if (shows) expect(status, `${who}：页面显示按钮，接口应当 204`).toBe(204);
-			else expect([403, 404], `${who}：页面不显示按钮，接口应当拒绝`).toContain(status);
+			expect(await manageStatus(await cookie), `${who}：接口状态`).toBe(status);
+			// 页面显示按钮（范围里有「管理」）的，接口不拒绝；不显示的，接口拒绝。
+			expect(current.scopes.includes("manage"), `${who}：显示与否和接口一致`).toBe(status === 204);
 		}
+	});
+
+	it("在另一个项目里是管理员、不是默认项目成员的人：scopes 是空的，管理接口 404（范围只按默认项目算）", async () => {
+		await accounts.project("alpha");
+		const id = await accounts.user("alphaadmin");
+		await accounts.member("alpha", id, "project_admin");
+		const cookie = await cookieFor(id);
+		expect((await me(cookie)).scopes).toEqual([]);
+		expect(await manageStatus(cookie)).toBe(404);
+		// 同一个人在默认项目里是编辑者：只有编辑者的范围，别的项目里的管理员身份不加进来。
+		await accounts.member("default", id, "editor");
+		expect((await me(cookie)).scopes).toEqual([...ROLE_SCOPES.editor]);
+		expect(await manageStatus(cookie)).toBe(403);
 	});
 
 	it("登录的响应也带范围（和 /auth/me 同一个）", async () => {

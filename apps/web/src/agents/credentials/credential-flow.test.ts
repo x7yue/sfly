@@ -67,4 +67,19 @@ describe("凭据弹窗的步骤", () => {
 		expect(flowReducer(issued, { type: "askRevoke", credential }, "agent-a")).toBe(issued);
 		expect(flowReducer(issued, { type: "backToList" }, "agent-a")).toBe(issued);
 	});
+
+	it("签发时没有收到响应（可能签发了一枚没看到原值的）：从填名称或列表进到这个名字的列表（那一枚在列表里）；显示原值时不动", () => {
+		expect(flowReducer({ view: "name" }, { type: "unseen", name: "w" }, null)).toEqual({
+			view: "list",
+			name: "w",
+		});
+		expect(
+			flowReducer(
+				{ view: "list", name: "agent-a" },
+				{ type: "unseen", name: "agent-a" },
+				"agent-a",
+			),
+		).toEqual({ view: "list", name: "agent-a" });
+		expect(flowReducer(issued, { type: "unseen", name: "agent-a" }, "agent-a")).toBe(issued);
+	});
 });
