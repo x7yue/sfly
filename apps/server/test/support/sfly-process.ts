@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import {
-	cleanEnv,
+	cliCallNow,
 	repoRoot,
 	type SflyOptions,
 	type SflyResult,
@@ -25,11 +25,10 @@ export interface SflyProcess {
  * 进程放在自己的进程组里，`interrupt()` 与终端按 Ctrl-C 一样发给整个进程组（`uv run` 和命令本身）。
  */
 export function spawnSfly(args: string[], options: SflyOptions = {}): SflyProcess {
-	const env = { ...cleanEnv(), ...options.env };
-	for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
-	const child = spawn("uv", ["run", "--locked", "sfly", ...args], {
+	const call = cliCallNow(args, options);
+	const child = spawn("uv", ["run", "--locked", "sfly", ...call.args], {
 		cwd: options.cwd ?? repoRoot,
-		env: env as NodeJS.ProcessEnv,
+		env: call.env,
 		detached: true,
 		stdio: ["ignore", "pipe", "pipe"],
 	});

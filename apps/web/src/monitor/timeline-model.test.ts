@@ -7,8 +7,10 @@ import {
 	liveSpan,
 	nodeSegments,
 	runExtent,
+	type Segment,
 	ticks,
 	timelineContentHeight,
+	timingOf,
 	visibleRange,
 	zoomFromFractions,
 	zoomStep,
@@ -173,6 +175,87 @@ describe("节点的时间线区段", () => {
 
 	it("没有尝试（待执行、跳过、没开始就取消）就没有区段", () => {
 		expect(nodeSegments(node("package", []), s(10))).toEqual([]);
+	});
+});
+
+describe("节点的用时（timingOf）：时间线的节点行和选中节点的摘要共用", () => {
+	const seg = (kind: Segment["kind"], start: number, end: number, attempt = 1): Segment => ({
+		kind,
+		start,
+		end,
+		live: false,
+		attempt,
+		taskId: `t${attempt}`,
+	});
+
+	it("没有区段（还没开始）：总耗时是 null", () => {
+		expect(timingOf([])).toEqual({ total: null, queued: 0, execution: null, attempts: 0 });
+	});
+
+	it("一次尝试：总耗时是排队加执行（和轨道的条一样长），排队和执行各自写出来", () => {
+		const t = timingOf([seg("queue", 0, 2000), seg("ok", 2000, 6000)]);
+		expect(t).toEqual({ total: 6000, queued: 2000, execution: 4000, attempts: 1 });
+	});
+
+	it("没有排队：总耗时等于执行", () => {
+		expect(timingOf([seg("ok", 100, 4100)])).toEqual({
+			total: 4000,
+			queued: 0,
+			execution: 4000,
+			attempts: 1,
+		});
+	});
+
+	it("两次尝试：总耗时是两次各自从排队到结束的合计（不含两次之间的间隔），执行是最近一次的", () => {
+		const t = timingOf([
+			seg("queue", 0, 500),
+			seg("fail", 500, 3500),
+			seg("queue", 5500, 6000, 2),
+			seg("run", 6000, 11000, 2),
+		]);
+		expect(t).toEqual({ total: 3500 + 5500, queued: 1000, execution: 5000, attempts: 2 });
+	});
+
+	it("两次尝试紧挨着：总耗时和第一次排队到最后一次结束一样", () => {
+		const t = timingOf([
+			seg("queue", 6000, 6000.5),
+			seg("fail", 6000, 9000),
+			seg("queue", 9000, 9500, 2),
+			seg("run", 9500, 14500, 2),
+		]);
+		expect(t.total).toBe(8500);
+	});
+
+	it("还在排队（没有执行段）：执行是 null，总耗时是排队到现在", () => {
+		expect(timingOf([seg("queue", 1000, 3500)])).toEqual({
+			total: 2500,
+			queued: 2500,
+			execution: null,
+			attempts: 1,
+		});
+	});
+
+	it("停止子流程的节点：等待段算执行", () => {
+		expect(timingOf([seg("queue", 0, 100), seg("wait", 100, 5100)]).execution).toBe(5000);
+	});
+
+	it("和 nodeSegments 接起来：一次尝试排队 2 秒、执行 4 秒", () => {
+		const node = {
+			node_id: "fetch",
+			kind: "package",
+			attempts: [
+				{
+					attempt: 1,
+					task_id: "t1",
+					status: "success",
+					queued_at: "2026-01-01T08:00:00.000Z",
+					started_at: "2026-01-01T08:00:02.000Z",
+					ended_at: "2026-01-01T08:00:06.000Z",
+				},
+			],
+		} as unknown as NodeRunView;
+		const t = timingOf(nodeSegments(node, Date.parse("2026-01-01T08:00:10.000Z")));
+		expect(t).toMatchObject({ total: 6000, queued: 2000, execution: 4000, attempts: 1 });
 	});
 });
 

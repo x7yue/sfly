@@ -135,7 +135,7 @@ test("任务的进度说明、动作的名称和字段和原因、日志、输�
 	const artifactName = `report${HOSTILE.zeroWidth}${HOSTILE.bidi}.html`;
 	const put = await controlPlane.fetch(
 		`/tasks/${probe.taskId}/artifacts/${encodeURIComponent(artifactName)}`,
-		{ method: "PUT", body: "<html>x</html>" },
+		{ method: "PUT", headers: agent.auth, body: "<html>x</html>" },
 	);
 	clock.advance(1000);
 

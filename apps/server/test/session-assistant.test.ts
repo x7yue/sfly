@@ -852,6 +852,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		] as const) {
 			const res = await cp.fetch(path, {
 				method: "POST",
+				credentials: "omit",
 				headers: { "content-type": "application/json", "x-sfly-nickname": encodeURIComponent(nul) },
 				body: JSON.stringify(body),
 			});

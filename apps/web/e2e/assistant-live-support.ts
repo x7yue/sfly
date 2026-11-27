@@ -23,7 +23,8 @@ export const test = base.extend<{
 			const accounts = new TestAccounts(controlPlane.database.url);
 			try {
 				const name = nickname ?? "tester";
-				const user = await accounts.user(name, { displayName: name });
+				// 控制面的默认凭据（#493）可能同时也在建这个昵称的用户：用同一个，不另建。
+				const user = await accounts.userNamed(name, { displayName: name });
 				await accounts.member("default", user, "editor");
 				await context.addCookies([
 					{ name: "sfly_login", value: await accounts.login(user), url: controlPlane.httpUrl },

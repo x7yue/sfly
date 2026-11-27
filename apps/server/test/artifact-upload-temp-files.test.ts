@@ -78,6 +78,9 @@ const canConnect = (port: number) =>
 		socket.once("error", () => resolve(false));
 	});
 
+/** 上传产物带的凭据：这台 Agent 的（`agent.auth`，连上 Agent 时取）。默认的个人令牌不能上传。 */
+let agentAuth: Record<string, string> = {};
+
 /**
  * 用 HTTP PUT 传一个产物（分块）；`abortAfterMs` 给了就是发完第一块之后过这么久客户端自己断开（返回 `"aborted"`）。
  */
@@ -89,7 +92,7 @@ function put(
 	return new Promise((resolve) => {
 		const req = httpRequest(
 			url,
-			{ method: "PUT", headers: { "transfer-encoding": "chunked" } },
+			{ method: "PUT", headers: { ...agentAuth, "transfer-encoding": "chunked" } },
 			(res) => {
 				let body = "";
 				res.setEncoding("utf8");
@@ -132,6 +135,7 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 		cp = await startTestControlPlane({ artifactLimitBytes: LIMIT });
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
+		agentAuth = agent.auth;
 		const api = new ApiClient(cp);
 		const scenario = await api.orchestrationWith(DOC);
 		await api.triggerOk(scenario);

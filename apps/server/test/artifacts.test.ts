@@ -81,13 +81,17 @@ describe("产物", () => {
 			token: options.agentToken,
 		});
 		agents.push(agent);
+		agentAuth = agent.auth;
 		const api = new ApiClient(cp);
 		const runId = await api.triggerOk(await api.orchestrationWith(options.document ?? DOC));
 		const task = await agent.nextAssign();
 		return { agent, task, runId, api };
 	};
 
-	/** 像 Agent 一样上传一个产物：PUT 到上传地址 + 按路径段编码的名称。 */
+	/**
+	 * 像 Agent 一样上传一个产物：PUT 到上传地址 + 按路径段编码的名称。`token` 不给时带这台 Agent 的凭据，
+	 * 给 `""` 时什么凭据都不带。
+	 */
 	const upload = (
 		task: AssignedTask,
 		name: string,
@@ -99,7 +103,7 @@ describe("产物", () => {
 			method: "PUT",
 			headers: {
 				"content-type": "application/octet-stream",
-				...(token ? { authorization: `Bearer ${token}` } : {}),
+				...(token === undefined ? agentAuth : token ? { authorization: `Bearer ${token}` } : {}),
 				...headers,
 			},
 			body,
@@ -136,7 +140,8 @@ describe("产物", () => {
 			`${task.artifactUploadUrl}${encodeURIComponent("截图")}/${encodeURIComponent("第 1 张.png")}`,
 		);
 
-		const res = await fetch(shot.url);
+		// 下载地址是绝对地址，像人在命令行里一样带上个人令牌。
+		const res = await fetch(shot.url, { headers: await cp.users.as("tester") });
 		expect(res.status).toBe(200);
 		expect(Buffer.from(await res.arrayBuffer())).toEqual(png);
 		expect(res.headers.get("content-disposition")).toContain(
@@ -151,7 +156,7 @@ describe("产物", () => {
 		expect((await api.run(runId)).status).toBe("success");
 
 		// 任务结束后仍可下载，但不能再上传。
-		expect((await fetch(shot.url)).status).toBe(200);
+		expect((await fetch(shot.url, { headers: await cp.users.as("tester") })).status).toBe(200);
 		const late = await upload(task, "late.txt", "x");
 		expect(late.status).toBe(409);
 		expect(((await late.json()) as { error: { code: string } }).error.code).toBe(
@@ -235,7 +240,9 @@ describe("产物", () => {
 		await upload(task, "a.txt", "second!");
 		const { artifacts } = await list(task.taskId);
 		expect(artifacts.map((a) => [a.name, a.size])).toEqual([["a.txt", 7]]);
-		expect(await (await fetch(artifacts[0]?.url ?? "")).text()).toBe("second!");
+		expect(
+			await (await fetch(artifacts[0]?.url ?? "", { headers: await cp.users.as("tester") })).text(),
+		).toBe("second!");
 	});
 
 	// #12 × #18：Agent 先上传产物再报结果，被取消的任务也一样。
@@ -249,7 +256,9 @@ describe("产物", () => {
 		expect((await api.run(runId)).status).toBe("cancelled");
 		const { artifacts } = await list(task.taskId);
 		expect(artifacts.map((a) => [a.name, a.size])).toEqual([["partial.txt", 4]]);
-		expect(await (await fetch(artifacts[0]?.url ?? "")).text()).toBe("half");
+		expect(
+			await (await fetch(artifacts[0]?.url ?? "", { headers: await cp.users.as("tester") })).text(),
+		).toBe("half");
 	});
 
 	it("强制取消后控制面先把任务记为 cancelled，Agent 稍后上传的产物仍被接受", async () => {
@@ -450,7 +459,7 @@ describe("产物", () => {
 
 	it("配置了 Agent 注册令牌时，上传必须带上令牌", async () => {
 		const { task } = await setup({ agentToken: "s3cret" });
-		expect((await upload(task, "a.txt", "x")).status).toBe(401);
+		expect((await upload(task, "a.txt", "x", "")).status).toBe(401);
 		expect((await upload(task, "a.txt", "x", "wrong")).status).toBe(401);
 		expect((await upload(task, "a.txt", "x", "s3cret")).status).toBe(201);
 	});
@@ -462,7 +471,7 @@ describe("产物", () => {
 		expect((await cp.fetch(`/tasks/${task.taskId}/artifacts/nope.txt`)).status).toBe(404);
 		const put = await fetch(`${cp.httpUrl}/tasks/${missing}/artifacts/a.txt`, {
 			method: "PUT",
-			headers: { "content-type": "application/octet-stream" },
+			headers: { ...agentAuth, "content-type": "application/octet-stream" },
 			body: "x",
 		});
 		expect(put.status).toBe(404);
@@ -507,13 +516,14 @@ describe("控制面关闭时还在下载的产物", () => {
 			const big = Buffer.alloc(32 * 1024 * 1024, 7);
 			const put = await fetch(`${task.artifactUploadUrl}big.bin`, {
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream" },
+				headers: { ...agent.auth, "content-type": "application/octet-stream" },
 				body: big,
 			});
 			expect(put.status).toBe(201);
 			await agent.disconnect();
 
 			const res = await fetch(`${task.artifactUploadUrl}big.bin`, {
+				headers: await cp.users.as("tester"),
 				dispatcher: client,
 			} as RequestInit);
 			expect(res.status).toBe(200);
@@ -580,6 +590,12 @@ describe("节点输出上限", () => {
 	});
 });
 
+/**
+ * 上传产物带的凭据：这台 Agent 的（和真实的 Agent 一样，#492，`setup` 里取 `agent.auth`）。
+ * 默认的个人令牌不能上传；下面几个手写请求的函数都带它。
+ */
+let agentAuth: Record<string, string> = {};
+
 /** 不做 URL 规范化的 PUT（路径原样发送）。 */
 function rawPut(url: string, body: string): Promise<{ status: number; body: string }> {
 	const { host, pathname } = new URL(url.replace(/\/artifacts\/.*$/, "/artifacts/"));
@@ -591,7 +607,7 @@ function rawPut(url: string, body: string): Promise<{ status: number; body: stri
 				port: Number(host.split(":")[1]),
 				path,
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream" },
+				headers: { ...agentAuth, "content-type": "application/octet-stream" },
 			},
 			(res) => {
 				let text = "";
@@ -652,6 +668,9 @@ function rejectedEarlyThenSendBody(
 		socket.on("connect", () => {
 			socket.write(
 				`PUT ${pathname} HTTP/1.1\r\nhost: ${hostname}:${port}\r\n` +
+					Object.entries(agentAuth)
+						.map(([name, value]) => `${name}: ${value}\r\n`)
+						.join("") +
 					`content-type: application/octet-stream\r\ncontent-length: ${length}\r\n\r\n`,
 			);
 		});
@@ -665,7 +684,11 @@ function headersOnlyPut(url: string, length: number): Promise<{ status: number; 
 			url,
 			{
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream", "content-length": String(length) },
+				headers: {
+					...agentAuth,
+					"content-type": "application/octet-stream",
+					"content-length": String(length),
+				},
 			},
 			(res) => {
 				let text = "";
@@ -696,7 +719,11 @@ function chunkedPut(url: string, chunks: Buffer[]): Promise<{ status: number; bo
 			url,
 			{
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream", "transfer-encoding": "chunked" },
+				headers: {
+					...agentAuth,
+					"content-type": "application/octet-stream",
+					"transfer-encoding": "chunked",
+				},
 			},
 			(res) => {
 				let text = "";

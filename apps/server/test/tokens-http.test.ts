@@ -50,7 +50,11 @@ describe("令牌", () => {
 				done();
 			},
 		});
-		cp = await startTestControlPlane({ initialAdmin: ADMIN, logger: { stream } });
+		cp = await startTestControlPlane({
+			defaultCredentials: false,
+			initialAdmin: ADMIN,
+			logger: { stream },
+		});
 		clock = cp.clock as ManualClock;
 		accounts = new TestAccounts(cp.database.url);
 		db = new pg.Client({ connectionString: cp.database.url });
@@ -125,7 +129,7 @@ describe("令牌", () => {
 
 	/** 默认项目里一个场景（触发运行用）。 */
 	const scenario = () =>
-		new ApiClient(cp).orchestrationWith({
+		new ApiClient(cp.asTester()).orchestrationWith({
 			default_agent: "agent-a",
 			nodes: [{ id: "entry", kind: "entry", params: [] }],
 			edges: [],
@@ -654,7 +658,7 @@ describe("令牌", () => {
 		const waitEnded = (stream: SseClient) =>
 			vi.waitFor(() => expect(stream.ended).toBe(true), { timeout: 3000 });
 		const open = async (token: string) => {
-			const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
+			const { run } = await seedTask(cp.asTester(), { agent: "agent-a", status: "running" });
 			return SseClient.open(cp, `/runs/${run}/events`, bearer(token));
 		};
 

@@ -270,8 +270,11 @@ describe("下载带上可以核对的结尾信息，命令行读完核对（#721
 		/** 比一批（1000 行）多：第一批发出去之后还有第二批、第三批要读。 */
 		const ROWS = 3500;
 
-		const download = (server: string, runId: string, target: string) =>
-			sfly(["run", "logs", runId, "--all", target, "--server", server, "--nickname", "alice"]);
+		// 经代理连的地址不是测试控制面登记的地址，默认凭据带不上：自己给令牌。
+		const download = async (server: string, runId: string, target: string) =>
+			sfly(["run", "logs", runId, "--all", target, "--server", server, "--nickname", "alice"], {
+				env: { SFLY_API_TOKEN: await cp.users.token("alice") },
+			});
 
 		it("没有改动：下载完整，文件里每一行都在（对照）", async () => {
 			const { runId } = await newTask(range(ROWS));

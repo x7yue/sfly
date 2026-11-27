@@ -234,7 +234,10 @@ describe("取消运行", () => {
 		expect(done.status).toBe(409);
 		expect(((await done.json()) as { error: { code: string } }).error.code).toBe("run_not_running");
 
-		const anonymous = await cp.fetch(`/runs/${runId}/cancel`, { method: "POST" });
+		const anonymous = await cp.fetch(`/runs/${runId}/cancel`, {
+			method: "POST",
+			credentials: "omit",
+		});
 		expect(anonymous.status).toBe(400);
 		expect((await api.cancel("00000000-0000-4000-8000-000000000000")).status).toBe(404);
 		expect((await api.cancel("nope")).status).toBe(404);

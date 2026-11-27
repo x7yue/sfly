@@ -120,6 +120,7 @@ describe("飞书机器人的登记和测试消息", () => {
 			const noNickname = (method: string, path: string, body?: unknown) =>
 				cp.fetch(path, {
 					method,
+					credentials: "omit",
 					headers: body === undefined ? {} : { "content-type": "application/json" },
 					body: body === undefined ? undefined : JSON.stringify(body),
 				});

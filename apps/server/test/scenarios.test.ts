@@ -111,6 +111,7 @@ describe("场景", () => {
 			const id = await api.createOrchestration("校验");
 			const noNick = await cp.fetch(`/orchestrations/${id}`, {
 				method: "PATCH",
+				credentials: "omit",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "x" }),
 			});
@@ -197,7 +198,10 @@ describe("场景", () => {
 
 		it("归档与恢复需要昵称；场景不存在时返回 404；不提供物理删除", async () => {
 			const id = await api.createOrchestration("x");
-			const noNick = await cp.fetch(`/orchestrations/${id}/archive`, { method: "POST" });
+			const noNick = await cp.fetch(`/orchestrations/${id}/archive`, {
+				method: "POST",
+				credentials: "omit",
+			});
 			expect(noNick.status).toBe(400);
 			expect(
 				(await api.post("/orchestrations/00000000-0000-0000-0000-000000000000/archive", {})).status,

@@ -142,6 +142,7 @@ describe("编排版本", () => {
 		const id = await api.createOrchestration("无昵称");
 		const res = await cp.fetch(`/orchestrations/${id}/versions`, {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ base_version: 0, document: docV1 }),
 		});
@@ -230,6 +231,7 @@ describe("编排版本", () => {
 	it("新建编排需要昵称", async () => {
 		const res = await cp.fetch("/orchestrations", {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ name: "无昵称" }),
 		});
@@ -248,6 +250,7 @@ describe("编排版本", () => {
 		const source = await api.createOrchestration("复制校验");
 		const noNick = await cp.fetch(`/orchestrations/${source}/copy`, {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ name: "x" }),
 		});
