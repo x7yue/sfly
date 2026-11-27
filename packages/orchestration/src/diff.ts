@@ -25,7 +25,7 @@ export interface DiffableDocument {
 
 /** 一项字段的变化；before/after 为 undefined 表示该项不存在。 */
 export interface FieldChange {
-	/** 例如 `default_agent`、`packages.http`、`agent`、`inputs.url`、`params.url`。 */
+	/** 例如 `default_agent`、`packages.http`、`agent`、`inputs.url`、`params.url`（新增、删除的入口参数）、`params.url.default`（两边都有的入口参数改了的字段）。 */
 	path: string;
 	before: unknown;
 	after: unknown;
@@ -143,6 +143,24 @@ const paramsByName = (value: unknown): Record<string, unknown> =>
 			)
 		: {};
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * 入口参数声明的变化：两边都有的参数逐个字段比较，只写变了的字段（`params.<参数名>.<字段>`，例如只去掉了默认值时
+ * 是 `params.token.default`），不把整条声明划掉再写一遍（#341）；新增、删除的参数整条写（`params.<参数名>`）。
+ */
+function paramChanges(
+	before: Record<string, unknown>,
+	after: Record<string, unknown>,
+): FieldChange[] {
+	return recordChanges("params.", before, after).flatMap((change) =>
+		isRecord(change.before) && isRecord(change.after)
+			? recordChanges(`${change.path}.`, change.before, change.after)
+			: [change],
+	);
+}
+
 /** 字段顺序：先 before 节点中的字段，再 after 新增的字段。 */
 function nodeChanges(before: Node, after: Node): FieldChange[] {
 	const changes: FieldChange[] = [];
@@ -156,7 +174,7 @@ function nodeChanges(before: Node, after: Node): FieldChange[] {
 			// 包节点的输入、异步任务节点的子流程参数映射：逐项列出。
 			changes.push(...recordChanges(`${key}.`, asRecord(b), asRecord(a)));
 		} else if (key === "params") {
-			changes.push(...recordChanges("params.", paramsByName(b), paramsByName(a)));
+			changes.push(...paramChanges(paramsByName(b), paramsByName(a)));
 		} else {
 			changes.push({ path: key, before: b, after: a });
 		}
