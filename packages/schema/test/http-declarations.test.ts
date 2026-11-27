@@ -92,20 +92,20 @@ describe("契约里全部接口的声明", () => {
 			creates: "scenario",
 		});
 		// 新建、没有定位到已有资源：不写 creates
-		expect(find("POST /orchestrations")).toMatchObject({
+		expect(find("POST /projects/:project/orchestrations")).toMatchObject({
 			resource: { kind: "scenario", target: "collection" },
 		});
-		expect(find("POST /orchestrations")?.creates).toBeUndefined();
+		expect(find("POST /projects/:project/orchestrations")?.creates).toBeUndefined();
 		// 让资源（或它的一部分）不再可用
 		const removing = httpContract
 			.filter((def) => def.removes)
 			.map((def) => `${def.method} ${def.path}`);
 		expect(removing.sort()).toEqual([
 			"DELETE /account/tokens/:id",
-			"DELETE /agents/:name/credentials/:id",
-			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
+			"DELETE /projects/:project/agents/:name/credentials/:id",
 			"DELETE /projects/:project/dev-agents/:name",
+			"DELETE /projects/:project/feishu-bots/:name",
 			"DELETE /projects/:project/tokens/:id",
 			"POST /orchestrations/:id/archive",
 		]);
@@ -183,11 +183,57 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			problems(
 				broken({
 					resource: { kind: "scenario", target: "collection" },
-					path: "/things",
-					params: undefined,
+					path: "/projects/:project/things",
+					params: z.object({ project: z.string() }),
 				}),
 			),
 		).toEqual([]);
+	});
+
+	it("列表、新建、上传和按名字定位的路径带 :project，按 ID 定位的不带；system、account 都不带（ADR 0029）", () => {
+		const at = (resource: unknown, path: string, extra: Record<string, unknown> = {}) =>
+			problems(broken({ resource, path, params: undefined }, extra));
+		const message = "路径要写成 /projects/:project/…";
+		expect(at({ kind: "scenario", target: "collection" }, "/things").join()).toContain(message);
+		expect(at({ kind: "package", target: "upload" }, "/things", { upload: true }).join()).toContain(
+			message,
+		);
+		expect(at({ kind: "agent", target: { params: "name" } }, "/things/:name").join()).toContain(
+			message,
+		);
+		expect(
+			at({ kind: "agent", target: { params: "name" } }, "/projects/:project/things/:name"),
+		).toEqual([]);
+		expect(at({ kind: "run", target: { params: "id" } }, "/things/:id")).toEqual([]);
+		// 名字写在查询参数或请求体里也是按名字定位：路径同样要带项目（#834 审查）。
+		const byName = z.object({ name: z.string() });
+		const viaQuery = { kind: "feishu_bot", target: { query: "name" } };
+		const viaBody = { kind: "feishu_bot", target: { body: "name" } };
+		const post = { method: "POST", effect: "write" };
+		expect(at(viaQuery, "/things", { query: byName }).join()).toContain(message);
+		expect(at(viaBody, "/things", { ...post, body: byName }).join()).toContain(message);
+		expect(
+			at(viaQuery, "/projects/:project/things", {
+				query: byName,
+				params: z.object({ project: z.string() }),
+			}),
+		).toEqual([]);
+		expect(
+			at(viaBody, "/projects/:project/things", {
+				...post,
+				body: byName,
+				params: z.object({ project: z.string() }),
+			}),
+		).toEqual([]);
+		// 按 ID 定位的从查询参数取 ID：路径不带项目，不报。
+		expect(
+			at({ kind: "run", target: { query: "id" } }, "/things", {
+				query: z.object({ id: z.string() }),
+			}),
+		).toEqual([]);
+		expect(at({ kind: "system", target: "global" }, "/projects/:project/things").join()).toContain(
+			"system 不属于项目",
+		);
 	});
 
 	it("没有 summary、是空的、不止一行、太长", () => {
@@ -226,15 +272,16 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: { kind: "scenario", target: { params: "*" } } }))[0],
 		).toContain("路径参数 * 不在路径");
+		// 用按 ID 定位的类别（运行）：路径里不带项目也合法，只看字段在不在请求里。
 		const withQuery = { query: z.object({ owner: z.string() }) };
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { query: "owner" } } }, withQuery)),
+			problems(broken({ resource: { kind: "run", target: { query: "owner" } } }, withQuery)),
 		).toEqual([]);
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { query: "who" } } }, withQuery))[0],
+			problems(broken({ resource: { kind: "run", target: { query: "who" } } }, withQuery))[0],
 		).toContain("字段 who，它不在 query 里");
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { query: "owner" } } }))[0],
+			problems(broken({ resource: { kind: "run", target: { query: "owner" } } }))[0],
 		).toContain("没有对象形式的 query");
 		const withBody = {
 			method: "POST",
@@ -242,10 +289,10 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			body: z.object({ name: z.string() }).refine(() => true),
 		};
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { body: "name" } } }, withBody)),
+			problems(broken({ resource: { kind: "run", target: { body: "name" } } }, withBody)),
 		).toEqual([]);
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { body: "id" } } }, withBody))[0],
+			problems(broken({ resource: { kind: "run", target: { body: "id" } } }, withBody))[0],
 		).toContain("字段 id，它不在 body 里");
 		// 套了一层包装的对象也认得出
 		const wrapped = {
@@ -254,7 +301,7 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			body: z.object({ name: z.string() }).optional(),
 		};
 		expect(
-			problems(broken({ resource: { kind: "agent", target: { body: "name" } } }, wrapped)),
+			problems(broken({ resource: { kind: "run", target: { body: "name" } } }, wrapped)),
 		).toEqual([]);
 	});
 
@@ -266,15 +313,19 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			problems(
 				broken({
 					resource: { kind: "package", target: "upload" },
-					path: "/things",
-					params: undefined,
+					path: "/projects/:project/things",
+					params: z.object({ project: z.string() }),
 				}),
 			)[0],
 		).toContain("接口不是上传");
 		expect(
 			problems(
 				broken(
-					{ resource: { kind: "package", target: "upload" }, path: "/things", params: undefined },
+					{
+						resource: { kind: "package", target: "upload" },
+						path: "/projects/:project/things",
+						params: z.object({ project: z.string() }),
+					},
 					{ upload: true },
 				),
 			),
@@ -667,10 +718,13 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 
 	it("把 /dashboard 写成 system + global：拦住，说明写 system 就是公开，也说明怎么改", () => {
 		const wrong = withResource(dashboardApi.get, { kind: "system", target: "global" });
-		const [problem, ...rest] = problems(wrong);
-		expect(rest).toEqual([]);
+		const found = problems(wrong);
+		// 路径带项目（#488）：system 不属于项目这一条也拦住它。
+		expect(found).toHaveLength(2);
+		expect(found.join("\n")).toContain("system 不属于项目，路径里不能有 /projects/:project");
+		const problem = found.find((p) => p.includes("PATH_KINDS")) ?? "";
 		expect(problem).toContain(
-			"GET /dashboard：resource.kind 写的是 system，PATH_KINDS 里 /dashboard 对应 run",
+			"GET /projects/:project/dashboard：resource.kind 写的是 system，PATH_KINDS 里 /projects/:project/dashboard 对应 run",
 		);
 		expect(problem).toContain("声明成 system 就等于这个接口不带项目、不需要凭据（公开）");
 		expect(problem).toContain("声明写错了就改成 run");
@@ -689,7 +743,7 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 	it("写接口的 kind 写错：拦住（飞书测试消息写成 agent）", () => {
 		const wrong = withResource(feishuBotsApi.test, { kind: "agent", target: { params: "name" } });
 		expect(problems(wrong).join("\n")).toContain(
-			"resource.kind 写的是 agent，PATH_KINDS 里 /feishu-bots 对应 feishu_bot",
+			"resource.kind 写的是 agent，PATH_KINDS 里 /projects/:project/feishu-bots 对应 feishu_bot",
 		);
 	});
 

@@ -69,6 +69,9 @@ class _FakeClient:
         self.answers = answers
         self.paths: list[str] = []
 
+    def in_project(self, path: str) -> str:
+        return f"/projects/default{path}"
+
     def get(self, path: str) -> Any:
         self.paths.append(path)
         answer = self.answers[path]
@@ -107,12 +110,14 @@ DEFAULT_A = {"default_agent": "a"}
 
 
 def test_unpublished_package_reads_the_dev_version_from_online_agents() -> None:
-    """只有开发版本的包（`GET /packages/<名>` 是 404）、场景还没锁定：和控制面一样取在线 Agent
+    """只有开发版本的包（`GET …/packages/<名>` 是 404）、场景还没锁定：和控制面一样取在线 Agent
     上报的开发版本。"""
     client = _FakeClient(
         {
-            "/packages/devkit": NOT_FOUND,
-            "/agents": {"agents": [_agent("b", _dev_nodes(TAG)), _agent("a", None, "offline")]},
+            "/projects/default/packages/devkit": NOT_FOUND,
+            "/projects/default/agents": {
+                "agents": [_agent("b", _dev_nodes(TAG)), _agent("a", None, "offline")]
+            },
         }
     )
     schemas = _node_inputs(cast(Client, client), {"default_agent": "b"}, "devkit", "t", None)
@@ -124,7 +129,10 @@ def test_unpublished_package_reads_the_dev_version_from_online_agents() -> None:
 def test_dev_metadata_that_is_missing_or_malformed_means_no_types(metadata: Any) -> None:
     """Agent 上报的元信息是 null 或格式不对：查不到声明（值照常按 JSON 解析），不抛异常。"""
     client = _FakeClient(
-        {"/packages/devkit": NOT_FOUND, "/agents": {"agents": [_agent("a", metadata)]}}
+        {
+            "/projects/default/packages/devkit": NOT_FOUND,
+            "/projects/default/agents": {"agents": [_agent("a", metadata)]},
+        }
     )
     assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
 
@@ -134,8 +142,8 @@ def test_dev_properties_that_are_malformed_mean_no_types(properties: Any) -> Non
     """属性一层格式不对（照控制面的 reportedNodeTypes 规则）：当作不知道，不抛异常。"""
     client = _FakeClient(
         {
-            "/packages/devkit": NOT_FOUND,
-            "/agents": {"agents": [_agent("a", _dev_nodes(properties))]},
+            "/projects/default/packages/devkit": NOT_FOUND,
+            "/projects/default/agents": {"agents": [_agent("a", _dev_nodes(properties))]},
         }
     )
     assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
@@ -146,8 +154,8 @@ def _two_agents() -> _FakeClient:
     （名字的顺序和声明无关）。"""
     return _FakeClient(
         {
-            "/packages/devkit": NOT_FOUND,
-            "/agents": {
+            "/projects/default/packages/devkit": NOT_FOUND,
+            "/projects/default/agents": {
                 "agents": [_agent("b", _dev_nodes(TAG)), _agent("a", _dev_nodes(INTEGER_TAG))]
             },
         }
@@ -182,26 +190,26 @@ def test_dev_types_are_unknown_when_nodes_of_the_package_go_to_agents_that_disag
 
 
 def test_other_errors_reading_the_package_still_fall_back_to_no_types() -> None:
-    client = _FakeClient({"/packages/devkit": ApiError(500, "internal", "出错了")})
+    client = _FakeClient({"/projects/default/packages/devkit": ApiError(500, "internal", "出错了")})
     assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
-    assert client.paths == ["/packages/devkit"]
+    assert client.paths == ["/projects/default/packages/devkit"]
 
 
 def test_latest_published_version_is_by_version_number_like_the_control_plane() -> None:
     """不写版本、没锁定时取最新发布的版本：按版本号比较（和控制面一样），不是按发布时间。"""
     client = _FakeClient(
         {
-            "/packages/kit": {
+            "/projects/default/packages/kit": {
                 "versions": [
                     {"version": "1.2.0", "published_at": "2026-11-02T00:00:00Z"},
                     {"version": "1.10.0", "published_at": "2026-11-01T00:00:00Z"},
                 ]
             },
-            "/packages/kit/versions/1.10.0": {"metadata": _dev_nodes(TAG)},
+            "/projects/default/packages/kit/versions/1.10.0": {"metadata": _dev_nodes(TAG)},
         }
     )
     assert _node_inputs(cast(Client, client), {}, "kit", "t", None) == TAG
-    assert client.paths[-1] == "/packages/kit/versions/1.10.0"
+    assert client.paths[-1] == "/projects/default/packages/kit/versions/1.10.0"
 
 
 VERSION_CASES = json.loads(
@@ -232,8 +240,10 @@ def test_dev_types_are_unknown_when_the_target_is_offline() -> None:
     """派发目标离线（上报过合法的元信息）：和控制面一样当作不知道。"""
     client = _FakeClient(
         {
-            "/packages/devkit": NOT_FOUND,
-            "/agents": {"agents": [_agent("a", _dev_nodes(INTEGER_TAG), "offline")]},
+            "/projects/default/packages/devkit": NOT_FOUND,
+            "/projects/default/agents": {
+                "agents": [_agent("a", _dev_nodes(INTEGER_TAG), "offline")]
+            },
         }
     )
     assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
@@ -299,8 +309,8 @@ def test_agents_that_report_true_and_1_disagree() -> None:
             Client,
             _FakeClient(
                 {
-                    "/packages/devkit": NOT_FOUND,
-                    "/agents": {
+                    "/projects/default/packages/devkit": NOT_FOUND,
+                    "/projects/default/agents": {
                         "agents": [
                             _agent("a", _dev_nodes(nodes[0])),
                             _agent("b", _dev_nodes(nodes[1])),

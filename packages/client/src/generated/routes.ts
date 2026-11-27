@@ -52,6 +52,7 @@ import type {
 	PresetParamInput,
 	PresetView,
 	ProgressEvent,
+	ProjectParams,
 	RunFocus,
 	RunFocusQuery,
 	RunListItem,
@@ -154,12 +155,14 @@ export interface Api {
 	};
 	agents: {
 		/**
-		 * `GET /agents`
+		 * `GET /projects/:project/agents`
 		 *
 		 * 全部注册过的 Agent，按名称排序。
 		 */
 		list: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			{
 				agents: AgentView[];
 				/** 控制面版本，也就是 Agent 的目标版本。 */
@@ -167,7 +170,7 @@ export interface Api {
 			}
 		>;
 		/**
-		 * `POST /agents/:name/update-now`
+		 * `POST /projects/:project/agents/:name/update-now`
 		 *
 		 * 立即更新（ADR 0014）：让正在更新（下载中或等待任务结束）的在线 Agent 不再等手上的任务跑完。这些任务立即以 agent_lost 失败、按重试配置重新排队
 		 * （Agent 更新后重新连上再派发），Agent 按取消流程终止它们后立即替换自己。返回被终止的任务。
@@ -178,6 +181,7 @@ export interface Api {
 		updateNow: Endpoint<
 			{
 				params: {
+					project: string;
 					/** Agent 名称。 */
 					name: string;
 				};
@@ -225,34 +229,39 @@ export interface Api {
 	};
 	dashboard: {
 		/**
-		 * `GET /dashboard`
+		 * `GET /projects/:project/dashboard`
 		 *
 		 * 控制台统计（最近 24 小时）。
 		 */
 		get: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			DashboardView
 		>;
 	};
 	feishuBots: {
 		/**
-		 * `GET /feishu-bots`
+		 * `GET /projects/:project/feishu-bots`
 		 *
-		 * 全部飞书机器人，按名称排序。
+		 * 项目里的全部飞书机器人，按名称排序。
 		 */
 		list: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			{
 				bots: FeishuBotView[];
 			}
 		>;
 		/**
-		 * `POST /feishu-bots`
+		 * `POST /projects/:project/feishu-bots`
 		 *
 		 * 登记一个飞书机器人（201，需要昵称请求头）。名称已被占用 409 `name_taken`。
 		 */
 		create: Endpoint<
 			{
+				params: ProjectParams;
 				body: {
 					/** 机器人名称：全局唯一，创建后不能改。 */
 					name: FeishuBotName;
@@ -263,7 +272,7 @@ export interface Api {
 			FeishuBotView
 		>;
 		/**
-		 * `PATCH /feishu-bots/:name`
+		 * `PATCH /projects/:project/feishu-bots/:name`
 		 *
 		 * 替换 Webhook 地址（需要昵称请求头）。名称创建后不能修改：请求里带 `name` 返回 400 `name_immutable`。
 		 * 机器人不存在 404 `not_found`。
@@ -271,6 +280,7 @@ export interface Api {
 		replaceWebhook: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -282,7 +292,7 @@ export interface Api {
 			FeishuBotView
 		>;
 		/**
-		 * `GET /feishu-bots/:name/references`
+		 * `GET /projects/:project/feishu-bots/:name/references`
 		 *
 		 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里「飞书机器人」类型的输入的常量值，
 		 * 以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
@@ -291,6 +301,7 @@ export interface Api {
 		references: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -301,13 +312,14 @@ export interface Api {
 			}
 		>;
 		/**
-		 * `DELETE /feishu-bots/:name`
+		 * `DELETE /projects/:project/feishu-bots/:name`
 		 *
 		 * 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。
 		 */
 		remove: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -315,7 +327,7 @@ export interface Api {
 			void
 		>;
 		/**
-		 * `POST /feishu-bots/:name/test`
+		 * `POST /projects/:project/feishu-bots/:name/test`
 		 *
 		 * 发送测试消息：不经过发送队列，直接同步向 Webhook 地址发一条固定文本（单次超时 10 秒），
 		 * 把飞书的结果翻译成中文返回。机器人不存在 404 `not_found`。
@@ -323,6 +335,7 @@ export interface Api {
 		test: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -510,12 +523,13 @@ export interface Api {
 	};
 	orchestrations: {
 		/**
-		 * `GET /orchestrations`
+		 * `GET /projects/:project/orchestrations`
 		 *
 		 * 场景列表，按新建时间从新到旧；archived_count 是已归档场景的总数（不受其他筛选影响）。
 		 */
 		list: Endpoint<
 			{
+				params: ProjectParams;
 				query?: ListOrchestrationsQuery;
 			},
 			{
@@ -749,12 +763,13 @@ export interface Api {
 			SavedVersionView
 		>;
 		/**
-		 * `POST /orchestrations`
+		 * `POST /projects/:project/orchestrations`
 		 *
 		 * 新建场景（自带入口节点：还没有版本时编辑起点是只含入口节点的初始文档）。
 		 */
 		create: Endpoint<
 			{
+				params: ProjectParams;
 				body: {
 					/** 场景名称。 */
 					name: string;
@@ -847,38 +862,41 @@ export interface Api {
 	};
 	packages: {
 		/**
-		 * `GET /packages`
+		 * `GET /projects/:project/packages`
 		 *
 		 * 包列表（含各版本与节点类型摘要），按包名排序。
 		 */
 		list: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			{
 				packages: PackageSummary[];
 			}
 		>;
 		/**
-		 * `GET /packages/:name`
+		 * `GET /projects/:project/packages/:name`
 		 *
 		 * 单个包的版本列表。
 		 */
 		get: Endpoint<
 			{
 				params: {
-					/** 节点包名。 */
+					project: string;
 					name: PackageName;
 				};
 			},
 			PackageSummary
 		>;
 		/**
-		 * `GET /packages/:name/versions/:version`
+		 * `GET /projects/:project/packages/:name/versions/:version`
 		 *
 		 * 版本详情（含完整元信息）。
 		 */
 		version: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 节点包名。 */
 					name: PackageName;
 					/** 版本号。 */
@@ -888,13 +906,14 @@ export interface Api {
 			PackageVersionView
 		>;
 		/**
-		 * `GET /packages/:name/versions/:version/nodes/:node`
+		 * `GET /projects/:project/packages/:name/versions/:version/nodes/:node`
 		 *
 		 * 某个版本里的一个节点类型。
 		 */
 		nodeType: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 节点包名。 */
 					name: PackageName;
 					/** 版本号。 */
@@ -1010,13 +1029,14 @@ export interface Api {
 	};
 	runs: {
 		/**
-		 * `GET /runs`
+		 * `GET /projects/:project/runs`
 		 *
 		 * 所有场景的运行，按开始时间从新到旧（最多 limit 条）。counts 是按场景、关键字筛选后
 		 * （不按状态）各状态的运行数，用于状态筛选上的计数。
 		 */
 		list: Endpoint<
 			{
+				params: ProjectParams;
 				query?: RunListQuery;
 			},
 			{
@@ -1456,23 +1476,23 @@ export const routes = {
 		events: { method: "GET", path: "/tasks/:id/actions/events", kind: "stream" },
 	},
 	agents: {
-		list: { method: "GET", path: "/agents", kind: "endpoint" },
-		updateNow: { method: "POST", path: "/agents/:name/update-now", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/agents", kind: "endpoint" },
+		updateNow: { method: "POST", path: "/projects/:project/agents/:name/update-now", kind: "endpoint" },
 	},
 	artifacts: {
 		list: { method: "GET", path: "/tasks/:id/artifacts", kind: "endpoint" },
 		download: { method: "GET", path: "/tasks/:id/artifacts/*", kind: "download" },
 	},
 	dashboard: {
-		get: { method: "GET", path: "/dashboard", kind: "endpoint" },
+		get: { method: "GET", path: "/projects/:project/dashboard", kind: "endpoint" },
 	},
 	feishuBots: {
-		list: { method: "GET", path: "/feishu-bots", kind: "endpoint" },
-		create: { method: "POST", path: "/feishu-bots", kind: "endpoint" },
-		replaceWebhook: { method: "PATCH", path: "/feishu-bots/:name", kind: "endpoint" },
-		references: { method: "GET", path: "/feishu-bots/:name/references", kind: "endpoint" },
-		remove: { method: "DELETE", path: "/feishu-bots/:name", kind: "endpoint" },
-		test: { method: "POST", path: "/feishu-bots/:name/test", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/feishu-bots", kind: "endpoint" },
+		create: { method: "POST", path: "/projects/:project/feishu-bots", kind: "endpoint" },
+		replaceWebhook: { method: "PATCH", path: "/projects/:project/feishu-bots/:name", kind: "endpoint" },
+		references: { method: "GET", path: "/projects/:project/feishu-bots/:name/references", kind: "endpoint" },
+		remove: { method: "DELETE", path: "/projects/:project/feishu-bots/:name", kind: "endpoint" },
+		test: { method: "POST", path: "/projects/:project/feishu-bots/:name/test", kind: "endpoint" },
 	},
 	logs: {
 		page: { method: "GET", path: "/tasks/:id/logs", kind: "endpoint" },
@@ -1489,7 +1509,7 @@ export const routes = {
 		platform: { method: "GET", path: "/runs/:id/metrics/platform", kind: "endpoint" },
 	},
 	orchestrations: {
-		list: { method: "GET", path: "/orchestrations", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/orchestrations", kind: "endpoint" },
 		get: { method: "GET", path: "/orchestrations/:id", kind: "endpoint" },
 		head: { method: "GET", path: "/orchestrations/:id/head", kind: "endpoint" },
 		saveVersion: { method: "POST", path: "/orchestrations/:id/versions", kind: "endpoint" },
@@ -1500,17 +1520,17 @@ export const routes = {
 		versions: { method: "GET", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		version: { method: "GET", path: "/orchestrations/:id/versions/:number", kind: "endpoint" },
 		restoreVersion: { method: "POST", path: "/orchestrations/:id/versions/:number/restore", kind: "endpoint" },
-		create: { method: "POST", path: "/orchestrations", kind: "endpoint" },
+		create: { method: "POST", path: "/projects/:project/orchestrations", kind: "endpoint" },
 		update: { method: "PATCH", path: "/orchestrations/:id", kind: "endpoint" },
 		copy: { method: "POST", path: "/orchestrations/:id/copy", kind: "endpoint" },
 		archive: { method: "POST", path: "/orchestrations/:id/archive", kind: "endpoint" },
 		unarchive: { method: "POST", path: "/orchestrations/:id/unarchive", kind: "endpoint" },
 	},
 	packages: {
-		list: { method: "GET", path: "/packages", kind: "endpoint" },
-		get: { method: "GET", path: "/packages/:name", kind: "endpoint" },
-		version: { method: "GET", path: "/packages/:name/versions/:version", kind: "endpoint" },
-		nodeType: { method: "GET", path: "/packages/:name/versions/:version/nodes/:node", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/packages", kind: "endpoint" },
+		get: { method: "GET", path: "/projects/:project/packages/:name", kind: "endpoint" },
+		version: { method: "GET", path: "/projects/:project/packages/:name/versions/:version", kind: "endpoint" },
+		nodeType: { method: "GET", path: "/projects/:project/packages/:name/versions/:version/nodes/:node", kind: "endpoint" },
 	},
 	presets: {
 		list: { method: "GET", path: "/orchestrations/:id/presets", kind: "endpoint" },
@@ -1520,7 +1540,7 @@ export const routes = {
 		remove: { method: "DELETE", path: "/orchestrations/:id/presets/:presetId", kind: "endpoint" },
 	},
 	runs: {
-		list: { method: "GET", path: "/runs", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/runs", kind: "endpoint" },
 		focus: { method: "GET", path: "/runs/:id/focus", kind: "endpoint" },
 		summary: { method: "GET", path: "/runs/:id/summary", kind: "endpoint" },
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },

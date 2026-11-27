@@ -32,7 +32,7 @@ describe("Agent 的时钟偏差（#172）", () => {
 	});
 
 	async function agentView(name: string): Promise<AgentView> {
-		const res = await (cp as TestControlPlane).fetch("/agents");
+		const res = await (cp as TestControlPlane).fetch("/projects/default/agents");
 		expect(res.status).toBe(200);
 		const agent = agentsApi.list.response
 			.parse(await res.json())

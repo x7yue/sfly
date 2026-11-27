@@ -25,7 +25,7 @@ import { definePerfItem, hard, type ItemRun } from "../item.js";
 import { AGENT, MB, usageMeasurements } from "../measure.js";
 import { DISCONNECT_SECONDS_ENV, secondsFromEnv } from "../options.js";
 import type { Measurement } from "../report.js";
-import { type PerfApi, sampleProcess, sleep, startStack } from "../stack.js";
+import { PERF_ADMIN_ENV, type PerfApi, sampleProcess, sleep, startStack } from "../stack.js";
 import {
 	checkSeqMetric,
 	checkStdoutLines,
@@ -163,6 +163,7 @@ export default definePerfItem({
 			databaseUrl: database.url,
 			dataDir: stack.dataDir,
 			ports: { http, grpc },
+			env: PERF_ADMIN_ENV,
 		});
 		ctx.defer(() => server.stop());
 		const restartAt = Date.now();

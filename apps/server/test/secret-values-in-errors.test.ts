@@ -91,7 +91,9 @@ describe("触发时的报错不回显 secret 参数的值", () => {
 	beforeEach(async () => {
 		cp = await startTestControlPlane({ version: "1.1.0" });
 		api = new ApiClient(cp);
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await connect("runner", "1.1.0");
 	});
 	afterEach(async () => {
@@ -374,7 +376,9 @@ describe("secret 参数的值是读取接口打的码 ******", () => {
 		cp = await startTestControlPlane({ version: "1.1.0" });
 		api = new ApiClient(cp);
 		runner = await FakeAgent.connect(cp.grpcUrl, { name: "runner", agentVersion: "1.1.0" });
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 	});
 	afterEach(async () => {
 		await runner.disconnect();

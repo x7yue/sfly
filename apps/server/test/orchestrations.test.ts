@@ -1,6 +1,7 @@
 import { orchestrationsApi, runNotificationTriggerRemovedMessage } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -27,7 +28,7 @@ describe("编排版本", () => {
 	});
 
 	it("新建编排后还没有版本", async () => {
-		const res = await api.post("/orchestrations", { name: "冒烟" }, "alice");
+		const res = await api.post("/projects/default/orchestrations", { name: "冒烟" }, "alice");
 		expect(res.status).toBe(201);
 		const created = (await res.json()) as { id: string };
 		expect(created).toMatchObject({ name: "冒烟", head_version: 0 });
@@ -115,7 +116,7 @@ describe("编排版本", () => {
 		for (const method of ["PUT", "PATCH"]) {
 			const res = await cp.fetch(`/orchestrations/${id}/versions/1`, {
 				method,
-				headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+				headers: { "content-type": "application/json", ...actAs("alice") },
 				body: JSON.stringify({ base_version: 0, document: docV1 }),
 			});
 			expect(res.status).toBe(404);
@@ -142,6 +143,7 @@ describe("编排版本", () => {
 		const id = await api.createOrchestration("无昵称");
 		const res = await cp.fetch(`/orchestrations/${id}/versions`, {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ base_version: 0, document: docV1 }),
 		});
@@ -158,7 +160,7 @@ describe("编排版本", () => {
 			clock.advance(1000);
 			const newer = await localApi.createOrchestration("较新");
 
-			expect(await localApi.getJson("/orchestrations")).toMatchObject({
+			expect(await localApi.getJson("/projects/default/orchestrations")).toMatchObject({
 				orchestrations: [
 					{ id: newer, name: "较新", head_version: 0, created_at: "2026-01-01T00:00:01.000Z" },
 					{ id: older, name: "较早", head_version: 1, created_at: "2026-01-01T00:00:00.000Z" },
@@ -228,8 +230,9 @@ describe("编排版本", () => {
 	});
 
 	it("新建编排需要昵称", async () => {
-		const res = await cp.fetch("/orchestrations", {
+		const res = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ name: "无昵称" }),
 		});
@@ -248,6 +251,7 @@ describe("编排版本", () => {
 		const source = await api.createOrchestration("复制校验");
 		const noNick = await cp.fetch(`/orchestrations/${source}/copy`, {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ name: "x" }),
 		});
@@ -291,7 +295,7 @@ describe("编排版本", () => {
 		expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ head_version: 1 });
 
 		const published = await cp.fetch(
-			"/packages",
+			"/projects/default/packages",
 			publishInit(
 				packageArchive(
 					packageMetadata({
@@ -350,7 +354,7 @@ describe("场景的运行通知设置", () => {
 		expect(await settingsOf(id)).toEqual(OFF);
 		const listed = await api.getJson<{
 			orchestrations: Array<{ id: string; run_notification: unknown }>;
-		}>("/orchestrations");
+		}>("/projects/default/orchestrations");
 		expect(listed.orchestrations.find((o) => o.id === id)?.run_notification).toEqual(OFF);
 	});
 

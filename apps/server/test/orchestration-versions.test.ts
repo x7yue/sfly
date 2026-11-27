@@ -157,6 +157,7 @@ describe("编排版本：冲突、历史与恢复", () => {
 		await save(id, { base_version: 0, document: doc("a") });
 		const noNick = await cp.fetch(`/orchestrations/${id}/versions/1/restore`, {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: "{}",
 		});

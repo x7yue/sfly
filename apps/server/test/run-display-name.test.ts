@@ -58,9 +58,9 @@ describe("运行里的节点带上显示名称", () => {
 	const nameOf = async (runId: string, nodeId: string) =>
 		(await view(runId)).chains[0]?.nodes.find((n) => n.node_id === nodeId)?.display_name;
 	const list = async () =>
-		runListApi.list.response.parse(await (await cp.fetch("/runs")).json()).runs;
+		runListApi.list.response.parse(await (await cp.fetch("/projects/default/runs")).json()).runs;
 	const dashboard = async () =>
-		dashboardApi.get.response.parse(await (await cp.fetch("/dashboard")).json());
+		dashboardApi.get.response.parse(await (await cp.fetch("/projects/default/dashboard")).json());
 
 	/** 触发后 probe 失败（子流程失败），check 执行中。 */
 	async function runUntilProbeFails(scenarioId: string) {

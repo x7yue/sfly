@@ -1,4 +1,4 @@
-"""CI 里的评测（`./aeval.sh ci`，#552）：平台臂、假的模型端点，每道题一次，全部通过才算过。
+"""CI 里的评测（`./aeval.sh ci`，#552）：平台臂、假的模型端点，五道题各一次，全部通过才算过。
 
 先 `up --assistant` 起好环境。不论会话结果如何、中途有没有出错，最后都扫一遍结果目录里的凭据
 （`leakscan`）；退出码告诉工作流结果目录能不能作为产物上传：
@@ -21,7 +21,7 @@ from aeval.models import load_models
 from aeval.session import run_session
 from aeval.tasks.registry import TASKS
 
-TASK_IDS = ("write", "fix", "orchestrate", "cross")
+TASK_IDS = ("write", "fix", "orchestrate", "cross", "daemon")
 PASSED = 0
 FAILED = 4
 LEAKED = 5

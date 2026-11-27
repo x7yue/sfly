@@ -120,6 +120,7 @@ describe("关注项的设置", () => {
 			const id = await scene();
 			const anonymous = await cp.fetch(`/orchestrations/${id}`, {
 				method: "PATCH",
+				credentials: "omit",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ focus_items: [LOAD_TPS] }),
 			});

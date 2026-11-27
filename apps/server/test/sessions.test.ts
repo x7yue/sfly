@@ -19,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { SessionNotFoundError } from "../src/sessions/session-store.js";
 import { ApiClient } from "./support/api-client.js";
-import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
+import { actAs, bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { messageId, persistedBodies, seedSession } from "./support/sessions.js";
@@ -619,12 +619,14 @@ describe("助手没有配置：写接口 503，读接口照常", () => {
 		// 建会话只认用户的凭据：不带凭据是 401（不是 400 缺昵称）；别的会话接口在 #494 之前照旧，没有昵称 400。
 		const noCredential = await cp.fetch("/projects/default/sessions", {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ text: "你好" }),
 		});
 		expect(noCredential.status).toBe(401);
 		const noNickname = await cp.fetch(`/sessions/${id}/messages`, {
 			method: "POST",
+			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ text: "你好" }),
 		});
@@ -695,10 +697,11 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 	const call = (who: keyof typeof headers, method: string, path: string, body?: unknown) =>
 		cp.fetch(path, {
 			method,
+			credentials: "omit",
 			headers: {
 				...headers[who],
 				"content-type": "application/json",
-				"x-sfly-nickname": "tester",
+				...actAs("tester"),
 			},
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});

@@ -16,6 +16,7 @@ import { notify } from "#/components/feedback/notify";
 import { UntrustedText } from "#/components/untrusted-text";
 import { callApi } from "#/lib/api";
 import { AGENT_DISABLE } from "#/lib/copy";
+import { PROJECT } from "#/lib/project";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,7 +108,9 @@ function DisableDialog({
 	const invalidate = useInvalidateAfterToggle();
 	const toggle = useMutation({
 		mutationFn: () =>
-			callApi(disabled ? agentsApi.enable : agentsApi.disable, { params: { name: agent.name } }),
+			callApi(disabled ? agentsApi.enable : agentsApi.disable, {
+				params: { project: PROJECT, name: agent.name },
+			}),
 		onSuccess: () => {
 			invalidate();
 			onOpenChange(false);

@@ -83,9 +83,11 @@ export const registeredElsewhere = (name: string, auth: AgentAuth): Refusal =>
  * 还没换成 Agent 凭据的 Agent（没有停用的，最近一次连接用的不是 Agent 凭据，或者记下之前连接的）：登记工作台之前必须是空的
  * （ADR 0029「迁移与过渡」，登记那一步在 #549，有没换的就拒绝并列出它们）。只签发过、没用它连上过的不算换了；停用的不算。
  */
-export async function agentsNotOnCredentials(db: Db): Promise<string[]> {
-	const rows = await db
-		.select({ name: agents.name })
+export async function agentsNotOnCredentials(
+	db: Db,
+): Promise<{ name: string; projectId: string }[]> {
+	return db
+		.select({ name: agents.name, projectId: agents.projectId })
 		.from(agents)
 		.where(
 			and(
@@ -94,7 +96,6 @@ export async function agentsNotOnCredentials(db: Db): Promise<string[]> {
 			),
 		)
 		.orderBy(asc(agents.name));
-	return rows.map((row) => row.name);
 }
 
 const CREDENTIAL_REQUIRED =

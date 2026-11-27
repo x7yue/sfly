@@ -54,7 +54,7 @@ import {
 	PROGRESS_LABEL,
 	TERM,
 } from "#/lib/copy";
-import { formatDateTime, formatSpan, shortId } from "#/lib/format";
+import { formatDateTime, formatProgress, formatSpan, shortId } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { ACTIONS_POLL_MS } from "#/lib/polling";
 import { untrustedPlain } from "#/lib/untrusted-text";
@@ -183,7 +183,7 @@ export function useRunDecorations(
 						);
 				}
 				if (summary.state === "running" && last?.progress?.total) {
-					const done = `${last.progress.current}/${last.progress.total}`;
+					const done = formatProgress(last.progress.current, last.progress.total);
 					decoration.figure = done;
 					decoration.overview = <span className="font-mono">{done}</span>;
 					decoration.progress = last.progress.current / last.progress.total;

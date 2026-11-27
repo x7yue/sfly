@@ -18,7 +18,7 @@ from sfly.cli import main
 
 
 class FakeControlPlane:
-    """接受 `POST /packages` 的本地 HTTP 服务，记录收到的请求路径。"""
+    """接受 `POST /projects/:project/packages` 的本地 HTTP 服务，记录收到的请求路径。"""
 
     def __init__(self) -> None:
         self.paths: list[str] = []
@@ -83,7 +83,7 @@ def test_publish_uses_the_control_plane_from_agent_env(
     write_agent_env(home, planes[0].url)
 
     assert main(["publish", str(archive)]) == 0
-    assert planes[0].paths == ["/packages"]
+    assert planes[0].paths == ["/projects/default/packages"]
 
 
 def test_publish_project_public_goes_to_the_public_project(
@@ -97,7 +97,7 @@ def test_publish_project_public_goes_to_the_public_project(
     assert main(["publish", str(archive)]) == 0
     assert main(["publish", str(archive), "--project", "public"]) == 0
 
-    assert planes[0].paths == ["/packages", "/packages?project=public"]
+    assert planes[0].paths == ["/projects/default/packages", "/projects/public/packages"]
     output = capsys.readouterr().out.splitlines()
     assert output[0].startswith("已发布 demo@1.0.0（sha256")
     assert output[1].startswith("已发布 demo@1.0.0 到项目 public（sha256")
@@ -116,8 +116,8 @@ def test_server_option_and_environment_override_agent_env(
     assert main(["publish", str(archive), "--server", cli_plane.url]) == 0
     assert (file_plane.paths, env_plane.paths, cli_plane.paths) == (
         [],
-        ["/packages"],
-        ["/packages"],
+        ["/projects/default/packages"],
+        ["/projects/default/packages"],
     )
 
 
@@ -133,7 +133,7 @@ def test_sfly_home_defaults_to_dot_sfly_in_the_home_directory(
     archive.write_bytes(b"archive")
 
     assert main(["publish", str(archive)]) == 0
-    assert planes[0].paths == ["/packages"]
+    assert planes[0].paths == ["/projects/default/packages"]
 
 
 def dev_project(root: Path) -> Path:

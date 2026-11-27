@@ -60,7 +60,7 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 		/sfly_login=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? "";
 
 	beforeAll(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		secrets.set("管理员密码", ADMIN.password);
 		const login = await send(cp, "登录", "POST", "/auth/login", {
 			body: { login_name: ADMIN.loginName, password: ADMIN.password },
@@ -285,7 +285,7 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 		}
 
 		// 初始化：另起一个空库，初始化码、新管理员的密码。
-		setupCp = await startTestControlPlane();
+		setupCp = await startTestControlPlane({ defaultCredentials: false });
 		const code = (await readFile(join(setupCp.dataDir, SETUP_CODE_FILE), "utf8")).trim();
 		secrets.set("初始化码", code);
 		secrets.set("初始化时的密码", "SetupSecret-8jjjkk");

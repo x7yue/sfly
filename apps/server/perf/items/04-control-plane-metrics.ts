@@ -8,7 +8,7 @@ import { createTestDatabase } from "../../test/support/test-database.js";
 import { controlPlaneLoad } from "../control-plane-load.js";
 import { definePerfItem, type ItemRun, type PerfContext } from "../item.js";
 import { CONTROL_PLANE_SECONDS_ENV, secondsFromEnv } from "../options.js";
-import { PerfApi } from "../stack.js";
+import { allowAgents, PERF_ADMIN_ENV, PerfApi } from "../stack.js";
 
 const DEFAULT_SECONDS = 60;
 
@@ -28,8 +28,10 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 		dir: ctx.artifacts.bundleDir,
 		databaseUrl: database.url,
 		dataDir: await mkdtemp(join(ctx.tmpDir, "data-")),
+		env: PERF_ADMIN_ENV,
 	});
 	ctx.defer(() => server.stop());
+	await allowAgents(ctx, server);
 	return controlPlaneLoad(
 		ctx,
 		{

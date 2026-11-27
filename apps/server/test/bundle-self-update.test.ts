@@ -126,7 +126,7 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 				cwd: repoRoot,
 			},
 		);
-		const res = await fetch(`${httpUrl}/packages`, {
+		const res = await fetch(`${httpUrl}/projects/default/packages`, {
 			method: "POST",
 			headers: { "content-type": "application/octet-stream" },
 			body: await readFile(join(out, "sfly-stub-0.1.0.sflypkg")),
@@ -189,7 +189,7 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 			const { agents, control_plane_version } = await api.getJson<{
 				agents: AgentView[];
 				control_plane_version: string;
-			}>("/agents");
+			}>("/projects/default/agents");
 			expect(control_plane_version).toBe(version);
 			const found = agents.find((a) => a.name === NAME);
 			if (!found) throw new Error(`没有 Agent ${NAME}`);

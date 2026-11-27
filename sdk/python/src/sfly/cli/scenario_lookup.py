@@ -26,7 +26,7 @@ def find_scenario(client: Client, ref: str, *, command: str) -> dict[str, Any]:
             if error.status != 404:
                 raise
 
-    listing = client.get("/orchestrations", {"q": ref})
+    listing = client.get(client.in_project("/orchestrations"), {"q": ref})
     matches = [s for s in listing["orchestrations"] if s["name"] == ref]
     if len(matches) == 1:
         found = matches[0]

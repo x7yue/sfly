@@ -255,7 +255,7 @@ test("排队的任务：列在格子下面，写排队了多久、多久后排�
 });
 
 test("加载中：骨架是每台 Agent 一个面板，外面没有再套一层面板", async ({ page }) => {
-	await holdApi(page, "/agents");
+	await holdApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	const skeleton = page.getByRole("status", { name: "加载中" });
 	await expect(skeleton).toBeVisible();
@@ -347,9 +347,11 @@ test.describe("凭据种类和停用（#492）", () => {
 		await expect(header(page, "agent-none").getByText("没有凭据", { exact: true })).toHaveClass(
 			/text-warn-fg/,
 		);
+		// 登录着的管理员在标题栏里还有「凭据」「停用」按钮：只看连接凭据的那几句。
 		for (const name of ["agent-own", "agent-unknown"]) {
-			await expect(header(page, name)).not.toContainText("凭据");
-			await expect(header(page, name)).not.toContainText("共享令牌");
+			for (const said of ["共享令牌", "没有凭据", "自己的凭据"]) {
+				await expect(header(page, name)).not.toContainText(said);
+			}
 		}
 	});
 
@@ -755,19 +757,19 @@ test("「如何接入 Agent」弹窗：Esc 关闭后焦点回到按钮", async (
 
 test("加载中显示骨架，加载失败显示错误详情，重试后恢复", async ({ page, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
-	const hold = await holdApi(page, "/agents");
+	const hold = await holdApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	await expect(page.getByRole("status", { name: "加载中" })).toBeVisible();
 	hold.release();
 	await expect(rack(page, "agent-a")).toBeVisible();
 
 	await page.unrouteAll();
-	const outage = await failApi(page, "/agents");
+	const outage = await failApi(page, "/projects/default/agents");
 	await page.reload();
 	const error = page.getByRole("alert");
 	await expect(error).toContainText("无法加载 Agent");
 	await expect(error).toContainText("控制面暂时不可用");
-	await expect(error).toContainText("GET /api/agents → 503 unavailable");
+	await expect(error).toContainText("GET /api/projects/default/agents → 503 unavailable");
 
 	await outage.restore();
 	await error.getByRole("button", { name: "重试" }).click();
@@ -857,7 +859,7 @@ test("立即更新失败时，原因写在确认框里，不发通知", async ({
 		},
 	});
 	await agent.sync();
-	await page.route("**/api/agents/agent-waiting/update-now", (route) =>
+	await page.route("**/api/projects/default/agents/agent-waiting/update-now", (route) =>
 		route.fulfill({
 			status: 503,
 			contentType: "application/json",

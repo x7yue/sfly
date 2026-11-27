@@ -8,6 +8,7 @@ import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { appendStartupStubs, dropStartupStubs } from "./support/migrations.js";
 import { publishPackage } from "./support/package-archive.js";
@@ -48,7 +49,7 @@ describe("经哪个 AI 编程助手", () => {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				"x-sfly-nickname": encodeURIComponent(nickname),
+				...actAs(nickname),
 				...(client === undefined ? {} : { "x-sfly-client": client }),
 			},
 			body: JSON.stringify(body),
@@ -84,7 +85,7 @@ describe("经哪个 AI 编程助手", () => {
 			await api.getJson(`/orchestrations/${scenario}/runs`),
 		);
 		expect(perScenario.runs[0]).toMatchObject({ id: triggered.id, triggered_via: "claude-code" });
-		const records = runListApi.list.response.parse(await api.getJson("/runs"));
+		const records = runListApi.list.response.parse(await api.getJson("/projects/default/runs"));
 		expect(records.runs[0]).toMatchObject({ id: triggered.id, triggered_via: "claude-code" });
 	});
 
@@ -316,7 +317,7 @@ describe("升级前已有的运行和版本", () => {
 		expect(versions.versions).toEqual([
 			{ number: 1, author: "旧人", author_via: null, created_at: "2026-01-01T00:00:00.000Z" },
 		]);
-		const records = runListApi.list.response.parse(await api.getJson("/runs"));
+		const records = runListApi.list.response.parse(await api.getJson("/projects/default/runs"));
 		expect(records.runs[0]).toMatchObject({ id: ids.run, triggered_via: null });
 	});
 });

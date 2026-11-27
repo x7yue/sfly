@@ -114,7 +114,7 @@ base=http://127.0.0.1:$(docker port "$cp" 8080/tcp | head -n 1 | sed 's/.*://')
 json_post=(-H 'content-type: application/json' -H 'sec-fetch-site: same-origin')
 printf '{"login_name":"%s","password":"%s"}' "$admin_login" "$admin_password" |
 	curl -fsS -c "$jar" "${json_post[@]}" --data-binary @- "$base/auth/login" >/dev/null || fail "管理员登录"
-token=$(curl -fsS -b "$jar" "${json_post[@]}" -d '{}' "$base/agents/$agent/credentials" |
+token=$(curl -fsS -b "$jar" "${json_post[@]}" -d '{}' "$base/projects/default/agents/$agent/credentials" |
 	node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(0, "utf8")).token)') ||
 	fail "签发 Agent 凭据"
 [[ $token == sfly_agt_* ]] || fail "签发的不是 Agent 凭据"
@@ -129,7 +129,7 @@ start_workbench() {
 
 # Agent 页上这台 Agent 的状态，一行：在线与否、环境是否准备好、Agent 版本、控制面版本、版本是否不一致、凭据种类、对外地址、能力端口。
 agent_state() {
-	curl -fsS -b "$jar" -H 'sec-fetch-site: same-origin' "$base/agents" | node -e '
+	curl -fsS -b "$jar" -H 'sec-fetch-site: same-origin' "$base/projects/default/agents" | node -e '
 		const { agents, control_plane_version: controlPlane } = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
 		const agent = agents.find((a) => a.name === process.argv[1]);
 		if (!agent) { console.log("none"); process.exit(0); }

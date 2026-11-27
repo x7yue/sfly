@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { PREDATES_LOGIN_MESSAGE } from "../src/sessions/session-service.js";
 import { SESSION_TOKEN_TTL_MS } from "../src/sessions/session-tokens.js";
 import { ApiClient } from "./support/api-client.js";
-import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
+import { actAs, bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { FakeAssistant } from "./support/fake-assistant.js";
@@ -238,7 +238,11 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			);
 			for (const [method, path, body] of [
 				["POST", "/projects/default/tokens", { name: "x", scopes: ["read"] }],
-				["POST", "/feishu-bots", { name: "x", webhook_url: "https://example.com/hook" }],
+				[
+					"POST",
+					"/projects/default/feishu-bots",
+					{ name: "x", webhook_url: "https://example.com/hook" },
+				],
 				["POST", "/projects/default/sessions", { text: "你好" }],
 				["POST", `/sessions/${view.id}/messages`, { text: "你好" }],
 				["POST", `/sessions/${view.id}/stop`, {}],
@@ -249,7 +253,7 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 				expect(res.status, `${method} ${path}`).toBe(403);
 			}
 			// 发布节点包：范围不够（缺「发布」），不是找不到、也不是没有凭据。
-			const publish = await as("POST", "/packages");
+			const publish = await as("POST", "/projects/default/packages");
 			expect(publish.status).toBe(403);
 			expect(await publish.json()).toMatchObject({
 				error: { message: expect.stringContaining("发布") },
@@ -596,7 +600,8 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			const before = await query<{ n: number }>(cp, "select count(*)::int as n from sessions");
 			const res = await cp.fetch("/projects/default/sessions", {
 				method: "POST",
-				headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+				credentials: "omit",
+				headers: { "content-type": "application/json", ...actAs("alice") },
 				body: JSON.stringify({ text: "没有凭据" }),
 			});
 			expect(res.status).toBe(401);

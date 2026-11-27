@@ -226,10 +226,14 @@ AgentStart(a) ==
 
 \* lib.rs run_task 结束：Ledger::finish 在一次持锁里把执行中换成结果待发，并带上结束时执行器启动过没有（Finished::started）；
 \* 被放弃的尝试的结果直接丢弃，它也不再在手上（Ledger::discarded 叫醒 serve，只影响自更新的排空，模型里没有）。
-\* 成功只可能来自真正执行了、没有被取消的尝试；安装失败（执行器没启动，start_task 返回 Err）、节点失败、被杀都是失败。
+\* 成功只可能来自执行器真正启动过的尝试；安装失败（执行器没启动，start_task 返回 Err）是失败。
+\* 被告知停止（stopSig）的尝试也可能报成功：取消在执行器进程退出之后才到（running.wait 已返回），或者在开始上传产物之前、
+\* 没有产物要上传时到（artifacts.rs Uploader::finish、upload_all 的 borrow_and_update：开始上传之前已有的取消不打断上传），
+\* 节点的结果照原样上报；只有上传期间到的取消把成功改成 cancelled（#673）。所以这里不要求 a \notin stopSig。
+\* 会对 a 发取消的只有 agent_lost 和 Welcome 的放弃，那时 cp[a] 已不在 OnAgent，迟到的成功由 #applyResult 忽略。
 AgentFinish(a, ok) ==
     /\ ag[a] \in {"held", "started"}
-    /\ ok => (ag[a] = "started" /\ a \notin stopSig)
+    /\ ok => ag[a] = "started"
     /\ ag' = [ag EXCEPT ![a] = IF ag[a] = "started" THEN "done" ELSE "doneUnstarted"]
     /\ chan' = IF a \in abandoned THEN chan ELSE chan \cup {<<a, ok>>}
     /\ abandoned' = abandoned \ {a}

@@ -22,13 +22,12 @@ import { STATUS, StatusPill } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
 import {
 	attemptLabel,
-	DURATION_LABEL,
 	ERROR_LOCATION_LABEL,
 	MESSAGE,
 	noDataLabel,
 	PROGRESS_LABEL,
 } from "#/lib/copy";
-import { formatDuration } from "#/lib/format";
+import { formatDuration, formatProgress } from "#/lib/format";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { useElementWidth } from "#/lib/use-element-width";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -60,8 +59,10 @@ import { MetricChart } from "./MetricChart";
 import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
 import { nodeKey } from "./node-ref";
+import { NODE_TOTAL_HINT, NODE_TOTAL_LABEL, timingTitle } from "./node-timing";
 import { chainLabel, documentNodes, findNode } from "./run-model";
-import type { TimeRange } from "./timeline-model";
+import { nodeSegments, type TimeRange, timingOf } from "./timeline-model";
+import { useRevealGroup } from "./use-reveal-group";
 import {
 	attemptsSignature,
 	seriesQuery,
@@ -261,10 +262,17 @@ export function ChartWorkspace({
 		if (result.data && !entry.loaded.includes(result.data)) entry.loaded.push(result.data);
 	}
 
+	// 打开页面时滚到选中节点或第一个执行中 / 失败的组；之后选中节点时展开它的组并滚到可见处，版面变了再对准。
+	const {
+		reveal,
+		stop: stopRevealing,
+		userScroll,
+	} = useRevealGroup({ scroller, content, toolbar });
 	const changeFilter = (next: ReadonlySet<string> | null, open: Record<string, boolean> = {}) => {
 		actions.setFilter(next);
 		setOpened(open);
 		// 筛选变化时回到顶部。
+		stopRevealing();
 		if (scroller.current) scroller.current.scrollTop = 0;
 	};
 	const setAll = (open: boolean) =>
@@ -272,7 +280,6 @@ export function ChartWorkspace({
 			Object.fromEntries([...groups.map((g) => g.key), PLATFORM_KEY].map((k) => [k, open])),
 		);
 
-	// 打开页面时滚到选中节点或第一个执行中 / 失败的组；之后选中节点时展开它的组并滚到可见处。
 	const [scrollTo, setScrollTo] = useState<string | null>(null);
 	const selectedKey = selected ? nodeKey(selected) : null;
 	const lastSelected = useRef<string | null | undefined>(undefined);
@@ -295,20 +302,8 @@ export function ChartWorkspace({
 	useLayoutEffect(() => {
 		if (!scrollTo) return;
 		setScrollTo(null);
-		const box = scroller.current;
-		const el = box?.querySelector<HTMLElement>(`[data-group="${CSS.escape(scrollTo)}"]`);
-		if (!box || !el) return;
-		const top = el.offsetTop - (toolbar.current?.offsetHeight ?? 0) - 8;
-		// 看得见：组的上沿在工具栏下面，第一张图表露出大半（组标题和节点摘要在图表上面，只露出它们看不到曲线）。
-		// 图表还没有渲染出来时（组刚展开）只要求露出组标题那一截。
-		const chart = el.querySelector<HTMLElement>("[data-chart]");
-		const boxTop = box.getBoundingClientRect().top;
-		const needed = chart
-			? chart.getBoundingClientRect().top - boxTop + box.scrollTop + chart.offsetHeight * 0.75
-			: el.offsetTop + 40;
-		const visible = top >= box.scrollTop && needed <= box.scrollTop + box.clientHeight;
-		if (!visible) box.scrollTop = Math.max(0, top);
-	}, [scrollTo]);
+		reveal(scrollTo);
+	}, [scrollTo, reveal]);
 
 	const nodes = filter ? [...filter].filter((k) => k !== PLATFORM_KEY) : [];
 	const only = groups.find((g) => g.key === nodes[0])?.node;
@@ -325,6 +320,7 @@ export function ChartWorkspace({
 	return (
 		<section
 			ref={scrollerRef}
+			{...userScroll}
 			aria-label="图表工作区"
 			className={cn(
 				"relative flex-initial overflow-auto px-3 [scrollbar-gutter:stable]",
@@ -802,15 +798,14 @@ function LossNotes({ loss }: { loss: MetricDataLoss }) {
 	);
 }
 
-/** 选中节点的摘要（组内顶部）：状态、节点类型、Agent、耗时、尝试、进度、错误。 */
+/** 选中节点的摘要（组内顶部）：状态、节点类型、Agent、总耗时（和时间线的节点行是同一个数）、尝试、进度、错误。 */
 function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 	const { node, entry, status } = group;
-	const latest = node.attempts.at(-1);
-	const started = latest?.started_at ? Date.parse(latest.started_at) : null;
-	const ended = latest?.ended_at ? Date.parse(latest.ended_at) : now;
-	const progress = latest?.progress;
-	const item = (label: string, value: React.ReactNode) => (
-		<div className="min-w-0">
+	const timing = timingOf(nodeSegments(node, now));
+	const progress = node.attempts.at(-1)?.progress;
+	// 摘要只占一行：总耗时的构成写在悬停提示里，不多占一行把下面的图表推下去。
+	const item = (label: string, value: React.ReactNode, hint?: string) => (
+		<div className="min-w-0" title={hint}>
 			<div className="text-xs text-fg-3">{label}</div>
 			<div className="font-mono text-xs">{value}</div>
 		</div>
@@ -820,14 +815,17 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
 			{item("节点类型", <UntrustedText text={`${entry.package}/${entry.node}@${entry.version}`} />)}
 			{item("Agent", <UntrustedText text={node.agent ?? "—"} />)}
-			{item(DURATION_LABEL, started === null ? "—" : formatDuration(ended - started))}
+			{item(
+				NODE_TOTAL_LABEL,
+				timing.total === null ? "—" : formatDuration(timing.total),
+				timingTitle(timing),
+			)}
 			{item("尝试", node.attempts.length)}
 			{progress && (
 				<div className="min-w-45">
 					<div className="text-xs text-fg-3">{PROGRESS_LABEL}</div>
 					<div className="font-mono text-xs">
-						{progress.current}
-						{progress.total === null ? "" : ` / ${progress.total}`}
+						{formatProgress(progress.current, progress.total)}
 						{progress.message && (
 							<span className="ml-2 font-sans text-fg-2">
 								<UntrustedText text={progress.message} />
@@ -992,7 +990,7 @@ const platformNode = (run: RunView, n: { chain_instance_id: string; node_id: str
 const platformNodeName = (run: RunView, n: { chain_instance_id: string; node_id: string }) =>
 	runNodeName(platformNode(run, n));
 
-/** 节点耗时 Top 10：条长为总耗时（含排队与等待）。 */
+/** 节点耗时 Top 10：条长为总耗时（各次尝试从排队到结束的合计，含排队与等待；和时间线的节点行、选中节点的摘要是同一个口径）。 */
 function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | undefined }) {
 	const statusOf = new Map(
 		run.chains.flatMap((c) => c.nodes.map((n) => [`${c.id}:${n.node_id}`, n.status])),
@@ -1009,7 +1007,9 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 		>
 			<figcaption className="flex items-baseline gap-2 text-xs">
 				<span className="text-fg-2">节点耗时 Top 10</span>
-				<span className="text-xs text-fg-3">含排队与等待</span>
+				<span className="text-xs text-fg-3" title={NODE_TOTAL_HINT}>
+					含排队与等待
+				</span>
 			</figcaption>
 			{nodes.length === 0 ? (
 				<p className="m-0 mt-1.5 text-xs text-fg-3">

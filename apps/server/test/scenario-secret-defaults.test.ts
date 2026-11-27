@@ -281,7 +281,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 
 			const responses: Array<[string, Response, { masked: boolean }]> = [
 				["读场景", await api.get(`/orchestrations/${id}`), { masked: false }],
-				["场景列表", await api.get("/orchestrations"), { masked: false }],
+				["场景列表", await api.get("/projects/default/orchestrations"), { masked: false }],
 				["编辑起点", await api.get(`/orchestrations/${id}/head`), { masked: true }],
 				["版本 1", await api.get(`/orchestrations/${id}/versions/1`), { masked: true }],
 				["版本列表", await api.get(`/orchestrations/${id}/versions`), { masked: false }],
@@ -291,10 +291,10 @@ describe("场景版本里 secret 参数的默认值", () => {
 				["复制场景", copied, { masked: false }],
 				["副本的编辑起点", await api.get(`/orchestrations/${copyId}/head`), { masked: true }],
 				["运行视图", await api.get(`/runs/${runId}`), { masked: false }],
-				["运行列表", await api.get("/runs"), { masked: false }],
+				["运行列表", await api.get("/projects/default/runs"), { masked: false }],
 				["场景的运行", await api.get(`/orchestrations/${id}/runs`), { masked: false }],
 				["运行预设", await api.get(`/orchestrations/${id}/presets`), { masked: true }],
-				["首页", await api.get("/dashboard"), { masked: false }],
+				["首页", await api.get("/projects/default/dashboard"), { masked: false }],
 			];
 			for (const [what, res, { masked }] of responses) {
 				expect(res.status, what).toBeLessThan(300);
@@ -763,23 +763,23 @@ describe("场景版本里 secret 参数的默认值", () => {
 		 * 其余的写接口必须在下面的用例里被请求过（成功的和失败的），新增的写接口两边都不在时测试失败。
 		 */
 		const NOT_EXERCISED: Record<string, string> = {
-			"POST /agents/:name/update-now": "只让 Agent 自更新，响应是被终止的任务数",
-			"POST /agents/:name/credentials":
+			"POST /projects/:project/agents/:name/update-now": "只让 Agent 自更新，响应是被终止的任务数",
+			"POST /projects/:project/agents/:name/credentials":
 				"签发 Agent 凭据：原值只在响应里出现一次，另见 agent-credentials-http.test.ts",
-			"DELETE /agents/:name/credentials/:id": "同上",
-			"POST /agents/:name/disable": "停用 Agent，不带场景和参数",
-			"POST /agents/:name/enable": "同上",
+			"DELETE /projects/:project/agents/:name/credentials/:id": "同上",
+			"POST /projects/:project/agents/:name/disable": "停用 Agent，不带场景和参数",
+			"POST /projects/:project/agents/:name/enable": "同上",
 			"POST /projects/:project/dev-agents":
 				"注册开发 Agent：名字由控制面生成，凭据另见 agent-credentials-http.test.ts",
 			"DELETE /projects/:project/dev-agents/:name": "同上",
 			"PUT /projects/:project/workbench":
 				"登记项目的工作台：请求体只有 Agent 的名字，不带场景和参数，另见 project-workbench-http.test.ts",
 			"PUT /tasks/:id/artifacts/*": "上传产物的字节，不带场景和参数",
-			"POST /feishu-bots": "登记 Webhook 地址（地址里的令牌另有打码，ADR 0020）",
-			"PATCH /feishu-bots/:name": "同上",
-			"DELETE /feishu-bots/:name": "同上",
-			"POST /feishu-bots/:name/test": "同上",
-			"POST /packages": "发布节点包，不带场景和参数",
+			"POST /projects/:project/feishu-bots": "登记 Webhook 地址（地址里的令牌另有打码，ADR 0020）",
+			"PATCH /projects/:project/feishu-bots/:name": "同上",
+			"DELETE /projects/:project/feishu-bots/:name": "同上",
+			"POST /projects/:project/feishu-bots/:name/test": "同上",
+			"POST /projects/:project/packages": "发布节点包，不带场景和参数",
 			// 账号类接口（登录、初始化、改密码、管理账号）：和场景的默认值无关，但处理的是密码，另有专门的测试
 			// 遍历它们的每个出口（accounts-secrets.test.ts：每个账号类接口成功的和失败的响应里没有密码、Cookie、初始化码、哈希）。
 			"POST /auth/setup": "账号类接口，密码另见 accounts-secrets.test.ts",
@@ -828,8 +828,11 @@ describe("场景版本里 secret 参数的默认值", () => {
 			};
 
 			// 新建场景：成功、名称缺失（400）。
-			await record("新建场景", tracked.post("/orchestrations", { name: "另一个" }));
-			await record("新建场景：缺名称", tracked.post("/orchestrations", {}));
+			await record(
+				"新建场景",
+				tracked.post("/projects/default/orchestrations", { name: "另一个" }),
+			);
+			await record("新建场景：缺名称", tracked.post("/projects/default/orchestrations", {}));
 			// 触发：成功；把占位符当成值传回来（400）；传了没有声明的参数（400）；类型不对（400）；场景不存在（404）。
 			const triggered = await tracked.trigger(id);
 			responses.push(["触发", triggered]);

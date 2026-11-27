@@ -66,7 +66,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		writeFile(file, JSON.stringify(content, null, 2));
 
 	const createScenario = async (name: string, document?: unknown): Promise<string> => {
-		const res = await api.post("/orchestrations", { name });
+		const res = await api.post("/projects/default/orchestrations", { name });
 		const { id } = (await res.json()) as { id: string };
 		if (document) await api.saveVersion(id, document);
 		clock.advance(1000);
@@ -246,8 +246,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			const seen = await startRecordingProxy(cp.httpUrl);
 			proxies.push(seen);
 
+			// 测的是命令行发的昵称请求头（不带令牌时才发，#494 一并删除）：不带默认的令牌。
 			const result = await sfly(["scenario", "push", file, "--server", seen.url], {
-				env: { SFLY_NICKNAME: "阿杰", CLAUDECODE: "1" },
+				env: { SFLY_NICKNAME: "阿杰", CLAUDECODE: "1", SFLY_API_TOKEN: undefined },
 			});
 			expect(result.code, result.stderr).toBe(0);
 			const save = seen.requests.filter(
@@ -255,6 +256,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			);
 			expect(save).toHaveLength(1);
 			expect(save[0]?.headers["x-sfly-client"]).toBe(`sfly-cli/${cliVersion} agent/claude-code`);
+			// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 			expect(save[0]?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("阿杰"));
 			expect((await versions(id))[0]).toMatchObject({
 				number: 2,
@@ -770,8 +772,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("--from 的文档没有通过校验时报错，也不会新建场景", async () => {
-			const before = (await api.getJson<{ orchestrations: unknown[] }>("/orchestrations"))
-				.orchestrations.length;
+			const before = (
+				await api.getJson<{ orchestrations: unknown[] }>("/projects/default/orchestrations")
+			).orchestrations.length;
 			const file = newFile();
 			await writeScenarioFile(file, {
 				document: {
@@ -784,8 +787,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			const result = await cli("scenario", "create", "--name", "新建-不会出现", "--from", file);
 			expect(result.code).toBe(2);
 			expect(result.stderr).toContain("nodes/1/kind");
-			const after = (await api.getJson<{ orchestrations: unknown[] }>("/orchestrations"))
-				.orchestrations.length;
+			const after = (
+				await api.getJson<{ orchestrations: unknown[] }>("/projects/default/orchestrations")
+			).orchestrations.length;
 			expect(after).toBe(before);
 		});
 	});

@@ -53,27 +53,36 @@ describe("sfly api → 控制面", () => {
 
 	describe("调用", () => {
 		it("GET：响应原样输出，路径里可以直接带查询参数，--query 追加", async () => {
-			const direct = await (await api.get("/orchestrations")).text();
-			const plain = await cli("GET", "/orchestrations");
+			const direct = await (await api.get("/projects/default/orchestrations")).text();
+			const plain = await cli("GET", "/projects/default/orchestrations");
 			expect(plain.code, plain.stderr).toBe(0);
 			expect(plain.stderr).toBe("");
 			expect(plain.stdout).toBe(`${direct}\n`);
 
-			const filtered = await cli("get", "/orchestrations", "--query", "q=阿尔法");
+			const filtered = await cli("get", "/projects/default/orchestrations", "--query", "q=阿尔法");
 			expect(filtered.code, filtered.stderr).toBe(0);
 			const found = JSON.parse(filtered.stdout) as { orchestrations: { name: string }[] };
 			expect(found.orchestrations.map((s) => s.name)).toEqual(["阿尔法"]);
 
-			const inline = await cli("GET", "/runs?limit=1&status=running");
+			const inline = await cli("GET", "/projects/default/runs?limit=1&status=running");
 			expect(inline.code, inline.stderr).toBe(0);
-			expect(JSON.parse(inline.stdout)).toEqual(await api.getJson("/runs?limit=1&status=running"));
+			expect(JSON.parse(inline.stdout)).toEqual(
+				await api.getJson("/projects/default/runs?limit=1&status=running"),
+			);
 		});
 
 		it("带公共的昵称和 x-sfly-client 请求头", async () => {
 			proxy.requests.length = 0;
-			const result = await viaProxy("GET", "/health", "--nickname", "小明");
+			// 测的是命令行发的昵称请求头（不带令牌时才发，#494 一并删除）：不带默认的令牌。
+			const result = await sfly(
+				["api", "GET", "/health", "--nickname", "小明", "--server", proxy.url],
+				{
+					env: { SFLY_API_TOKEN: undefined },
+				},
+			);
 			expect(result.code, result.stderr).toBe(0);
 			const [request] = proxy.requests;
+			// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 			expect(request?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("小明"));
 			expect(request?.headers["x-sfly-client"]).toMatch(/^sfly-cli\/\S+$/);
 
@@ -90,7 +99,7 @@ describe("sfly api → 控制面", () => {
 		it("POST：--body 给 JSON 文本，或 @文件", async () => {
 			const inline = await cli(
 				"POST",
-				"/orchestrations",
+				"/projects/default/orchestrations",
 				"--body",
 				'{"name":"来自 api","description":"d"}',
 				"--nickname",
@@ -106,7 +115,7 @@ describe("sfly api → 控制面", () => {
 
 			const file = join(dir, "body.json");
 			await writeFile(file, JSON.stringify({ name: "来自文件" }));
-			const fromFile = await cli("POST", "/orchestrations", "--body", `@${file}`);
+			const fromFile = await cli("POST", "/projects/default/orchestrations", "--body", `@${file}`);
 			expect(fromFile.code, fromFile.stderr).toBe(0);
 			expect((JSON.parse(fromFile.stdout) as { name: string }).name).toBe("来自文件");
 		});
@@ -153,7 +162,7 @@ describe("sfly api → 控制面", () => {
 		});
 
 		it("上传接口不支持：提示用 sfly publish", async () => {
-			const result = await cli("POST", "/packages");
+			const result = await cli("POST", "/projects/default/packages");
 			expect(result.code).toBe(2);
 			expect(result.stderr).toContain("请求体是原始字节");
 			expect(result.stderr).toContain("sfly publish");
@@ -171,10 +180,20 @@ describe("sfly api → 控制面", () => {
 		};
 
 		it("body 缺必填字段、字段类型不对、有不认识的字段：逐条列出，不发请求", async () => {
-			const missing = await rejected(["POST", "/orchestrations", "--body", '{"description":"x"}']);
+			const missing = await rejected([
+				"POST",
+				"/projects/default/orchestrations",
+				"--body",
+				'{"description":"x"}',
+			]);
 			expect(missing).toContain("body：缺少必填字段 name");
 
-			const wrongType = await rejected(["POST", "/orchestrations", "--body", '{"name":3}']);
+			const wrongType = await rejected([
+				"POST",
+				"/projects/default/orchestrations",
+				"--body",
+				'{"name":3}',
+			]);
 			expect(wrongType).toContain("body.name：需要 string，收到 integer");
 
 			const extra = await rejected([
@@ -201,26 +220,32 @@ describe("sfly api → 控制面", () => {
 		});
 
 		it("缺 --body、body 不是 JSON、文件读不了、接口没有请求体", async () => {
-			expect(await rejected(["POST", "/orchestrations"])).toContain("缺少 --body，必填字段：name");
-			expect(await rejected(["POST", "/orchestrations", "--body", "{name:"])).toContain(
-				"--body 不是合法的 JSON",
+			expect(await rejected(["POST", "/projects/default/orchestrations"])).toContain(
+				"缺少 --body，必填字段：name",
 			);
-			expect(await rejected(["POST", "/orchestrations", "--body", "@/不存在.json"])).toContain(
-				"读不了 --body 的文件",
-			);
+			expect(
+				await rejected(["POST", "/projects/default/orchestrations", "--body", "{name:"]),
+			).toContain("--body 不是合法的 JSON");
+			expect(
+				await rejected(["POST", "/projects/default/orchestrations", "--body", "@/不存在.json"]),
+			).toContain("读不了 --body 的文件");
 			expect(await rejected(["GET", "/health", "--body", "{}"])).toContain("这个接口没有请求体");
 		});
 
 		it("查询参数：不认识的名字、类型不对、没有查询参数的接口", async () => {
-			expect(await rejected(["GET", "/runs", "--query", "limt=5"])).toContain(
+			expect(await rejected(["GET", "/projects/default/runs", "--query", "limt=5"])).toContain(
 				"不认识的查询参数 limt（接受：",
 			);
-			expect(await rejected(["GET", "/runs", "--query", "limit=abc"])).toContain(
+			expect(await rejected(["GET", "/projects/default/runs", "--query", "limit=abc"])).toContain(
 				"query.limit：需要 integer，收到 string",
 			);
-			expect(await rejected(["GET", "/runs", "--query", "limit=0"])).toContain("query.limit：");
+			expect(await rejected(["GET", "/projects/default/runs", "--query", "limit=0"])).toContain(
+				"query.limit：",
+			);
 			expect(await rejected(["GET", "/health", "--query", "a=1"])).toContain("没有查询参数");
-			expect(await rejected(["GET", "/runs", "--query", "limit"])).toContain("名=值");
+			expect(await rejected(["GET", "/projects/default/runs", "--query", "limit"])).toContain(
+				"名=值",
+			);
 		});
 
 		it("路径不在清单里：列出最接近的几条路由，不发请求", async () => {
@@ -254,20 +279,22 @@ describe("sfly api → 控制面", () => {
 			expect(lines[0]).toMatch(/^方法\s+路径\s+种类\s+效果\s+说明\s+参数/);
 			const row = (method: string, path: string) =>
 				lines.find((line) => line.startsWith(method) && line.split(/\s+/)[1] === path);
-			expect(row("POST", "/orchestrations")).toMatch(
+			expect(row("POST", "/projects/:project/orchestrations")).toMatch(
 				/普通\s+有副作用\s+新建一个场景\s+body: name\*, description$/,
 			);
 			expect(row("GET", "/runs/:id/events")).toMatch(/SSE\s+只读\s+实时推送一次运行/);
 			expect(row("GET", "/llms.txt")).toMatch(/下载\s+只读/);
-			expect(row("POST", "/packages")).toMatch(/上传\s+有副作用/);
-			expect(row("GET", "/runs")).toMatch(/query: .*limit/);
+			expect(row("POST", "/projects/:project/packages")).toMatch(/上传\s+有副作用/);
+			expect(row("GET", "/projects/:project/runs")).toMatch(/query: .*limit/);
 			// 新建别类、新建同类、删除或归档，在效果一列里写明
 			expect(row("POST", "/orchestrations/:id/runs")).toMatch(
 				/有副作用（新建运行）\s+触发一个场景/,
 			);
 			expect(row("POST", "/orchestrations/:id/copy")).toMatch(/有副作用（新建场景）/);
 			expect(row("POST", "/orchestrations/:id/archive")).toMatch(/有副作用（删除或归档）/);
-			expect(row("DELETE", "/feishu-bots/:name")).toMatch(/有副作用（删除或归档）/);
+			expect(row("DELETE", "/projects/:project/feishu-bots/:name")).toMatch(
+				/有副作用（删除或归档）/,
+			);
 			expect(result.stdout).toContain("sfly api --describe <方法> <路径>");
 		});
 
@@ -280,7 +307,9 @@ describe("sfly api → 控制面", () => {
 				manifest.routes.map((r) => `${r.method} ${r.path}`),
 			);
 			expect(listed).toEqual(manifest.routes);
-			const create = listed.find((r) => r.method === "POST" && r.path === "/orchestrations");
+			const create = listed.find(
+				(r) => r.method === "POST" && r.path === "/projects/:project/orchestrations",
+			);
 			expect(create?.key).toEqual(["orchestrations", "create"]);
 			expect(create?.kind).toBe("endpoint");
 			expect(create?.body?.required).toEqual(["name"]);
@@ -381,7 +410,7 @@ describe("sfly api → 控制面", () => {
 		});
 
 		it("有副作用、请求体和资源在列表上的接口", async () => {
-			const result = await cli("--describe", "POST", "/orchestrations");
+			const result = await cli("--describe", "POST", "/projects/default/orchestrations");
 			expect(result.code, result.stderr).toBe(0);
 			expect(result.stdout).toContain("效果：有副作用");
 			expect(result.stdout).toContain("资源：场景，列表或新建，没有具体的那一个");
@@ -412,9 +441,9 @@ describe("sfly api → 控制面", () => {
 			expect(download.stdout).toContain(
 				"响应：文件内容（content-type：text/plain; charset=utf-8）",
 			);
-			const upload = await cli("--describe", "POST", "/packages");
+			const upload = await cli("--describe", "POST", "/projects/default/packages");
 			expect(upload.stdout).toContain("sfly api 不能直接调用");
-			const empty = await cli("--describe", "DELETE", "/feishu-bots/:name");
+			const empty = await cli("--describe", "DELETE", "/projects/default/feishu-bots/:name");
 			expect(empty.stdout).toContain("响应：没有响应体（204）");
 		});
 

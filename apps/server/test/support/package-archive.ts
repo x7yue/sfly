@@ -132,6 +132,6 @@ export async function publishPackage(
 		}),
 		{ [`${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`]: strToU8("wheel") },
 	);
-	const res = await cp.fetch("/packages", publishInit(archive));
+	const res = await cp.fetch("/projects/default/packages", publishInit(archive));
 	if (res.status !== 201) throw new Error(`publish ${name}@${version}: ${await res.text()}`);
 }
