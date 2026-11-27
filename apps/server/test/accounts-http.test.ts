@@ -6,6 +6,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PLATFORM_ADMIN_SCOPES } from "../src/auth/scopes.js";
 import { SETUP_CODE_FILE } from "../src/auth/setup-code.js";
 import { loginCookie, TestAccounts } from "./support/credentials.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -86,6 +87,8 @@ describe("第一个管理员", () => {
 			login_name: "boss",
 			display_name: "第一个管理员",
 			is_platform_admin: true,
+			// 初始化响应也带范围：第一个管理员是平台管理员，有项目管理员的全部范围（控制台据此显示管理类的操作）。
+			scopes: [...PLATFORM_ADMIN_SCOPES],
 		});
 		const cookie = /sfly_login=([^;]+)/.exec(created.headers.get("set-cookie") ?? "")?.[1] ?? "";
 		expect(cookie).not.toBe("");

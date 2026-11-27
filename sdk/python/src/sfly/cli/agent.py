@@ -227,14 +227,20 @@ def _issue(session: Session, args: argparse.Namespace) -> None:
         )
         return
     script = session.client.shown_url("/install.sh")
-    install = f"curl -fsSL {script} | sh -s -- --name {_quote(args.name)}"
+    # 一行、放在子 shell 里：两行一起粘贴时，没有括号粘贴的终端（bash 5.1 之前）里
+    # `read -rs` 会读走第二行，接着粘贴的凭据被当成命令执行并进 shell 历史；
+    # `read` 失败时 `&&` 让安装不运行，装完交互 shell 里不留 SFLY_TOKEN。
+    install = (
+        "(read -rs SFLY_TOKEN && export SFLY_TOKEN && "
+        f"curl -fsSL {script} | sh -s -- --name {_quote(args.name)})"
+    )
     text = "\n".join(
         [
             f"已为 {args.name} 签发凭据 {issued['credential']['prefix']}…",
             "凭据（原值只显示这一次，控制面只存哈希，丢了只能重新签发）：",
             token,
-            "装到这台 Agent 上，用环境变量传凭据（不要写在命令行参数里）：",
-            "  read -rs SFLY_TOKEN && export SFLY_TOKEN",
+            "装到这台 Agent 上，用环境变量传凭据（不要写在命令行参数里；"
+            "运行之后粘贴上面的凭据、回车）：",
             f"  {install}",
             "批量或远程安装时用 --token-only 经管道交给远程的 read，"
             "见 sfly agent credentials issue --help",
