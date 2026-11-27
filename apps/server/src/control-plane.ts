@@ -61,6 +61,7 @@ import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
+import { openVaultKey } from "./secrets/vault-key.js";
 import { AssistantClient } from "./sessions/assistant-client.js";
 import { assistantSetup } from "./sessions/assistant-config.js";
 import { AssistantConnection } from "./sessions/assistant-connection.js";
@@ -504,6 +505,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	});
 	try {
 		await mkdir(options.dataDir, { recursive: true });
+		await openVaultKey(options.dataDir, database.db);
 		await bootstrapFirstAdmin({
 			accounts,
 			setupCode,

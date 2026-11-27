@@ -457,6 +457,8 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | `task_actions` | (task_id, id) 主键, kind（action / mark）, parent, depth, name, fields（JSON，保留写入的先后）, noted（JSON：结束时补充的字段，读取时覆盖到 fields 上）, started_at, agent_started_at, start_mono, ended_at, agent_ended_at, duration_ms, result（还在做时为空）, reason, rev（最后写入这一行的那一批的修订号）；索引：(task_id, started_at, id)、(task_id, name, started_at, id)、只含失败的 (task_id, started_at, id)、(task_id, rev, id)（实时推送补发）；没有指向任务的外键（写入路径上逐行检查，与 `metric_segments` 一样）（规格 #345） |
 | `task_action_names` | (task_id, name) 主键, stored（存下的明细个数，不含补发的失败动作）, dropped（控制面兜底丢弃的个数）, dropped_from / agent_dropped_from（被丢弃的明细里最早的开始） |
 | `artifacts` | id, task_id, name, path, size, sha256, created_at（上传时间，控制面时间）, agent_modified_at（文件在 Agent 上的修改时间，Agent 时间，可为空） |
+| `run_vaults` | run_id（主键，外键，随运行删除）, sealed（运行的加密副本：AES-256-GCM，附加数据是运行 ID；`src/secrets/run-vault.ts`，迁移 `0044_run_vaults`，#505） |
+| `vault_key` | id（只有一行）, fingerprint（数据目录里钥匙文件 `secrets.key` 的指纹；启动时对照，钥匙文件丢了、换了、别的用户读得到都拒绝启动，`src/secrets/vault-key.ts`） |
 
 用户与项目（ADR 0029）。第一次迁移（`0032_users_and_projects`）只建表和回填，不改变任何接口的行为；登录、令牌、鉴权在后面的任务里往这些表里写数据：
 
