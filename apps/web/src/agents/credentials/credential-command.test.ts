@@ -143,14 +143,18 @@ describe("给还没连过的名字签发：名称的规则和控制面一样", (
 			"a\nb",
 			"😀".repeat(64),
 		]) {
-			expect(agentNameProblem(name) === undefined).toBe(params.safeParse({ name }).success);
+			expect(agentNameProblem(name) === undefined).toBe(
+				params.safeParse({ project: "default", name }).success,
+			);
 		}
 	});
 
 	it("页面比控制面严的一类：首尾有空白的名称接口认、页面不让签发（控制面签发接口的规则不在这里动，命令行同样的问题另记）", () => {
 		const params = agentsApi.issueCredential.params;
 		for (const name of [" a", "a ", " a "]) {
-			expect(params.safeParse({ name }).success, JSON.stringify(name)).toBe(true);
+			expect(params.safeParse({ project: "default", name }).success, JSON.stringify(name)).toBe(
+				true,
+			);
 			expect(agentNameProblem(name), JSON.stringify(name)).toBe(NAME_EDGE_WHITESPACE);
 		}
 	});

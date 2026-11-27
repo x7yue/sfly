@@ -744,7 +744,7 @@ describe("运行通知", () => {
 		async function expectRunEndedAndNothingSent(runId: string, reason: RegExp) {
 			expect((await api.run(runId)).run_notification).toBeNull();
 			expect(agent.ended).toBe(false);
-			const online = await api.get("/agents");
+			const online = await api.get("/projects/default/agents");
 			expect(await online.text()).toContain('"status":"online"');
 			expect(feishu.requests).toHaveLength(0);
 			const logged = errors.mock.calls.map((call) => call.map(String).join(" ")).join("\n");

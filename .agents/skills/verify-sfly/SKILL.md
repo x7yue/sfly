@@ -78,10 +78,10 @@ agent-browser $S screenshot "$RUN/evidence/<序号>-<步骤>.png"
 ```sh
 curl -s "$HTTP_URL/api/runs" | python3 -c 'import json,sys; print([(r["id"],r["status"]) for r in json.load(sys.stdin)["runs"]])'
 curl -s "$HTTP_URL/api/runs/<运行ID>"   # 各链、各节点的 status 和 outputs
-curl -s "$HTTP_URL/api/agents"          # 在线状态、agent_version、installed_packages
+curl -s "$HTTP_URL/api/projects/default/agents"  # 在线状态、agent_version、installed_packages
 ```
 
-浏览器只走 `/api/*`。Agent 和 CLI 用根路径上的同一套 API，比如 `sfly publish` 调的是 `POST /packages`。
+浏览器只走 `/api/*`。Agent 和 CLI 用根路径上的同一套 API，比如 `sfly publish` 调的是 `POST /projects/default/packages`。
 
 ## 证据
 

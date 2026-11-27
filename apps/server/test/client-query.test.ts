@@ -184,17 +184,20 @@ describe("API 客户端查询测试控制面", () => {
 	});
 
 	it("列出 Agent 和节点包，读节点包的详情、版本和节点类型", async () => {
-		const { agents } = await client.agents.list();
+		const at = { project: "default" };
+		const { agents } = await client.agents.list({ params: at });
 		expect(agents.map((a) => a.name)).toEqual(["agent-a", "agent-b"]);
 
-		const { packages } = await client.packages.list();
+		const { packages } = await client.packages.list({ params: at });
 		expect(packages.map((p) => p.name)).toEqual(["probe"]);
-		const detail = await client.packages.get({ params: { name: "probe" } });
+		const detail = await client.packages.get({ params: { ...at, name: "probe" } });
 		expect(detail.versions.map((v) => v.version)).toEqual(["1.0.0"]);
-		const version = await client.packages.version({ params: { name: "probe", version: "1.0.0" } });
+		const version = await client.packages.version({
+			params: { ...at, name: "probe", version: "1.0.0" },
+		});
 		expect(version.metadata.nodes.map((n) => n.name)).toEqual(["check"]);
 		const nodeType = await client.packages.nodeType({
-			params: { name: "probe", version: "1.0.0", node: "check" },
+			params: { ...at, name: "probe", version: "1.0.0", node: "check" },
 		});
 		expect(nodeType.metrics?.map((m) => m.name)).toEqual(["tps"]);
 	});

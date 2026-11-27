@@ -56,7 +56,7 @@ def issue_credential(name: str) -> int:
     凭据只写到标准输出。"""
     s = stack()
     request = urllib.request.Request(
-        f"{s.cp_url}/agents/{name}/credentials", data=b"{}", method="POST"
+        f"{s.cp_url}/projects/{PROJECT}/agents/{name}/credentials", data=b"{}", method="POST"
     )
     request.add_header("content-type", "application/json")
     request.add_header("cookie", e2e.login_cookie(s))

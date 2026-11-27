@@ -55,7 +55,7 @@ describe("派发内容", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		for (const archive of [demo, strict]) {
-			expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(201);
+			expect((await cp.fetch("/projects/default/packages", publishInit(archive))).status).toBe(201);
 		}
 		// 被引用的 Agent：注册过、现在离线；一台版本够，一台太旧。
 		for (const [name, agentVersion] of [
@@ -72,7 +72,8 @@ describe("派发内容", () => {
 	});
 
 	const content = createAssignContent({
-		packageArchiveUrl: (name, version) => `http://sfly.test/${name}/${version}/archive`,
+		packageArchiveUrl: (project, name, version) =>
+			`http://sfly.test/${project}/${name}/${version}/archive`,
 		artifactUploadUrl: (taskId) => `http://sfly.test/artifacts/${taskId}`,
 		artifactLimitBytes: 5000,
 	});
@@ -123,7 +124,7 @@ describe("派发内容", () => {
 				runId: "run-1",
 				nodeId: "n1",
 				packageSha256: createHash("sha256").update(demo).digest("hex"),
-				packageUrl: "http://sfly.test/demo/1.0.0/archive",
+				packageUrl: "http://sfly.test/default/demo/1.0.0/archive",
 				artifactUploadUrl: "http://sfly.test/artifacts/task-1",
 				artifactLimitBytes: 5000n,
 				referencedAgents: [],
@@ -135,7 +136,8 @@ describe("派发内容", () => {
 	it("产物上限是 Infinity 或超过 uint64 时夹在 uint64 的最大值：派发内容能序列化（不让派发出错）", async () => {
 		for (const wild of [Number.POSITIVE_INFINITY, 1e30]) {
 			const wildContent = createAssignContent({
-				packageArchiveUrl: (name, version) => `http://sfly.test/${name}/${version}/archive`,
+				packageArchiveUrl: (project, name, version) =>
+					`http://sfly.test/${project}/${name}/${version}/archive`,
 				artifactUploadUrl: (taskId) => `http://sfly.test/artifacts/${taskId}`,
 				artifactLimitBytes: wild,
 			});

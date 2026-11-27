@@ -52,6 +52,7 @@ import type {
 	PresetParamInput,
 	PresetView,
 	ProgressEvent,
+	ProjectParams,
 	RunFocus,
 	RunFocusQuery,
 	RunListItem,
@@ -154,12 +155,14 @@ export interface Api {
 	};
 	agents: {
 		/**
-		 * `GET /agents`
+		 * `GET /projects/:project/agents`
 		 *
 		 * 全部注册过的 Agent，按名称排序。
 		 */
 		list: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			{
 				agents: AgentView[];
 				/** 控制面版本，也就是 Agent 的目标版本。 */
@@ -167,7 +170,7 @@ export interface Api {
 			}
 		>;
 		/**
-		 * `POST /agents/:name/update-now`
+		 * `POST /projects/:project/agents/:name/update-now`
 		 *
 		 * 立即更新（ADR 0014）：让正在更新（下载中或等待任务结束）的在线 Agent 不再等手上的任务跑完。这些任务立即以 agent_lost 失败、按重试配置重新排队
 		 * （Agent 更新后重新连上再派发），Agent 按取消流程终止它们后立即替换自己。返回被终止的任务。
@@ -178,6 +181,7 @@ export interface Api {
 		updateNow: Endpoint<
 			{
 				params: {
+					project: string;
 					/** Agent 名称。 */
 					name: string;
 				};
@@ -847,38 +851,41 @@ export interface Api {
 	};
 	packages: {
 		/**
-		 * `GET /packages`
+		 * `GET /projects/:project/packages`
 		 *
 		 * 包列表（含各版本与节点类型摘要），按包名排序。
 		 */
 		list: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			{
 				packages: PackageSummary[];
 			}
 		>;
 		/**
-		 * `GET /packages/:name`
+		 * `GET /projects/:project/packages/:name`
 		 *
 		 * 单个包的版本列表。
 		 */
 		get: Endpoint<
 			{
 				params: {
-					/** 节点包名。 */
+					project: string;
 					name: PackageName;
 				};
 			},
 			PackageSummary
 		>;
 		/**
-		 * `GET /packages/:name/versions/:version`
+		 * `GET /projects/:project/packages/:name/versions/:version`
 		 *
 		 * 版本详情（含完整元信息）。
 		 */
 		version: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 节点包名。 */
 					name: PackageName;
 					/** 版本号。 */
@@ -888,13 +895,14 @@ export interface Api {
 			PackageVersionView
 		>;
 		/**
-		 * `GET /packages/:name/versions/:version/nodes/:node`
+		 * `GET /projects/:project/packages/:name/versions/:version/nodes/:node`
 		 *
 		 * 某个版本里的一个节点类型。
 		 */
 		nodeType: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 节点包名。 */
 					name: PackageName;
 					/** 版本号。 */
@@ -1456,8 +1464,8 @@ export const routes = {
 		events: { method: "GET", path: "/tasks/:id/actions/events", kind: "stream" },
 	},
 	agents: {
-		list: { method: "GET", path: "/agents", kind: "endpoint" },
-		updateNow: { method: "POST", path: "/agents/:name/update-now", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/agents", kind: "endpoint" },
+		updateNow: { method: "POST", path: "/projects/:project/agents/:name/update-now", kind: "endpoint" },
 	},
 	artifacts: {
 		list: { method: "GET", path: "/tasks/:id/artifacts", kind: "endpoint" },
@@ -1507,10 +1515,10 @@ export const routes = {
 		unarchive: { method: "POST", path: "/orchestrations/:id/unarchive", kind: "endpoint" },
 	},
 	packages: {
-		list: { method: "GET", path: "/packages", kind: "endpoint" },
-		get: { method: "GET", path: "/packages/:name", kind: "endpoint" },
-		version: { method: "GET", path: "/packages/:name/versions/:version", kind: "endpoint" },
-		nodeType: { method: "GET", path: "/packages/:name/versions/:version/nodes/:node", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/packages", kind: "endpoint" },
+		get: { method: "GET", path: "/projects/:project/packages/:name", kind: "endpoint" },
+		version: { method: "GET", path: "/projects/:project/packages/:name/versions/:version", kind: "endpoint" },
+		nodeType: { method: "GET", path: "/projects/:project/packages/:name/versions/:version/nodes/:node", kind: "endpoint" },
 	},
 	presets: {
 		list: { method: "GET", path: "/orchestrations/:id/presets", kind: "endpoint" },

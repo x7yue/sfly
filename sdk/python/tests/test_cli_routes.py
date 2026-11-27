@@ -11,6 +11,7 @@ import textwrap
 from importlib import resources
 from pathlib import Path
 
+import pytest
 from cli_paths import collect_paths, mismatches
 from jsonschema import Draft202012Validator
 
@@ -47,7 +48,7 @@ SMALL_MANIFEST = {
             ("POST", "/runs/:id/cancel"),
             ("GET", "/runs/:id/logs"),
             ("GET", "/orchestrations/:id/head"),
-            ("POST", "/packages"),
+            ("POST", "/projects/default/packages"),
         ]
     ]
 }
@@ -141,3 +142,14 @@ def test_every_route_in_the_manifest_has_a_one_line_summary_and_documented_reque
     wanted = {"输出", "日志", "产物", "指标", "关注项", "预设", "取消", "失败原因"}
     for word in wanted:
         assert any(word in route.summary for route in routes), f"没有接口的说明里有「{word}」"
+
+
+def test_an_old_path_says_where_it_moved(capsys: pytest.CaptureFixture[str]) -> None:
+    # 列表、新建和按名字定位的接口搬到了 /projects/<项目>/… 下（#488）：旧写法写明新写法，不发请求。
+    from sfly.cli import main
+
+    assert main(["api", "GET", "/agents", "--server", "http://127.0.0.1:9", "--json"]) == 2
+    error = json.loads(capsys.readouterr().err)["error"]
+    assert error["code"] == "route_moved"
+    assert "/projects/default/agents" in error["message"]
+    assert error["next"] == "sfly api GET /projects/default/agents"

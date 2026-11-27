@@ -60,10 +60,13 @@ describe("排队中的尝试在等什么", () => {
 		await cp.close();
 	});
 	const setDisabled = async (name: string, disabled: boolean) => {
-		const response = await cp.fetch(`/agents/${name}/${disabled ? "disable" : "enable"}`, {
-			method: "POST",
-			headers: admin,
-		});
+		const response = await cp.fetch(
+			`/projects/default/agents/${name}/${disabled ? "disable" : "enable"}`,
+			{
+				method: "POST",
+				headers: admin,
+			},
+		);
 		expect(response.status).toBe(204);
 	};
 
@@ -77,7 +80,7 @@ describe("排队中的尝试在等什么", () => {
 		await agent.disconnect();
 		agents.splice(agents.indexOf(agent), 1);
 		await eventually(async () => {
-			const list = (await (await cp.fetch("/agents")).json()) as {
+			const list = (await (await cp.fetch("/projects/default/agents")).json()) as {
 				agents: Array<{ name: string; status: string }>;
 			};
 			expect(list.agents.find((a) => a.name === name)?.status).toBe("offline");

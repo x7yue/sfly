@@ -50,11 +50,11 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		why: "运行，以及运行的日志、指标、关注项、事件流：路径里的 :id 是运行 id",
 	},
 	"/tasks": { kind: "task", why: "任务的日志、动作、产物：路径里的 :id 是任务 id，不是运行 id" },
-	"/packages": {
+	"/projects/:project/packages": {
 		kind: "package",
 		why: "节点包，以及它的版本、节点类型、归档下载、发布：路径里的 :name 是包名",
 	},
-	"/agents": {
+	"/projects/:project/agents": {
 		kind: "agent",
 		why: "Agent 列表、立即更新、凭据的签发和吊销、停用和恢复：路径里的 :name 是 Agent 名称",
 	},
@@ -179,7 +179,26 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 export interface DeclarationRules {
 	pathKinds: Readonly<Record<string, PathKind>>;
 	nonGetReads: Readonly<Record<string, string>>;
+	/** 照约定路径要带 `:project`、还没有搬过去的接口（{@link PROJECT_PATH_PENDING}）。 */
+	projectPathPending?: Readonly<Record<string, string>>;
 }
+
+/**
+ * 照「路径里带不带 `:project`」的约定（{@link checkProjectInPath}）该带、还没有搬到 `/projects/:project/…` 下的接口：#488 按领域
+ * 分几个 PR 搬，每搬一个领域就从这里删掉它的接口。键是 `方法 路径`；契约测试检查表里的接口都在契约里（搬了就不在了）。
+ */
+export const PROJECT_PATH_PENDING: Readonly<Record<string, string>> = {
+	"GET /orchestrations": "#488 场景、运行、控制台统计",
+	"POST /orchestrations": "#488 场景、运行、控制台统计",
+	"GET /runs": "#488 场景、运行、控制台统计",
+	"GET /dashboard": "#488 场景、运行、控制台统计",
+	"GET /feishu-bots": "#488 飞书机器人",
+	"POST /feishu-bots": "#488 飞书机器人",
+	"PATCH /feishu-bots/:name": "#488 飞书机器人",
+	"GET /feishu-bots/:name/references": "#488 飞书机器人",
+	"DELETE /feishu-bots/:name": "#488 飞书机器人",
+	"POST /feishu-bots/:name/test": "#488 飞书机器人",
+};
 
 /**
  * 方法不是 GET、声明为只读的接口：一眼看不出它只读，所以每一个都要在这里登记，写明为什么只读、调用后会留下什么
@@ -199,6 +218,7 @@ export const NON_GET_READS: Readonly<Record<string, string>> = {
 export const DECLARATION_RULES: DeclarationRules = {
 	pathKinds: PATH_KINDS,
 	nonGetReads: NON_GET_READS,
+	projectPathPending: PROJECT_PATH_PENDING,
 };
 
 /** 说明的长度上限：它是一句话，在 `sfly api --list` 的一行里显示。 */
@@ -433,6 +453,32 @@ function checkProjectPath(def: RouteDef): string[] {
 	return problems;
 }
 
+/**
+ * 路径里带不带 `:project`，由声明定（ADR 0029「项目从请求的哪里来」）：`target` 是 `collection`、`upload`，或者按名字定位
+ * （Agent、节点包、飞书机器人、开发 Agent；项目本身写 `{ params: "project" }`），路径要写成 `/projects/:project/…`，项目从路径取；
+ * 按 ID 定位的（{@link ID_LOCATED_KINDS}）路径里不能有 `:project`，项目从资源得出（这一半由 `checkTarget` 查）；
+ * `system`、`account` 不属于项目，路径里都没有。这样「项目从哪来」不用另外声明。
+ */
+function checkProjectInPath(
+	def: RouteDef,
+	kind: ResourceKind,
+	target: ResourceTarget,
+	rules: DeclarationRules,
+): string[] {
+	const scoped = isProjectScoped(def.path);
+	if (kind === "system" || kind === "account") {
+		return scoped ? [`${kind} 不属于项目，路径里不能有 /projects/:${PROJECT_PARAM}`] : [];
+	}
+	const located = typeof target === "object" && "params" in target;
+	const needs =
+		target === "collection" || target === "upload" || (located && !ID_LOCATED_KINDS.includes(kind));
+	if (!needs || scoped || label(def) in (rules.projectPathPending ?? {})) return [];
+	return [
+		`${target === "collection" ? "列表和新建" : target === "upload" ? "上传" : "按名字定位"}的接口，路径要写成 /projects/:${PROJECT_PARAM}/…：` +
+			"项目从路径里取（按 ID 定位的才从资源得出）",
+	];
+}
+
 /** 接口的路径前缀和声明的资源类别要对得上 {@link PATH_KINDS}。 */
 function checkPathKind(def: RouteDef, kind: ResourceKind, rules: DeclarationRules): string[] {
 	const found = pathKindFor(def.path, rules.pathKinds);
@@ -485,6 +531,13 @@ export function checkDeclarationTables(
 		}
 	}
 	const known = new Map(contract.map((def) => [label(def), def]));
+	for (const key of Object.keys(rules.projectPathPending ?? {})) {
+		if (!known.has(key)) {
+			problems.push(
+				`PROJECT_PATH_PENDING 的 ${key} 不在契约里：搬到 /projects/:${PROJECT_PARAM}/… 之后把这一项删掉`,
+			);
+		}
+	}
 	for (const [key, what] of Object.entries(rules.nonGetReads)) {
 		const def = known.get(key);
 		if (def === undefined) problems.push(`NON_GET_READS 的 ${key} 不在契约里：接口改名或删掉了`);
@@ -548,6 +601,7 @@ export function checkRouteDeclarations(
 		}
 		for (const problem of checkTarget(def, kind, target)) add(def, problem);
 		for (const problem of checkProjectPath(def)) add(def, problem);
+		for (const problem of checkProjectInPath(def, kind, target, rules)) add(def, problem);
 		for (const problem of checkPathKind(def, kind, rules)) add(def, problem);
 	}
 	return problems;

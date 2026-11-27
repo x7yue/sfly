@@ -239,7 +239,7 @@ describe("带凭据的请求", () => {
 			const archive = (name: string) =>
 				packageArchive(packageMetadata({ name, version: "1.0.0" })) as Uint8Array<ArrayBuffer>;
 			const publish = (headers: Record<string, string>, name: string) =>
-				cp.fetch("/packages", {
+				cp.fetch("/projects/default/packages", {
 					method: "POST",
 					headers: { "content-type": "application/octet-stream", ...headers },
 					body: archive(name),
@@ -263,7 +263,7 @@ describe("带凭据的请求", () => {
 		});
 	});
 
-	describe("发布到公共项目：POST /packages?project=public（#565）", () => {
+	describe("发布到公共项目：POST /projects/public/packages（#565、#488）", () => {
 		const archive = (name: string, version = "1.0.0") =>
 			packageArchive(packageMetadata({ name, version }), {
 				[`${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`]: strToU8(`wheel ${name}`),
@@ -271,10 +271,10 @@ describe("带凭据的请求", () => {
 		const publish = (
 			headers: Record<string, string>,
 			name: string,
-			query = "",
+			project = "default",
 			version = "1.0.0",
 		) =>
-			cp.fetch(`/packages${query}`, {
+			cp.fetch(`/projects/${project}/packages`, {
 				method: "POST",
 				headers: { "content-type": "application/octet-stream", ...headers },
 				body: archive(name, version),
@@ -294,7 +294,7 @@ describe("带凭据的请求", () => {
 			const admin = await accounts.user("root", { displayName: "管理员", admin: true });
 			const token = await accounts.personalToken(admin, { name: "发布令牌" });
 
-			const res = await publish(bearer(token), "sfly-std", "?project=public");
+			const res = await publish(bearer(token), "sfly-std", "public");
 
 			expect(res.status, await res.clone().text()).toBe(201);
 			expect(await projectOf("sfly-std")).toEqual(["public"]);
@@ -313,7 +313,7 @@ describe("带凭据的请求", () => {
 						"select route, resource_kind, resource_id, project_id, user_id, token_name, status from platform_admin_actions",
 					),
 				).toEqual({
-					route: "POST /packages",
+					route: "POST /projects/:project/packages",
 					resource_kind: "package",
 					resource_id: null,
 					project_id: "public",
@@ -327,7 +327,7 @@ describe("带凭据的请求", () => {
 			expect(index).toContain("sfly_std-1.0.0-py3-none-any.whl");
 		});
 
-		it("平台管理员不指明 project：照旧发布到默认项目（也留平台管理员的记录，和以前一样）", async () => {
+		it("平台管理员发布到默认项目：在默认项目里（也留平台管理员的记录，和以前一样）", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = await accounts.personalToken(admin);
 
@@ -342,10 +342,10 @@ describe("带凭据的请求", () => {
 		it("公共项目里和已有版本规范化（PEP 440）之后相同的版本不能再发布：409，写明已有的是哪个；一模一样的版本也 409；不同的版本照常；默认项目不受这条限制", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = bearer(await accounts.personalToken(admin));
-			expect((await publish(token, "sfly-std", "?project=public", "0.9.0")).status).toBe(201);
+			expect((await publish(token, "sfly-std", "public", "0.9.0")).status).toBe(201);
 
 			for (const same of ["0.9", "0.9.0.0", "00.9.0"]) {
-				const res = await publish(token, "sfly-std", "?project=public", same);
+				const res = await publish(token, "sfly-std", "public", same);
 				expect(res.status, same).toBe(409);
 				const { code, message } = await error(res);
 				expect(code, same).toBe("conflict");
@@ -353,15 +353,15 @@ describe("带凭据的请求", () => {
 				expect(message, same).toContain("公共项目里已有的 sfly-std@0.9.0");
 			}
 			// 一模一样的版本：照旧是「已存在」。
-			const identical = await publish(token, "sfly-std", "?project=public", "0.9.0");
+			const identical = await publish(token, "sfly-std", "public", "0.9.0");
 			expect(identical.status).toBe(409);
 			expect((await error(identical)).message).toContain("已存在");
 			// 不同的版本、别的名字照常发布。
-			expect((await publish(token, "sfly-std", "?project=public", "0.9.1")).status).toBe(201);
-			expect((await publish(token, "other", "?project=public", "0.9")).status).toBe(201);
+			expect((await publish(token, "sfly-std", "public", "0.9.1")).status).toBe(201);
+			expect((await publish(token, "other", "public", "0.9")).status).toBe(201);
 			expect(await versionsOf("sfly-std")).toEqual(["0.9.0", "0.9.1"]);
 			// 默认项目里发布不受这条限制（索引只列公共项目里的包）。
-			expect((await publish(token, "sfly-std", "", "0.9")).status).toBe(201);
+			expect((await publish(token, "sfly-std", "default", "0.9")).status).toBe(201);
 			expect((await projectOf("sfly-std")).sort()).toEqual(["default", "public", "public"]);
 		});
 
@@ -371,7 +371,7 @@ describe("带凭据的请求", () => {
 
 			const results = await Promise.all(
 				["1.5", "1.5.0", "1.5.0.0", "01.5"].map((version) =>
-					publish(token, "racing", "?project=public", version),
+					publish(token, "racing", "public", version),
 				),
 			);
 
@@ -383,9 +383,9 @@ describe("带凭据的请求", () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = bearer(await accounts.personalToken(admin));
 
-			const first = await publish(token, "plain", "", "1.0");
-			const second = await publish(token, "plain", "", "1.0.0");
-			const third = await publish(token, "plain", "", "1.0.0.0");
+			const first = await publish(token, "plain", "default", "1.0");
+			const second = await publish(token, "plain", "default", "1.0.0");
+			const third = await publish(token, "plain", "default", "1.0.0.0");
 
 			expect([first.status, second.status, third.status]).toEqual([201, 201, 201]);
 			expect(await versionsOf("plain")).toEqual(["1.0", "1.0.0", "1.0.0.0"]);
@@ -396,8 +396,8 @@ describe("带凭据的请求", () => {
 			const token = bearer(await accounts.personalToken(admin));
 
 			// 默认项目里先有了 x@2.0，平台管理员再往公共项目发同一个版本。
-			expect((await publish(token, "elsewhere", "", "2.0")).status).toBe(201);
-			const toPublic = await publish(token, "elsewhere", "?project=public", "2.0");
+			expect((await publish(token, "elsewhere", "default", "2.0")).status).toBe(201);
+			const toPublic = await publish(token, "elsewhere", "public", "2.0");
 			expect(toPublic.status).toBe(409);
 			expect((await error(toPublic)).message).toBe(
 				"节点包 elsewhere@2.0 已存在（在默认项目里），不能覆盖已发布的版本，它不在包索引里；换一个版本号发布到公共项目",
@@ -405,15 +405,15 @@ describe("带凭据的请求", () => {
 			expect(await projectOf("elsewhere")).toEqual(["default"]);
 
 			// 反过来：公共项目里先有，默认项目再发同一个版本。
-			expect((await publish(token, "shared-first", "?project=public", "3.0")).status).toBe(201);
-			const toDefault = await publish(token, "shared-first", "", "3.0");
+			expect((await publish(token, "shared-first", "public", "3.0")).status).toBe(201);
+			const toDefault = await publish(token, "shared-first", "default", "3.0");
 			expect(toDefault.status).toBe(409);
 			expect((await error(toDefault)).message).toBe(
 				"节点包 shared-first@3.0 已存在（在公共项目里），不能覆盖已发布的版本",
 			);
 
 			// 同一个项目里重发：说明和以前一样，不多说项目。
-			const again = await publish(token, "shared-first", "?project=public", "3.0");
+			const again = await publish(token, "shared-first", "public", "3.0");
 			expect((await error(again)).message).toBe(
 				"节点包 shared-first@3.0 已存在，不能覆盖已发布的版本",
 			);
@@ -429,8 +429,8 @@ describe("带凭据的请求", () => {
 			);
 
 			for (const [where, headers, query] of [
-				["往公共项目发", token, "?project=public"],
-				["往默认项目发", token, ""],
+				["往公共项目发", token, "public"],
+				["往默认项目发", token, "default"],
 			] as const) {
 				const res = await publish(headers, "hidden", query, "4.0");
 				expect(res.status, where).toBe(409);
@@ -457,7 +457,7 @@ describe("带凭据的请求", () => {
 					 values ('locked', '1.5', 'public', '{}'::jsonb, 'packages/locked/1.5.sflypkg', 'x', 1, now())`,
 				);
 
-				const racing = publish(token, "locked", "?project=public", "1.5.0");
+				const racing = publish(token, "locked", "public", "1.5.0");
 				const early = await Promise.race([
 					racing.then(() => "done"),
 					new Promise((resolve) => setTimeout(() => resolve("waiting"), 500)),
@@ -486,7 +486,7 @@ describe("带凭据的请求", () => {
 				["不带凭据", {}, 401],
 			];
 			for (const [name, headers, status] of cases) {
-				const res = await publish(headers, "rejected", "?project=public");
+				const res = await publish(headers, "rejected", "public");
 				expect(res.status, name).toBe(status);
 				expect((await error(res)).message, name).toContain("公共项目只有平台管理员能写");
 			}
@@ -494,22 +494,14 @@ describe("带凭据的请求", () => {
 			expect((await db.query("select 1 from platform_admin_actions")).rowCount).toBe(0);
 		});
 
-		it("指明 public 以外的项目：400，写明现在只能写 public；不指明时照旧", async () => {
+		it("路径里的项目不存在：404，有没有凭据、是谁都一样；什么也没有发布", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = await accounts.personalToken(admin);
-			for (const query of [
-				"?project=default",
-				"?project=alpha",
-				"?project=",
-				"?project=public&project=public",
-			]) {
+			for (const project of ["alpha", "Not-A-Project"]) {
 				for (const headers of [{}, bearer(token)]) {
-					const res = await publish(headers, "rejected", query);
-					expect(res.status, query).toBe(400);
-					expect(await error(res), query).toMatchObject({
-						code: "invalid_request",
-						message: expect.stringContaining("现在只能写 public"),
-					});
+					const res = await publish(headers, "rejected", project);
+					expect(res.status, project).toBe(404);
+					expect(await error(res), project).toMatchObject({ code: "not_found" });
 				}
 			}
 			expect(await projectOf("rejected")).toEqual([]);
@@ -530,7 +522,7 @@ describe("带凭据的请求", () => {
 		it("检查先于读请求体：失效的凭据上传超过上限的请求体是 401，不是 413、415，也不会先读请求体", async () => {
 			const junk = new Uint8Array(2 * 1024 * 1024);
 			const post = (headers: Record<string, string>) =>
-				cp.fetch("/packages", { method: "POST", headers, body: junk });
+				cp.fetch("/projects/default/packages", { method: "POST", headers, body: junk });
 			expect(
 				(await post({ "content-type": "text/plain", ...bearer("sfly_pat_unknown") })).status,
 			).toBe(401);
@@ -888,7 +880,7 @@ describe("开发 Agent 的凭据随用户停用失效（真库）", () => {
 	});
 
 	const archive = (headers: Record<string, string>) =>
-		cp.fetch("/packages/stub/versions/1.0.0/archive", { headers });
+		cp.fetch("/projects/default/packages/stub/versions/1.0.0/archive", { headers });
 
 	it("所属用户启用时能下载节点包归档；停用之后 401；吊销过的、按台签发的（没有用户）各按各的", async () => {
 		const owner = await accounts.user("owner1");

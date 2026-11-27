@@ -2,10 +2,11 @@ import { packagesApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { apiQuery } from "#/lib/api";
+import { PROJECT } from "#/lib/project";
 
 /** 包节点类型的标题（CanvasInfo.titleOf）：同一个节点类型有多个版本时取第一个版本里的标题。 */
 export function usePackageTitles(): (pkg: string, node: string) => string | undefined {
-	const packages = useQuery(apiQuery(packagesApi.list));
+	const packages = useQuery(apiQuery(packagesApi.list, { params: { project: PROJECT } }));
 	return useMemo(() => {
 		const titles = new Map<string, string>();
 		for (const pkg of packages.data?.packages ?? []) {

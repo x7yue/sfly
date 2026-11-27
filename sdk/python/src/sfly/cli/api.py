@@ -21,7 +21,7 @@ from http.client import HTTPException
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
-from sfly.cli.client import READ_CHUNK, ApiError
+from sfly.cli.client import READ_CHUNK, ApiError, segment
 from sfly.cli.errors import EXIT_INTERRUPTED, CliError
 from sfly.cli.input_source import read_source
 from sfly.cli.output import dump_json, format_table
@@ -104,7 +104,7 @@ def _api(session: Session, args: argparse.Namespace) -> int:
         )
     method, raw_path = args.target[0].upper(), args.target[1]
     path, inline_query = _split_path(raw_path)
-    route, params = _locate(routes, method, path)
+    route, params = _locate(routes, method, path, session.client.project)
     query = _parse_query(args.query, inline_query)
     problems = [
         *_check_params(route, params),
@@ -168,7 +168,7 @@ def _describe_route(session: Session, routes: Sequence[Route], target: Sequence[
     path, _ = _split_path(raw_path)
     resolution = resolve(routes, method, path)
     if resolution.route is None:
-        raise _not_in_manifest(routes, method, path, resolution)
+        raise _not_in_manifest(routes, method, path, resolution, session.client.project)
     session.out.emit(resolution.route.to_json(), describe_route(resolution.route))
     return 0
 
@@ -204,7 +204,9 @@ def _split_path(raw: str) -> tuple[str, list[tuple[str, str]]]:
     return parts.path, parse_qsl(parts.query, keep_blank_values=True)
 
 
-def _locate(routes: Sequence[Route], method: str, path: str) -> tuple[Route, dict[str, str]]:
+def _locate(
+    routes: Sequence[Route], method: str, path: str, project: str
+) -> tuple[Route, dict[str, str]]:
     resolution = resolve(routes, method, path)
     if resolution.route is not None:
         for value in resolution.params.values():
@@ -215,12 +217,22 @@ def _locate(routes: Sequence[Route], method: str, path: str) -> tuple[Route, dic
                     next="sfly api --list",
                 )
         return resolution.route, resolution.params
-    raise _not_in_manifest(routes, method, path, resolution)
+    raise _not_in_manifest(routes, method, path, resolution, project)
 
 
 def _not_in_manifest(
-    routes: Sequence[Route], method: str, path: str, resolution: Resolution
+    routes: Sequence[Route], method: str, path: str, resolution: Resolution, project: str
 ) -> CliError:
+    # 列表、新建和按名字定位的接口搬到了 /projects/<项目>/… 下（#488）：旧写法加上项目对得上时提示。
+    moved = f"/projects/{segment(project)}{path}"
+    scoped = path.split("/")[1:2] == ["projects"]
+    if not scoped and resolve(routes, method, moved).route is not None:
+        return CliError(
+            "route_moved",
+            f"{method} {path} 已经移到项目下：写成 {method} {moved}"
+            "（项目写在路径里，默认项目是 default）",
+            next=f"sfly api {method} {moved}",
+        )
     if resolution.other_methods:
         allowed = "、".join(resolution.other_methods)
         return CliError(

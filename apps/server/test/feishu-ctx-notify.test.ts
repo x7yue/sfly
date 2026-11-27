@@ -84,7 +84,9 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
 		feishu = await startFakeFeishu();
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", feishu.webhookUrl(OPS));
 		await api.createFeishuBot("dev", feishu.webhookUrl(DEV));
 		runner = await connect("runner");

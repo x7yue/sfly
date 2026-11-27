@@ -108,7 +108,9 @@ describe("API 客户端的写操作", () => {
 			expect(missing).toBeInstanceOf(ApiError);
 			expect(missing).toMatchObject({ status: 404, method: "POST" });
 
-			const offline = await rejection(client.agents.updateNow({ params: { name: "agent-a" } }));
+			const offline = await rejection(
+				client.agents.updateNow({ params: { project: "default", name: "agent-a" } }),
+			);
 			expect(offline).toMatchObject({ status: 409, code: "agent_offline" });
 		});
 	});
@@ -267,8 +269,8 @@ describe("API 客户端的写操作", () => {
 				"POST /orchestrations/:id/runs": () => client.runs.trigger({ params }),
 				"POST /runs/:id/cancel": () => client.runs.cancel({ params: { id: seeded.runId } }),
 				"DELETE /feishu-bots/:name": () => client.feishuBots.remove({ params: { name: "群" } }),
-				"POST /agents/:name/update-now": () =>
-					client.agents.updateNow({ params: { name: "agent-a" } }),
+				"POST /projects/:project/agents/:name/update-now": () =>
+					client.agents.updateNow({ params: { project: "default", name: "agent-a" } }),
 			};
 			for (const [route, attempt] of Object.entries(writes)) {
 				const failure = await rejection(attempt());

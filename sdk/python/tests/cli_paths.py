@@ -4,6 +4,7 @@
 - `client.get(路径)`、`client.request(方法, 路径)`、`client.open(方法, 路径)` 的路径参数记下方法；
 - 其余所有以 `/字母` 开头的完整字符串（路径常量、传给辅助函数的路径）也记下，只对照路径，
   宁可多查：不是控制面路径的（见 `NOT_CONTROL_PLANE`）要在这里明确排除；
+- `client.in_project(路径)` 还原成 `/projects/x` 加上那段路径（项目写在路径里，#488）；
 - f-string 里的 `{...}` 当作一段任意的值，同一个函数（或模块、类）里先赋过值的变量会展开，
   所以 `base = f"/orchestrations/{id}"` 之后的 `f"{base}/head"` 也能还原成完整路径。
 没法还原成路径的拼接（例如路径来自函数参数）不会被扫到：新增命令请直接把路径写成字面量或 f-string。
@@ -166,6 +167,14 @@ class _Scanner:
         """表达式可能的字符串值；不是字符串时为 None，不认识的 `{...}` 当作 `PLACEHOLDER`。"""
         if isinstance(node, ast.Constant):
             return [node.value] if isinstance(node.value, str) else None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "in_project"
+            and node.args
+        ):
+            inner = self._resolve(node.args[0], env)
+            return None if inner is None else [f"/projects/{PLACEHOLDER}{path}" for path in inner]
         if isinstance(node, ast.Name):
             return env.get(node.id)
         if isinstance(node, ast.Attribute):
@@ -217,9 +226,12 @@ def _without_server_prefix(
 
 
 def _string_parts(scope: ast.AST) -> set[int]:
-    """拼成更长字符串的各个部分（f-string 的片段、`+` 的两边）：整个字符串单独处理，部分不处理。"""
+    """拼成更长字符串的部分（f-string 片段、`+` 两边、`in_project` 的路径）：只处理整个字符串。"""
     parts: set[int] = set()
     for node in _own_nodes(scope):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "in_project" and node.args:
+                parts.add(id(node.args[0]))
         if isinstance(node, ast.JoinedStr):
             parts.update(id(part) for part in node.values)
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):

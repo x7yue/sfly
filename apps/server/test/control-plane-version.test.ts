@@ -13,7 +13,7 @@ describe("控制面在响应上带自己的版本号", () => {
 	it("每个接口响应都带版本号，错误响应和 /api 前缀的响应也带", async () => {
 		cp = await startTestControlPlane({ version: "7.8.9" });
 
-		const agents = await cp.fetch("/agents");
+		const agents = await cp.fetch("/projects/default/agents");
 		expect(agents.status).toBe(200);
 		expect(agents.headers.get(CONTROL_PLANE_VERSION_HEADER)).toBe("7.8.9");
 

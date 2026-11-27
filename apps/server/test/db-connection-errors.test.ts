@@ -28,7 +28,7 @@ const startProcess = (
  * 重启之后照样有效，不用在每次重新起进程时再传。
  */
 const issueAgentCredential = async (target: SourceServer, name: string): Promise<string> => {
-	const res = await target.request("POST", `/agents/${name}/credentials`, {});
+	const res = await target.request("POST", `/projects/default/agents/${name}/credentials`, {});
 	expect(res.status, await res.clone().text()).toBe(201);
 	return ((await res.json()) as { token: string }).token;
 };

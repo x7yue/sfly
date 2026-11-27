@@ -87,7 +87,9 @@ describe("「飞书机器人」类型的输入", () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
 		runner = await FakeAgent.connect(cp.grpcUrl, { name: "runner" });
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", "http://127.0.0.1:9/hook/ops");
 		await api.createFeishuBot("dev", "http://127.0.0.1:9/hook/dev");
 	});
@@ -262,7 +264,9 @@ describe("删除飞书机器人之前列出「飞书机器人」类型的输入�
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", "http://127.0.0.1:9/hook/ops");
 		await api.createFeishuBot("dev", "http://127.0.0.1:9/hook/dev");
 	});

@@ -373,13 +373,13 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 	};
 
 	it("列表（Agent、场景、运行、节点包、飞书机器人、控制台统计）里没有项目乙的行", async () => {
-		expect((await json("/agents")).agents).toEqual([]);
+		expect((await json("/projects/default/agents")).agents).toEqual([]);
 		expect((await json("/orchestrations")).orchestrations).toEqual([]);
 		expect(await json("/runs")).toMatchObject({
 			runs: [],
 			counts: { running: 0, success: 0, failed: 0, cancelled: 0 },
 		});
-		expect((await json("/packages")).packages).toEqual([]);
+		expect((await json("/projects/default/packages")).packages).toEqual([]);
 		expect((await json("/feishu-bots")).bots).toEqual([]);
 		expect(await json("/dashboard")).toMatchObject({
 			runs: { running: 0 },
@@ -399,11 +399,20 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 			const response = await res;
 			expect(response.status, what).toBe(404);
 		};
-		await notFound(api.postEmpty("/agents/agent-b/update-now"), "agent update-now");
-		await notFound(api.get("/packages/pkg-b"), "package");
-		await notFound(api.get("/packages/pkg-b/versions/1.0.0"), "package version");
-		await notFound(api.get("/packages/pkg-b/versions/1.0.0/nodes/x"), "package node");
-		await notFound(api.get("/packages/pkg-b/versions/1.0.0/archive"), "package archive");
+		await notFound(
+			api.postEmpty("/projects/default/agents/agent-b/update-now"),
+			"agent update-now",
+		);
+		await notFound(api.get("/projects/default/packages/pkg-b"), "package");
+		await notFound(api.get("/projects/default/packages/pkg-b/versions/1.0.0"), "package version");
+		await notFound(
+			api.get("/projects/default/packages/pkg-b/versions/1.0.0/nodes/x"),
+			"package node",
+		);
+		await notFound(
+			api.get("/projects/default/packages/pkg-b/versions/1.0.0/archive"),
+			"package archive",
+		);
 		await notFound(api.get("/feishu-bots/bot-b/references"), "bot references");
 		await notFound(
 			api.patch("/feishu-bots/bot-b", { webhook_url: "https://open.feishu.cn/hook/x" }),
@@ -448,7 +457,9 @@ describe("标准节点包升级后在公共项目里：默认项目的接口照�
 	it("包列表、详情、归档下载（Agent 装包走这一条）和控制台的「开始使用」都和升级前一样", async () => {
 		const api = new ApiClient(cp);
 		await publishPackage(cp, "sfly-std", "0.1.0", { shell: ["stdout"] });
-		const before = await (await api.get("/packages/sfly-std/versions/0.1.0/archive")).arrayBuffer();
+		const before = await (
+			await api.get("/projects/default/packages/sfly-std/versions/0.1.0/archive")
+		).arrayBuffer();
 		expect(before.byteLength).toBeGreaterThan(0);
 
 		// 升级：迁移把 sfly-std 的已发布版本放进公共项目（0032）。
@@ -460,11 +471,11 @@ describe("标准节点包升级后在公共项目里：默认项目的接口照�
 			await client.end();
 		}
 
-		const list = await api.getJson<{ packages: { name: string }[] }>("/packages");
+		const list = await api.getJson<{ packages: { name: string }[] }>("/projects/default/packages");
 		expect(list.packages.map((p) => p.name)).toEqual(["sfly-std"]);
-		await api.getJson("/packages/sfly-std");
-		await api.getJson("/packages/sfly-std/versions/0.1.0");
-		const archive = await api.get("/packages/sfly-std/versions/0.1.0/archive");
+		await api.getJson("/projects/default/packages/sfly-std");
+		await api.getJson("/projects/default/packages/sfly-std/versions/0.1.0");
+		const archive = await api.get("/projects/default/packages/sfly-std/versions/0.1.0/archive");
 		expect(archive.status).toBe(200);
 		expect(await archive.arrayBuffer()).toEqual(before);
 		expect(

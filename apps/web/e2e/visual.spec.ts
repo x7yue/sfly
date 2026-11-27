@@ -586,14 +586,14 @@ test("Agent 列表为空", async ({ page }) => {
 });
 
 test("加载骨架", async ({ page }) => {
-	await holdApi(page, "/agents");
+	await holdApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	await expect(page.getByRole("status", { name: "加载中" })).toBeVisible();
 	await expect(page).toHaveScreenshot("agents-loading.png");
 });
 
 test("加载失败", async ({ page }) => {
-	await failApi(page, "/agents");
+	await failApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	await expect(page.getByRole("alert")).toBeVisible();
 	await expect(page).toHaveScreenshot("agents-error.png");

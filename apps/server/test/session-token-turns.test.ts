@@ -249,7 +249,7 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 				expect(res.status, `${method} ${path}`).toBe(403);
 			}
 			// 发布节点包：范围不够（缺「发布」），不是找不到、也不是没有凭据。
-			const publish = await as("POST", "/packages");
+			const publish = await as("POST", "/projects/default/packages");
 			expect(publish.status).toBe(403);
 			expect(await publish.json()).toMatchObject({
 				error: { message: expect.stringContaining("发布") },

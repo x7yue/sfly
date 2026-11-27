@@ -181,7 +181,7 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 		// 节点包：默认项目里的 logs，只在项目 alpha 里的 alpha-only，在公共项目里的 public-only。
 		for (const name of ["logs", "logs-alpha"]) {
 			const published = await cp.fetch(
-				"/packages",
+				"/projects/default/packages",
 				publishInit(packageArchive(logsMetadata(name))),
 			);
 			expect(published.status, name).toBe(201);

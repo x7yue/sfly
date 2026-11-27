@@ -409,8 +409,8 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		hub,
 		sessions,
 		assignContent: createAssignContent({
-			packageArchiveUrl: (name, version) =>
-				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
+			packageArchiveUrl: (project, name, version) =>
+				`${publicHttpUrl}/projects/${project}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 			artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 			artifactLimitBytes: options.artifactLimitBytes ?? DEFAULT_ARTIFACT_LIMIT_BYTES,
 		}),

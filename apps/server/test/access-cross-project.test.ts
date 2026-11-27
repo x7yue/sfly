@@ -1,6 +1,6 @@
 // 项目甲的凭据请求项目乙的资源，每个接口一条（ADR 0029「一处检查」，规格 #489）。
 //
-// 真实控制面和数据库。项目乙是默认项目（接口的路径还不带项目，#488 之前列表和新建都落在默认项目里），
+// 真实控制面和数据库。项目乙是默认项目（还没有搬到 `/projects/:project/…` 下的列表和新建落在默认项目里，#488），
 // 有真实存在的场景、版本、预设、运行、任务、Agent、节点包和飞书机器人；项目甲 `alpha` 的各种凭据去请求它们，
 // 每个属于项目的接口一条：被拒绝（经场景、运行、任务定位的资源和按名字定位的资源都是 404，不是 403；Agent 凭据和任务凭据
 // 请求清单之外的接口是 403），写接口前后各取一份控制面留下的全部痕迹（库、序列、数据目录）和假飞书服务收到的请求，
@@ -13,7 +13,7 @@ import Fastify from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
-import { routeKey } from "../src/auth/access-rules.js";
+import { requiresCredential, routeKey } from "../src/auth/access-rules.js";
 import { requiredScope, writeNeedsPerson } from "../src/auth/scopes.js";
 import { guardHttpContract } from "../src/http/contract-route.js";
 import { ApiClient } from "./support/api-client.js";
@@ -296,6 +296,27 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		}, 30_000);
 	}
 
+	// 路径里的项目不存在（#488）：每个 `/projects/:project/…` 的接口一条，平台管理员（在每个项目里都有项目管理员的权限）、
+	// 不带凭据都是访问检查的 404；不带凭据时现在就要求凭据的接口是 401，不透露项目存不存在。
+	for (const def of projectRoutes().filter((d) => d.path.startsWith("/projects/:project/"))) {
+		it(`项目不存在：${routeKey(def)}`, async () => {
+			const request = requestFor(def, { ...victim, project: "no-such-project" });
+			const root = await accounts.userNamed("root_488", { admin: true });
+			for (const [name, headers] of [
+				["平台管理员", bearer(await accounts.personalToken(root))],
+				["不带凭据", {}],
+			] as const) {
+				const res = await send(def, request, headers);
+				if (name === "不带凭据" && requiresCredential(def)) {
+					expect(res.status, name).toBe(401);
+					continue;
+				}
+				expect(res.status, `${name}：${await res.clone().text()}`).toBe(404);
+				expect(await isAccessNotFound(res), name).toBe(true);
+			}
+		});
+	}
+
 	it("会话：路径参数填的是项目乙里真实存在的会话 ID（请求真的打到了会话上，不是 404 因为 ID 不对）", async () => {
 		const get = projectRoutes().find((d) => routeKey(d) === "GET /sessions/:id") as RouteDef;
 		const request = requestFor(get, victim);
@@ -328,7 +349,7 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			(d) => routeKey(d) === "PUT /tasks/:id/artifacts/*",
 		) as RouteDef;
 		const archive = projectRoutes().find(
-			(d) => routeKey(d) === "GET /packages/:name/versions/:version/archive",
+			(d) => routeKey(d) === "GET /projects/:project/packages/:name/versions/:version/archive",
 		) as RouteDef;
 		const download = projectRoutes().find(
 			(d) => routeKey(d) === "GET /tasks/:id/artifacts/*",

@@ -274,7 +274,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await off.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-b")?.status).toBe("offline");
 			});
@@ -320,7 +320,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await b.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-b")?.status).toBe("offline");
 			});
@@ -354,7 +354,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await off.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-c")?.status).toBe("offline");
 			});
@@ -427,7 +427,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await off.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-off")?.status).toBe("offline");
 			});

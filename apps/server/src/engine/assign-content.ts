@@ -69,7 +69,7 @@ export type AssignContentOf = (tx: Tx, request: AssignRequest) => Promise<Assign
 
 /** `urls` 是 Agent 下载节点包归档、上传任务产物的地址（Agent 通过 HTTP 访问），和每个任务的产物合计上限。 */
 export function createAssignContent(urls: {
-	packageArchiveUrl: (name: string, version: string) => string;
+	packageArchiveUrl: (project: string, name: string, version: string) => string;
 	artifactUploadUrl: (taskId: string) => string;
 	/** 每个任务的产物合计上限（字节），随任务下发给 Agent（AssignTask.artifact_limit_bytes，#477）。 */
 	artifactLimitBytes: number;
@@ -87,7 +87,11 @@ export function createAssignContent(urls: {
 
 		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
 		const [archive] = await tx
-			.select({ sha256: nodePackages.sha256, metadata: nodePackages.metadata })
+			.select({
+				sha256: nodePackages.sha256,
+				metadata: nodePackages.metadata,
+				projectId: nodePackages.projectId,
+			})
 			.from(nodePackages)
 			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
 		// 开发版本的元信息由加载它的 Agent 上报；不知道节点类型时不校验（Agent 会以 env_error 失败）。
@@ -149,7 +153,9 @@ export function createAssignContent(urls: {
 				runId: task.runId,
 				nodeId: node.id,
 				packageSha256: archive?.sha256 ?? "",
-				packageUrl: archive ? urls.packageArchiveUrl(node.package, packageVersion) : "",
+				packageUrl: archive
+					? urls.packageArchiveUrl(archive.projectId, node.package, packageVersion)
+					: "",
 				artifactUploadUrl: urls.artifactUploadUrl(task.id),
 				artifactLimitBytes: artifactLimit,
 				referencedAgents: referenced.agents,

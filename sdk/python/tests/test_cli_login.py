@@ -39,7 +39,7 @@ class FakeServer:
         self.issue_error: tuple[int, dict[str, Any]] | None = None
         # 按顺序用掉的错误（每次 POST /account/tokens 取一个，用完了再看 issue_error）。
         self.issue_errors: list[tuple[int, dict[str, Any]]] = []
-        # POST /packages 的回答状态码（201 是成功）。
+        # POST /projects/:project/packages 的回答状态码（201 是成功）。
         self.publish_status = 201
         # 失败时的错误信息、成功时回的包名和版本（服务端的文字，什么都可能有）。
         self.publish_message = "需要登录或令牌"
@@ -81,7 +81,7 @@ class FakeServer:
                 )
 
             def do_POST(self) -> None:
-                if self.path == "/packages":
+                if self.path == "/projects/default/packages":
                     length = int(self.headers.get("content-length") or 0)
                     raw = self.rfile.read(length)
                     self._record(raw)
@@ -1012,7 +1012,7 @@ class TestPublishUsesTheToken:
         code, out, err = run(capsys, monkeypatch, "publish", str(archive))
         assert code == 0, err
         assert "已发布 demo@1.0.0" in out
-        request = next(r for r in server.requests if r["path"] == "/packages")
+        request = next(r for r in server.requests if r["path"] == "/projects/default/packages")
         assert request["headers"]["authorization"] == f"Bearer {TOKEN}"
         assert request["headers"]["content-type"] == "application/octet-stream"
         assert request["body"] == b"archive-bytes"
@@ -1058,7 +1058,7 @@ class TestPublishUsesTheToken:
         archive.write_bytes(b"archive-bytes")
         code, out, err = run(capsys, monkeypatch, "publish", str(archive))
         assert code == 0, err
-        request = next(r for r in server.requests if r["path"] == "/packages")
+        request = next(r for r in server.requests if r["path"] == "/projects/default/packages")
         assert "authorization" not in request["headers"]
 
         server.publish_status = 401

@@ -740,7 +740,7 @@ async function publishProbe(cp: TestControlPlane): Promise<void> {
 		}),
 		{ "probe-1.0.0-py3-none-any.whl": new TextEncoder().encode("wheel") },
 	);
-	const res = await cp.fetch("/packages", publishInit(archive));
+	const res = await cp.fetch("/projects/default/packages", publishInit(archive));
 	if (res.status !== 201) throw new Error(`publish probe: ${await res.text()}`);
 }
 
@@ -934,7 +934,9 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	// 再来一次运行：Agent 的槽位满了，任务排队
 	const queuedRunId = await api.triggerOk(pressure, { env: "prod" });
 	await eventually(async () => {
-		const { agents } = await api.getJson<{ agents: Array<{ queued_tasks: unknown[] }> }>("/agents");
+		const { agents } = await api.getJson<{ agents: Array<{ queued_tasks: unknown[] }> }>(
+			"/projects/default/agents",
+		);
 		expect(agents[0]?.queued_tasks).toHaveLength(1);
 	});
 

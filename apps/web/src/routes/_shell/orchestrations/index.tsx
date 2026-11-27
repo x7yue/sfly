@@ -17,6 +17,7 @@ import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { useSearchInput } from "#/lib/use-search-input";
 import { ScenarioCards, ScenarioRunDrawer, ScenarioTable } from "#/scenarios/ScenarioList";
@@ -68,7 +69,7 @@ function ScenariosPage() {
 		placeholderData: keepPreviousData,
 		refetchInterval: STATUS_POLL_MS,
 	});
-	const agents = useQuery(apiQuery(agentsApi.list));
+	const agents = useQuery(apiQuery(agentsApi.list, { params: { project: PROJECT } }));
 	const filtered = Boolean(search.q || search.status || search.agent);
 	const searchBox = useSearchInput(search.q, (q) => setSearch({ q }));
 	useListNavigation();
