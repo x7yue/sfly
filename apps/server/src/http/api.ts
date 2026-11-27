@@ -71,6 +71,7 @@ import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerRunSummaryRoutes } from "./run-summary-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
+import { registerSessionBuildRoutes } from "./session-build-routes.js";
 import { registerSessionRoutes } from "./session-routes.js";
 import { registerTokenRoutes } from "./token-routes.js";
 import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
@@ -385,6 +386,7 @@ export function buildHttpApi({
 	registerSessionRoutes(app, { sessions, service: sessionService, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
+	registerSessionBuildRoutes(app, { packages, sessions });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig, stdIndex });
 	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });
 	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });

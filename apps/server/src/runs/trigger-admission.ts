@@ -149,7 +149,12 @@ export function createTriggerAdmission(checks: {
 			);
 		if (!version) return reject(400, "no_version", "orchestration has no saved version");
 
-		const problems = await checks.preflight(tx, orchestration.projectId, version.document);
+		const problems = await checks.preflight(
+			tx,
+			orchestration.projectId,
+			version.document,
+			version.sessionId,
+		);
 		if (problems.length > 0) return invalidOrchestration(problems);
 		const plan = planRun(version.document);
 		if ("errors" in plan) {
@@ -179,6 +184,7 @@ export function createTriggerAdmission(checks: {
 			tx,
 			orchestration.projectId,
 			version.document,
+			version.sessionId,
 			plan,
 			filled.params,
 			{

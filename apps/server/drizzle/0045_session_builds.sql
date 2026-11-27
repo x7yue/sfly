@@ -1,0 +1,3 @@
+ALTER TABLE "node_packages" ADD COLUMN "session_id" uuid;--> statement-breakpoint
+ALTER TABLE "node_packages" ADD CONSTRAINT "node_packages_session_project_fk" FOREIGN KEY ("session_id","project_id") REFERENCES "public"."sessions"("id","project_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "node_packages_session" ON "node_packages" USING btree ("session_id") WHERE "node_packages"."session_id" is not null;

@@ -1,12 +1,18 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { PackageMetadata } from "@sfly/schema";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import {
+	hasSessionBuildTag,
+	isSessionBuildOf,
+	PackageMetadata,
+	type SessionBuildView,
+	sessionBuildTag,
+} from "@sfly/schema";
+import { and, asc, desc, eq, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
-import { nodePackages } from "../db/schema.js";
+import { nodePackages, sessions } from "../db/schema.js";
 import {
 	DEFAULT_PROJECT,
 	type ProjectId,
@@ -19,7 +25,7 @@ import { sameVersion } from "./pep440.js";
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */
 export const METADATA_FILE = "sfly-package.json";
 
-export type PackageErrorKind = "invalid_package" | "conflict";
+export type PackageErrorKind = "invalid_package" | "conflict" | "session_ended";
 
 export class PackageError extends Error {
 	constructor(
@@ -59,6 +65,46 @@ export interface Publisher {
 	name: string;
 	userId: string | null;
 	token: string | null;
+}
+
+/**
+ * 按场景版本找它锁定的节点包版本时看得到哪些（#795）：正式版本，加上这个会话的会话构建（会话没有结束时）。
+ * `session` 是场景版本所属的会话（`orchestration_versions.session_id`），不属于会话的版本是 null，只看得到正式版本。
+ * `"any"`：已经存在的运行读它用的版本（派发、下载归档、运行页上的节点类型），会话构建在回收之前都看得到。
+ */
+export type BuildScope = { session: string | null } | "any";
+
+/** {@link BuildScope} 写成查询条件。 */
+function buildScopeCondition(scope: BuildScope): SQL | undefined {
+	if (scope === "any") return undefined;
+	if (scope.session === null) return isNull(nodePackages.sessionId);
+	return or(
+		isNull(nodePackages.sessionId),
+		and(
+			eq(nodePackages.sessionId, scope.session),
+			sql`exists (select 1 from ${sessions} where ${sessions.id} = ${scope.session} and ${sessions.status} <> 'ended')`,
+		),
+	);
+}
+
+/** 登记会话构建（`sessionBuilds`）时的会话：它的 ID，版本号的标签要是它的。 */
+export interface BuildSession {
+	id: string;
+}
+
+/**
+ * 版本号的本地标签和会话构建对不对得上：正式版本不能带会话构建的标签（ADR 0029「会话构建和正式版本走两个接口」），
+ * 会话构建要带这个会话的标签（`s<会话 ID 去掉连字符>.<序号>`）。
+ */
+function sessionTagProblem(version: string, session: BuildSession | undefined): string | undefined {
+	if (session === undefined) {
+		return hasSessionBuildTag(version)
+			? `版本号 ${version} 带着会话构建的标签：会话构建用 sfly publish --session-build 登记到会话下，正式版本的版本号不能带它`
+			: undefined;
+	}
+	return isSessionBuildOf(version, session.id)
+		? undefined
+		: `会话构建的版本号要带这个会话的标签：<基础版本>+${sessionBuildTag(session.id)}.<序号>（序号是不带前导零的整数），收到 ${version}`;
 }
 
 export interface StoredArchive {
@@ -207,18 +253,34 @@ async function existingMessage(
  */
 export function createPackageRepository({ db, clock, dataDir }: PackageRepositoryDeps) {
 	return {
-		/** 发布节点包到这个项目；`包名@版本` 已存在（第一步：不论哪个项目里已有）时抛出 conflict，已发布的文件不会被覆盖。 */
+		/**
+		 * 发布节点包到这个项目；`包名@版本` 已存在（第一步：不论哪个项目里已有）时抛出 conflict，已发布的文件不会被覆盖。
+		 * 带 `session` 时是登记这个会话的会话构建（#795）：版本号要带这个会话的标签，会话已结束时抛出 session_ended；
+		 * 不带时版本号不能带会话构建的标签。
+		 */
 		async publish(
 			project: ProjectId,
 			archive: Uint8Array,
 			publisher: Publisher | null,
+			session?: BuildSession,
 		): Promise<PackageVersion> {
 			const metadata = readPackageArchive(archive);
+			const tagProblem = sessionTagProblem(metadata.version, session);
+			if (tagProblem) throw new PackageError("invalid_package", tagProblem);
 			const sha256 = createHash("sha256").update(archive).digest("hex");
 			// 版本格式由 schema 约束（不含路径分隔符），可以直接用作文件名。
 			const filePath = join("packages", metadata.name, `${metadata.version}.sflypkg`);
 
 			return db.transaction(async (tx) => {
+				if (session) {
+					const [row] = await tx
+						.select({ status: sessions.status })
+						.from(sessions)
+						.where(eq(sessions.id, session.id));
+					if (row?.status === "ended") {
+						throw new PackageError("session_ended", "会话已经结束，不能再登记会话构建");
+					}
+				}
 				if (project === PUBLIC_PROJECT) await rejectEquivalentVersion(tx, metadata);
 				const [row] = await tx
 					.insert(nodePackages)
@@ -234,6 +296,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 						publishedBy: publisher?.name ?? null,
 						publishedByUserId: publisher?.userId ?? null,
 						publishedToken: publisher?.token ?? null,
+						sessionId: session?.id ?? null,
 					})
 					.onConflictDoNothing()
 					.returning();
@@ -258,12 +321,17 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			});
 		},
 
-		/** 这个项目读得到的节点包：本项目发布的，加上公共项目里的。 */
+		/** 这个项目读得到的节点包：本项目发布的，加上公共项目里的。会话构建不在里面（#795）。 */
 		async list(project: ProjectId): Promise<PackageSummary[]> {
 			const rows = await db
 				.select()
 				.from(nodePackages)
-				.where(inArray(nodePackages.projectId, readableProjects(project)))
+				.where(
+					and(
+						inArray(nodePackages.projectId, readableProjects(project)),
+						isNull(nodePackages.sessionId),
+					),
+				)
 				.orderBy(asc(nodePackages.name), desc(nodePackages.publishedAt));
 			const byName = new Map<string, PackageSummary>();
 			for (const row of rows) {
@@ -277,7 +345,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			return [...byName.values()];
 		},
 
-		/** 这个项目里按名字取节点包的各个版本（本项目的或公共项目的）；不存在或属于别的项目时返回 undefined。 */
+		/** 这个项目里按名字取节点包的各个版本（本项目的或公共项目的，不含会话构建）；不存在或属于别的项目时返回 undefined。 */
 		async get(project: ProjectId, name: string): Promise<PackageSummary | undefined> {
 			const rows = await db
 				.select()
@@ -286,19 +354,20 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 					and(
 						inArray(nodePackages.projectId, readableProjects(project)),
 						eq(nodePackages.name, name),
+						isNull(nodePackages.sessionId),
 					),
 				)
 				.orderBy(desc(nodePackages.publishedAt));
 			return rows.length ? { name, versions: rows.map(toSummary) } : undefined;
 		},
 
-		/** 这个项目读得到的一个节点包版本；不存在或属于别的项目时返回 undefined。 */
+		/** 这个项目读得到的一个节点包版本（不含会话构建）；不存在或属于别的项目时返回 undefined。 */
 		async getVersion(
 			project: ProjectId,
 			name: string,
 			version: string,
 		): Promise<PackageVersion | undefined> {
-			const row = await findRow(db, name, version, project);
+			const row = await findRow(db, name, version, project, { session: null });
 			return row && toVersion(row);
 		},
 
@@ -324,13 +393,29 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			}));
 		},
 
-		/** 归档文件在磁盘上的位置（供下载）；不存在或属于别的项目时返回 undefined。 */
+		/** 一个会话登记的会话构建（#795），按登记时间从新到旧；已经回收的不在里面。 */
+		async sessionBuilds(sessionId: string): Promise<SessionBuildView[]> {
+			const rows = await db
+				.select()
+				.from(nodePackages)
+				.where(eq(nodePackages.sessionId, sessionId))
+				.orderBy(desc(nodePackages.publishedAt), asc(nodePackages.name));
+			return rows.map((row) => ({
+				name: row.name,
+				version: row.version,
+				sha256: row.sha256,
+				size: row.size,
+				registered_at: row.publishedAt.toISOString(),
+			}));
+		},
+
+		/** 归档文件在磁盘上的位置（供下载，会话构建回收之前也在）；不存在或属于别的项目时返回 undefined。 */
 		async archive(
 			project: ProjectId,
 			name: string,
 			version: string,
 		): Promise<StoredArchive | undefined> {
-			const row = await findRow(db, name, version, project);
+			const row = await findRow(db, name, version, project, "any");
 			return row && { path: join(dataDir, row.filePath), sha256: row.sha256, size: row.size };
 		},
 	};
@@ -349,8 +434,9 @@ export async function findPackageVersion(
 	project: ProjectId,
 	name: string,
 	version: string,
+	scope: BuildScope,
 ): Promise<PackageVersion | undefined> {
-	const row = await findRow(db, name, version, project);
+	const row = await findRow(db, name, version, project, scope);
 	return row && toVersion(row);
 }
 
@@ -363,8 +449,9 @@ export async function findPackageMetadata(
 	project: ProjectId,
 	name: string,
 	version: string,
+	scope: BuildScope,
 ): Promise<PackageMetadata | undefined> {
-	return (await findRow(db, name, version, project))?.metadata;
+	return (await findRow(db, name, version, project, scope))?.metadata;
 }
 
 async function findRow(
@@ -372,6 +459,7 @@ async function findRow(
 	name: string,
 	version: string,
 	project: ProjectId,
+	scope: BuildScope,
 ): Promise<Row | undefined> {
 	const [row] = await db
 		.select()
@@ -381,6 +469,7 @@ async function findRow(
 				eq(nodePackages.name, name),
 				eq(nodePackages.version, version),
 				inArray(nodePackages.projectId, readableProjects(project)),
+				buildScopeCondition(scope),
 			),
 		);
 	return row;

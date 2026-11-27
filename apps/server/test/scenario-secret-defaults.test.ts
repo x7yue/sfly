@@ -764,6 +764,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		 */
 		const NOT_EXERCISED: Record<string, string> = {
 			"POST /projects/:project/agents/:name/update-now": "只让 Agent 自更新，响应是被终止的任务数",
+			"POST /sessions/:id/builds": "登记会话构建：请求体是节点包归档，不带场景和参数",
 			"POST /projects/:project/agents/:name/credentials":
 				"签发 Agent 凭据：原值只在响应里出现一次，另见 agent-credentials-http.test.ts",
 			"DELETE /projects/:project/agents/:name/credentials/:id": "同上",

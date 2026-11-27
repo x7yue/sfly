@@ -13,7 +13,7 @@ import { describeSecretDefaultProblem } from "../orchestrations/secret-defaults.
 import { versionCheck, versionDiff, versionWarnings } from "../orchestrations/version-check.js";
 import { DEFAULT_PROJECT, pathProject } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
-import { requireActor } from "./actor.js";
+import { requireActor, sessionOf } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 import { requireNickname } from "./nickname.js";
@@ -98,7 +98,7 @@ export function registerOrchestrationRoutes(
 			copied.head_version > 0 ? await orchestrations.getVersion(copied.id, 1) : undefined;
 		const project = (await orchestrations.projectOf(copied.id)) ?? DEFAULT_PROJECT;
 		const warnings = first
-			? await versionWarnings(db, project, copied.id, first.document, undefined)
+			? await versionWarnings(db, project, actor.sessionId, copied.id, first.document, undefined)
 			: [];
 		return reply.code(201).send({ ...copied, warnings });
 	});
@@ -161,14 +161,26 @@ export function registerOrchestrationRoutes(
 		// （docs/SEMANTICS.md §1.2、§2.4、§6）。先设状态码再返回响应：响应在类型上受契约约束。
 		reply.code(201);
 		const project = (await orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT;
-		const warnings = await versionWarnings(db, project, params.id, saved.document, result.previous);
+		const warnings = await versionWarnings(
+			db,
+			project,
+			actor.sessionId,
+			params.id,
+			saved.document,
+			result.previous,
+		);
 		return { ...saved, warnings };
 	});
 
 	// 检查 = 保存的同一段校验，不追加版本（#424）。错误码与保存相同，见契约的 check。
-	contractRoute(app, orchestrationsApi.check, async ({ params, body }, reply) => {
+	contractRoute(app, orchestrationsApi.check, async ({ params, body }, reply, raw) => {
 		const result = isUuid(params.id)
-			? await orchestrations.checkVersion(params.id, body.document, body.base_version)
+			? await orchestrations.checkVersion(
+					params.id,
+					body.document,
+					body.base_version,
+					sessionOf(raw),
+				)
 			: ({ kind: "not_found" } as const);
 		if (result.kind !== "checked") return rejectVersion(reply, result, body.base_version);
 		return result.check;
@@ -195,15 +207,20 @@ export function registerOrchestrationRoutes(
 				return rejectVersion(reply, prepared, baseVersion);
 		}
 	};
-	const editsOf = (id: string, operations: Parameters<typeof prepareEdits>[3], base?: number) =>
+	const editsOf = (
+		id: string,
+		operations: Parameters<typeof prepareEdits>[3],
+		session: string | null,
+		base?: number,
+	) =>
 		isUuid(id)
-			? prepareEdits(db, orchestrations, id, operations, base)
+			? prepareEdits(db, orchestrations, id, operations, session, base)
 			: Promise.resolve({ kind: "not_found" } as const);
 
 	contractRoute(app, orchestrationsApi.edit, async ({ params, body }, reply, raw) => {
 		const actor = requireActor(raw, reply);
 		if (!actor) return reply;
-		const prepared = await editsOf(params.id, body.operations, body.base_version);
+		const prepared = await editsOf(params.id, body.operations, actor.sessionId, body.base_version);
 		if (prepared.kind !== "edited") return rejectEdits(reply, prepared, body.base_version);
 		// 结果和最新版本相同：不存出新版本，返回当前版本（检查走和保存同一段代码，警告和差异与保存时一样）。
 		if (prepared.base > 0) {
@@ -211,6 +228,7 @@ export function registerOrchestrationRoutes(
 				params.id,
 				prepared.document,
 				prepared.base,
+				actor.sessionId,
 			);
 			if (checked.kind !== "checked") return rejectVersion(reply, checked, prepared.base);
 			if (isEmptyDiff(checked.check.diff)) {
@@ -230,6 +248,7 @@ export function registerOrchestrationRoutes(
 		const check = await versionCheck(
 			db,
 			(await orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT,
+			actor.sessionId,
 			params.id,
 			saved.document,
 			result.previous,
@@ -238,10 +257,16 @@ export function registerOrchestrationRoutes(
 		return { ...saved, ...check };
 	});
 
-	contractRoute(app, orchestrationsApi.checkEdits, async ({ params, body }, reply) => {
-		const prepared = await editsOf(params.id, body.operations, body.base_version);
+	contractRoute(app, orchestrationsApi.checkEdits, async ({ params, body }, reply, raw) => {
+		const session = sessionOf(raw);
+		const prepared = await editsOf(params.id, body.operations, session, body.base_version);
 		if (prepared.kind !== "edited") return rejectEdits(reply, prepared, body.base_version);
-		const result = await orchestrations.checkVersion(params.id, prepared.document, prepared.base);
+		const result = await orchestrations.checkVersion(
+			params.id,
+			prepared.document,
+			prepared.base,
+			session,
+		);
 		if (result.kind !== "checked") return rejectVersion(reply, result, prepared.base);
 		return result.check;
 	});
@@ -266,7 +291,14 @@ export function registerOrchestrationRoutes(
 		if (!restored) return versionNotFound(reply);
 		const { version, previous } = restored;
 		const project = (await orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT;
-		const warnings = await versionWarnings(db, project, params.id, version.document, previous);
+		const warnings = await versionWarnings(
+			db,
+			project,
+			actor.sessionId,
+			params.id,
+			version.document,
+			previous,
+		);
 		return reply.code(201).send({ ...version, warnings });
 	});
 

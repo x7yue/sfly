@@ -17,18 +17,19 @@ import { secretDefaultWarnings } from "./secret-defaults.js";
  * 一份即将成为（或已经成为）场景新版本的文档的警告，保存、恢复和检查（#424）共用这一处：
  * 文档的静态检查，加上会让运行预设失效的改动，以及 secret 参数写了默认值的提醒（只提醒，不阻止保存）。
  * `document` 是新版本的文档、`previous` 是它的上一个版本（第一个版本没有），都是打码后的：这几项检查都不看 secret 默认值的内容。
- * `project` 是场景所在的项目：检查里的包、Agent 都只在它的范围里找。
+ * `project` 是场景所在的项目：检查里的包、Agent 都只在它的范围里找。`session` 是新版本属于的会话（`checkDocument`）。
  * `db` 由调用方传：在保存的事务里检查（`strict`）时传事务对象。
  */
 export async function versionWarnings(
 	db: Db | Tx,
 	project: ProjectId,
+	session: string | null,
 	orchestrationId: string,
 	document: StoredOrchestrationDocument,
 	previous: StoredOrchestrationDocument | undefined,
 ): Promise<DocumentWarningView[]> {
 	return [
-		...(await checkDocument(db, project, document)),
+		...(await checkDocument(db, project, document, session)),
 		...(await presetInvalidatedWarnings(db, orchestrationId, previous, document)),
 		...secretDefaultWarnings(document),
 	];
@@ -52,11 +53,12 @@ export function versionDiff(
 export async function flagExistingWarnings(
 	db: Db | Tx,
 	project: ProjectId,
+	session: string | null,
 	warnings: readonly DocumentWarningView[],
 	previous: StoredOrchestrationDocument | undefined,
 ): Promise<CheckedWarningView[]> {
 	const before = previous
-		? [...(await checkDocument(db, project, previous)), ...secretDefaultWarnings(previous)]
+		? [...(await checkDocument(db, project, previous, session)), ...secretDefaultWarnings(previous)]
 		: [];
 	const remaining = new Map<string, number>();
 	for (const w of before) remaining.set(warningKey(w), (remaining.get(warningKey(w)) ?? 0) + 1);
@@ -77,14 +79,15 @@ export async function flagExistingWarnings(
 export async function versionCheck(
 	db: Db | Tx,
 	project: ProjectId,
+	session: string | null,
 	orchestrationId: string,
 	document: StoredOrchestrationDocument,
 	previous: StoredOrchestrationDocument | undefined,
 	diffBase: StoredOrchestrationDocument,
 ): Promise<VersionCheckView> {
-	const warnings = await versionWarnings(db, project, orchestrationId, document, previous);
+	const warnings = await versionWarnings(db, project, session, orchestrationId, document, previous);
 	return {
-		warnings: await flagExistingWarnings(db, project, warnings, previous),
+		warnings: await flagExistingWarnings(db, project, session, warnings, previous),
 		diff: versionDiff(diffBase, document),
 	};
 }

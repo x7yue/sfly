@@ -57,6 +57,8 @@ export const ID_PARAM_VALUES = {
 	agent: (v) => v.credential,
 	dev_agent: () => null,
 	feishu_bot: () => null,
+	// 会话构建没有自己定位的接口（登记、列出都定位到会话）。
+	session_build: () => null,
 	system: () => null,
 	account: () => null,
 } as const satisfies Record<ResourceKind, (victim: Victim) => string | null>;
@@ -72,6 +74,7 @@ export const NAME_PARAM_VALUES = {
 	agent: (v) => v.agent,
 	dev_agent: (v) => v.agent,
 	feishu_bot: (v) => v.bot,
+	session_build: () => null,
 	system: () => null,
 	account: () => null,
 } as const satisfies Record<ResourceKind, (victim: Victim) => string | null>;
@@ -172,6 +175,11 @@ const UPLOAD_BODIES: Record<string, () => Uint8Array<ArrayBuffer>> = {
 			packageMetadata({ name: "uploaded", version: "9.9.9" }),
 		) as Uint8Array<ArrayBuffer>,
 	"PUT /tasks/:id/artifacts/*": () => new TextEncoder().encode("x") as Uint8Array<ArrayBuffer>,
+	// 版本号的标签对不上项目乙的会话也没关系：访问检查在读归档之前就拒绝。
+	"POST /sessions/:id/builds": () =>
+		packageArchive(
+			packageMetadata({ name: "uploaded", version: "9.9.9" }),
+		) as Uint8Array<ArrayBuffer>,
 };
 
 /** 一个接口的请求（方法、地址、请求体）：路径参数填项目乙的资源，写接口带样本请求体。 */

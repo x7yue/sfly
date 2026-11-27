@@ -13,7 +13,7 @@ import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
 /** 节点包归档上传上限。 */
-const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
+export const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 
 const notFound = (reply: FastifyReply, message: string) =>
 	sendError(reply, 404, "not_found", message);
