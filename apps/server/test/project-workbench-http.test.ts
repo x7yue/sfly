@@ -24,7 +24,11 @@ interface Registered {
 	previous_agent: string | null;
 }
 interface ApiError {
-	error: { code: string; message: string; details?: { agents?: string[] } };
+	error: {
+		code: string;
+		message: string;
+		details?: { agents?: string[]; other_projects?: number };
+	};
 }
 
 describe("登记项目的工作台", () => {
@@ -32,6 +36,8 @@ describe("登记项目的工作台", () => {
 	let accounts: TestAccounts;
 	let db: pg.Client;
 	let boss: Record<string, string>;
+	/** 平台管理员，也是默认项目的项目管理员：开关还没开时只有平台管理员能登记（#778）。 */
+	let root: Record<string, string>;
 	let editor: Record<string, string>;
 	let reader: Record<string, string>;
 	let session: Record<string, string>;
@@ -50,6 +56,9 @@ describe("登记项目的工作台", () => {
 		const readerId = await accounts.user("rita");
 		await accounts.member("default", readerId, "read_only");
 		boss = bearer(await accounts.personalToken(bossId));
+		const rootId = await accounts.user("root", { admin: true });
+		await accounts.member("default", rootId, "project_admin");
+		root = bearer(await accounts.personalToken(rootId));
 		editor = bearer(await accounts.personalToken(editorId));
 		reader = bearer(await accounts.personalToken(readerId));
 		session = bearer(await accounts.sessionToken(bossId, "default"));
@@ -70,7 +79,7 @@ describe("登记项目的工作台", () => {
 			headers: { ...(body === undefined ? {} : JSON_HEADERS), ...headers },
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});
-	const register = (agent: string, headers = boss, project = "default") =>
+	const register = (agent: string, headers = root, project = "default") =>
 		send("PUT", `/projects/${project}/workbench`, headers, { agent });
 	const json = async <T>(res: Response, status: number): Promise<T> => {
 		expect(res.status, await res.clone().text()).toBe(status);
@@ -119,9 +128,20 @@ describe("登记项目的工作台", () => {
 			await json<ApiError>(await register("wb", {}), 401);
 			await json<ApiError>(await register("wb", bearer(SHARED)), 403);
 			expect(await column()).toBeNull();
-			// 对照：项目管理员的个人令牌登记得成。
+			// 对照：平台管理员的个人令牌登记得成（项目管理员见下面 #778 那一条）。
 			await json<Registered>(await register("wb"), 200);
 			expect(await column()).toBe("wb");
+		});
+
+		it("开关还没开时项目管理员登记不了（403，写明要平台管理员），不改任何东西；平台管理员登记之后，项目管理员能换自己项目的工作台（#778）", async () => {
+			await onCredential("wb");
+			await onCredential("wb-2");
+			const refused = await json<ApiError>(await register("wb", boss), 403);
+			expect(refused.error.code).toBe("workbench_switch_platform_admin_only");
+			expect(refused.error.message).toContain("平台管理员");
+			expect(await column()).toBeNull();
+			await json<Registered>(await register("wb"), 200);
+			expect((await json<Registered>(await register("wb-2", boss), 200)).previous_agent).toBe("wb");
 		});
 
 		it("项目不存在、或者调用方不是这个项目的成员：404（不透露有没有这个项目）", async () => {
@@ -162,7 +182,10 @@ describe("登记项目的工作台", () => {
 
 			const blocked = await json<ApiError>(await register("wb"), 409);
 			expect(blocked.error.code).toBe("agents_not_on_credentials");
-			expect(blocked.error.details?.agents).toEqual(["legacy-shared", "mixed"]);
+			expect(blocked.error.details).toEqual({
+				agents: ["legacy-shared", "mixed"],
+				other_projects: 0,
+			});
 			expect(blocked.error.message).toContain("2 台");
 			expect(await column()).toBeNull();
 
@@ -176,6 +199,37 @@ describe("登记项目的工作台", () => {
 			const done = await json<Registered>(await register("wb"), 200);
 			expect(done).toEqual({ project: "default", agent: "wb", previous_agent: null });
 			expect(await column()).toBe("wb");
+		});
+
+		it("另一个项目（乙）登记工作台：乙的管理员 403、看不到默认项目里任何 Agent 的名字；平台管理员在乙登记时只列乙里没换的，默认项目里的只给台数（#778）", async () => {
+			await accounts.project("beta");
+			const betaBossId = await accounts.user("bella");
+			await accounts.member("beta", betaBossId, "project_admin");
+			const betaBoss = bearer(await accounts.personalToken(betaBossId));
+			const rootId = (await db.query("select id from users where login_name = 'root'")).rows[0]?.id;
+			await accounts.member("beta", rootId, "project_admin");
+			const betaWb = await cp.current.agentCredentials.issue("beta" as never, "beta-wb");
+			await connect("beta-wb", betaWb.token);
+			await connect("default-secret-box", SHARED);
+			await connect("default-old", SHARED);
+			const betaOld = await cp.current.agentCredentials.issue("beta" as never, "beta-old");
+			await cp.current.agentCredentials.issue("beta" as never, "beta-unused");
+			await connect("beta-old", betaOld.token);
+			// beta-old 最近一次用共享令牌连接（不算换了）：把它记成旧方式。
+			await db.query("update agents set last_auth_kind = 'shared' where name = 'beta-old'");
+
+			const refused = await register("beta-wb", betaBoss, "beta");
+			const text = await refused.text();
+			expect(refused.status, text).toBe(403);
+			for (const name of ["default-secret-box", "default-old", "beta-old"]) {
+				expect(text).not.toContain(name);
+			}
+
+			const blocked = await json<ApiError>(await register("beta-wb", root, "beta"), 409);
+			expect(blocked.error.code).toBe("agents_not_on_credentials");
+			expect(blocked.error.details).toEqual({ agents: ["beta-old"], other_projects: 2 });
+			expect(blocked.error.message).toContain("另有 2 台在别的项目里，请部署者处理");
+			expect(JSON.stringify(blocked)).not.toContain("default-");
 		});
 
 		it("登记的工作台本身：没有这台 Agent、别的项目里的名字、被停用、最近一次连接不是 Agent 凭据，各是各的 409，不改任何东西", async () => {
@@ -211,7 +265,7 @@ describe("登记项目的工作台", () => {
 			const [, path = "", body = ""] = command ?? [];
 			expect(JSON.parse(body)).toEqual({ agent: "workbench" });
 
-			const token = (boss.authorization ?? "").replace(/^Bearer /, "");
+			const token = (root.authorization ?? "").replace(/^Bearer /, "");
 			const run = () =>
 				sfly(["api", "PUT", path, "--body", body, "--server", cp.httpUrl], {
 					env: { SFLY_API_TOKEN: token },
@@ -337,7 +391,8 @@ describe("助手页：没有登记工作台", () => {
 			assistantReconnectMs: { min: 20, max: 100 },
 		});
 		accounts = new TestAccounts(cp.database.url);
-		const bossId = await accounts.user("boss");
+		// 第一次登记打开整个部署的开关，要平台管理员（#778）。
+		const bossId = await accounts.user("boss", { admin: true });
 		await accounts.member("default", bossId, "project_admin");
 		boss = bearer(await accounts.personalToken(bossId));
 	});
