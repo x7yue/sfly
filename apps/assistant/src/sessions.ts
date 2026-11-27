@@ -69,7 +69,7 @@ import {
  *   （`steer` 因为没有一轮在做回 409）。
  * - **恢复**（#545）：下一条 `prompt` 到来、没有活着的进程时用同一条启动命令（`--session-dir` + `--session-id`）起 pi，pi 从会话文件
  *   恢复上下文。**pi 1.6.0 读不了会话文件时不报错退出，而是悄悄开一个空会话**（会话文件读不了、头部坏了、工作目录对不上、目录没了
- *   都是；`rpcprobe` 之外的探针见 PR #545 P），模型丢了上下文、人不知道。所以起来之后问一次 `get_state`：这个会话之前说过话
+ *   都是，#545 P 在真的 pi 上逐种试过），模型丢了上下文、人不知道。所以起来之后问一次 `get_state`：这个会话之前说过话
  *   （{@link Transcript}：助手服务自己记的对话）而 pi 的 `messageCount` 是 0，就算恢复不了：关掉这个 pi，把 `pi-session/` 挪到
  *   `pi-session.broken/`（只留最近一份，排查用），起一个新的会话，把之前的话整理成摘要放在这一轮第一句前面（{@link summarize}），
  *   时间线补一条 `notice`（`context_reset`，**只写条数，没有对话原文**）。**摘要只进 pi：不进任何事件、日志，不发给控制面。**
@@ -858,6 +858,7 @@ export class SessionManager {
 		}
 		this.#spawn(session, startedFor);
 		await this.#setSteeringMode(session);
+		if (turn.ended || turn.stop) return { ok: false };
 		const summary = summarize(history, turn.number);
 		if (!summary) return { ok: true };
 		this.#emit(session, turn, {
