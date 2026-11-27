@@ -367,6 +367,12 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			"versions/DocumentDiffView.tsx": { wrapped: ["text", "tail", "tail"] },
 		},
 	},
+	{
+		area: "线路上站的悬停提示（节点名和状态，#655）",
+		files: {
+			"components/run-lines.tsx": { wrapped: ["runNodeName(station.node)"] },
+		},
+	},
 ];
 
 const SRC = join(import.meta.dirname, "..");

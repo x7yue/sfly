@@ -72,4 +72,9 @@ mutant dispatch-before-ready Safe AssignOnlyWhenReady \
 mutant replace-fail-to-success Safe SuccessWasRun \
 	$'        /\\ r[2]\n        /\\ LET new == <<r[1], FALSE>>' \
 	$'        /\\ ~r[2]\n        /\\ LET new == <<r[1], TRUE>>'
+# engine.ts #resultTask：已经以 agent_lost 失败的尝试，它迟到的结果照样接受（只拒绝还没派发和已成功的）。
+# 被告知停止的尝试也可能报成功（#738：取消在执行器退出之后、开始上传之前到），重试的那次又成功时，一个节点有两次成功。
+mutant result-accepts-lost Safe AtMostOneSuccess \
+	'                    /\ cp'"'"' = IF cp[m.a] \notin OnAgent THEN cp' \
+	'                    /\ cp'"'"' = IF cp[m.a] \in {"none", "queued", "success"} THEN cp'
 exit $status
