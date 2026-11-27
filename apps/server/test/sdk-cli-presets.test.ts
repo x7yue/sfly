@@ -84,6 +84,8 @@ describe("sfly 运行预设 → 控制面", { timeout: 60_000 }, () => {
 
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
+		// spawnSfly 同步起进程：先建好 tester 的用户和令牌。
+		await cp.users.user();
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 	}, 120_000);

@@ -77,8 +77,16 @@ export class TestAccounts {
 		login: string,
 		options: { displayName?: string; admin?: boolean } = {},
 	): Promise<string> {
+		// 几个测试辅助可能同时要同一个登录名的用户（各自查不到、各自去建）：插入时撞上就用已有的那一个。
+		const { rows: inserted } = await this.#pool.query(
+			`insert into users (id, login_name, display_name, password_hash, is_platform_admin, disabled_at, created_at)
+			values ($1, $2, $3, 'scrypt$placeholder', $4, null, $5)
+			on conflict (login_name) do nothing returning id`,
+			[randomUUID(), login, options.displayName ?? login, options.admin ?? false, AT],
+		);
+		if (inserted[0] !== undefined) return inserted[0].id as string;
 		const { rows } = await this.#pool.query("select id from users where login_name = $1", [login]);
-		return rows[0] === undefined ? this.user(login, options) : (rows[0].id as string);
+		return rows[0].id as string;
 	}
 
 	async member(project: string, userId: string, role: ProjectRole): Promise<void> {

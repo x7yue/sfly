@@ -93,10 +93,11 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ clock, leaseMs: 60 * 60_000 });
+		// spawnSfly 同步起进程：先建好用到的昵称的用户和令牌。
+		await cp.users.user();
+		await cp.users.user("alice");
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
-		// `spawnSfly` 同步起进程，要先建好用到的昵称的用户和令牌（tester 启动时就建好了）。
-		await cp.users.user("alice");
 	}, 120_000);
 
 	beforeEach(async () => {

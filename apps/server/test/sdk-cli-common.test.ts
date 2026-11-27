@@ -58,7 +58,10 @@ describe("sfly 命令行的公共部分 → 控制面", () => {
 		expect(hits()).toEqual([false, true, false]);
 
 		viaEnv.requests.length = 0;
-		const fileOnly = await sfly(["scenario", "list"], { env: { SFLY_HOME: home } });
+		// 地址只在 agent.env 里：默认凭据认不出连的是测试控制面，自己给令牌。
+		const fileOnly = await sfly(["scenario", "list"], {
+			env: { SFLY_HOME: home, SFLY_API_TOKEN: await cp.users.token() },
+		});
 		expect(fileOnly.code, fileOnly.stderr).toBe(0);
 		expect(hits()).toEqual([false, false, true]);
 	});

@@ -162,7 +162,7 @@ async function cliCall(
 	return prepare(args, options, () => token);
 }
 
-/** {@link prepare}，同步：令牌要已经建出来（测试控制面启动时建好 `tester` 的；别的昵称先 `await cp.users.user(昵称)`）。 */
+/** {@link prepare}，同步：令牌要已经建出来（先 `await cp.users.user(昵称)`，tester 是 `cp.users.user()`）。 */
 export function cliCallNow(
 	args: readonly string[],
 	options: SflyOptions,

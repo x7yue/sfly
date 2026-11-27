@@ -260,12 +260,12 @@ export async function startTestControlPlane(
 			return issued.token;
 		});
 	let unregister = registerIssuer();
-	// 命令行连这个控制面时默认带上个人令牌（sfly-cli.ts）；`tester` 先建出来，`spawnSfly` 要同步拿到它。
+	// 命令行连这个控制面时默认带上个人令牌（sfly-cli.ts）。用户第一次用到时才建（启动时不建：
+	// 「还没有任何用户」的初始化页要看到空库）；`spawnSfly` 同步起进程，用之前先 `await cp.users.user()`。
 	const unregisterCli = registerCliCredentials(current.httpUrl, {
 		token: async (nickname) => (signs() ? users.token(nickname) : undefined),
 		tokenNow: (nickname) => (signs() ? users.tokenNow(nickname) : ""),
 	});
-	if (signs()) await users.user();
 
 	// 每个控制面实例一套独立的 HTTP 连接池：重启时销毁旧池，重启后的请求不会复用
 	// 已被旧实例关闭的 keep-alive 连接（全局 fetch 的连接池会复用，偶发 ECONNRESET）。
