@@ -99,3 +99,53 @@ export function addResults(
 /** 有没有任何成果。 */
 export const hasResults = (results: SessionResults): boolean =>
 	results.commits.length + results.versions.length + results.runs.length > 0;
+
+/** 清单里最近的在前（成果栏每一块都是这个顺序）：按事件序号从大到小，不改原来的清单。 */
+export const newestFirst = <T extends { seq: number }>(list: readonly T[]): T[] =>
+	[...list].sort((a, b) => b.seq - a.seq);
+
+/** 场景那一块的一项：一个场景，这个会话保存过的版本。 */
+export interface ResultScenario {
+	scenarioId: string;
+	/** 最近一次保存时的场景名（场景中途改过名的取最新的）。 */
+	name: string;
+	/** 这个会话保存过的版本号，从小到大，不重复。 */
+	versions: readonly number[];
+	/** 最近一次保存的事件序号：场景之间按它排，最近的在前。 */
+	lastSeq: number;
+}
+
+/** 场景那一块：版本按场景合并（一个场景保存过几个版本只是一项），最近保存的场景在前。 */
+export function resultScenarios(results: SessionResults): ResultScenario[] {
+	const byScenario = new Map<string, ResultScenario>();
+	for (const version of results.versions) {
+		const known = byScenario.get(version.scenarioId);
+		if (known === undefined) {
+			byScenario.set(version.scenarioId, {
+				scenarioId: version.scenarioId,
+				name: version.name,
+				versions: [version.version],
+				lastSeq: version.seq,
+			});
+			continue;
+		}
+		if (!known.versions.includes(version.version)) {
+			known.versions = [...known.versions, version.version].sort((a, b) => a - b);
+		}
+		if (version.seq > known.lastSeq) {
+			known.name = version.name;
+			known.lastSeq = version.seq;
+		}
+	}
+	return [...byScenario.values()].sort((a, b) => b.lastSeq - a.lastSeq);
+}
+
+/**
+ * 版本历史里选中哪几个版本（版本历史页的 `a`、`b`）：只保存过一个版本就选它（`b`）；保存过几个就对比最早的和最晚的（`a`、`b`）。
+ * 这个会话保存过的版本之间别人也可能保存过，所以对比的是「这个会话第一次保存的」和「最近一次保存的」，不是相邻的两个。
+ */
+export function versionsSearch(versions: readonly number[]): { a?: number; b: number } {
+	const first = Math.min(...versions);
+	const last = Math.max(...versions);
+	return first === last ? { b: last } : { a: first, b: last };
+}

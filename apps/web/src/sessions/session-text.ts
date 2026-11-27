@@ -1,4 +1,11 @@
-import type { Readiness, SessionStatus, SessionTool, WaitingFor } from "@sfly/schema";
+import type {
+	Readiness,
+	ReadinessProblemKind,
+	SessionStatus,
+	SessionTool,
+	TurnOutcome,
+	WaitingFor,
+} from "@sfly/schema";
 import type { StatusKind } from "#/components/status";
 import { SESSION } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
@@ -23,15 +30,51 @@ export const SESSION_STATUS: Record<SessionStatus, { label: string; kind: Status
 	ended: { label: SESSION.status.ended, kind: "stopped" },
 };
 
-/** 助手页顶部的就绪状态：就绪的写一行，不就绪的逐条写缺什么（每条取就绪状态里给人看的那句话）。 */
-export function readinessProblems(readiness: Readiness): string[] {
-	return readiness.problems.map((problem) =>
-		problem.kind === "workbench_offline" &&
-		readiness.workbench !== null &&
-		!problem.message.includes(readiness.workbench)
-			? SESSION.workbenchOffline(readiness.workbench)
-			: problem.message,
-	);
+/** 就绪状态里的一条问题：缺什么（控制面写的一句，带具体的变量名、哪一台）和该找谁、做什么（页面按种类写，{@link SESSION.readinessHint}）。 */
+export interface ReadinessItem {
+	kind: ReadinessProblemKind;
+	/** 缺什么：控制面的话，可能嵌着别人写的文字（助手服务报的原因、工作台的名字），经不可信文字组件显示。 */
+	what: string;
+	/** 该找谁、做什么：控制台自己的话。 */
+	hint: string;
+}
+
+/**
+ * 助手和会话页输入框旁的就绪状态：不就绪时逐条写缺什么、该找谁（每条取就绪状态里给人看的那句话，后面接按种类写的「找谁」）；
+ * 工作台不在线而那句话里没有写出是哪一台时补上名字。就绪时没有问题。
+ */
+export function readinessItems(readiness: Readiness): ReadinessItem[] {
+	return readiness.problems.map((problem) => ({
+		kind: problem.kind,
+		what:
+			problem.kind === "workbench_offline" &&
+			readiness.workbench !== null &&
+			!problem.message.includes(readiness.workbench)
+				? SESSION.workbenchOffline(readiness.workbench)
+				: problem.message,
+		hint: SESSION.readinessHint[problem.kind],
+	}));
+}
+
+/**
+ * 会话列表里状态下面标出来的上一轮的结局（`last_turn_outcome`）：完成的、还没有结束过一轮的（null）不标；其余写「上一轮被打断」这样的一句，
+ * 出了问题的（被打断、出错、模型不可用）用失败的形状，到了上限用提醒的，用户自己停的是中性的。在做的会话标的是这一轮之前的那一轮。
+ */
+export function lastTurnFlag(
+	outcome: TurnOutcome | null,
+): { label: string; kind: StatusKind } | null {
+	if (outcome === null || outcome === "completed") return null;
+	const label = SESSION.list.lastTurn(SESSION.list.outcome[outcome]);
+	switch (outcome) {
+		case "interrupted":
+		case "failed":
+		case "model_unavailable":
+			return { label, kind: "failed" };
+		case "limit":
+			return { label, kind: "warn" };
+		case "stopped":
+			return { label, kind: "stopped" };
+	}
 }
 
 /** 就绪状态里有模型的问题（没有配置、连不上，#548）：空闲的会话说不了话。别的问题（助手、工作台）在助手页的就绪状态里写，会话页不管。 */
