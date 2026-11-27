@@ -491,6 +491,7 @@ async fn a_procs_dir_still_being_written_to_is_kept_until_the_writes_stop() {
     let writer = tokio::spawn(async move {
         loop {
             let _ = std::fs::write(&log, "log");
+            #[allow(clippy::disallowed_methods)] // 造场景：后台进程一直在写日志
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     });

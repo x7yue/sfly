@@ -4,54 +4,19 @@
 
 mod support;
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sfly_agent::proto::{CancelTask, TaskStatus, server_message};
 use support::{
-    AgentOptions, FakeControlPlane, assert_quiet_termination, capture_stderr, spawn_agent,
-    stub_task, wait_until,
+    AgentOptions, FakeControlPlane, alive, assert_all_gone, assert_quiet_termination,
+    capture_stderr, spawn_agent, stub_task, wait_for_file, wait_until,
 };
-
-fn alive(pid: u32) -> bool {
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => !stat
-            .rsplit_once(')')
-            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
-        Err(_) => false,
-    }
-}
-
-async fn wait_for_file(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path)
-            && !text.is_empty()
-        {
-            return text;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{} never appeared",
-            path.display()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
 
 fn pids(text: &str) -> Vec<u32> {
     text.split_whitespace()
         .map(|p| p.parse().unwrap())
         .collect()
-}
-
-async fn assert_all_gone(pids: &[u32]) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while pids.iter().any(|&p| alive(p)) {
-        assert!(Instant::now() < deadline, "processes still alive: {pids:?}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 async fn cancel(cp: &FakeControlPlane, task_id: &str, force: bool) {
@@ -218,6 +183,8 @@ async fn forced_cancel_during_graceful_termination_kills_immediately() {
     let pids = pids(&wait_for_file(&pid_file).await);
     let started = Instant::now();
     cancel(&cp, "task-escalate", false).await;
+    #[allow(clippy::disallowed_methods)]
+    // 确认某件事没有发生：SIGTERM 被忽略，这一小段时间里进程还在
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(pids.iter().all(|&p| alive(p)), "SIGTERM is ignored");
     cancel(&cp, "task-escalate", true).await;

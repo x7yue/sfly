@@ -56,7 +56,13 @@ pub fn peak_rss_bytes(pid: u32) -> u64 {
 
 /// 等到 `check` 成立（看的是假控制面收不到的东西，例如文件；消息用 [`FakeControlPlane::wait_for`]）。
 pub async fn wait_until(what: &str, check: impl Fn() -> bool) {
-    let deadline = tokio::time::Instant::now() + WAIT;
+    wait_until_within(what, WAIT, check).await;
+}
+
+/// 同 [`wait_until`]，超时用 `timeout`（准备环境这类本来就慢的事）。测试里等条件都经它，不自己 sleep 轮询。
+#[allow(clippy::disallowed_methods)] // 等待辅助本身要隔一段时间再看
+pub async fn wait_until_within(what: &str, timeout: Duration, check: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + timeout;
     while !check() {
         assert!(
             tokio::time::Instant::now() < deadline,
@@ -64,6 +70,37 @@ pub async fn wait_until(what: &str, check: impl Fn() -> bool) {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// 进程是否还活着（僵尸进程算已经结束）。
+pub fn alive(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        // 第三个字段是状态；命令名在括号里，可能有空格，从最后一个 ')' 之后取。
+        Ok(stat) => !stat
+            .rsplit_once(')')
+            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
+        Err(_) => false,
+    }
+}
+
+/// 等到这些进程都结束。
+pub async fn assert_all_gone(pids: &[u32]) {
+    wait_until(&format!("进程 {pids:?} 都结束"), || {
+        !pids.iter().any(|&p| alive(p))
+    })
+    .await;
+}
+
+/// 等到 `path` 有内容（还不存在、还是空的都算没有），返回内容。
+pub async fn wait_for_file(path: &Path) -> String {
+    let readable = || std::fs::read_to_string(path).is_ok_and(|text| !text.is_empty());
+    wait_until(&format!("{} 有内容", path.display()), readable).await;
+    std::fs::read_to_string(path).expect("刚读到过的文件")
+}
+
+/// 等到 `path` 存在（文件或目录，可以是空的）。
+pub async fn wait_for_path(path: &Path) {
+    wait_until(&format!("{} 出现", path.display()), || path.exists()).await;
 }
 
 /// 任务被取消、超时或被停止子流程节点停止（节点里收到 `Cancelled`）时的日志：正常终止不是节点出错，
@@ -203,6 +240,8 @@ impl FakeControlPlane {
                         tokio::time::Instant::now() < deadline,
                         "port {port} still in use"
                     );
+                    #[allow(clippy::disallowed_methods)]
+                    // 假的控制面：端口还被上一个占着时隔一会儿再试
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 Err(error) => panic!("bind 127.0.0.1:{port}: {error}"),
@@ -274,6 +313,7 @@ impl FakeControlPlane {
                     self.received()
                 );
             }
+            #[allow(clippy::disallowed_methods)] // 等待辅助本身要隔一段时间再看
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
@@ -735,6 +775,7 @@ impl Drop for AgentChild {
             let _ = kill(group, Signal::SIGTERM);
             while matches!(self.child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline
             {
+                #[allow(clippy::disallowed_methods)] // Drop 里不能 await：同步地等 Agent 进程退出
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
@@ -742,6 +783,7 @@ impl Drop for AgentChild {
         // 等组里的进程都结束（被杀的孤儿由 init 收尸）再让调用方删临时目录。
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while killpg(group, None).is_ok() && std::time::Instant::now() < deadline {
+            #[allow(clippy::disallowed_methods)] // Drop 里不能 await：同步地等进程组都结束
             std::thread::sleep(Duration::from_millis(20));
         }
     }
