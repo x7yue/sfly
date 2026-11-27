@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { nameProblem, nameRefinement } from "../text-safety.js";
-import { CurrentUser, PASSWORD_MAX_LENGTH } from "./accounts.js";
+import { AccountUser, PASSWORD_MAX_LENGTH } from "./accounts.js";
 import { endpoint, Timestamp } from "./contract.js";
+import { SCOPES } from "./scopes.js";
+
+export { SCOPE_LABELS, SCOPES, type Scope } from "./scopes.js";
 
 /**
  * 令牌的接口契约（约定见 ./contract.ts，ADR 0029「凭据」）：命令行、API 客户端、自建页面和自动化不能用 Cookie，
@@ -16,23 +19,6 @@ import { endpoint, Timestamp } from "./contract.js";
  * 令牌不能签发令牌：这些接口里的签发只认人（登录 Cookie；个人令牌还可以用账号密码换，`sfly login` 用）。
  * 这些接口都只给控制台和命令行用，不进 API 客户端（`client: false`）。
  */
-
-/**
- * 范围（ADR 0029 的范围表）：检查只看范围，不看角色名；以后加「只能触发运行」这类角色，只是多一组范围。
- * 控制面的访问检查和控制台的令牌页都从这里取。
- */
-export const SCOPES = ["read", "run", "edit", "session_build", "publish", "manage"] as const;
-export type Scope = (typeof SCOPES)[number];
-
-/** 范围的中文名（GLOSSARY「令牌」里的词）：写进拒绝的说明，控制台的令牌页也显示它。 */
-export const SCOPE_LABELS = {
-	read: "读",
-	run: "运行",
-	edit: "编辑",
-	session_build: "会话构建",
-	publish: "发布",
-	manage: "管理",
-} as const satisfies Record<Scope, string>;
 
 /** 令牌的名称（「经 …」记它，所以要认得出是哪一个）：去掉首尾空白后 1–64 个字符，不含控制字符、双向文字的控制字符和零宽空格这类看不见的字符（`text-safety.ts` 里那张明确的表），同一个所有者名下没有两个有效的同名令牌。 */
 export const TOKEN_NAME_MAX_LENGTH = 64;
@@ -109,7 +95,7 @@ export const TokenList = z.object({ tokens: z.array(TokenView) });
  * 自己的个人令牌列表，附上令牌所属的用户：命令行靠它知道「自己」是谁（`sfly run … latest` 找自己触发的最近一次运行，
  * 记在运行上的触发人是用户的显示名）；个人令牌不能读 `/auth/me`（只认登录），所以放在这里。
  */
-export const PersonalTokenList = TokenList.extend({ user: CurrentUser });
+export const PersonalTokenList = TokenList.extend({ user: AccountUser });
 
 export const TokenIdParams = z.object({ id: z.uuid() });
 export const ProjectTokenParams = z.object({ project: z.string() });

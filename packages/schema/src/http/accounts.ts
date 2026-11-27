@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { nameProblem, nameRefinement } from "../text-safety.js";
 import { endpoint, Timestamp } from "./contract.js";
+import { SCOPES } from "./scopes.js";
 
 /**
  * 账号与登录相关接口的契约（约定见 ./contract.ts，ADR 0029「用户、项目与角色」「认证的几处细节」）。
@@ -41,8 +42,8 @@ export const AccountDisplayName = z
 	.max(DISPLAY_NAME_MAX_LENGTH, `显示名不能超过 ${DISPLAY_NAME_MAX_LENGTH} 个字符`)
 	.refine((name) => nameProblem(name) === undefined, nameRefinement("显示名"));
 
-/** 当前登录的用户。 */
-export const CurrentUser = z.object({
+/** 一个用户的账号信息（令牌页的「属于谁」、当前登录的用户和平台管理员看到的用户都从这里长出来）。 */
+export const AccountUser = z.object({
 	id: z.string(),
 	login_name: z.string(),
 	display_name: z.string(),
@@ -50,9 +51,19 @@ export const CurrentUser = z.object({
 	is_platform_admin: z.boolean(),
 });
 
+/**
+ * 当前登录的用户，加上他**此刻在默认项目里有的范围**（登录 Cookie 本来就只落在默认项目，ADR 0029「项目只从令牌取」）：
+ * 控制台按它决定显示哪些操作（例如有「管理」才显示 Agent 的凭据和停用）。算法和访问检查是同一处（控制面的 `userScopes`）：
+ * 平台管理员有项目管理员的全部范围，成员按角色，不是成员的什么范围都没有。它只是让页面少显示点不了的按钮，不是授权：
+ * 每个请求服务端照样检查；也不缓存：登录、初始化和 `GET /auth/me` 每次都按此刻的角色算。
+ */
+export const CurrentUser = AccountUser.extend({
+	scopes: z.array(z.enum(SCOPES)),
+});
+
 /** 平台管理员看到的一个用户。 */
 export const UserView = z.object({
-	...CurrentUser.shape,
+	...AccountUser.shape,
 	/** 停用的时间；没有停用为 null。停用的用户的登录和令牌立即失效。 */
 	disabled_at: Timestamp.nullable(),
 	created_at: Timestamp,
@@ -248,6 +259,7 @@ export const usersApi = {
 	}),
 };
 
+export type AccountUser = z.infer<typeof AccountUser>;
 export type CurrentUser = z.infer<typeof CurrentUser>;
 export type UserView = z.infer<typeof UserView>;
 export type AuthStatus = z.infer<typeof AuthStatus>;

@@ -66,7 +66,13 @@ describe("开发环境下按契约校验响应", () => {
 
 describe("请求拿到 401：登录着的人回到登录页", () => {
 	const expired = vi.fn();
-	const USER = { id: "u1", login_name: "root", display_name: "管理员", is_platform_admin: true };
+	const USER = {
+		id: "u1",
+		login_name: "root",
+		display_name: "管理员",
+		is_platform_admin: true,
+		scopes: [],
+	};
 	const unauthorized = () =>
 		Response.json({ error: { code: "unauthorized", message: "凭据无效" } }, { status: 401 });
 	afterEach(() => {

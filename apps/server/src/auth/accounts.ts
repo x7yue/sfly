@@ -6,7 +6,7 @@ import { and, asc, count, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { logins, type ProjectRole, projectMembers, users } from "../db/schema.js";
-import { DEFAULT_PROJECT } from "../projects/project-id.js";
+import { DEFAULT_PROJECT, type ProjectId } from "../projects/project-id.js";
 import { DEFAULT_LOGIN_IDLE_MS } from "./access-guard.js";
 import { hashCredential } from "./credential-hash.js";
 import { LoginThrottle } from "./login-throttle.js";
@@ -19,6 +19,7 @@ import {
 } from "./password.js";
 import { PasswordGate, PasswordGateBusy } from "./password-gate.js";
 import { type Revocation, RevocationBus } from "./revocations.js";
+import { type Scope, userScopes } from "./scopes.js";
 import type { SetupCode } from "./setup-code.js";
 
 /** 一个用户（不含密码哈希）。 */
@@ -423,6 +424,18 @@ export class AccountService {
 	async findUser(id: string): Promise<UserRecord | undefined> {
 		const [row] = await this.#db.select().from(users).where(eq(users.id, id));
 		return row && toRecord(row);
+	}
+
+	/**
+	 * 这个用户此刻在一个项目里有的范围（默认项目：登录 Cookie 本来就只落在默认项目），`CurrentUser.scopes` 用它：
+	 * 算法是 {@link userScopes}，访问检查用的是同一个，页面和接口的判断不会分叉。每次现查成员的角色，不缓存。
+	 */
+	async scopesIn(user: UserRecord, project: ProjectId = DEFAULT_PROJECT): Promise<Scope[]> {
+		const [row] = await this.#db
+			.select({ role: projectMembers.role })
+			.from(projectMembers)
+			.where(and(eq(projectMembers.projectId, project), eq(projectMembers.userId, user.id)));
+		return [...userScopes(user, row?.role ?? null)];
 	}
 
 	/** 建用户；登录名重复时抛 {@link LoginNameTaken}。登录名的写法由契约校验，库里还有约束兜底。 */

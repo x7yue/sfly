@@ -6,7 +6,7 @@ import { useRef, useState } from "react";
 import { AgentRack } from "#/agents/AgentRack";
 import { useConnectCommand } from "#/agents/connect-command";
 import { CredentialsDialog } from "#/agents/credentials/CredentialsDialog";
-import { useCanAdminAgents } from "#/agents/use-agent-admin";
+import { useCanAdminAgents, useRefreshIdentityOnOpen } from "#/agents/use-agent-admin";
 import { useSlotFocus } from "#/agents/use-slot-focus";
 import { DocPageLink } from "#/components/doc-page-link";
 import { EmptyState, QueryView, RackSkeleton } from "#/components/feedback/states";
@@ -31,6 +31,7 @@ export const Route = createFileRoute("/_shell/agents")({
 });
 
 function AgentsPage() {
+	useRefreshIdentityOnOpen();
 	const command = useConnectCommand();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
 	const runFocus = useSlotFocus(agents.data?.agents ?? []);

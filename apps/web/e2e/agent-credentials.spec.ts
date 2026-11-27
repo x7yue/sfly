@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { FakeAgent } from "../../server/test/support/fake-agent.js";
-import { signInAsAdmin } from "./agent-admin-support";
+import { signInAs, signInAsAdmin } from "./agent-admin-support";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
@@ -389,6 +389,56 @@ test.describe("停用和恢复", () => {
 });
 
 test.describe("谁看得到这些按钮", () => {
+	// 页面按 `CurrentUser.scopes` 里有没有「管理」显示按钮；显示与否和接口的 200/403 要一致（服务端照样检查）。
+	const WHO = [
+		{ name: "项目管理员", login: "pa", role: "project_admin", shown: true },
+		{ name: "编辑者", login: "ed", role: "editor", shown: false },
+		{ name: "只读成员", login: "ro", role: "read_only", shown: false },
+		{ name: "平台管理员（不是成员）", login: "plat", role: null, platformAdmin: true, shown: true },
+	] as const;
+	for (const who of WHO) {
+		test(`${who.name}：按钮${who.shown ? "显示" : "不显示"}，管理类接口${who.shown ? "204" : "403"}，两边一致`, async ({
+			page,
+			context,
+			controlPlane,
+			connectAgent,
+		}) => {
+			await signInAs(context, controlPlane, who);
+			await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+			await page.goto("/agents");
+			await expect(rack(page, "agent-a")).toBeVisible();
+			const want = who.shown ? 1 : 0;
+			await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(want);
+			await expect(page.getByRole("button", { name: "agent-a 的凭据" })).toHaveCount(want);
+			await expect(page.getByRole("button", { name: "停用 agent-a" })).toHaveCount(want);
+			// 同一个登录在页面里（同源）调管理类接口：恢复一台没有停用的 Agent，什么都不改。
+			const status = await page.evaluate(
+				async () => (await fetch("/api/agents/agent-a/enable", { method: "POST" })).status,
+			);
+			expect(status).toBe(who.shown ? 204 : 403);
+		});
+	}
+
+	test("范围跟着身份走：打开 Agent 页时重新问一次，管理员被降级之后再打开就看不到按钮了", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await signInAs(context, controlPlane, { login: "pa", role: "project_admin" });
+		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+		await page.goto("/agents");
+		await expect(page.getByRole("button", { name: "agent-a 的凭据" })).toBeVisible();
+		// 管理员在别处被降成编辑者：控制面里的角色变了，页面还开着，按钮还在（点了服务端拒绝）。
+		await signInAs(context, controlPlane, { login: "pa", role: "editor" });
+		// 换一个页面再回来：身份重新读，按钮没了。
+		await page.getByRole("link", { name: /^节点包/ }).click();
+		await page.getByRole("link", { name: /Agent 管理/ }).click();
+		await expect(rack(page, "agent-a")).toBeVisible();
+		await expect(page.getByRole("button", { name: "agent-a 的凭据" })).toHaveCount(0);
+		await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
+	});
+
 	test("没有登录（昵称模式）的人看不到凭据、停用的按钮，也看不到「为新 Agent 签发凭据」；接口也要登录", async ({
 		page,
 		controlPlane,

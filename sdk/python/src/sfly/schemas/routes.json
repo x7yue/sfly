@@ -3037,13 +3037,28 @@
           "is_platform_admin": {
             "type": "boolean",
             "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run",
+                "edit",
+                "session_build",
+                "publish",
+                "manage"
+              ]
+            }
           }
         },
         "required": [
           "id",
           "login_name",
           "display_name",
-          "is_platform_admin"
+          "is_platform_admin",
+          "scopes"
         ]
       },
       "notes": [
@@ -3102,13 +3117,28 @@
           "is_platform_admin": {
             "type": "boolean",
             "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run",
+                "edit",
+                "session_build",
+                "publish",
+                "manage"
+              ]
+            }
           }
         },
         "required": [
           "id",
           "login_name",
           "display_name",
-          "is_platform_admin"
+          "is_platform_admin",
+          "scopes"
         ]
       },
       "notes": []
@@ -3174,13 +3204,28 @@
           "is_platform_admin": {
             "type": "boolean",
             "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run",
+                "edit",
+                "session_build",
+                "publish",
+                "manage"
+              ]
+            }
           }
         },
         "required": [
           "id",
           "login_name",
           "display_name",
-          "is_platform_admin"
+          "is_platform_admin",
+          "scopes"
         ]
       },
       "notes": []

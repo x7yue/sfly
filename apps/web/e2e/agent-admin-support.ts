@@ -1,4 +1,5 @@
 import type { BrowserContext } from "@playwright/test";
+import type { ProjectRole } from "../../server/src/db/schema.js";
 import { bearer, TestAccounts } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 
@@ -43,19 +44,21 @@ export async function setAgentDisabled(
 }
 
 /**
- * 页面以项目管理员登录（Agent 的凭据、停用要登录和「管理」范围）：造用户、成员、登录 Cookie，返回同一个人的个人令牌
- * （测试里直接调接口、核对列表接口的响应用）。
+ * 页面以某个人登录（Agent 的凭据、停用要登录和「管理」范围）：造用户、成员（`role` 为 null 是不是成员）、登录 Cookie；
+ * `platformAdmin` 是平台管理员。返回同一个人的个人令牌（测试里直接调接口、核对列表接口的响应用）。
  */
-export async function signInAsAdmin(
+export async function signInAs(
 	context: BrowserContext,
 	controlPlane: TestControlPlane,
-	role: "project_admin" | "editor" | "read_only" = "project_admin",
-	login = "agentadmin",
+	who: { login: string; role: ProjectRole | null; platformAdmin?: boolean },
 ): Promise<{ token: string; headers: Record<string, string> }> {
 	const accounts = new TestAccounts(controlPlane.database.url);
 	try {
-		const user = await accounts.userNamed(login, { displayName: login });
-		await accounts.member("default", user, role);
+		const user = await accounts.userNamed(who.login, {
+			displayName: who.login,
+			admin: who.platformAdmin ?? false,
+		});
+		if (who.role !== null) await accounts.member("default", user, who.role);
 		await context.addCookies([
 			{ name: "sfly_login", value: await accounts.login(user), url: controlPlane.httpUrl },
 		]);
@@ -65,6 +68,10 @@ export async function signInAsAdmin(
 		await accounts.close();
 	}
 }
+
+/** 页面以项目管理员登录。 */
+export const signInAsAdmin = (context: BrowserContext, controlPlane: TestControlPlane) =>
+	signInAs(context, controlPlane, { login: "agentadmin", role: "project_admin" });
 
 /** 把一台 Agent 的凭据全部删掉（只在测试里：造「这个名字还没有签发过凭据」的空列表，真实的接口不会让它发生）。 */
 export async function clearCredentials(
