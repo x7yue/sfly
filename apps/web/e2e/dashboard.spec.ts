@@ -788,7 +788,7 @@ test("右栏没有 Agent、没有场景时写明；场景列加载中显示骨�
 	});
 	expect(archived.ok).toBe(true);
 	// 接口没有删除 Agent 的操作：让 Agent 列表返回空，相当于一台 Agent 都没有。
-	await page.route("**/api/agents", async (route) => {
+	await page.route("**/api/projects/default/agents", async (route) => {
 		const response = await route.fetch();
 		await route.fulfill({ response, json: { ...(await response.json()), agents: [] } });
 	});

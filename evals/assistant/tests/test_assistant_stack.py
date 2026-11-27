@@ -224,7 +224,7 @@ def test_agent_credentials_are_issued_by_the_admin_and_secrets_go_by_stdin(
     assert "COOKIE123" not in issue["script"]
     assert "-H @-" in issue["script"]
     assert issue["input_text"] == "cookie: sfly_login=COOKIE123\nsec-fetch-site: same-origin\n"
-    assert "/agents/dev-root-dev/credentials" in issue["script"]
+    assert "/projects/default/agents/dev-root-dev/credentials" in issue["script"]
 
 
 def test_the_workbench_is_registered_with_the_admin_login_and_the_cookie_goes_by_stdin(

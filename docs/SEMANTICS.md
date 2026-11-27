@@ -172,7 +172,7 @@ Agent 在 Hello 里报的文字存下来之后会显示在别人的命令行和�
 |---|---|---|
 | `name`（Agent 的名称） | 身份 | 和令牌的名称、显示名同一个检查，不合格的连接被拒（`InvalidArgument`，说第几个字符、哪个码位） |
 | `name`（Agent 的名称）的长度 | 身份 | 上限 64 个字符，超过的拒绝连接（和令牌的名称一样）；名称的检查在凭据检查之前，不合格的名称不进任何报错和日志 |
-| 签发 Agent 凭据的名称（`POST /agents/:name/credentials`） | 身份 | 同一张表、同一个 64 个字符的上限，不合格的是 400，说第几个字符、哪个码位或上限，不回显名称；不合格的名称签发不出凭据（Agent 也就连不上来） |
+| 签发 Agent 凭据的名称（`POST /projects/:project/agents/:name/credentials`） | 身份 | 同一张表、同一个 64 个字符的上限，不合格的是 400，说第几个字符、哪个码位或上限，不回显名称；不合格的名称签发不出凭据（Agent 也就连不上来） |
 | `agent_version`、`os`、`arch` | 短的标识类（上限 64 个字符） | 含表里的字符或超长：整段换成空串 |
 | `installed_packages[].name`、`dev_packages[].name` | 短的标识类（上限 128） | 同上 |
 | `installed_packages[].version`、`capabilities[].name` | 短的标识类（上限 64） | 同上 |

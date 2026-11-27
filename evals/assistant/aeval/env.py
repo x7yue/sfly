@@ -677,7 +677,7 @@ class Stack:
         out = d.sh(
             container,
             "curl -fsS -X POST -H 'content-type: application/json' -H @- -d '{}' "
-            f"http://sfly.internal:8080/agents/{name}/credentials",
+            f"http://sfly.internal:8080/projects/default/agents/{name}/credentials",
             input_text=f"cookie: {cookie}\nsec-fetch-site: same-origin\n",
         )
         return str(json.loads(out.stdout)["token"])

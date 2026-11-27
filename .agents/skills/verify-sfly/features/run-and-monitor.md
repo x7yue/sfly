@@ -25,7 +25,7 @@ Preconditions:
 
 - **打开抽屉。** 在画布上点 `button "运行"`，出现标题「运行 · 验证回显」，里面有「入口参数 0 个」和「触发前检查」两块，还有 `button "触发运行"`。截图 `run-01-drawer.png`。
 - **触发。** 点 `button "触发运行"`。运行结束要轮询 API，等到 `curl -s $HTTP_URL/api/runs` 里这次运行的 `status` 变成 `success`，本机通常不到 1 秒。抽屉显示 `成功 <运行ID前8位> <耗时>`，「主链 2/2」，「运行已结束：成功。」截图 `run-02-finished.png`。
-- **副作用。** `curl -s $HTTP_URL/api/runs/<运行ID> > $RUN/evidence/run-run.json`，里面 `chains[0].nodes` 中 `echo_1` 的 `outputs` 应该是 `{"text":"你好 sfly"}`，`triggered_by` 是浏览器里填的昵称。再看 `/api/agents`，`installed_packages` 里有 `sfly-stub 0.1.0`，说明 Agent 从控制面装好了这个包。
+- **副作用。** `curl -s $HTTP_URL/api/runs/<运行ID> > $RUN/evidence/run-run.json`，里面 `chains[0].nodes` 中 `echo_1` 的 `outputs` 应该是 `{"text":"你好 sfly"}`，`triggered_by` 是浏览器里填的昵称。再看 `/api/projects/default/agents`，`installed_packages` 里有 `sfly-stub 0.1.0`，说明 Agent 从控制面装好了这个包。
 - **运行监控。** 运行 `find role link click --name "打开运行监控"`，URL 变成 `/runs/<运行ID>?view=overview`，页头 `tab "概览"` 选中，能看到「链路」，和「执行中节点的主指标」（这个场景没设关注项，运行已经结束，所以没有可显示的节点）。再点 `tab "详情"`，URL 变成 `?view=detail`，才能看到 `region "链路时间线"` 和 `region "底部面板"`。点底部面板的 `tab "输入输出"`，应该看到 `text` 的值 `你好 sfly`。截图 `run-03-detail.png`。
 - **运行记录。** 打开 `$HTTP_URL/runs`，`table "历史运行"` 里有一行包含运行 ID 的前 8 位，状态是成功。
 

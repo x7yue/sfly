@@ -160,7 +160,7 @@ describe("sfly api → 控制面", () => {
 		});
 
 		it("上传接口不支持：提示用 sfly publish", async () => {
-			const result = await cli("POST", "/packages");
+			const result = await cli("POST", "/projects/default/packages");
 			expect(result.code).toBe(2);
 			expect(result.stderr).toContain("请求体是原始字节");
 			expect(result.stderr).toContain("sfly publish");
@@ -266,7 +266,7 @@ describe("sfly api → 控制面", () => {
 			);
 			expect(row("GET", "/runs/:id/events")).toMatch(/SSE\s+只读\s+实时推送一次运行/);
 			expect(row("GET", "/llms.txt")).toMatch(/下载\s+只读/);
-			expect(row("POST", "/packages")).toMatch(/上传\s+有副作用/);
+			expect(row("POST", "/projects/:project/packages")).toMatch(/上传\s+有副作用/);
 			expect(row("GET", "/runs")).toMatch(/query: .*limit/);
 			// 新建别类、新建同类、删除或归档，在效果一列里写明
 			expect(row("POST", "/orchestrations/:id/runs")).toMatch(
@@ -419,7 +419,7 @@ describe("sfly api → 控制面", () => {
 			expect(download.stdout).toContain(
 				"响应：文件内容（content-type：text/plain; charset=utf-8）",
 			);
-			const upload = await cli("--describe", "POST", "/packages");
+			const upload = await cli("--describe", "POST", "/projects/default/packages");
 			expect(upload.stdout).toContain("sfly api 不能直接调用");
 			const empty = await cli("--describe", "DELETE", "/feishu-bots/:name");
 			expect(empty.stdout).toContain("响应：没有响应体（204）");

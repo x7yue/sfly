@@ -30,7 +30,7 @@ sfly 是测试编排平台：节点包里用 `@node` 声明的 Python 函数，�
 按顺序读下面各页，照着做，每一步达到「完成」再做下一步。
 
 1. **检查环境并安装**：先确认是 Linux（`uname -sm` 输出 `Linux x86_64` 或 `Linux aarch64`；其他系统不支持，WSL 可以），再在开发机上用一条命令安装 sfly Agent，加 `--dev` 同时装好 `sfly` 命令行。见 [安装 Agent](install-agent.md)。
-   - 完成：`sfly --version` 输出 `sfly {{SFLY_VERSION}}`，这台机器的 Agent 在线（[Agent 管理](/agents) 页面，或 `curl -s {{SFLY_URL}}/agents` 的列表里 `status` 是 `online`）。已经装过当前版本时跳过安装。
+   - 完成：`sfly --version` 输出 `sfly {{SFLY_VERSION}}`，这台机器的 Agent 在线（[Agent 管理](/agents) 页面，或 `curl -s {{SFLY_URL}}/projects/default/agents` 的列表里 `status` 是 `online`）。已经装过当前版本时跳过安装。
 2. **初始化**：`sfly init` 创建节点包目录，带示例节点、单元测试和给 AI 编程助手的 skill。见 [初始化节点包](init-project.md)。
    - 完成：在节点包目录里 `uv run pytest` 全部通过。已经在 `sfly init` 创建的节点包目录里时跳过这一步。
 3. **开发**：用 `@node` 写节点，`ctx` 上报日志、进度、指标、产物。见 [开发节点（SDK 参考）](sdk-reference.md)。

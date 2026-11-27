@@ -42,7 +42,7 @@ describe("立即更新", () => {
 	};
 
 	const updateNow = (name: string) =>
-		api.post(`/agents/${encodeURIComponent(name)}/update-now`, {});
+		api.post(`/projects/default/agents/${encodeURIComponent(name)}/update-now`, {});
 
 	/** Agent 在心跳里上报更新状态，并带上手上的任务 `held`。 */
 	const report = async (

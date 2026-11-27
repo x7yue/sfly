@@ -61,7 +61,7 @@ describe("停用的 Agent 不参与派发", () => {
 		const id = await api.orchestrationWith(orchestration(0));
 		expect((await api.getJson<Preflight>(`/orchestrations/${id}/preflight`)).problems).toEqual([]);
 
-		expect((await post("/agents/agent-a/disable")).status).toBe(204);
+		expect((await post("/projects/default/agents/agent-a/disable")).status).toBe(204);
 		await eventually(async () => expect(first.ended).toBe(true));
 		const { problems } = await api.getJson<Preflight>(`/orchestrations/${id}/preflight`);
 		expect(problems).toEqual([
@@ -75,7 +75,7 @@ describe("停用的 Agent 不参与派发", () => {
 		expect(refused.status).toBe(400);
 		expect(await api.getJson(`/orchestrations/${id}/runs`)).toEqual({ runs: [] });
 
-		expect((await post("/agents/agent-a/enable")).status).toBe(204);
+		expect((await post("/projects/default/agents/agent-a/enable")).status).toBe(204);
 		await connect();
 		expect((await api.getJson<Preflight>(`/orchestrations/${id}/preflight`)).problems).toEqual([]);
 		await api.triggerOk(id);
@@ -104,7 +104,7 @@ describe("停用的 Agent 不参与派发", () => {
 			// 这个项目里被停用：agent_disabled（上一条用例）。
 			await connect("agent-a");
 			const own = await api.orchestrationWith(orchestration(0));
-			expect((await post("/agents/agent-a/disable")).status).toBe(204);
+			expect((await post("/projects/default/agents/agent-a/disable")).status).toBe(204);
 			expect(
 				(await api.getJson<Preflight>(`/orchestrations/${own}/preflight`)).problems.map(
 					(p) => p.code,
@@ -123,7 +123,7 @@ describe("停用的 Agent 不参与派发", () => {
 		await agent.started(task);
 		await eventually(async () => expect((await api.node(runId, "a")).status).toBe("running"));
 
-		expect((await post("/agents/agent-a/disable")).status).toBe(204);
+		expect((await post("/projects/default/agents/agent-a/disable")).status).toBe(204);
 		await eventually(async () => expect(agent.ended).toBe(true));
 		// 连接断了，但不立刻判失败：和别的失联一样，等租约过期。
 		expect((await api.node(runId, "a")).status).toBe("running");
@@ -138,7 +138,7 @@ describe("停用的 Agent 不参与派发", () => {
 
 		// 停用期间连不上，第 2 次尝试留在队列里；恢复之后重连，派下来。
 		await expect(connect()).rejects.toThrow(/停用/);
-		expect((await post("/agents/agent-a/enable")).status).toBe(204);
+		expect((await post("/projects/default/agents/agent-a/enable")).status).toBe(204);
 		const again = await connect();
 		const second = await again.nextAssign();
 		expect(second).toMatchObject({ runId, nodeId: "a", attempt: 2 });

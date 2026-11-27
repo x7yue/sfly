@@ -463,7 +463,9 @@ describe("改密码、平台管理员管理账号", () => {
 			const read = (headers: Record<string, string>) => cp.fetch("/orchestrations", { headers });
 			const bearerOf = (t: string) => ({ authorization: `Bearer ${t}` });
 			const download = (t: string) =>
-				cp.fetch("/packages/stub/versions/1.0.0/archive", { headers: bearerOf(t) });
+				cp.fetch("/projects/default/packages/stub/versions/1.0.0/archive", {
+					headers: bearerOf(t),
+				});
 
 			// 启用着：能用；吊销过的不能用。
 			expect((await api(cp, cookie)("GET", "/auth/me")).status).toBe(200);

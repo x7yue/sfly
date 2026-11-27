@@ -597,7 +597,7 @@ describe("节点输入里的运行状态 ${{ run.state }}", () => {
 			).close();
 			await eventually(async () => {
 				const { agents } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(agents.find((a) => a.name === "agent-b")?.status).toBe("offline");
 			});

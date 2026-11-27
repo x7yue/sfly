@@ -8,7 +8,7 @@ import {
 	type PackageRepository,
 	type PackageSummary,
 } from "../packages/package-repository.js";
-import { DEFAULT_PROJECT } from "../projects/project-id.js";
+import { type ProjectId, pathProject } from "../projects/project-id.js";
 import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
@@ -19,15 +19,14 @@ const notFound = (reply: FastifyReply, message: string) =>
 	sendError(reply, 404, "not_found", message);
 
 /**
- * 节点包 API（契约见 @sfly/schema 的 packagesApi）：
+ * 节点包 API（契约见 @sfly/schema 的 packagesApi），都在 `/projects/:project` 下，项目从路径里取（#488）：
  *   POST /packages                                         发布（请求体为 .sflypkg 原始字节）
  *   GET  /packages                                         包列表（含各版本、节点类型摘要与锁定数）
  *   GET  /packages/:name                                   单个包的版本列表（同上）
  *   GET  /packages/:name/versions/:version                 版本详情（含完整元信息）
  *   GET  /packages/:name/versions/:version/nodes/:node     节点类型元信息
  *   GET  /packages/:name/versions/:version/archive         下载归档（x-sfly-sha256 头）
- * 路径还不带项目（#488）：读和管理都在默认项目里；发布可以用过渡的查询参数 `project=public` 发布到公共项目
- * （只有平台管理员能这样做，#565，访问检查里校验）。
+ * 读的是这个项目和公共项目里的包；发布到公共项目只有平台管理员能做（访问检查里校验）。
  */
 export function registerPackageRoutes(
 	app: FastifyInstance,
@@ -40,7 +39,7 @@ export function registerPackageRoutes(
 			(_req, body, done) => done(null, body),
 		);
 
-		contractRoute(scope, packagesApi.publish, async (_request, reply, req) => {
+		contractRoute(scope, packagesApi.publish, async ({ params }, reply, req) => {
 			// 带了凭据的发布记下发布人；不带凭据的（#494 之前照旧放行）没有。
 			const { access } = req;
 			const publisher = access && {
@@ -57,10 +56,8 @@ export function registerPackageRoutes(
 				);
 			}
 			try {
-				// 发布到哪个项目由访问检查得出（查询参数 `project=public` 只有平台管理员能写，其余校验也在那里）；
-				// 没有身份（不带凭据、共享令牌）时一定是默认项目：公共项目已经被拒绝了。
 				const published = await packages.publish(
-					access?.project ?? DEFAULT_PROJECT,
+					pathProject(params),
 					new Uint8Array(req.body),
 					publisher ?? null,
 				);
@@ -76,8 +73,8 @@ export function registerPackageRoutes(
 	});
 
 	// 锁定数随各场景的最新版本变化，查询时现算。
-	const withLocks = async (summaries: PackageSummary[]) => {
-		const locks = packageLocks(await orchestrations.rawHeadDocuments(DEFAULT_PROJECT));
+	const withLocks = async (project: ProjectId, summaries: PackageSummary[]) => {
+		const locks = packageLocks(await orchestrations.rawHeadDocuments(project));
 		return summaries.map((pkg) => ({
 			...pkg,
 			versions: pkg.versions.map((v) => ({
@@ -87,30 +84,35 @@ export function registerPackageRoutes(
 		}));
 	};
 
-	contractRoute(app, packagesApi.list, async () => ({
-		packages: await withLocks(await packages.list(DEFAULT_PROJECT)),
-	}));
+	contractRoute(app, packagesApi.list, async ({ params }) => {
+		const project = pathProject(params);
+		return { packages: await withLocks(project, await packages.list(project)) };
+	});
 
 	contractRoute(app, packagesApi.get, async ({ params }, reply) => {
-		const pkg = await packages.get(DEFAULT_PROJECT, params.name);
+		const project = pathProject(params);
+		const pkg = await packages.get(project, params.name);
 		if (!pkg) return notFound(reply, `节点包 ${params.name} 不存在`);
-		const [view] = await withLocks([pkg]);
+		const [view] = await withLocks(project, [pkg]);
 		return view ?? notFound(reply, `节点包 ${params.name} 不存在`);
 	});
 
-	contractRoute(app, packagesApi.version, async ({ params: { name, version } }, reply) => {
-		const found = await packages.getVersion(DEFAULT_PROJECT, name, version);
+	contractRoute(app, packagesApi.version, async ({ params }, reply) => {
+		const { name, version } = params;
+		const found = await packages.getVersion(pathProject(params), name, version);
 		return found ?? notFound(reply, `节点包 ${name}@${version} 不存在`);
 	});
 
-	contractRoute(app, packagesApi.nodeType, async ({ params: { name, version, node } }, reply) => {
-		const found = await packages.getVersion(DEFAULT_PROJECT, name, version);
+	contractRoute(app, packagesApi.nodeType, async ({ params }, reply) => {
+		const { name, version, node } = params;
+		const found = await packages.getVersion(pathProject(params), name, version);
 		const nodeType = found?.metadata.nodes.find((n) => n.name === node);
 		return nodeType ?? notFound(reply, `节点类型 ${name}/${node}（${version}）不存在`);
 	});
 
-	contractDownload(app, packagesApi.archive, async ({ params: { name, version } }, reply) => {
-		const stored = await packages.archive(DEFAULT_PROJECT, name, version);
+	contractDownload(app, packagesApi.archive, async ({ params }, reply) => {
+		const { name, version } = params;
+		const stored = await packages.archive(pathProject(params), name, version);
 		if (!stored) return notFound(reply, `节点包 ${name}@${version} 不存在`);
 		return reply
 			.type(packagesApi.archive.contentType)

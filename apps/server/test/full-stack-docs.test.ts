@@ -215,7 +215,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 		const agentOnline = (name: string) =>
 			eventually(async () => {
 				const { agents } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(agents.find((a) => a.name === name)?.status, `${name}\n${foregroundLog}`).toBe(
 					"online",
@@ -378,7 +378,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 				expect(result.stdout).toContain("read -rs SFLY_TOKEN && export SFLY_TOKEN");
 				expect(result.stdout.split(issued as string).length - 1).toBe(1);
 				expect(result.stderr).not.toContain(issued as string);
-				const res = await cp.fetch("/agents/worker-1/credentials", {
+				const res = await cp.fetch("/projects/default/agents/worker-1/credentials", {
 					headers: { authorization: `Bearer ${readerToken}` },
 				});
 				const listed = (await res.json()) as { credentials: unknown[] };
@@ -408,7 +408,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 				expect(result.stdout).toContain(`已发布 ${PACKAGE}@${version}`);
 				await runScenario(version);
 			}
-			if (block.includes("sfly-std-") && block.includes("/packages")) {
+			if (block.includes("sfly-std-") && block.includes("/projects/default/packages")) {
 				// sha256sum -c 的输出之后是 curl 打印的响应：上传的节点包版本。
 				expect(result.stdout).toContain(`${std.file}: OK`);
 				const published = JSON.parse(result.stdout.slice(result.stdout.indexOf("{")));
@@ -443,7 +443,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 					} else if (isForegroundAgent(block)) {
 						await startForeground(block);
 					} else {
-						if (block.includes("/agents") || /\bsfly dev\b/.test(block)) {
+						if (block.includes("/projects/default/agents") || /\bsfly dev\b/.test(block)) {
 							await agentOnline(devAgent);
 						}
 						// 注册开发 Agent 要读者自己的身份：文档让读者先设置个人令牌（SFLY_API_TOKEN）。

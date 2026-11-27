@@ -295,7 +295,7 @@ describe("编排版本", () => {
 		expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ head_version: 1 });
 
 		const published = await cp.fetch(
-			"/packages",
+			"/projects/default/packages",
 			publishInit(
 				packageArchive(
 					packageMetadata({

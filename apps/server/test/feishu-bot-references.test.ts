@@ -54,7 +54,9 @@ describe("删除飞书机器人之前列出引用它的场景", () => {
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", "http://127.0.0.1:9/hook/a");
 		await api.createFeishuBot("dev", "http://127.0.0.1:9/hook/b");
 	});

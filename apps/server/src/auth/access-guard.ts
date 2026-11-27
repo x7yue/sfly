@@ -257,7 +257,7 @@ export class AccessGuard {
 	/**
 	 * 检查一个请求；返回拒绝的原因，或通过时的身份。
 	 *
-	 * 公共项目只有平台管理员能写（{@link PUBLIC_WRITE_DENIED}），判的范围：项目写在路径或查询参数里的写接口（对所有身份，
+	 * 公共项目只有平台管理员能写（{@link PUBLIC_WRITE_DENIED}），判的范围：项目写在路径里的写接口（对所有身份，
 	 * 不读库），和带凭据的、按 ID 定位的写接口（读库得出项目之后，在 `#checkScoped` 里判）。不带凭据和共享令牌的、按 ID 定位的
 	 * 写（场景、运行、任务、会话）没有判：读库之前没有项目可判，强制登录（#494）之后这一类都带凭据，由 #494 关上。
 	 */
@@ -284,28 +284,22 @@ export class AccessGuard {
 		const presented = crossSite ? undefined : offered;
 		// 登出例外（`#checkLogout`）：它要看到跨站带来的 Cookie，才能把库里的这条登录也注销。
 		if (locator.from === "account") return this.#checkAccount(request, presented, offered);
-		// 项目写在查询参数里（过渡，#565）：写错了的先拒绝，不管有没有凭据。
-		const queried = locator.from === "query" ? queriedProject(locator.param, request) : undefined;
-		if (queried !== undefined && "denied" in queried) return queried.denied;
-		// 这次写的是公共项目吗：只看不用读库就知道的（查询参数里的项目、路径里的项目）。按 ID 定位的资源
-		// （场景、运行、会话…）要读库才知道它在哪个项目里：带了凭据的在 `#checkScoped` 里判，不带凭据和共享令牌的
-		// 这里没有判（到 #494 强制登录之后它们都带凭据）。
+		// 这次写的是公共项目吗：只看路径里的项目，不读库。按 ID 定位的资源（场景、运行、会话…）要读库才知道它在哪个项目里：
+		// 带了凭据的在 `#checkScoped` 里判，不带凭据和共享令牌的这里没有判（到 #494 强制登录之后它们都带凭据）。
 		const named =
-			locator.from === "query"
-				? queried?.project
-				: locator.from === "path" && locator.param !== null
-					? parseProjectId(request.params[locator.param] ?? "")
-					: undefined;
+			locator.from === "path" && locator.param !== null
+				? parseProjectId(request.params[locator.param] ?? "")
+				: undefined;
 		const publicWrite = writesPublicProject(named, request.route);
 		if (presented === undefined) {
 			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
 			if (publicWrite) return denied(401, "unauthorized", PUBLIC_WRITE_DENIED);
 			return requiresCredential(request.route)
 				? denied(401, "unauthorized", credentialRequiredMessage(request.route))
-				: { ok: true, access: null };
+				: this.#letThrough(locator, named);
 		}
 		const resolved = await this.#resolve(presented);
-		const result = await this.#decide(resolved, request, locator, queried?.project, publicWrite);
+		const result = await this.#decide(resolved, request, locator, named, publicWrite);
 		return withCookie(result, resolved, request, this.#idleMs);
 	}
 
@@ -313,7 +307,7 @@ export class AccessGuard {
 		{ principal }: Resolved,
 		request: AccessRequest,
 		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
-		queried: ProjectId | undefined,
+		named: ProjectId | undefined,
 		publicWrite: boolean,
 	): Promise<AccessResult> {
 		if (principal === undefined) {
@@ -323,7 +317,7 @@ export class AccessGuard {
 			if (publicWrite) return denied(403, "forbidden", PUBLIC_WRITE_DENIED);
 			return requiresCredential(request.route)
 				? denied(403, "forbidden", "共享令牌不能调用这个接口：它只给 Agent 用")
-				: { ok: true, access: null };
+				: this.#letThrough(locator, named);
 		}
 		// 路径参数含 NUL：它不指向任何东西，和不带凭据时一样是 404（契约路由的约定，#212）；
 		// 不能往下走：管理员的写记录要把路径参数写进库，NUL 存不进 PostgreSQL 的文本。
@@ -335,7 +329,7 @@ export class AccessGuard {
 			return this.#checkProgram(principal, request, locator);
 		}
 		const memo: Memo = {};
-		const project = queried ?? (await this.#projectOf(locator, request.params, memo));
+		const project = await this.#projectOf(locator, request.params, memo);
 		if (project === undefined) return notFound();
 		return this.#checkScoped(principal, request, project, memo);
 	}
@@ -498,6 +492,19 @@ export class AccessGuard {
 		return { principal: credential && agentPrincipal(credential) };
 	}
 
+	/**
+	 * 不带凭据、共享令牌照旧放行的请求（到 #494）：路径里写了项目的，项目要存在（ADR 0029：不存在和看不见一样是 404），
+	 * 读一次库；别的不读库。带凭据的请求在得出项目之后的检查里同样是 404。
+	 */
+	async #letThrough(
+		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
+		named: ProjectId | undefined,
+	): Promise<AccessResult> {
+		if (locator.from !== "path" || locator.param === null) return { ok: true, access: null };
+		if (named === undefined || !(await this.deps.store.projectExists(named))) return notFound();
+		return { ok: true, access: null };
+	}
+
 	// ---- 项目从请求的哪里来 ----
 
 	/** 请求作用在哪个项目里；资源不存在（或路径里的项目写得不对）时返回 undefined。 */
@@ -506,8 +513,6 @@ export class AccessGuard {
 		params: AccessRequest["params"],
 		memo: Memo = {},
 	): Promise<ProjectId | undefined> {
-		// 查询参数里的项目在 check() 里先得出（写错了要拒绝，不是「找不到」）。
-		if (locator.from === "query") return DEFAULT_PROJECT;
 		if (locator.from === "path") {
 			if (locator.param === null) return DEFAULT_PROJECT;
 			const value = params[locator.param];
@@ -768,27 +773,6 @@ export class AccessGuard {
 	async finishAdminWrite(id: string, status: number): Promise<void> {
 		await this.deps.store.completeAdminWrite(id, status);
 	}
-}
-
-/**
- * 项目写在查询参数里的接口（过渡，#565）：不写是默认项目，写了只认 `public`；别的值（别的项目名、写了几次、不是字符串）
- * 拒绝 400，说明现在只能写 public。
- */
-function queriedProject(
-	param: string,
-	request: AccessRequest,
-): { project: ProjectId } | { denied: AccessResult } {
-	const value = request.query?.[param];
-	if (value === undefined) return { project: DEFAULT_PROJECT };
-	if (value === PUBLIC_PROJECT) return { project: PUBLIC_PROJECT };
-	return {
-		denied: denied(
-			400,
-			"invalid_request",
-			`查询参数 ${param} 现在只能写 ${PUBLIC_PROJECT}（发布到公共项目，只有平台管理员能这样做）；` +
-				"不写时发布到默认项目",
-		),
-	};
 }
 
 /** 一次检查里先读到、后面还要用的东西（同一行不读两次）。 */

@@ -65,7 +65,10 @@ describe("按项目找飞书机器人（保存、检查、预检、运行通知�
 		await accounts.project("alpha");
 		feishu = await startFakeFeishu();
 		for (const name of ["alerts", "alerts-alpha"]) {
-			const res = await cp.fetch("/packages", publishInit(packageArchive(scopeMetadata(name))));
+			const res = await cp.fetch(
+				"/projects/default/packages",
+				publishInit(packageArchive(scopeMetadata(name))),
+			);
 			expect(res.status, name).toBe(201);
 		}
 		await sql.query("update node_packages set project_id = 'alpha' where name = 'alerts-alpha'");

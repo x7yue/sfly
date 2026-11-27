@@ -228,7 +228,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 				["运行日志的下载", await text(`/runs/${runId}/logs/download`)],
 				["仪表盘", await text("/dashboard")],
 				["关注项", await text(`/runs/${runId}/focus?points=0`)],
-				["Agent 列表", await text("/agents")],
+				["Agent 列表", await text("/projects/default/agents")],
 				["场景预检", await text(`/orchestrations/${id}/preflight`)],
 			];
 			for (const [what, body] of outputs) {

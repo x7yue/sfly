@@ -143,7 +143,7 @@ test("还没有节点包时显示空状态和发布命令，链接到开发文�
 
 test("加载失败时显示错误，可以重试", async ({ page, controlPlane }) => {
 	await publishPackage(controlPlane);
-	const outage = await failApi(page, "/packages");
+	const outage = await failApi(page, "/projects/default/packages");
 	await page.goto("/packages");
 	await expect(page.getByRole("alert")).toContainText("无法加载节点包");
 	await outage.restore();

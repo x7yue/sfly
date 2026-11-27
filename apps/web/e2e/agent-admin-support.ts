@@ -31,7 +31,7 @@ export async function setAgentDisabled(
 		await accounts.member("default", boss, "project_admin");
 		const token = await accounts.personalToken(boss);
 		const response = await controlPlane.fetch(
-			`/agents/${name}/${disabled ? "disable" : "enable"}`,
+			`/projects/default/agents/${name}/${disabled ? "disable" : "enable"}`,
 			{
 				method: "POST",
 				headers: bearer(token),

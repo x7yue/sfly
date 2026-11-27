@@ -144,7 +144,10 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 		await accounts.project("alpha");
 		feishu = await startFakeFeishu();
 		for (const name of ["alerts", "alerts-alpha"]) {
-			const res = await cp.fetch("/packages", publishInit(packageArchive(scopeMetadata(name))));
+			const res = await cp.fetch(
+				"/projects/default/packages",
+				publishInit(packageArchive(scopeMetadata(name))),
+			);
 			expect(res.status, name).toBe(201);
 		}
 		await sql.query("update node_packages set project_id = 'alpha' where name = 'alerts-alpha'");

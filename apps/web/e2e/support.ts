@@ -23,7 +23,7 @@ export async function publishPackage(
 	overrides: Record<string, unknown> = {},
 ): Promise<void> {
 	const archive = packageArchive(packageMetadata(overrides));
-	await ok(await cp.fetch("/packages", publishInit(archive)), "发布节点包");
+	await ok(await cp.fetch("/projects/default/packages", publishInit(archive)), "发布节点包");
 }
 
 /** 新建场景，给了文档时保存为第 1 版；返回场景 ID。 */

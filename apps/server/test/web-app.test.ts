@@ -41,14 +41,18 @@ describe("控制面托管前端（SPA）", () => {
 		expect(asset.headers.get("content-type")).toMatch(/^text\/javascript/);
 		expect(await asset.text()).toBe(APP_JS);
 
-		const agents = await cp.fetch("/api/agents");
+		const agents = await cp.fetch("/api/projects/default/agents");
 		expect(agents.status).toBe(200);
 		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 	});
 
 	it("浏览器导航到前端路由时回退到入口页，包括与 API 同名的路径", async () => {
 		cp = await startTestControlPlane({ webDir });
-		for (const path of ["/agents", "/orchestrations/abc/runs", "/no/such/page?x=1"]) {
+		for (const path of [
+			"/projects/default/agents",
+			"/orchestrations/abc/runs",
+			"/no/such/page?x=1",
+		]) {
 			const res = await cp.fetch(path, { headers: NAVIGATE });
 			expect(res.status, path).toBe(200);
 			expect(await res.text(), path).toBe(INDEX_HTML);
@@ -76,7 +80,7 @@ describe("控制面托管前端（SPA）", () => {
 
 	it("Agent、CLI 等非浏览器客户端访问根路径上的 API 不受影响", async () => {
 		cp = await startTestControlPlane({ webDir });
-		const agents = await cp.fetch("/agents");
+		const agents = await cp.fetch("/projects/default/agents");
 		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 		const missing = await cp.fetch("/no/such/route");
 		expect(missing.status).toBe(404);
@@ -134,6 +138,6 @@ describe("控制面托管前端（SPA）", () => {
 		cp = await startTestControlPlane();
 		const res = await cp.fetch("/", { headers: NAVIGATE });
 		expect(res.status).toBe(404);
-		expect((await cp.fetch("/api/agents")).status).toBe(200);
+		expect((await cp.fetch("/api/projects/default/agents")).status).toBe(200);
 	});
 });

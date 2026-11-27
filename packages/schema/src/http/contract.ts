@@ -295,6 +295,9 @@ export type ApiErrorBody = z.infer<typeof ApiErrorBody>;
 /** 时间：ISO 8601 字符串（控制面用 `Date#toISOString()` 输出）。 */
 export const Timestamp = z.iso.datetime();
 
+/** 路径里的项目（`/projects/:project/…`，ADR 0029「项目从请求的哪里来」）：项目不存在时控制面回 404。 */
+export const ProjectParams = z.object({ project: z.string().min(1) });
+
 /**
  * 控制面时间（GLOSSARY「时间」，ADR 0018）：控制面把自己的当前时间带给页面，页面据此修正浏览器时间，
  * "已运行"等时长才不依赖浏览器时钟（apps/web/src/lib/control-plane-time.ts）。

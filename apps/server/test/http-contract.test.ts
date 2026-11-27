@@ -191,8 +191,8 @@ describe("请求里的 NUL 字符（#212）", () => {
 
 	it("路径参数含 NUL 的标识不指向任何东西，返回 404 not_found", async () => {
 		for (const [method, path] of [
-			["POST", "/agents/%00/update-now"],
-			["GET", "/packages/stub/versions/%00"],
+			["POST", "/projects/default/agents/%00/update-now"],
+			["GET", "/projects/default/packages/stub/versions/%00"],
 		] as const) {
 			const res = await cp.fetch(path, { method });
 			expect(res.status, `${method} ${path}`).toBe(404);

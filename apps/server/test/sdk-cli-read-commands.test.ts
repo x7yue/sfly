@@ -132,7 +132,7 @@ describe("sfly 只读命令 → 控制面", () => {
 		});
 	const publishRich = async (version: string) => {
 		const res = await cp.fetch(
-			"/packages",
+			"/projects/default/packages",
 			publishInit(
 				packageArchive(richMetadata(version), {
 					[`rich-${version}-py3-none-any.whl`]: strToU8("wheel"),

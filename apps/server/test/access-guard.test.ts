@@ -184,14 +184,17 @@ describe("契约路由的访问检查", () => {
 	};
 
 	describe("不带凭据、带共享令牌：照旧放行（到 #494 才拒绝）", () => {
-		it("不带凭据的请求每个接口都放行，不读库，没有身份（账号类接口除外：它们需要登录，见 accounts-http.test.ts）", async () => {
+		it("不带凭据的请求每个接口都放行，没有身份（账号类接口除外：它们需要登录，见 accounts-http.test.ts）；只有路径里写了项目的读一次库，核对项目存在", async () => {
+			let pathScoped = 0;
 			for (const def of httpContract) {
 				// 登录、初始化、状态本来就不要凭据，登出什么凭据都不拒绝，其余账号类接口不带登录是 401：这是新接口，没有「照旧」可言。
 				if (locatorOf(def)?.from === "account" || needsCredential(def)) continue;
 				const result = await run(def, {});
 				expect(result, routeKey(def)).toEqual({ ok: true, access: null });
+				if (def.path.startsWith("/projects/:project/")) pathScoped++;
 			}
-			expect(store.reads).toBe(0);
+			expect(pathScoped).toBeGreaterThan(0);
+			expect(store.reads).toBe(pathScoped);
 		});
 
 		it("项目的管理面（项目令牌）和 Agent 凭据的签发、列出、吊销、Agent 的停用、恢复是新这一套信任的根，没有「照旧」可言：不带凭据是 401，带共享令牌是 403，不读库", async () => {
@@ -209,11 +212,11 @@ describe("契约路由的访问检查", () => {
 					"POST /projects/:project/tokens",
 					"DELETE /projects/:project/tokens/:id",
 					// 不带任何凭据的请求能给任意名字签发 Agent 凭据、再用它连上来顶掉用共享令牌连着的那一台（#638 审查）。
-					"GET /agents/:name/credentials",
-					"POST /agents/:name/credentials",
-					"DELETE /agents/:name/credentials/:id",
-					"POST /agents/:name/disable",
-					"POST /agents/:name/enable",
+					"GET /projects/:project/agents/:name/credentials",
+					"POST /projects/:project/agents/:name/credentials",
+					"DELETE /projects/:project/agents/:name/credentials/:id",
+					"POST /projects/:project/agents/:name/disable",
+					"POST /projects/:project/agents/:name/enable",
 					// 建会话只认用户的凭据（#547）：会话令牌代发起人干活，没有发起人的会话签发不了令牌。
 					"POST /projects/:project/sessions",
 					...REQUIRES_CREDENTIAL_ROUTES,
@@ -484,7 +487,7 @@ describe("契约路由的访问检查", () => {
 				ok: true,
 				access: { credential: "project", userId: null, name: "CI", tokenName: "CI", role: null },
 			});
-			expect(outcome(await run(route("POST /packages"), runner))).toBe(403);
+			expect(outcome(await run(route("POST /projects/:project/packages"), runner))).toBe(403);
 		});
 
 		it("项目令牌不能带「管理」：成员、角色、Agent 和飞书机器人的管理只能由人做，库里写了 manage 也不认", async () => {
@@ -492,12 +495,14 @@ describe("契约路由的访问检查", () => {
 			const manager = token({ kind: "project", projectId: DEFAULT, scopes: ["read", "manage"] });
 			for (const c of [everything, manager]) {
 				expect(outcome(await run(route("POST /feishu-bots"), c))).toBe(403);
-				expect(outcome(await run(route("POST /agents/:name/update-now"), c))).toBe(403);
+				expect(
+					outcome(await run(route("POST /projects/:project/agents/:name/update-now"), c)),
+				).toBe(403);
 				expect(outcome(await run(route("GET /feishu-bots"), c))).toBe("ok");
 			}
 			// 别的范围照常：带了全部范围的项目令牌能运行、编辑、发布。
 			expect(outcome(await run(route("POST /orchestrations/:id/runs"), everything))).toBe("ok");
-			expect(outcome(await run(route("POST /packages"), everything))).toBe("ok");
+			expect(outcome(await run(route("POST /projects/:project/packages"), everything))).toBe("ok");
 			// 人的凭据不受影响：项目管理员照样管理。
 			expect(outcome(await run(route("POST /feishu-bots"), personal(USERS.boss)))).toBe("ok");
 		});
@@ -545,7 +550,7 @@ describe("契约路由的访问检查", () => {
 			it("发布和管理：缺少范围，403，说明缺哪个；令牌行里写了这两个范围也不认（会话令牌的上限是读、运行、编辑、会话构建）", async () => {
 				// 发起人是项目管理员（有「发布」「管理」），令牌行里还写了这两个范围：仍然拿不到。
 				const generous = session(USERS.boss, { scopes: [...SCOPES] });
-				expect(await run(route("POST /packages"), generous)).toMatchObject({
+				expect(await run(route("POST /projects/:project/packages"), generous)).toMatchObject({
 					ok: false,
 					status: 403,
 					message: expect.stringContaining("缺少「发布」范围"),
@@ -557,7 +562,9 @@ describe("契约路由的访问检查", () => {
 				});
 				// 同一个发起人用个人令牌：放行（说明挡住会话令牌的不是角色）。
 				expect(outcome(await run(route("POST /feishu-bots"), personal(USERS.boss)))).toBe("ok");
-				expect(outcome(await run(route("POST /packages"), personal(USERS.boss)))).toBe("ok");
+				expect(
+					outcome(await run(route("POST /projects/:project/packages"), personal(USERS.boss))),
+				).toBe("ok");
 			});
 
 			it("声明了 removes 的接口（删除、归档）：一律 403，说明是会话令牌不能删除或归档；同一个发起人的个人令牌可以", async () => {
@@ -929,10 +936,13 @@ describe("契约路由的访问检查", () => {
 	describe("公共项目：任何凭据都能读它的节点包", () => {
 		// 路径还不带项目（#488）：用 #488 之后的写法构造接口，路径里有 :project 就按它得出项目。
 		const publicPackage: RouteDef = {
-			...route("GET /packages/:name/versions/:version"),
+			...route("GET /projects/:project/packages/:name/versions/:version"),
 			path: "/projects/:project/packages/:name/versions/:version",
 		};
-		const publish: RouteDef = { ...route("POST /packages"), path: "/projects/:project/packages" };
+		const publish: RouteDef = {
+			...route("POST /projects/:project/packages"),
+			path: "/projects/:project/packages",
+		};
 		const scenarios: RouteDef = {
 			...route("GET /orchestrations"),
 			path: "/projects/:project/orchestrations",
@@ -980,24 +990,23 @@ describe("契约路由的访问检查", () => {
 		});
 	});
 
-	describe("发布节点包时指明公共项目：过渡的查询参数 project=public（#565）", () => {
-		const publish = route("POST /packages");
-		const check = (credentials: Credentials & { fetchSite?: string }, project?: unknown) =>
+	describe("发布节点包到公共项目：POST /projects/public/packages（#565、#488）", () => {
+		const publish = route("POST /projects/:project/packages");
+		const check = (credentials: Credentials & { fetchSite?: string }, project = "default") =>
 			guard.check({
 				route: publish,
-				params: {},
-				...(project === undefined ? {} : { query: { project } }),
+				params: { project },
 				// 登录 Cookie 要同源的请求才认（./cross-site.ts）：这些测试默认是控制台自己发的请求。
 				fetchSite: "same-origin",
 				...credentials,
 			});
 		const DENIED = "公共项目只有平台管理员能写";
 
-		it("发布的项目从查询参数得出：不写是默认项目，写 public 是公共项目", () => {
-			expect(locatorOf(publish)).toEqual({ from: "query", param: "project" });
+		it("发布的项目从路径得出", () => {
+			expect(locatorOf(publish)).toEqual({ from: "path", param: "project" });
 		});
 
-		it("不写 project：和以前一样发布到默认项目，不带凭据放行、没有身份", async () => {
+		it("发布到默认项目：和以前一样，不带凭据放行、没有身份", async () => {
 			expect(await check({})).toEqual({ ok: true, access: null });
 			const result = await check(personal(USERS.boss));
 			expect(result).toMatchObject({ ok: true, access: { project: "default" } });
@@ -1012,8 +1021,8 @@ describe("契约路由的访问检查", () => {
 			expect(
 				store.adminWrites.map((w) => [w.projectId, w.route, w.resourceKind, w.resourceId]),
 			).toEqual([
-				["public", "POST /packages", "package", null],
-				["public", "POST /packages", "package", null],
+				["public", "POST /projects/:project/packages", "package", null],
+				["public", "POST /projects/:project/packages", "package", null],
 			]);
 			expect(store.adminWrites[1]).toMatchObject({ tokenName: "发布令牌", userId: USERS.admin.id });
 		});
@@ -1093,7 +1102,7 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await check({ authorization: "Bearer unknown" }, "public"))).toBe(401);
 		});
 
-		it("跨站的请求带着平台管理员的登录 Cookie 指明 public：Cookie 不算（和不带凭据一样 401），不写平台管理员的记录；不指明 project 时和不带凭据一样放行", async () => {
+		it("跨站的请求带着平台管理员的登录 Cookie 发布到公共项目：Cookie 不算（和不带凭据一样 401），不写平台管理员的记录；发布到默认项目时和不带凭据一样放行", async () => {
 			const { cookie } = login(USERS.admin);
 			for (const fetchSite of ["cross-site", "same-site"]) {
 				const result = await check({ cookie, fetchSite }, "public");
@@ -1112,23 +1121,10 @@ describe("契约路由的访问检查", () => {
 			});
 		});
 
-		it("指明 public 以外的值：400，写明现在只能写 public；有没有凭据、是谁都一样", async () => {
-			for (const value of [
-				"alpha",
-				"default",
-				"Public",
-				"public ",
-				"",
-				["public", "public"],
-				"public\u0000",
-			]) {
+		it("路径里的项目不存在或写法不对：404；有没有凭据、是谁都一样", async () => {
+			for (const value of ["no-such-project", "Public", "public ", "", "public\u0000"]) {
 				for (const credentials of [{}, personal(USERS.admin), personal(USERS.boss)]) {
-					expect(await check(credentials, value), JSON.stringify(value)).toMatchObject({
-						ok: false,
-						status: 400,
-						code: "invalid_request",
-						message: expect.stringContaining("现在只能写 public"),
-					});
+					expect(outcome(await check(credentials, value)), JSON.stringify(value)).toBe(404);
 				}
 			}
 		});
@@ -1162,7 +1158,7 @@ describe("契约路由的访问检查", () => {
 				["POST /projects/:project/sessions", route("POST /projects/:project/sessions")],
 				[
 					"#488 之后的 POST /projects/:project/packages",
-					{ ...route("POST /packages"), path: "/projects/:project/packages" },
+					{ ...route("POST /projects/:project/packages"), path: "/projects/:project/packages" },
 				],
 				[
 					"#488 之后的 POST /projects/:project/orchestrations",
@@ -1529,7 +1525,7 @@ describe("契约路由的访问检查", () => {
 				personal(USERS.admin, { name: "运维令牌" }),
 			);
 			await run(route("POST /feishu-bots"), login(USERS.admin));
-			await run(route("POST /packages"), login(USERS.admin));
+			await run(route("POST /projects/:project/packages"), login(USERS.admin));
 			expect(store.adminWrites).toEqual([
 				{
 					projectId: ALPHA,
@@ -1558,7 +1554,7 @@ describe("契约路由的访问检查", () => {
 					resourceId: null,
 				}),
 				expect.objectContaining({
-					route: "POST /packages",
+					route: "POST /projects/:project/packages",
 					resourceKind: "package",
 					resourceId: null,
 				}),
@@ -1571,7 +1567,7 @@ describe("契约路由的访问检查", () => {
 			await run(route("POST /orchestrations/:id/versions"), editor);
 			await run(route("POST /orchestrations/:id/runs"), editor);
 			await run(route("POST /feishu-bots"), boss);
-			await run(route("POST /packages"), boss);
+			await run(route("POST /projects/:project/packages"), boss);
 			expect(store.adminWrites).toEqual([]);
 			await run(route("POST /feishu-bots"), login(USERS.boss));
 			await run(route("PUT /tasks/:id/artifacts/*"), login(USERS.admin), "alpha");
@@ -1616,7 +1612,7 @@ describe("契约路由的访问检查", () => {
 		};
 		const taskCredential = (project: ProjectId) =>
 			token({ kind: "task", projectId: project, name: "任务凭据" });
-		const archive = route("GET /packages/:name/versions/:version/archive");
+		const archive = route("GET /projects/:project/packages/:name/versions/:version/archive");
 		const upload = route("PUT /tasks/:id/artifacts/*");
 		const download = route("GET /tasks/:id/artifacts/*");
 
@@ -1644,7 +1640,7 @@ describe("契约路由的访问检查", () => {
 
 		it("清单是这三个接口：Agent 凭据下载节点包归档、上传产物；任务凭据下载产物", () => {
 			expect(Object.keys(AGENT_CREDENTIAL_ROUTES).sort()).toEqual([
-				"GET /packages/:name/versions/:version/archive",
+				"GET /projects/:project/packages/:name/versions/:version/archive",
 				"PUT /tasks/:id/artifacts/*",
 			]);
 			expect(Object.keys(TASK_CREDENTIAL_ROUTES)).toEqual(["GET /tasks/:id/artifacts/*"]);
