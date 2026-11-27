@@ -64,8 +64,9 @@ export function chartWindow(
 }
 
 /**
- * 有点、却没有一个落在这次尝试的时段里（开始到结束，还没结束就到 `now`）时，点所在的时间范围（第一个桶的开始到最后一个桶的
+ * 有点、却没有一个落在这次尝试的时段里（开始到结束，还没结束就到 `now`）时，数据桶的范围（第一个桶的开始到最后一个桶的
  * 结束）；否则 null。Agent 的时间换算有偏差时，点换算成控制面时间以后会落到尝试时段之外（#389）。
+ * 有桶没有换算后的时间（升级之前存下的，只有 Agent 时间）时不做这项推断。
  */
 export function pointsOutsideAttempt(
 	lines: readonly ChartLine[],
@@ -74,11 +75,20 @@ export function pointsOutsideAttempt(
 	bucketSeconds: number,
 ): TimeRange | null {
 	const span = attemptSpan(attempt, now);
-	const starts = lines.flatMap((l) => l.buckets.map(bucketStartMs));
-	if (span === null || starts.length === 0) return null;
+	if (span === null) return null;
 	const width = bucketSeconds * 1000;
-	if (starts.some((t) => t + width > span.start && t <= span.end)) return null;
-	return { start: Math.min(...starts), end: Math.max(...starts) + width };
+	let start = Number.POSITIVE_INFINITY;
+	let end = Number.NEGATIVE_INFINITY;
+	for (const line of lines) {
+		for (const bucket of line.buckets) {
+			if (bucket.time === null) return null;
+			const t = Date.parse(bucket.time);
+			if (t + width > span.start && t <= span.end) return null;
+			start = Math.min(start, t);
+			end = Math.max(end, t + width);
+		}
+	}
+	return start === Number.POSITIVE_INFINITY ? null : { start, end };
 }
 
 /** 一段时间怎么写：两端都和 `now` 同一天时只写钟点（`10:23:20 – 10:43:20`），否则写日期和钟点。 */

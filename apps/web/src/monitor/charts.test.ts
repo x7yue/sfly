@@ -107,6 +107,19 @@ describe("点都不在尝试的时段里（#389）", () => {
 		expect(pointsOutsideAttempt([line(9)], running, s(60), 5)).toBeNull();
 	});
 
+	it("1000 个序列、每个 300 个桶都在时段外：逐桶累计，不会因为参数太多出错", () => {
+		const seconds = Array.from({ length: 300 }, (_, i) => 100 + i);
+		const lines = Array.from({ length: 1000 }, () => line(...seconds));
+		expect(pointsOutsideAttempt(lines, running, s(60), 1)).toEqual({ start: s(100), end: s(400) });
+	});
+
+	it("有桶没有换算后的时间（升级之前存下的，只有 Agent 时间）：不推断", () => {
+		const old = { ...bucket(70), time: null, agent_time: at(70) };
+		expect(
+			pointsOutsideAttempt([line(80), { name: "cpu", buckets: [old] }], running, s(60), 1),
+		).toBeNull();
+	});
+
 	it("没有点、还没开始执行时不算", () => {
 		expect(pointsOutsideAttempt([line()], running, s(60), 1)).toBeNull();
 		expect(

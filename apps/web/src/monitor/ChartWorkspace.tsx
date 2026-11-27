@@ -710,7 +710,9 @@ function NodeGroup({
 					const result = series.charts.get(chart.title);
 					const lines = chartLines(chart.metrics, entry.metrics, result?.data?.series);
 					const bucketSeconds = result?.data?.bucket_seconds ?? 1;
-					const outside = runAttempt && pointsOutsideAttempt(lines, runAttempt, now, bucketSeconds);
+					// 缩放时只查到选区里的桶，判断不了整次尝试：选区里没有点就是选区空态。
+					const outside =
+						!zoomed && runAttempt && pointsOutsideAttempt(lines, runAttempt, now, bucketSeconds);
 					return (
 						<MetricChart
 							key={chart.title}
