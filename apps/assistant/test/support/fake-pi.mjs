@@ -151,6 +151,12 @@ function handle(command) {
 		out({ type: "fake_get_state", messageCount });
 		// 会话目录里有 `fake-no-state`：回应里没有 messageCount（认不出）。
 		if (sessionDir && existsSync(join(sessionDir, "fake-no-state"))) return respond(command, {});
+		// 会话目录里有 `fake-slow-state`：回应慢 800 毫秒（让测试能在回应之前停止这一轮）。
+		if (sessionDir && existsSync(join(sessionDir, "fake-slow-state"))) {
+			const answer = { messageCount, sessionId: "fake", isStreaming: false };
+			setTimeout(() => respond(command, answer), 800);
+			return;
+		}
 		return respond(command, { messageCount, sessionId: "fake", isStreaming: false });
 	}
 	if (command.type !== "prompt") return respond(command);
@@ -275,6 +281,13 @@ function handle(command) {
 		setInterval(() => {}, 60_000);
 		out(assistant("好的"));
 		settle();
+	} else if (text.startsWith("delay-settle:")) {
+		// `delay-settle:<毫秒>`：做这么久（真的时间）自己做完，其间不需要任何命令（不刷新「最近一次收到命令」）。
+		const ms = Number(text.split(":")[1]?.split(" ")[0] ?? 300);
+		setTimeout(() => {
+			out(assistant("好的"));
+			settle();
+		}, ms);
 	} else if (text.startsWith("settle-ignore-term")) {
 		// 做完这一轮；之后 stdin 被关、SIGTERM 都不退出（只有 SIGKILL 结束得了它）：空闲时被关的卡住的进程。
 		stubborn = true;
