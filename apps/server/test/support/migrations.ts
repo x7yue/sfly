@@ -34,11 +34,16 @@ export async function migrationsCopy(
 
 /**
  * 在只含旧迁移的库上启动当前的控制面时，启动就会读写、旧迁移里却没有的表（`registerSharedAgentToken` 读写
- * `agent_credentials`，`bootstrapFirstAdmin` 数 `users`，派发一次任务时 `mintTaskCredential` 写 `api_tokens`）：
- * 补一个只有列、没有外键的占位（`users` 只留 `id`，启动只数行；`api_tokens` 列和真表一致，只是没有约束）。
+ * `agent_credentials`，`bootstrapFirstAdmin` 数 `users`，派发一次任务时 `mintTaskCredential` 写 `api_tokens`，
+ * 路径里写了项目的请求在访问检查里核对 `projects` 里有这个项目，#488）：补一个只有列、没有外键的占位（`users` 只留 `id`，
+ * 启动只数行；`projects` 只留 `id` 和默认项目这一行；`api_tokens` 列和真表一致，只是没有约束）。
  * 升级前要删掉（{@link dropStartupStubs}），由真正的迁移来建。
  */
 export const STARTUP_STUB_SQL = `CREATE TABLE "users" ("id" uuid PRIMARY KEY NOT NULL);
+--> statement-breakpoint
+CREATE TABLE "projects" ("id" text PRIMARY KEY NOT NULL);
+--> statement-breakpoint
+INSERT INTO "projects" ("id") VALUES ('default');
 --> statement-breakpoint
 CREATE TABLE "agent_credentials" (
 	"id" uuid PRIMARY KEY NOT NULL,
@@ -92,6 +97,7 @@ export async function dropStartupStubs(databaseUrl: string): Promise<void> {
 		await client.query('drop table "api_tokens"');
 		await client.query('drop table "agent_credentials"');
 		await client.query('drop table "users"');
+		await client.query('drop table "projects"');
 	} finally {
 		await client.end();
 	}
