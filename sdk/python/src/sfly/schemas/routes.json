@@ -14356,6 +14356,25 @@
               }
             ],
             "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            "description": "修改以后的运行通知设置的问题，只提示、不阻止保存（#501）：要发给的机器人不是这个项目里登记的时，\n一条 `run_notification_bot_not_registered`。触发前的预检在 `warnings` 里给同一条，不阻断触发。"
           }
         },
         "required": [
@@ -14367,7 +14386,8 @@
           "archived_at",
           "run_notification",
           "focus_items",
-          "focus_edit"
+          "focus_edit",
+          "warnings"
         ]
       },
       "notes": [

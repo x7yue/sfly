@@ -804,7 +804,13 @@ export const orchestrationsApi = {
 				? { code: "invalid_request", message: runNotificationTriggerRemovedMessage }
 				: undefined;
 		},
-		response: OrchestrationView,
+		response: OrchestrationView.extend({
+			/**
+			 * 修改以后的运行通知设置的问题，只提示、不阻止保存（#501）：要发给的机器人不是这个项目里登记的时，
+			 * 一条 `run_notification_bot_not_registered`。触发前的预检在 `warnings` 里给同一条，不阻断触发。
+			 */
+			warnings: z.array(z.object({ code: z.string(), message: z.string() })),
+		}),
 	}),
 	/**
 	 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
