@@ -10,7 +10,12 @@ import {
 import { seedSession } from "../../server/test/support/sessions.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { actionsScenario, actionTable, loadSummary } from "./actions-support";
-import { setAgentDisabled, setAuthKind } from "./agent-admin-support";
+import {
+	clearCredentials,
+	setAgentDisabled,
+	setAuthKind,
+	signInAsAdmin,
+} from "./agent-admin-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
 	assistantMessage,
@@ -266,6 +271,220 @@ test("Agent 列表：凭据种类和停用（Agent 自己的凭据、共享令�
 	const last = await page.getByRole("region", { name: "agent-stopped", exact: true }).boundingBox();
 	expect((last?.y ?? 0) + (last?.height ?? 0)).toBeLessThanOrEqual(1000);
 	await expect(page).toHaveScreenshot("agents-credentials.png");
+});
+
+// Agent 的凭据弹窗、停用和恢复的确认（#492 D）：登录的项目管理员才看得到按钮。应用只有深色主题，没有浅色基线；
+// 「窄屏」是最小支持宽度 1280。凭据的前缀和原值是随机的，遮住。
+test.describe("Agent 凭据和停用", () => {
+	test.use({
+		controlPlaneOptions: { version: "1.2.3", publicHttpUrl: "http://sfly.internal:8080" },
+	});
+	const dialog = (page: Page) => page.getByRole("dialog");
+	/** 弹窗整个在视口里，弹窗和它的主体都没有横向滚动（我看不到基线图，版面靠这个量）。 */
+	async function fits(page: Page) {
+		const viewport = page.viewportSize();
+		const box = await dialog(page).boundingBox();
+		expect(box).not.toBeNull();
+		expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport?.width ?? 0);
+		expect(box?.y ?? -1).toBeGreaterThanOrEqual(0);
+		expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 0);
+		const overflow = await dialog(page).evaluate((el) =>
+			[
+				el,
+				...el.querySelectorAll('[data-slot="dialog-body"], table, [data-slot="code-block"]'),
+			].some(
+				(node) =>
+					node.scrollWidth > node.clientWidth + 1 && !node.matches('[data-slot="code-block"]'),
+			),
+		);
+		expect(overflow, "弹窗里有东西撑出了横向滚动").toBe(false);
+	}
+	const secretMasks = (page: Page) => [
+		page.locator('[data-slot="credential-prefix"]'),
+		page.locator("[data-issued-credential]"),
+	];
+	/** 管理员登录、一台 agent-a 连着，打开 Agent 页。 */
+	async function openAdmin(
+		page: Page,
+		context: Parameters<typeof signInAsAdmin>[0],
+		controlPlane: E2eFixtures["controlPlane"],
+		connectAgent: E2eFixtures["connectAgent"],
+	) {
+		await signInAsAdmin(context, controlPlane);
+		const agent = await connectAgent({ name: "agent-a", agentVersion: "1.2.3", slots: 2 });
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await page.goto("/agents");
+		await expect(page.getByRole("region", { name: "agent-a", exact: true })).toBeVisible();
+		return agent;
+	}
+
+	test("Agent 页：管理员看到页头的「为新 Agent 签发凭据」和机架上的「凭据」「停用」", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toBeVisible();
+		await expect(page).toHaveScreenshot("agents-admin.png");
+	});
+
+	test("凭据弹窗：列表（一个用过的有效凭据、一个新的、一个已吊销的）和轮换的三步", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		clock.advance(3_600_000);
+		await dialog(page).getByRole("button", { name: "签发新凭据" }).click();
+		await dialog(page).getByRole("button", { name: "我已保存，完成" }).click();
+		clock.advance(3_600_000);
+		await dialog(page).getByRole("button", { name: "签发新凭据" }).click();
+		await dialog(page).getByRole("button", { name: "我已保存，完成" }).click();
+		// 最老的那个吊销掉。
+		const rows = dialog(page).locator("[data-credential-state]");
+		await expect(rows).toHaveCount(3);
+		await rows.nth(2).getByRole("button", { name: /^吊销/ }).click();
+		await dialog(page).getByRole("button", { name: "吊销", exact: true }).click();
+		await expect(rows.nth(2)).toHaveAttribute("data-credential-state", "revoked");
+		await expect(dialog(page).locator('[data-slot="rotate-guide"]')).toBeVisible();
+		// 吊销成功的通知（2.6 秒后消失）不进基线。
+		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
+		await fits(page);
+		await page.mouse.move(8, 8);
+		await expect(page).toHaveScreenshot("agent-credentials-list.png", { mask: secretMasks(page) });
+	});
+
+	test("凭据弹窗：这个名字还没有签发过凭据（空状态）", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await clearCredentials(controlPlane, "agent-a");
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await expect(dialog(page)).toContainText("这个名字还没有签发过凭据");
+		await fits(page);
+		await page.mouse.move(8, 8);
+		await expect(page).toHaveScreenshot("agent-credentials-empty.png");
+	});
+
+	test("凭据弹窗：刚签发，显示一次的原值、写好名字的安装命令、换掉已装好的 Agent 的凭据的几步", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await dialog(page).getByRole("button", { name: "签发新凭据" }).click();
+		await expect(dialog(page)).toContainText("的凭据已签发");
+		await fits(page);
+		await page.mouse.move(8, 8);
+		await expect(page).toHaveScreenshot("agent-credentials-issued.png", {
+			mask: secretMasks(page),
+		});
+	});
+
+	test("凭据弹窗：刚签发（最小支持宽度 1280）：原值、命令、步骤都在弹窗里，没有横向滚动", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await dialog(page).getByRole("button", { name: "签发新凭据" }).click();
+		await expect(dialog(page)).toContainText("的凭据已签发");
+		// 弹窗在视口里，内容不撑出横向滚动，原值输入框够宽（能看见前面一大段）。
+		const box = await dialog(page).boundingBox();
+		expect((box?.x ?? -1) >= 0 && (box?.x ?? 0) + (box?.width ?? 0) <= 1280).toBe(true);
+		expect(await dialog(page).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+		const input = await dialog(page).locator("[data-issued-credential]").boundingBox();
+		expect(input?.width ?? 0).toBeGreaterThan(400);
+		await fits(page);
+		await page.mouse.move(8, 8);
+		await expect(page).toHaveScreenshot("agent-credentials-issued-1280.png", {
+			mask: secretMasks(page),
+		});
+	});
+
+	test("凭据弹窗：吊销确认（只有一个有效凭据，多写一句后果）", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await page.getByRole("button", { name: "agent-a 的凭据" }).click();
+		await dialog(page).getByRole("button", { name: /^吊销/ }).click();
+		await expect(dialog(page).locator('[data-slot="revoke-only-active"]')).toBeVisible();
+		await fits(page);
+		await page.mouse.move(8, 8);
+		await expect(page).toHaveScreenshot("agent-credentials-revoke.png", {
+			mask: secretMasks(page),
+		});
+	});
+
+	test("为新 Agent 签发凭据：名称表单和校验的提示", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await page.getByRole("button", { name: "为新 Agent 签发凭据" }).click();
+		await dialog(page).getByLabel("Agent 名称").fill("x".repeat(65));
+		await dialog(page).getByRole("button", { name: "签发凭据" }).click();
+		await expect(dialog(page)).toContainText("不能超过 64 个字符");
+		await fits(page);
+		await page.mouse.move(8, 8);
+		await expect(page).toHaveScreenshot("agent-credentials-new.png");
+	});
+
+	test("停用确认：断开连接、手上的任务按失联处理、停不下那台机器上正在跑的任务", async ({
+		page,
+		context,
+		controlPlane,
+		connectAgent,
+	}) => {
+		const agent = await openAdmin(page, context, controlPlane, connectAgent);
+		await publishPackage(controlPlane);
+		const runId = await triggerRun(
+			controlPlane,
+			await createScenario(controlPlane, "巡检", scenarioUsing("agent-a")),
+		);
+		await agent.nextAssign();
+		// 页面每 5 秒重新读一次 Agent 列表：读到这个任务占着槽位之后再打开确认框。
+		await expect(page.getByRole("region", { name: "agent-a", exact: true })).toContainText(
+			"1 / 2 占用",
+			{ timeout: 15_000 },
+		);
+		await page.getByRole("button", { name: "停用 agent-a" }).click();
+		await expect(dialog(page).locator('[data-slot="disable-running"]')).toContainText("1 个任务");
+		await fits(page);
+		await page.mouse.move(8, 8);
+		// 弹窗后面机架里占着槽位的任务写着运行编号（随机的），遮住。
+		await expect(page).toHaveScreenshot("agent-disable-confirm.png", {
+			mask: [page.getByText(runId.slice(0, 8))],
+		});
+	});
+
+	test("恢复确认", async ({ page, context, controlPlane, connectAgent }) => {
+		await openAdmin(page, context, controlPlane, connectAgent);
+		await setAgentDisabled(controlPlane, "agent-a", true);
+		await page.getByRole("button", { name: "恢复 agent-a" }).click({ timeout: 15_000 });
+		await expect(dialog(page)).toContainText("恢复之后这台 Agent 可以重新连接");
+		await fits(page);
+		await page.mouse.move(8, 8);
+		await expect(page).toHaveScreenshot("agent-enable-confirm.png");
+	});
 });
 
 test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connectAgent }) => {

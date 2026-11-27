@@ -161,6 +161,11 @@ export class TestAccounts {
 		if (rowCount === 0) throw new Error(`没有这台 Agent：${name}`);
 	}
 
+	/** 删掉一台 Agent 的全部凭据（造「还没有签发过凭据」的名字；真实的接口只吊销，不删行）。 */
+	async clearAgentCredentials(name: string): Promise<void> {
+		await this.#pool.query("delete from agent_credentials where agent_name = $1", [name]);
+	}
+
 	/** Agent 凭据行的 ID（`agent_credentials.id`）：按原值的哈希找。 */
 	async agentCredentialId(token: string): Promise<string> {
 		const { rows } = await this.#pool.query(

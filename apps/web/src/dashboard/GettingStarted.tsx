@@ -73,8 +73,10 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					: `${setup.agent.name} ${AGENT_STATUS_LABEL.online}`,
 			body: (
 				<>
-					任务在 Agent 所在的测试机上执行。在测试机上运行这条命令，Agent 会主动连接控制面；开发机加{" "}
-					<Mono>--dev</Mono> 同时装好 <Mono>sfly</Mono> 命令行。
+					任务在 Agent 所在的测试机上执行。每台 Agent 用自己的凭据连接：先在 {PAGE.agents}
+					页为它的名字签发凭据， 再在测试机上运行下面的命令（<Mono>read -rs</Mono>{" "}
+					那一行运行时粘贴凭据）；Agent 会主动连接控制面。 开发机加 <Mono>--dev</Mono> 同时装好{" "}
+					<Mono>sfly</Mono> 命令行。
 					<code className="mt-2.5 block max-w-160 overflow-x-auto rounded-md border border-border bg-sunk px-3 py-2 font-mono text-xs whitespace-pre text-fg-1">
 						{command}
 					</code>

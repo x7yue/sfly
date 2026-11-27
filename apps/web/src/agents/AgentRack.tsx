@@ -1,6 +1,7 @@
 import type { AgentView, QueuedTaskView } from "@sfly/schema";
 import { cn } from "cn";
 import { useId } from "react";
+import { AgentAdminActions } from "#/agents/AgentAdminActions";
 import { agentAnchor } from "#/agents/agent-anchor";
 import { acceptsTasks, agentStatusView, authNotice, updateStatus } from "#/agents/agent-status";
 import { PreparingBadge } from "#/agents/PreparingBadge";
@@ -20,7 +21,7 @@ import { Truncate } from "@/components/ui/truncate";
 
 /**
  * 一台 Agent 的机架面板（外壳页方案 4.1）：头部一行是状态、名称、版本、系统、对外地址和最后在线，状态后面跟着各种告警，
- * 右侧是被引用的场景数和「立即更新」；主体是槽位格，格子下面是排队的任务；底部是节点包与能力。
+ * 右侧是被引用的场景数、「立即更新」和管理操作（凭据、停用 / 恢复，只有能管理的人看得到）；主体是槽位格，格子下面是排队的任务；底部是节点包与能力。
  * 接不了新任务的 Agent（已停用、离线、准备环境中、版本不一致或更新中，`acceptsTasks`）槽位不算空闲，所以不画空闲矮条、不写占用数。
  */
 export function AgentRack({
@@ -68,6 +69,7 @@ export function AgentRack({
 				{canUpdateNow(agent) && (
 					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
 				)}
+				<AgentAdminActions agent={agent} />
 			</header>
 			{hasBody && (
 				<div className="flex flex-col gap-3 px-4 pt-3 pb-3.5">

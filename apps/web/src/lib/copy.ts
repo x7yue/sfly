@@ -657,6 +657,65 @@ export const AGENT_AUTH = {
 	},
 } as const;
 
+/**
+ * 一台 Agent 的「凭据」弹窗和「停用 / 恢复」确认里的话（Agent 管理页，#492）。凭据原值只显示一次、安装命令不带原值，
+ * 吊销、停用会发生什么都写准：和 `docs/guide/install-agent.md` 的「Agent 凭据」「被控制面拒绝」同一套说法。
+ */
+export const AGENT_CREDENTIAL = {
+	state: { active: "有效", revoked: "已吊销" },
+	/** 签发之后弹窗里的提示：系统剪贴板页面清不掉。 */
+	clipboardNote: "粘贴完之后请再复制点别的内容：系统剪贴板里的这一份，页面清不掉。",
+	install: {
+		title: "装到一台新机器上",
+		intro:
+			"在那台机器上运行下面的命令：先用 read -rs 读入凭据（粘贴上面复制的原值后回车，输入不显示），再运行安装脚本。",
+		note: "凭据经环境变量 SFLY_TOKEN 传给安装脚本，不放在命令行参数里，所以不会出现在进程列表和 shell 历史里。--name 要和签发凭据的名字一致，不一致控制面拒绝连接。",
+	},
+	replace: {
+		title: "换掉已装好的 Agent 的凭据",
+		steps: [
+			"打开那台机器上的 agent.env（默认在 ~/.sfly/agent.env；用 sudo 安装的在 root 的家目录下）。",
+			"把 SFLY_TOKEN= 那一行的值换成上面复制的凭据。",
+			"重启 Agent：systemctl --user restart sfly-agent（用 sudo 安装的：sudo systemctl restart sfly-agent）。",
+			"确认它连上之后，回到凭据列表吊销旧的。",
+		],
+	},
+	rotate: {
+		title: "轮换：换掉一台 Agent 正在用的凭据",
+		steps: [
+			"点「签发新凭据」，保存好新凭据的原值。",
+			"把新凭据换进那台 Agent 的 agent.env（SFLY_TOKEN 那一行），重启 Agent。",
+			"看到新凭据的「最后使用」有了时间（它用新凭据连上了），再回到这里吊销旧的。",
+		],
+	},
+	revoke: {
+		effect:
+			"吊销后立即失效：用它连着的连接会断开，那台 Agent 手上任务的任务凭据也立刻不认；不能撤销，要再用只能重新签发。Agent 不会退出，会一直重试连接，直到换上有效的凭据。",
+		onlyActive:
+			"这是这个名字唯一有效的凭据：吊销之后用它的那台 Agent 连不上控制面。要换凭据，先签发新的、换进它的 agent.env 并重启，确认连上之后再来吊销旧的。吊销之后这个名字没有有效凭据，过渡期里共享令牌和不带凭据的连接又能用这个名字（登记工作台之后不再接受）。",
+	},
+} as const;
+
+export const AGENT_DISABLE = {
+	disable: {
+		title: "停用",
+		effect:
+			"停用后它立即断开连接，不能再连接（不论带不带凭据），不再被派发任务；场景里引用它时，触发前的预检会拦下并写明原因。可以随时恢复。",
+		running: (count: number) =>
+			`它现在有 ${count} 个任务在执行：连接断开后这些任务按 Agent 失联处理，租约到期后以 agent_lost 失败，配置了重试的节点重新排队，等这台 Agent 恢复，排队超时的节点失败。`,
+		idle: "它现在没有任务在执行。",
+		referenced: (count: number) => `被 ${count} 个场景引用，停用期间这些场景触发时预检会拦下。`,
+		notStopped:
+			"停用不会停下那台机器上正在跑的任务：Agent 被断开之后，手上的任务仍在机器上执行，结果留在 Agent 里。要停下那台机器上的工作，得停 Agent 服务：systemctl --user stop sfly-agent（用 sudo 安装的：sudo systemctl stop sfly-agent）。",
+	},
+	enable: {
+		title: "恢复",
+		effect:
+			"恢复之后这台 Agent 可以重新连接、接任务；连接照常判断：这个名字有有效的 Agent 凭据时只认凭据。",
+		compromised: "如果是因为凭据泄露才停用的，先吊销旧凭据、签发新的，再恢复。",
+	},
+} as const;
+
 /** 已请求取消、还在等待任务结束与清理的运行（故事 70：不显示成「运行中」）。 */
 export const CANCELLING_LABEL = "取消中";
 /** 清理期间再次取消，正在强制终止。 */

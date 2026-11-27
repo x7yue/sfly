@@ -1,3 +1,4 @@
+import type { BrowserContext } from "@playwright/test";
 import { bearer, TestAccounts } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 
@@ -36,6 +37,43 @@ export async function setAgentDisabled(
 			},
 		);
 		if (response.status !== 204) throw new Error(`停用或恢复 ${name} 失败：${response.status}`);
+	} finally {
+		await accounts.close();
+	}
+}
+
+/**
+ * 页面以项目管理员登录（Agent 的凭据、停用要登录和「管理」范围）：造用户、成员、登录 Cookie，返回同一个人的个人令牌
+ * （测试里直接调接口、核对列表接口的响应用）。
+ */
+export async function signInAsAdmin(
+	context: BrowserContext,
+	controlPlane: TestControlPlane,
+	role: "project_admin" | "editor" | "read_only" = "project_admin",
+	login = "agentadmin",
+): Promise<{ token: string; headers: Record<string, string> }> {
+	const accounts = new TestAccounts(controlPlane.database.url);
+	try {
+		const user = await accounts.userNamed(login, { displayName: login });
+		await accounts.member("default", user, role);
+		await context.addCookies([
+			{ name: "sfly_login", value: await accounts.login(user), url: controlPlane.httpUrl },
+		]);
+		const token = await accounts.personalToken(user);
+		return { token, headers: bearer(token) };
+	} finally {
+		await accounts.close();
+	}
+}
+
+/** 把一台 Agent 的凭据全部删掉（只在测试里：造「这个名字还没有签发过凭据」的空列表，真实的接口不会让它发生）。 */
+export async function clearCredentials(
+	controlPlane: TestControlPlane,
+	name: string,
+): Promise<void> {
+	const accounts = new TestAccounts(controlPlane.database.url);
+	try {
+		await accounts.clearAgentCredentials(name);
 	} finally {
 		await accounts.close();
 	}
