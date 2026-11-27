@@ -31,7 +31,8 @@ from typing import Any
 from aeval import e2e
 from aeval.env import ADMIN_LOGIN, Stack
 
-PROJECT = "default"
+# 项目：骨架验收（#553）能指定，终验在两个项目上各跑一遍（#797）。
+PROJECT = os.environ.get("PROJECT", "default")
 
 
 class RemoteStack(Stack):

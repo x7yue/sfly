@@ -54,7 +54,7 @@ describe("登记工作台：还没换成 Agent 凭据的 Agent，和登记之后
 
 	describe("agentsNotOnCredentials", () => {
 		it("没有 Agent 时为空；没带凭据、用共享令牌、记下之前连接的（没有记录）都算没换；用 Agent 凭据连上的算换了", async () => {
-			expect(await agentsNotOnCredentials(database.db)).toEqual([]);
+			expect((await agentsNotOnCredentials(database.db)).map((a) => a.name)).toEqual([]);
 			await connectAs("a-none", { kind: "none" });
 			await connectAs("b-shared", { kind: "shared" });
 			await connectAs("c-agent", { kind: "agent", credentialId: crypto.randomUUID() });
@@ -62,25 +62,29 @@ describe("登记工作台：还没换成 Agent 凭据的 Agent，和登记之后
 			await database.pool.query(
 				"insert into agents (name, project_id, info, status, registered_at, last_seen_at) values ('d-old', 'default', '{}', 'offline', now(), now())",
 			);
-			expect(await agentsNotOnCredentials(database.db)).toEqual(["a-none", "b-shared", "d-old"]);
+			expect((await agentsNotOnCredentials(database.db)).map((a) => a.name)).toEqual([
+				"a-none",
+				"b-shared",
+				"d-old",
+			]);
 		});
 
 		it("只签发过凭据、最近一次仍用共享令牌连接的算没换；换成凭据连上之后不再列出", async () => {
 			const issued = await service.issue(DEFAULT_PROJECT, "worker-1");
 			await connectAs("worker-1", { kind: "shared" });
-			expect(await agentsNotOnCredentials(database.db)).toEqual(["worker-1"]);
+			expect((await agentsNotOnCredentials(database.db)).map((a) => a.name)).toEqual(["worker-1"]);
 			await connectAs("worker-1", { kind: "agent", credentialId: issued.credential.id });
-			expect(await agentsNotOnCredentials(database.db)).toEqual([]);
+			expect((await agentsNotOnCredentials(database.db)).map((a) => a.name)).toEqual([]);
 		});
 
 		it("停用的 Agent 不算（不挡登记）；恢复之后又算", async () => {
 			await connectAs("old-box", { kind: "none" });
 			await connectAs("new-box", { kind: "agent", credentialId: crypto.randomUUID() });
-			expect(await agentsNotOnCredentials(database.db)).toEqual(["old-box"]);
+			expect((await agentsNotOnCredentials(database.db)).map((a) => a.name)).toEqual(["old-box"]);
 			await hub.setDisabled(DEFAULT_PROJECT, "old-box", true);
-			expect(await agentsNotOnCredentials(database.db)).toEqual([]);
+			expect((await agentsNotOnCredentials(database.db)).map((a) => a.name)).toEqual([]);
 			await hub.setDisabled(DEFAULT_PROJECT, "old-box", false);
-			expect(await agentsNotOnCredentials(database.db)).toEqual(["old-box"]);
+			expect((await agentsNotOnCredentials(database.db)).map((a) => a.name)).toEqual(["old-box"]);
 		});
 	});
 

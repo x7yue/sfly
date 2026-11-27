@@ -75,8 +75,13 @@ def toolcheck_steps(name: str = "toolcheck.json") -> list[dict[str, Any]]:
 
 
 def _substitute(args: str, messages: list[dict[str, Any]]) -> str:
-    """剧本里的占位：{full_output}、{first_line} 取上一个工具结果，{token} 取之前任一工具结果。"""
+    """剧本里的占位：{full_output}、{first_line} 取上一个工具结果，{token} 取之前任一工具结果，
+    {last_user} 取最近一条用户的话（插话、接着说的那句）。"""
     last = _text(messages[-1].get("content")) if messages else ""
+    if "{last_user}" in args:
+        said = [_text(m.get("content")) for m in messages if m.get("role") == "user"]
+        quoted = json.dumps(said[-1] if said else "", ensure_ascii=False)
+        args = args.replace("{last_user}", quoted[1:-1])
     if "{full_output}" in args:
         found = _FULL_OUTPUT.search(last)
         args = args.replace("{full_output}", found.group(1) if found else "/nonexistent")
@@ -126,17 +131,24 @@ def next_reply(body: dict[str, Any], tasks_dir: Path) -> dict[str, Any]:
         step = steps[done]
         if step.get("overflow"):
             return {"error": 400, "message": OVERFLOW_MESSAGE}
+        # thinking：先流一段「思考」（reasoning_content），停 thinking_delay 秒，再回文字或调工具。
+        thinking = {
+            key: kind(step[key])
+            for key, kind in (("thinking", str), ("thinking_delay", float))
+            if key in step
+        }
         if "text" in step:
             # 只回一段文字（不调工具）；delay 是回复之前等几秒（探针在这时插话）；
             # pieces、interval 是把文字分成几段、每段之间隔几秒地流出来（探针在输出到一半时中止）；
             # prompt_tokens 是这次回复报的用量（探针让 pi 觉得上下文快满了）。
-            reply: dict[str, Any] = {"text": step["text"], "delay": float(step.get("delay", 0))}
+            text = json.loads(_substitute(json.dumps(step["text"], ensure_ascii=False), messages))
+            reply: dict[str, Any] = {"text": text, "delay": float(step.get("delay", 0)), **thinking}
             for key, kind in (("pieces", int), ("interval", float), ("prompt_tokens", int)):
                 if key in step:
                     reply[key] = kind(step[key])
             return reply
         args = _substitute(json.dumps(step["args"], ensure_ascii=False), messages)
-        return {"tool": step["tool"], "arguments": args, "call_id": f"call_{done + 1}"}
+        return {"tool": step["tool"], "arguments": args, "call_id": f"call_{done + 1}", **thinking}
     commands = script(find_task(prompt, tasks_dir))
     if done < len(commands):
         return {
@@ -157,6 +169,22 @@ def chunks(reply: dict[str, Any], model: str) -> list[dict[str, Any]]:
         "model": model,
     }
     prompt_tokens = int(reply.get("prompt_tokens", 100))
+    thought = (
+        [
+            {
+                **base,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "reasoning_content": reply["thinking"]},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        ]
+        if reply.get("thinking")
+        else []
+    )
     usage = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": 10,
@@ -191,6 +219,7 @@ def chunks(reply: dict[str, Any], model: str) -> list[dict[str, Any]]:
             for part in parts[1:]
         ]
         return [
+            *thought,
             first,
             *rest,
             {
@@ -200,6 +229,7 @@ def chunks(reply: dict[str, Any], model: str) -> list[dict[str, Any]]:
             },
         ]
     return [
+        *thought,
         {**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
         {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}], "usage": usage},
     ]
@@ -245,8 +275,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("connection", "close")
         self.end_headers()
         interval = float(reply.get("interval", 0))
+        thinking_delay = float(reply.get("thinking_delay", 0)) if reply.get("thinking") else 0.0
         for index, event in enumerate(events):
-            if index > 0 and interval > 0:
+            if index == 1 and thinking_delay > 0:
+                time.sleep(thinking_delay)
+            elif index > 0 and interval > 0:
                 time.sleep(interval)
             self.wfile.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode())
             self.wfile.flush()

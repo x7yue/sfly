@@ -1,0 +1,17 @@
+{
+	"说明": "骨架验收（#553）：命令在跑时停掉模型端点，下一次请求失败、重试、这一轮失败；恢复后说一句接着做。",
+	"steps": [
+		{
+			"id": "long",
+			"tool": "bash",
+			"args": {
+				"command": "for i in $(seq 1 15); do echo \"第 $i 行\"; sleep 1; done",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "after",
+			"text": "模型端点恢复了，接着做完（收到：{last_user}）。"
+		}
+	]
+}
