@@ -1,0 +1,40 @@
+name: PR 信息
+
+# 读 PR 的信息（改了哪些文件、带了哪些标签），规则见 scripts/pr_checks.py 和 docs/agents/branching-and-release.md「PR」。
+# 加上、去掉标签时重新检查，所以和 CI 分开：打个标签不用重跑整套 CI。
+# 检出的是 PR 的合并提交，只取检查脚本和关键路径清单：它们随 PR 一起改、一起生效。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# 读 PR 的文件列表和标签：pull-requests: read；检出脚本：contents: read。fork 来的 PR 也只有这两项读权限。
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-info:
+    name: PR 信息
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/pr_checks.py
+            docs/agents/perf-critical-paths.json
+          sparse-checkout-cone-mode: false
+      - name: 检查兼容性标签和性能关键路径
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' > "$RUNNER_TEMP/files"
+          gh api "repos/$REPO/pulls/$PR" --jq '.labels[].name' > "$RUNNER_TEMP/labels"
+          python3 scripts/pr_checks.py "$RUNNER_TEMP/files" "$RUNNER_TEMP/labels"

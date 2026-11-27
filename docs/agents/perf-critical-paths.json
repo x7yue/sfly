@@ -1,0 +1,35 @@
+{
+	"description": "性能关键路径（docs/agents/branching-and-release.md「关键路径的改动要贴 pnpm perf 结果」）。PR 改了 paths 里的文件（以 / 结尾的是目录下的全部文件）时，CI 的「PR 信息」提醒贴 pnpm perf 的结论（scripts/pr_checks.py，只警告）。",
+	"paths": [
+		{
+			"name": "Agent 日志转发",
+			"detail": "stdout/stderr 与事件管道合并、分批发往控制面、动作明细分批转发、进度与动作摘要只发最新一份、日志副本轮换、断线排队",
+			"paths": ["agent/src/logs.rs"]
+		},
+		{
+			"name": "事件通道（SDK → Agent，ADR 0015）",
+			"detail": "SDK 的 ctx.metric() / ctx.log / 进度写入、ctx.action() / ctx.mark() 的写入、events.fifo 的创建与读取",
+			"paths": [
+				"sdk/python/src/sfly/context.py",
+				"sdk/python/src/sfly/actions.py",
+				"agent/src/executor.rs",
+				"agent/src/logs.rs"
+			]
+		},
+		{
+			"name": "指标合并",
+			"detail": "按「指标 × 秒」合并、断线排队与丢弃计数",
+			"paths": ["agent/src/metrics.rs"]
+		},
+		{
+			"name": "控制面指标写入与查询（ADR 0009）",
+			"detail": "分段写入、摘要、降采样查询、保留期，及其表结构",
+			"paths": ["apps/server/src/metrics/"]
+		},
+		{
+			"name": "控制面动作明细写入",
+			"detail": "明细按批写入、兜底上限、分页与实时推送，及其表结构",
+			"paths": ["apps/server/src/actions/"]
+		}
+	]
+}

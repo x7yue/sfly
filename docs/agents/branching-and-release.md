@@ -67,28 +67,24 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 - 新增 ADR 的 PR，合入前先把最新的目标分支合进自己的分支：`pnpm lint:docs` 会拿它和目标分支比，能发现编号这期间被占用；两个 PR 同时开着、各自拿了同一个编号时，检查单靠自己拦不住，后合入的那个要在先合入之后再合一次目标分支。
   CI 里目标分支取自 PR；本地默认和 `origin/main` 比，目标是 `dev` 的分支用 `ADR_BASE_REF=origin/dev pnpm lint:docs`。
+- `.github/pull_request_template.md` 是新 PR 描述的默认内容，只列 CI 查不出来的三条提醒（修偶发失败写明加压复现、关键路径贴性能结论、新增 ADR 先合目标分支），别的规则不放进去。
 - 标题用祈使句：squash 合入后它就是 `main` 上的提交标题（GitHub 自动追加 ` (#编号)`），各提交的信息成为正文。
 - 加上分类标签，Release 说明按它分组（`.github/release.yml`）：`enhancement` 新功能、`bug` 修复、`documentation` 文档；其余归入「其他」。
   标题和标签靠判断：中文的祈使语气机器判断不了，分哪一类要读懂改动。
-- 让 API 客户端生成的类型（`packages/client/src/generated/`）出现不兼容变化的 PR，另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改。Release 说明把带这个标签的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。
+- 改了 API 客户端生成的类型（`packages/client/src/generated/`）的 PR，标明兼容性：不兼容的另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改；兼容的加 `client-compatible`。Release 说明把带 `breaking-change` 的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。
+  CI 的「PR 信息」（`.github/workflows/pr-checks.yml`，`scripts/pr_checks.py`）在这种 PR 两个标签都没带、或者都带了时失败；加上或去掉标签会重新检查。fork 来的 PR 作者打不了标签，由维护者打。
   - 不兼容的变化：删除或改名领域、方法、字段、事件；请求里新增必填的字段，或者可选的字段变成必填；字段的类型变了，或者响应里的枚举多了值（页面里穷举它的代码要跟着改）；响应里去掉字段，或者字段从总有值变成可能为空。只新增方法、可选的请求字段或响应字段不算。
   - 生成的类型提交在仓库里，看 PR 的 diff 里 `packages/client/src/generated/` 的变化来判断。
 - 用 `gh pr merge <编号> --auto --squash` 合入：先满足目标分支那一节（「`main`（强制）」或「`dev`（强制）」）的合入条件，再开自动合并；CI 通过后自动合入并删除分支，不用守着 CI。
 
 ### 关键路径的改动要贴 `pnpm perf` 结果
 
-性能测试不进 CI（docs/ARCHITECTURE.md §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
+性能测试不进 CI（docs/ARCHITECTURE.md §7.6），所以改动关键路径（清单见下）的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
 把报告的结论、总览和「与发版基线相比变化超过 20% 的数值」贴进 PR 描述。报告在本机结果目录
 （默认 `~/.local/share/sfly/perf/<时间>/report.md`，命令结束时打印路径），每份报告同时与两份基准对比：
 本机上一次（任何 worktree 里跑的都算），以及仓库里 `docs/perf/` 下最近一个版本的发版报告（发版基线）。
 
-| 关键路径 | 主要位置 |
-|---|---|
-| Agent 日志转发 | `agent/src/logs.rs`（stdout/stderr 与事件管道合并、分批发往控制面、动作明细分批转发、进度与动作摘要只发最新一份、日志副本轮换、断线排队） |
-| 事件通道（SDK → Agent，ADR 0015） | SDK 的 `ctx.metric()` / `ctx.log` / 进度写入（`sdk/python/src/sfly/context.py`）、`ctx.action()` / `ctx.mark()` 的写入（`sdk/python/src/sfly/actions.py`）、`events.fifo` 的创建与读取（`agent/src/executor.rs`、`agent/src/logs.rs`） |
-| 指标合并 | `agent/src/metrics.rs`（按「指标 × 秒」合并、断线排队与丢弃计数） |
-| 控制面指标写入与查询（ADR 0009） | `apps/server/src/metrics/`（分段写入、摘要、降采样查询、保留期）及其表结构 |
-| 控制面动作明细写入 | `apps/server/src/actions/`（明细按批写入、兜底上限、分页与实时推送）及其表结构 |
+关键路径的清单（名称、范围、文件）在 `docs/agents/perf-critical-paths.json`：PR 改了清单里的文件时，CI 的「PR 信息」给出提醒（只警告，不失败：只改注释也会命中）。关键路径的范围变了（拆分、挪文件）时改这份清单，`scripts/tests/test_pr_checks.py` 检查清单里的文件都还在。
 
 - 与发版基线的变化包含上次发版以来所有已合入的改动。要分清哪些来自这个 PR，在改动前（例如 `main` 上）先跑一次，
   再看改动后与本机上一次的对比。
