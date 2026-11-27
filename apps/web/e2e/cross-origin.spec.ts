@@ -93,14 +93,18 @@ test.describe("控制面版本和 API 客户端不一致", () => {
 			if (message.type() === "warning") warnings.push(message.text());
 		});
 		await openPage(page, pageHost);
-		const session = await page.evaluateHandle((baseUrl) => {
-			const times: string[] = [];
-			const client = window.sfly.createClient({
-				baseUrl,
-				onControlPlaneTime: (time) => times.push(time),
-			});
-			return { client, times, clientVersion: window.sfly.CLIENT_VERSION };
-		}, controlPlane.httpUrl);
+		const session = await page.evaluateHandle(
+			({ baseUrl, token }) => {
+				const times: string[] = [];
+				const client = window.sfly.createClient({
+					baseUrl,
+					token,
+					onControlPlaneTime: (time) => times.push(time),
+				});
+				return { client, times, clientVersion: window.sfly.CLIENT_VERSION };
+			},
+			{ baseUrl: controlPlane.httpUrl, token: await controlPlane.users.token() },
+		);
 
 		await session.evaluate(({ client }) => client.dashboard.get());
 		clock.advance(60_000);

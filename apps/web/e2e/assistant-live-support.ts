@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { DEFAULT_TESTER } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { FakeAssistant } from "../../server/test/support/fake-assistant.js";
 import { eventAt } from "./assistant-support";
@@ -15,11 +16,20 @@ export const test = base.extend<{
 	workbench: FakeAgent;
 	signedIn: undefined;
 }>({
-	// 建会话只认用户的凭据（#547）：页面登录着的用户（fixtures.ts 的 `loginAs`）在默认项目里是编辑者，显示名就是昵称
-	// （时间线上显示「tester：…」）。
+	// 建会话只认用户的凭据（#547）：页面以默认项目里的普通编辑者登录（不是平台管理员），显示名是 tester（时间线上显示「tester：…」）。
+	loginAs: null,
 	signedIn: [
-		async ({ controlPlane, loginAs }, use) => {
-			if (loginAs !== null) await controlPlane.users.joinProject(loginAs, "default", "editor");
+		async ({ controlPlane, context }, use) => {
+			const value = await controlPlane.users.memberLogin(DEFAULT_TESTER, "default", "editor");
+			await context.addCookies([
+				{ name: "sfly_login", value, url: controlPlane.httpUrl, httpOnly: true, sameSite: "Lax" },
+			]);
+			const me = await context.request.get(`${controlPlane.httpUrl}/api/auth/me`);
+			expect(await me.json()).toMatchObject({
+				display_name: DEFAULT_TESTER,
+				is_platform_admin: false,
+				scopes: expect.not.arrayContaining(["manage"]),
+			});
 			await use(undefined);
 		},
 		{ auto: true },

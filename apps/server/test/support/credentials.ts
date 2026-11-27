@@ -368,6 +368,19 @@ export class TestUsers {
 		});
 	}
 
+	/**
+	 * 显示名是这个昵称的普通成员（不是平台管理员，只在 `project` 里有 `role`）新登录一次，返回登录 Cookie 的值。
+	 * 登录名和默认凭据的用户分开（`m_` 开头），两者可以同时存在。
+	 */
+	async memberLogin(nickname: string, project: string, role: ProjectRole): Promise<string> {
+		return this.#withAccounts(async (accounts) => {
+			const id = await accounts.userNamed(loginNameOf(`m_${nickname}`), { displayName: nickname });
+			await accounts.project(project);
+			await accounts.member(project, id, role);
+			return accounts.login(id);
+		});
+	}
+
 	/** 这个昵称的用户新登录一次，返回登录 Cookie 的值（e2e 的浏览器带它就是登录着的）。 */
 	async loginCookie(nickname = DEFAULT_TESTER): Promise<string> {
 		const { id } = await this.user(nickname);
