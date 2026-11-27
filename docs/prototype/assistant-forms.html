@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>助手放在哪：三种布局对比（用完即弃的原型）</title>
+<style>
+/* 用完即弃的对比原型：单文件、不联网。色值抄自 apps/web/src/styles/tokens.css，只为看起来像控制台；不是规格。 */
+:root{
+  --sunk:#161616;--bg:#1a1a1a;--surface:#1f1f1f;--raised:#262626;--raised-2:#2e2e2e;
+  --border:#333;--border-soft:#2b2b2b;--border-strong:#444;--border-control:#707070;
+  --fg-1:#ececec;--fg-2:#a8a8a8;--fg-3:#969696;--primary:#f2f2f2;--primary-fg:#141414;
+  --signal:#2cc4f0;--signal-fg:#7fdcf7;--signal-soft:color-mix(in srgb,#2cc4f0 14%,transparent);
+  --ok:#5bd69a;--warn:#f0a83a;--warn-fg:#f3c27a;--danger:#ef5350;--danger-fg:#ff8f8c;
+  --danger-soft:color-mix(in srgb,#ef5350 13%,transparent);--danger-line:color-mix(in srgb,#ef5350 72%,transparent);
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#0d0d0d;color:var(--fg-1);font-family:"IBM Plex Sans","PingFang SC","Noto Sans CJK SC","Microsoft YaHei UI",sans-serif;font-size:13px;line-height:1.5}
+button{font:inherit;color:inherit}
+.chrome{position:sticky;top:0;z-index:50;background:#0d0d0d;border-bottom:1px solid var(--border);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.chrome h1{font-size:14px;margin:0 8px 0 0;font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:6px;overflow:hidden}
+.seg button{background:var(--surface);border:0;padding:5px 10px;cursor:pointer;color:var(--fg-2)}
+.seg button+button{border-left:1px solid var(--border-strong)}
+.seg button[aria-pressed=true]{background:var(--primary);color:var(--primary-fg)}
+.lbl{color:var(--fg-3);font-size:12px}
+.note{max-width:1440px;margin:12px auto 0;padding:0 16px;color:var(--fg-2);font-size:12.5px}
+.note b{color:var(--fg-1)}
+.stage{padding:14px 16px 40px;overflow-x:auto}
+.screen{position:relative;height:900px;margin:0 auto;border:1px solid var(--border-strong);background:var(--bg);overflow:hidden;display:flex;transform-origin:top left}
+.screen.w1440{width:1440px}.screen.w1280{width:1280px}
+.dim{position:absolute;top:6px;right:8px;z-index:40;font:11px var(--mono);color:var(--fg-3);background:#000a;padding:1px 6px;border-radius:4px}
+
+/* 外壳 */
+.nav{width:208px;flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:10px 8px;gap:2px}
+.nav .brand{font-weight:700;padding:4px 8px 12px;letter-spacing:.5px}
+.nav a{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:5px;color:var(--fg-2);text-decoration:none}
+.nav a.on{background:var(--raised-2);color:var(--fg-1);box-shadow:inset 2px 0 0 var(--primary)}
+.nav .badge{margin-left:auto;font-size:11px;color:var(--signal-fg)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{height:44px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:8px;color:var(--fg-2)}
+.topbar .sp{flex:1}
+.kbd{font:11px var(--mono);border:1px solid var(--border-strong);border-radius:4px;padding:0 4px;color:var(--fg-3)}
+.chip{white-space:nowrap;flex:none;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);background:var(--raised);border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--fg-3)}
+.dot.run{background:var(--signal);box-shadow:0 0 0 3px var(--signal-soft)}
+.dot.ok{background:var(--ok)}.dot.fail{background:var(--danger)}
+
+/* 会话页 */
+.sess{flex:1;min-height:0;display:flex;flex-direction:column;padding:18px 28px 14px}
+.sess-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.sess-head h2{font-size:17px;margin:0;font-weight:600}
+.btn{border:1px solid var(--border-strong);background:var(--raised);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12.5px;white-space:nowrap}
+.btn.pri{background:var(--primary);color:var(--primary-fg);border-color:var(--primary)}
+.btn.sig{border-color:var(--signal);color:var(--signal-fg);background:var(--signal-soft)}
+.cols{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 18rem;gap:24px}
+.tl-col{min-height:0;display:flex;flex-direction:column}
+.tl{flex:1;min-height:0;overflow:auto;padding-right:6px}
+.composer{margin-top:10px;border:1px solid var(--border-control);background:var(--sunk);border-radius:6px;padding:8px;display:flex;gap:8px;align-items:flex-end}
+.composer .ph{flex:1;color:var(--fg-3);min-height:34px}
+.composer .hint{font-size:11.5px;color:var(--fg-3)}
+
+/* 时间线条目 */
+.row{margin:0 0 10px}
+.user{background:var(--raised);border:1px solid var(--border-soft);border-radius:6px;padding:8px 10px}
+.who{font-size:12px;color:var(--fg-2);margin-bottom:2px}
+.who .t{color:var(--fg-3);font-family:var(--mono);margin-left:6px}
+.tag{font-size:11px;border:1px solid var(--border-strong);border-radius:4px;padding:0 5px;margin-left:6px;color:var(--fg-2)}
+.asst{color:var(--fg-1)}
+.asst ul{margin:4px 0;padding-left:18px}
+.asst code{font-family:var(--mono);font-size:12px;background:var(--sunk);border:1px solid var(--border-soft);border-radius:3px;padding:0 3px}
+.asst pre{font-family:var(--mono);font-size:12px;background:var(--sunk);border:1px solid var(--border-soft);border-radius:4px;padding:6px 8px;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.asst .host{color:var(--fg-3);font-size:11.5px}
+.tool{display:flex;align-items:center;gap:8px;border:1px solid var(--border-soft);background:var(--surface);border-radius:5px;padding:5px 8px;min-width:0}
+.tool .ic{width:16px;color:var(--fg-3);text-align:center;flex:none;font-family:var(--mono)}
+.tool .tt{font-family:var(--mono);font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool .st{font-size:11.5px;color:var(--fg-3);flex:none;white-space:nowrap}
+.tool.err{border-color:var(--danger-line)}
+.tool.err .st{color:var(--danger-fg)}
+.tool.running .st{color:var(--signal-fg)}
+.out{font-family:var(--mono);font-size:11.5px;background:var(--sunk);border:1px solid var(--border-soft);border-top:0;border-radius:0 0 5px 5px;padding:6px 8px;margin-top:-1px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--fg-2)}
+.diff .a{color:var(--ok)}.diff .d{color:var(--danger-fg)}.diff .h{color:var(--fg-3)}
+.rec{border-left:2px solid var(--fg-3);padding:4px 10px;display:flex;gap:8px;align-items:baseline;min-width:0}
+.rec .lab{font-size:11px;color:var(--fg-3);border:1px solid var(--border-strong);border-radius:3px;padding:0 4px;flex:none}
+.rec .txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rec .meta{font-size:11px;color:var(--fg-3);flex:none;font-family:var(--mono)}
+.rec a{color:var(--fg-1);text-decoration:underline;text-decoration-color:var(--fg-3)}
+.runcard{margin:4px 0 0 12px;border:1px solid var(--border);background:var(--surface);border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;font-size:12px;min-width:0}
+.runcard .id{font-family:var(--mono)}
+.runcard .why{color:var(--danger-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.hint-line{color:var(--fg-3);font-size:12px}
+.sep{display:flex;align-items:center;gap:10px;color:var(--fg-3);font-size:12px}
+.sep:before,.sep:after{content:"";flex:1;border-top:1px solid var(--border)}
+.thinking{color:var(--signal-fg);font-size:12px}
+
+/* 成果栏 */
+.res{min-height:0;overflow:auto;border-left:1px solid var(--border);padding-left:16px}
+.res h3{font-size:12px;color:var(--fg-2);font-weight:600;margin:4px 0 6px;display:flex;justify-content:space-between}
+.res .item{border:1px solid var(--border-soft);background:var(--surface);border-radius:5px;padding:6px 8px;margin-bottom:6px;font-size:12px}
+.res .item .m{color:var(--fg-3);font-family:var(--mono);font-size:11px}
+
+/* 运行监控（全屏，无外壳） */
+.mon{flex:1;min-width:0;display:flex;flex-direction:column}
+.mon-head{height:48px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 14px;min-width:0}
+.mon-head .t{font-weight:600;white-space:nowrap}
+.mon-head .via{color:var(--fg-2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mon-head .via a{color:var(--fg-1);cursor:pointer;text-decoration:underline;text-decoration-color:var(--fg-3)}
+.tabs{display:flex;gap:2px;margin-left:6px}
+.tabs span{white-space:nowrap;padding:3px 10px;border-radius:4px;color:var(--fg-2);font-size:12px}
+.tabs span.on{background:var(--raised-2);color:var(--fg-1)}
+.mon-body{flex:1;min-height:0;display:grid;grid-template-columns:260px minmax(0,1fr);}
+.mon-side{border-right:1px solid var(--border);padding:10px;overflow:hidden}
+.mon-side .n{display:flex;gap:8px;align-items:center;padding:5px 6px;border-radius:4px;font-size:12.5px;white-space:nowrap}
+.mon-side .n.sel{background:var(--raised-2);box-shadow:inset 2px 0 0 var(--primary)}
+.mon-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.mon-sum{padding:14px 16px;border-bottom:1px solid var(--border)}
+.mon-sum .err{border:1px solid var(--danger-line);background:var(--danger-soft);border-radius:6px;padding:8px 10px;margin-top:8px;font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:12px 16px}
+.chart{height:110px;border:1px solid var(--border-soft);background:var(--sunk);border-radius:6px;position:relative;overflow:hidden}
+.chart:after{content:"";position:absolute;left:8px;right:8px;bottom:18px;height:50px;background:linear-gradient(180deg,transparent 48%,#8e8e8e 49% 51%,transparent 52%);opacity:.5}
+.chart span{position:absolute;left:8px;top:6px;font-size:11.5px;color:var(--fg-2)}
+.logs{white-space:pre-wrap;flex:1;min-height:0;border-top:1px solid var(--border);background:var(--sunk);padding:8px 12px;font-family:var(--mono);font-size:11.5px;color:var(--fg-2);overflow:hidden}
+.logs .e{color:var(--danger-fg)}.logs .w{color:var(--warn-fg)}
+
+/* 方案二：就地侧栏（推开内容） */
+.side{width:420px;flex:none;border-left:1px solid var(--border-strong);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.side-head{height:48px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 10px 0 12px}
+.side-head .t{font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side-tabs{display:flex;gap:2px;padding:6px 10px;border-bottom:1px solid var(--border-soft)}
+.side-tabs span{padding:2px 10px;border-radius:4px;font-size:12px;color:var(--fg-2)}
+.side-tabs span.on{background:var(--raised-2);color:var(--fg-1)}
+.side .tl{padding:10px 12px}
+.side .composer{margin:0 10px 10px}
+.iconbtn{border:0;background:transparent;color:var(--fg-2);cursor:pointer;padding:4px 6px;border-radius:4px}
+.iconbtn:hover{background:var(--raised-2)}
+
+/* 方案三：悬浮窗 */
+.fab{position:absolute;right:20px;bottom:20px;z-index:30;display:flex;align-items:center;gap:8px;background:var(--primary);color:var(--primary-fg);border-radius:999px;padding:9px 14px;font-weight:600;box-shadow:0 8px 24px #000a;cursor:pointer;border:0}
+.float{position:absolute;right:20px;bottom:72px;z-index:30;width:400px;height:620px;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;box-shadow:0 16px 48px #000c;display:flex;flex-direction:column;overflow:hidden}
+.float .tl{padding:10px 12px}
+.float .composer{margin:0 10px 10px}
+.covered{position:absolute;z-index:29;border:2px dashed var(--warn);border-radius:10px;pointer-events:none}
+.covered span{position:absolute;left:6px;top:-20px;font-size:11px;color:var(--warn-fg);white-space:nowrap}
+
+.callout{position:absolute;z-index:45;background:#2b2410;border:1px solid var(--warn);color:var(--warn-fg);font-size:12px;border-radius:6px;padding:6px 9px;max-width:300px;box-shadow:0 4px 14px #0008}
+.callout b{color:#ffe1ab}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="chrome">
+  <h1>助手放在哪 · 三种布局</h1>
+  <span class="lbl">方案</span>
+  <div class="seg" id="seg-plan">
+    <button data-plan="1" aria-pressed="true">一 · 独立页面</button>
+    <button data-plan="2" aria-pressed="false">二 · 独立页面 + 就地侧栏</button>
+    <button data-plan="3" aria-pressed="false">三 · 只有悬浮窗</button>
+  </div>
+  <span class="lbl">屏幕宽</span>
+  <div class="seg" id="seg-w">
+    <button data-w="1440" aria-pressed="true">1440</button>
+    <button data-w="1280" aria-pressed="false">1280（最小宽度）</button>
+  </div>
+  <span class="lbl">标注</span>
+  <div class="seg" id="seg-c">
+    <button data-c="on" aria-pressed="true">显示</button>
+    <button data-c="off" aria-pressed="false">隐藏</button>
+  </div>
+</div>
+<p class="note" id="note"></p>
+<div class="stage"><div class="screen w1440" id="screen"></div></div>
+
+<script>
+// 同一份会话内容：取自 e2e 的固定事件（apps/web/e2e/session-timeline-support.ts，虚构的「接口巡检」故事），
+// 第二次运行改成失败，好让方案二、三有一个「失败的运行页」可放。
+const S = {
+  title: "给 http_check 加一个超时参数",
+  items: [
+    {k:"user", who:"alice", t:"08:00:00", text:"给 http_check 加一个超时参数（秒，默认 30），改好后把「接口巡检」保存成新版本并跑两遍，看结果。"},
+    {k:"asst", html:"我先看一下 http_check 现在怎么写的，再看场景里用到它的地方。"},
+    {k:"tool", ic:"R", title:"读 nodes/http_check.py", st:"8ms"},
+    {k:"tool", ic:"›", title:"$ sfly package list", st:"退出码 0 · 420ms"},
+    {k:"tool", ic:"›", title:"$ uv run pytest -q tests/test_http_check.py", st:"并行 · 出错 · 退出码 1 · 2.9s", err:true,
+      out:"FAILED tests/test_http_check.py::test_timeout - TypeError: run() got an unexpected keyword argument 'timeout'\nCommand exited with code 1"},
+    {k:"tool", ic:"›", title:"$ sfly scenario show 接口巡检", st:"并行 · 退出码 0 · 310ms"},
+    {k:"hint", text:"↻ 模型限流（429），12 秒后第 1 次重试（最多 3 次）"},
+    {k:"tool", ic:"E", title:"改 nodes/http_check.py", st:"12ms", diff:true},
+    {k:"tool", ic:"W", title:"写 tests/test_timeout.py", st:"6ms"},
+    {k:"tool", ic:"›", title:"$ uv run pytest -q tests/test_http_check.py", st:"退出码 0 · 2.1s"},
+    {k:"rec", text:"这一轮改了 2 个文件 +16 −2", meta:"3f1c2ab · 第 1 轮"},
+    {k:"rec", text:"保存了场景「接口巡检」的版本 4", meta:"第 1 轮 08:00:21"},
+    {k:"rec", text:"触发了运行 e5b8a0d2 · 场景「接口巡检」", meta:"第 1 轮 08:00:22", run:{id:"e5b8a0d2", st:"ok", text:"成功 · 1m 12s"}},
+    {k:"rec", text:"触发了运行 b17c93f4 · 场景「接口巡检」", meta:"第 1 轮 08:00:23", run:{id:"b17c93f4", st:"fail", text:"失败 · 34s", why:"http_check：TimeoutError（timeout=30.0）"}},
+    {k:"asst", html:"改好了，两次运行都已触发：<ul><li><code>http_check</code> 新增参数 <code>timeout</code>（秒，默认 30）</li><li>补了 <code>tests/test_timeout.py</code>，两个用例通过</li><li>场景「接口巡检」保存成了版本 4</li></ul>之后可以这样单独跑一遍：<pre>sfly run start 接口巡检 --wait --timeout 90s</pre>详见<a href='#' style='color:var(--fg-1)'>用户文档</a> <span class='host'>(example.com)</span>。"},
+    {k:"sep", text:"这一轮完成 · 7 步 · 用时 1m 24s"},
+    {k:"user", who:"alice", t:"08:03:10", text:"第二次运行失败了，看一下是不是超时设短了，修到两次都通过。"},
+    {k:"tool", ic:"›", title:"$ sfly run show b17c93f4", st:"退出码 0 · 0.6s"},
+    {k:"tool", ic:"›", title:"$ sfly run logs b17c93f4 --node http_check --tail 50", st:"运行中 · 4s", running:true,
+      out:"08:01:31 WARN 第 2 次尝试：GET http://sut:9000/slow 用时 29.8s\n08:01:33 ERROR TimeoutError: timeout=30.0"},
+    {k:"think", text:"● 等模型回复 · 3s"},
+  ],
+  results: {
+    commits:[{m:"第 1 轮 · 3f1c2ab", t:"2 个文件 +16 −2"}],
+    versions:[{t:"接口巡检 v4"}],
+    runs:[{id:"e5b8a0d2", st:"ok", t:"成功"},{id:"b17c93f4", st:"fail", t:"失败"}],
+  },
+};
+const DIFF = `<div class="out diff"><span class="h">@@ -1,5 +1,5 @@</span>\n<span class="d">-def run(url: str) -> int:</span>\n<span class="d">-    return requests.get(url).status_code</span>\n<span class="a">+def run(url: str, timeout: float = 30.0) -> int:</span>\n<span class="a">+    return requests.get(url, timeout=timeout).status_code</span></div>`;
+
+function esc(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))}
+function item(it){
+  switch(it.k){
+    case "user": return `<div class="row user"><div class="who">${it.who}<span class="t">${it.t}</span></div>${esc(it.text)}</div>`;
+    case "asst": return `<div class="row asst">${it.html}</div>`;
+    case "tool": return `<div class="row"><div class="tool ${it.err?"err":""} ${it.running?"running":""}"><span class="ic">${it.ic}</span><span class="tt" title="${esc(it.title)}">${esc(it.title)}</span><span class="st">${it.st}</span></div>${it.out?`<div class="out">${esc(it.out)}</div>`:""}${it.diff?DIFF:""}</div>`;
+    case "hint": return `<div class="row hint-line">${it.text}</div>`;
+    case "rec": return `<div class="row"><div class="rec"><span class="lab">平台记录</span><span class="txt">${esc(it.text)}</span><span class="meta">${it.meta}</span></div>${it.run?`<div class="runcard"><span class="dot ${it.run.st}"></span><span class="id">${it.run.id}</span><span>接口巡检</span><span style="color:var(--fg-2)">${it.run.text}</span>${it.run.why?`<span class="why">${esc(it.run.why)}</span>`:""}</div>`:""}</div>`;
+    case "sep": return `<div class="row sep">${it.text}</div>`;
+    case "think": return `<div class="row thinking">${it.text}</div>`;
+  }
+}
+const timeline = () => S.items.map(item).join("");
+const results = () => `
+  <h3><span>工作区的提交</span><span>${S.results.commits.length}</span></h3>${S.results.commits.map(c=>`<div class="item"><div class="m">${c.m}</div>${c.t}</div>`).join("")}
+  <h3><span>场景版本</span><span>${S.results.versions.length}</span></h3>${S.results.versions.map(v=>`<div class="item">${v.t}</div>`).join("")}
+  <h3><span>运行</span><span>${S.results.runs.length}</span></h3>${S.results.runs.map(r=>`<div class="item"><span class="dot ${r.st}"></span> <span class="m">${r.id}</span> 接口巡检 · ${r.t}</div>`).join("")}`;
+const composer = (running) => `<div class="composer"><div class="ph">${running?"在做时发出去的是插话…":"接着说…"}<div class="hint">${running?"插话在当前这一步做完后送到；要马上停下用停止":"Ctrl/⌘ + Enter 发送"}</div></div><button class="btn pri">${running?"发送插话":"发送"}</button></div>`;
+
+const navItems = ["控制台","助手","场景编排","运行记录","Agent 管理","节点包管理","飞书机器人","开发文档"];
+function nav(active, opts={}){
+  return `<div class="nav"><div class="brand">sfly</div>${navItems.filter(n=>!(opts.noAssistant&&n==="助手")).map(n=>`<a class="${n===active?"on":""}">${n}${n==="助手"&&opts.badge?`<span class="badge">● 1 在做</span>`:""}</a>`).join("")}</div>`;
+}
+
+function plan1(){
+  return `${nav("助手",{badge:true})}
+  <div class="main">
+    <div class="topbar">sfly › 助手 › 会话<span class="sp"></span><span class="kbd">Ctrl K</span> 搜索 · alice</div>
+    <div class="sess">
+      <div class="sess-head"><h2>${S.title}</h2><span class="chip"><span class="dot run"></span>在做</span><span style="flex:1"></span><button class="btn">停止</button><button class="btn">结束会话</button></div>
+      <div class="cols">
+        <div class="tl-col"><div class="tl">${timeline()}</div>${composer(true)}</div>
+        <div class="res">${results()}</div>
+      </div>
+    </div>
+  </div>
+  <div class="callout c" style="left:470px;top:250px">时间线约 <b>800px</b> 宽：命令、差异、运行卡片一行放得下</div>
+  <div class="callout c" style="right:24px;top:470px">成果栏 18rem，已经是会话页里的一条侧栏</div>
+  <div class="callout c" style="left:12px;top:440px;max-width:186px">离开会话页后：导航「助手」写「1 在做」（列表已有状态；导航上的计数是假设）</div>`;
+}
+
+function monitor(opts={}){
+  return `<div class="mon">
+    <div class="mon-head"><span class="iconbtn">←</span><span class="t">运行 b17c93f4</span><span class="chip"><span class="dot fail"></span>失败</span>
+      <span class="via">场景「接口巡检」 · 经 会话「<a id="via">${S.title}</a>」</span>
+      <div class="tabs"><span>概览</span><span class="on">详情</span></div><span style="flex:1"></span>
+      ${opts.askBtn?`<button class="btn sig" id="ask">让助手排查这次失败</button>`:""}<button class="btn">重新运行</button></div>
+    <div class="mon-body">
+      <div class="mon-side">
+        <div class="lbl" style="margin:0 0 6px 4px">链 1</div>
+        <div class="n"><span class="dot ok"></span>prepare_env</div>
+        <div class="n sel"><span class="dot fail"></span>http_check<span style="margin-left:auto;color:var(--danger-fg);font-size:11px">TimeoutError</span></div>
+        <div class="n"><span class="dot"></span>metric_rate</div>
+        <div class="n"><span class="dot"></span>report</div>
+      </div>
+      <div class="mon-main">
+        <div class="mon-sum"><b>http_check</b> · 第 2 次尝试 · 失败 · 34s<div class="err">TimeoutError: HTTPConnectionPool(host='sut', port=9000): Read timed out. (read timeout=30.0)</div></div>
+        <div class="charts"><div class="chart"><span>响应时间（ms）</span></div><div class="chart"><span>状态码</span></div><div class="chart"><span>重试次数</span></div></div>
+        <div class="logs">08:01:01 INFO 第 1 次尝试：GET http://sut:9000/slow
+08:01:01 <span class="w">WARN</span> 用时 29.9s，接近超时 30.0s
+08:01:31 INFO 第 2 次尝试：GET http://sut:9000/slow
+08:01:31 <span class="w">WARN</span> 第 2 次尝试：GET http://sut:9000/slow 用时 29.8s
+08:01:33 <span class="e">ERROR TimeoutError: timeout=30.0</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function sidePanel(){
+  return `<div class="side">
+    <div class="side-head"><span class="dot run"></span><span class="t">${S.title}</span>
+      <button class="iconbtn" title="在会话页打开">↗ 会话页</button><button class="iconbtn" title="关闭">✕</button></div>
+    <div class="side-tabs"><span class="on">时间线</span><span>成果 4</span><span style="margin-left:auto;color:var(--fg-3)">停止</span></div>
+    <div class="tl">${timeline()}</div>${composer(true)}
+  </div>`;
+}
+
+function plan2(){
+  return `${monitor({askBtn:true})}${sidePanel()}
+  <div class="callout c" style="right:440px;top:56px">「让助手排查这次失败」：新建会话，第一句话预填运行号；<b>点「经 会话」也在这里打开</b>，不离开运行监控</div>
+  <div class="callout c" style="right:440px;bottom:130px">右边是同一份时间线的<b>窄版</b>（约 400px）：长命令截断、成果收进页签；要看全就「↗ 会话页」</div>
+  <div class="callout c" style="left:280px;bottom:20px">运行监控不带外壳（全屏页）：侧栏要挂在这个页面上，不能只放在外壳里</div>`;
+}
+
+function plan3(){
+  return `${monitor({})}
+  <button class="fab"><span class="dot run" style="background:var(--signal)"></span>助手 · 1 在做</button>
+  <div class="float">
+    <div class="side-head"><button class="iconbtn" title="会话列表">☰</button><span class="t">${S.title}</span><button class="iconbtn" title="收起">—</button></div>
+    <div class="side-tabs"><span class="on">时间线</span><span>成果 4</span><span style="margin-left:auto;color:var(--fg-3)">停止</span></div>
+    <div class="tl">${timeline()}</div>${composer(true)}
+  </div>
+  <div class="covered c" style="right:16px;bottom:16px;width:410px;height:684px"><span>悬浮窗盖住的范围：日志尾部和右侧图表</span></div>
+  <div class="callout c" style="left:390px;top:520px">没有导航「助手」、没有会话页：会话列表、十几分钟的一轮、成果都挤在 400×620 里</div>`;
+}
+
+const NOTES = {
+  1:"<b>方案一（现状加就地入口）</b>：导航「助手」→ 会话列表 → 会话页。会话页三栏：外壳导航、时间线、成果栏。一轮十几分钟、几十个工具行时空间最够。运行监控上的「让助手排查这次失败」跳到这里、预填一句；离开会话页后看导航上的计数。",
+  2:"<b>方案二</b>：保留方案一的全部，另在运行监控（失败的运行）、场景页上加就地入口，在页面右边打开同一个会话的窄版侧栏（推开内容，不盖住）。点运行页上的「经 会话」也在侧栏里打开，不跳走。看全过程仍去会话页。",
+  3:"<b>方案三</b>：去掉独立的助手页和会话页，所有页面右下角一个悬浮按钮，打开 400×620 的悬浮窗，会话列表、时间线、成果都在里面。悬浮窗盖住页面内容（虚线框）。",
+};
+
+let plan="1", w="1440", c="on";
+function render(){
+  const scr=document.getElementById("screen");
+  scr.className="screen w"+w;
+  scr.innerHTML=({1:plan1,2:plan2,3:plan3})[plan]();
+  document.getElementById("note").innerHTML=`<span class="lbl">${w}×900 · </span>`+NOTES[plan];
+  scr.querySelectorAll(".c").forEach(el=>el.classList.toggle("hidden",c==="off"));
+  scr.querySelectorAll(".tl").forEach(el=>el.scrollTop=el.scrollHeight);
+}
+function bind(id,key,set){
+  document.getElementById(id).addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b) return;
+    set(b.dataset[key]);
+    document.querySelectorAll(`#${id} button`).forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+    render();
+  });
+}
+bind("seg-plan","plan",v=>plan=v);
+bind("seg-w","w",v=>w=v);
+bind("seg-c","c",v=>c=v);
+render();
+</script>
+</body>
+</html>
