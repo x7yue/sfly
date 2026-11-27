@@ -9,3 +9,7 @@
 - `#/dashboard` 控制台、`#/scenarios` 场景编排（卡片 / 表格、运行抽屉）、`#/runs` 运行记录、`#/agents`、`#/packages`
 - `#/editor/s1` 全屏编排画布（编辑 / 运行状态）
 - `#/monitor/0194692f`（小型运行）、`#/monitor/b7e2a91c`（30 节点、42 张图表）、`#/monitor/259c7e70`（失败的运行）
+
+## 助手放在哪 · 三种布局（用完即弃）
+
+`assistant-forms.html` 是调研 `docs/research/assistant-ui-form.md` 用的对比图：把同一段会话（e2e 固定事件里虚构的「接口巡检」）放进三种布局——独立页面、独立页面加就地侧栏、只有悬浮窗，可切 1440 和 1280 两种屏幕宽。它不是规格，形态定下来以后可以删掉。
