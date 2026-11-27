@@ -34,6 +34,13 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				],
 			},
 			"agents/UpdateNowButton.tsx": { wrapped: ["agent.name", "agent.name"] },
+			"agents/AgentAdminActions.tsx": {
+				wrapped: ["agent.name", "agent.name", "agent.name", "agent.name"],
+			},
+			"agents/credentials/CredentialsDialog.tsx": {
+				wrapped: ["name", "name", "name"],
+				truncate: 1,
+			},
 			"dashboard/AgentsPanel.tsx": { wrapped: ["agent.name", 'agent.info.agent_version || "—"'] },
 			"dashboard/GettingStarted.tsx": { wrapped: ["step.fact"] },
 			"editor/inspector/AgentSelect.tsx": { wrapped: ["a.name", "value"] },

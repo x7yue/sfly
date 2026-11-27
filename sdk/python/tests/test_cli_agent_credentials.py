@@ -193,8 +193,15 @@ class TestIssue:
         lines = out.splitlines()
         assert AGENT_TOKEN in lines, out
         assert out.count(AGENT_TOKEN) == 1
-        assert "read -rs SFLY_TOKEN && export SFLY_TOKEN" in out
-        assert f"curl -fsSL {logged_in.url}/install.sh | sh -s -- --name worker-1" in out
+        # 安装命令是一行、放在子 shell 里：两行一起粘贴时，没有括号粘贴的终端里
+        # `read -rs` 会读走第二行。
+        command = (
+            "(read -rs SFLY_TOKEN && export SFLY_TOKEN && "
+            f"curl -fsSL {logged_in.url}/install.sh | sh -s -- --name worker-1)"
+        )
+        assert f"  {command}\n" in out
+        install_lines = [line for line in lines if "read -rs" in line or "curl -fsSL" in line]
+        assert install_lines == [f"  {command}"], "read 和 curl 在同一行，没有单独一行的 read"
         # 安装命令里没有凭据（参数里看得见）：只有 `--token-only` 这个选项名出现。
         assert not re.search(r"--token(?!-only)", out)
         assert err == ""

@@ -42,13 +42,12 @@ import { cookieAllowed, type OriginRules } from "./cross-site.js";
 import { clearLoginCookieHeader, loginCookieHeader } from "./login-cookie.js";
 import {
 	effectiveScopes,
-	PLATFORM_ADMIN_SCOPES,
 	PROJECT_TOKEN_SCOPES,
-	ROLE_SCOPES,
 	requiredScope,
 	SCOPE_LABELS,
 	type Scope,
 	SESSION_TOKEN_SCOPES,
+	userScopes,
 	writeNeedsPerson,
 } from "./scopes.js";
 
@@ -641,14 +640,18 @@ export class AccessGuard {
 				if (role === null && !(await this.deps.store.projectExists(project))) return notFound();
 				admin = {
 					userId: user.id,
-					memberScopes: role === null ? [] : effectiveScopes(ROLE_SCOPES[role], principal.granted),
+					// 他作为成员本来就有的范围：同一个算法，不当平台管理员算。
+					memberScopes: effectiveScopes(
+						userScopes({ isPlatformAdmin: false }, role),
+						principal.granted,
+					),
 				};
-				scopes = effectiveScopes(PLATFORM_ADMIN_SCOPES, principal.granted);
+				scopes = effectiveScopes(userScopes(user, role), principal.granted);
 			} else if (role === null) {
 				if (!publicRead) return notFound();
 				scopes = effectiveScopes(["read"], principal.granted);
 			} else {
-				scopes = effectiveScopes(ROLE_SCOPES[role], principal.granted);
+				scopes = effectiveScopes(userScopes(user, role), principal.granted);
 			}
 		}
 

@@ -3037,13 +3037,29 @@
           "is_platform_admin": {
             "type": "boolean",
             "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run",
+                "edit",
+                "session_build",
+                "publish",
+                "manage"
+              ]
+            },
+            "description": "这个用户**此刻在默认项目里**有的范围（读、运行、编辑、会话构建、发布、管理）：控制台按它决定显示哪些操作（例如有「管理」才显示\nAgent 的凭据和停用）。**只是默认项目里的范围**：Agent 页和 `/agents` 现在都在默认项目，页面才能拿它判断；别的项目里的页面不能用它，\n项目切换、路径带项目（#499）之后要改成按页面所在的项目给。算法和访问检查是同一处（控制面的 `userScopes`）：平台管理员有项目管理员的全部范围，\n成员按角色，不是默认项目成员的什么范围都没有（在别的项目里是管理员也一样）。它只是让页面少显示点不了的按钮，不是授权：\n每个请求服务端照样检查；也不缓存：登录、初始化和 `GET /auth/me` 每次都按此刻的角色算。"
           }
         },
         "required": [
           "id",
           "login_name",
           "display_name",
-          "is_platform_admin"
+          "is_platform_admin",
+          "scopes"
         ]
       },
       "notes": [
@@ -3102,13 +3118,29 @@
           "is_platform_admin": {
             "type": "boolean",
             "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run",
+                "edit",
+                "session_build",
+                "publish",
+                "manage"
+              ]
+            },
+            "description": "这个用户**此刻在默认项目里**有的范围（读、运行、编辑、会话构建、发布、管理）：控制台按它决定显示哪些操作（例如有「管理」才显示\nAgent 的凭据和停用）。**只是默认项目里的范围**：Agent 页和 `/agents` 现在都在默认项目，页面才能拿它判断；别的项目里的页面不能用它，\n项目切换、路径带项目（#499）之后要改成按页面所在的项目给。算法和访问检查是同一处（控制面的 `userScopes`）：平台管理员有项目管理员的全部范围，\n成员按角色，不是默认项目成员的什么范围都没有（在别的项目里是管理员也一样）。它只是让页面少显示点不了的按钮，不是授权：\n每个请求服务端照样检查；也不缓存：登录、初始化和 `GET /auth/me` 每次都按此刻的角色算。"
           }
         },
         "required": [
           "id",
           "login_name",
           "display_name",
-          "is_platform_admin"
+          "is_platform_admin",
+          "scopes"
         ]
       },
       "notes": []
@@ -3174,13 +3206,29 @@
           "is_platform_admin": {
             "type": "boolean",
             "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run",
+                "edit",
+                "session_build",
+                "publish",
+                "manage"
+              ]
+            },
+            "description": "这个用户**此刻在默认项目里**有的范围（读、运行、编辑、会话构建、发布、管理）：控制台按它决定显示哪些操作（例如有「管理」才显示\nAgent 的凭据和停用）。**只是默认项目里的范围**：Agent 页和 `/agents` 现在都在默认项目，页面才能拿它判断；别的项目里的页面不能用它，\n项目切换、路径带项目（#499）之后要改成按页面所在的项目给。算法和访问检查是同一处（控制面的 `userScopes`）：平台管理员有项目管理员的全部范围，\n成员按角色，不是默认项目成员的什么范围都没有（在别的项目里是管理员也一样）。它只是让页面少显示点不了的按钮，不是授权：\n每个请求服务端照样检查；也不缓存：登录、初始化和 `GET /auth/me` 每次都按此刻的角色算。"
           }
         },
         "required": [
           "id",
           "login_name",
           "display_name",
-          "is_platform_admin"
+          "is_platform_admin",
+          "scopes"
         ]
       },
       "notes": []

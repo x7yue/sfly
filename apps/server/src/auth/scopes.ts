@@ -28,6 +28,19 @@ export const SESSION_TOKEN_SCOPES: readonly Scope[] = ["read", "run", "edit", "s
 export const PLATFORM_ADMIN_SCOPES: readonly Scope[] = ROLE_SCOPES.project_admin;
 
 /**
+ * 一个用户在一个项目里此刻有的范围（不含令牌自己限定的范围）：平台管理员有项目管理员的全部（项目要真的存在，由调用方判断），
+ * 成员按角色，不是成员也不是平台管理员的什么都没有。访问检查（`access-guard.ts`）和控制台要的 `CurrentUser.scopes`
+ * （`AccountService.scopesIn`）都用它，范围的算法只有这一份。
+ */
+export function userScopes(
+	user: { isPlatformAdmin: boolean },
+	role: ProjectRole | null,
+): readonly Scope[] {
+	if (user.isPlatformAdmin) return PLATFORM_ADMIN_SCOPES;
+	return role === null ? [] : ROLE_SCOPES[role];
+}
+
+/**
  * 范围表的一行：这类资源的写要什么范围（`write` 是 null 表示没有任何人和程序能写）；读几乎都是「读」，
  * 例外写在 `read` 里（项目的管理面：列表也要「管理」）。
  */

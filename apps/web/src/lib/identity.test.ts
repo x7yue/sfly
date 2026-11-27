@@ -10,7 +10,13 @@ import {
 	setSessionExpiredHandler,
 } from "./identity";
 
-const USER = { id: "u1", login_name: "root", display_name: "管理员", is_platform_admin: true };
+const USER = {
+	id: "u1",
+	login_name: "root",
+	display_name: "管理员",
+	is_platform_admin: true,
+	scopes: [],
+};
 
 /** 控制面对 `GET /auth/me` 的回答：登录有效（200）、已经失效（401）、网络出错。 */
 type MeAnswer = "valid" | "expired" | "unreachable";
@@ -158,6 +164,7 @@ describe("请求拿到 401（noteUnauthorized）", () => {
 			login_name: "alice",
 			display_name: "爱丽丝",
 			is_platform_admin: false,
+			scopes: [],
 		};
 		setCurrentUser(other);
 		release();
@@ -180,6 +187,7 @@ describe("请求拿到 401（noteUnauthorized）", () => {
 			login_name: "alice",
 			display_name: "爱丽丝",
 			is_platform_admin: false,
+			scopes: [],
 		};
 		setCurrentUser(other);
 		release();

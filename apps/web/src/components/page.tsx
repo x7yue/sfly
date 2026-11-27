@@ -142,7 +142,12 @@ export function CodeBlock({
 }: {
 	code: string;
 	className?: string;
-	wrap?: boolean;
+	/**
+	 * 放不下时折行：`true` 是给说明文字用的（无衬线、按词折行）；`"mono"` 保持等宽字体，用在一整行的命令上
+	 * （安装命令一行就有一百多个字符，横向滚动会让人看不见命令的后半截和最右边的复制按钮下面压着的字，
+	 * 折行之后命令是完整的、复制的仍然是一行）。
+	 */
+	wrap?: boolean | "mono";
 }) {
 	const [copied, setCopied] = useState(false);
 	return (
@@ -153,9 +158,11 @@ export function CodeBlock({
 			<pre
 				className={cn(
 					"m-0 px-3 py-2.5 pr-11 text-left leading-relaxed",
-					wrap
-						? "font-sans text-sm break-words whitespace-pre-wrap text-fg-1"
-						: "overflow-x-auto font-mono text-xs whitespace-pre text-fg-2",
+					wrap === "mono"
+						? "font-mono text-xs whitespace-pre-wrap text-fg-2 [overflow-wrap:anywhere]"
+						: wrap
+							? "font-sans text-sm break-words whitespace-pre-wrap text-fg-1"
+							: "overflow-x-auto font-mono text-xs whitespace-pre text-fg-2",
 				)}
 			>
 				{code}

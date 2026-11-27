@@ -21,12 +21,14 @@ curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 - `--no-auto-update`：不自动更新（见「版本与自动更新」）。
 - 完整参数：`curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --help`。
 
-用环境变量传凭据：先读入凭据（粘贴后回车，输入不显示），再运行安装命令（`--name` 写签发凭据时指定的名字）：
+用环境变量传凭据：下面这一行命令运行之后会停下来等你粘贴凭据（粘贴后回车，输入不显示），然后运行安装命令（`--name` 写签发凭据时指定的名字）：
 
 ```text
-read -rs SFLY_TOKEN && export SFLY_TOKEN
-curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
+(read -rs SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)")
 ```
+
+- **整条写成一行**：分成两行一起粘贴时，没有「括号粘贴」的终端（bash 5.1 之前的默认，例如 Ubuntu 20.04、RHEL 8）会把整段当成一行行输入，第一行的 `read -rs` 读走紧接着粘贴进来的第二行，之后粘贴的凭据又被当成命令执行（还会写进 shell 历史）。
+- **放在括号（子 shell）里**：装完之后你的交互 shell 里不留 `SFLY_TOKEN`；`read` 读不到凭据时（没有终端，或者不是 bash：dash 不认 `read -s`）`&&` 让后面的安装不运行。要在 bash 里运行这一行。
 
 ### 用 sudo 安装（系统级服务）
 
@@ -37,7 +39,13 @@ curl -fsSL {{SFLY_URL}}/install.sh | sudo sh -s -- --name "$(uname -n)"
 ```
 
 - Agent 以 root 运行，文件在 root 的家目录下（通常是 `/root/.sfly`，以安装脚本最后打印的路径为准），下面写的 `~/.sfly` 都指这个目录。之后升级、改配置也要用 `sudo`。
-- `sudo` 默认不传递环境变量：用环境变量传凭据、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
+- `sudo` 默认不传递环境变量：用环境变量传凭据、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。带凭据的整条命令（`sudo` 只换在 `sh` 前面，`read` 和 `curl` 不用 root）：
+
+  ```text
+  (read -rs SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL {{SFLY_URL}}/install.sh | sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)")
+  ```
+
+  换凭据时（凭据已经装好、只是换一个）同理：改 root 的 `agent.env`（需要 `sudo`），原来没有凭据的 `agent.env` 里没有 `SFLY_TOKEN=` 那一行，在末尾加一行 `SFLY_TOKEN=<凭据>`，再 `sudo systemctl restart sfly-agent`。
 - 同一台机器上之前用普通用户装过时，先停掉那个 Agent（`systemctl --user disable --now sfly-agent`，或结束前台进程），否则两个同名的 Agent 会同时连接控制面。
 
 Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动时它会准备运行环境，需要一两分钟：
@@ -123,6 +131,8 @@ sfly --version
 ## Agent 凭据
 
 每台 Agent 用**管理员为它签发的凭据**（`sfly_agt_` 开头）连接控制面，下载节点包、上传产物也带着它。凭据**按台签发**：只对签发时指定的那个名字有效，拿到它只能冒充这一台 Agent；控制面只存哈希，原值只在签发时显示一次。同一台 Agent 可以同时有几个有效的凭据，方便轮换。
+
+**在控制台签发**：管理员登录后，[Agent 管理](/agents) 页每台 Agent 的面板上有「凭据」按钮：列出这台 Agent 的凭据（前缀、状态、最后使用时间、所属用户，含已吊销的，不含原值），签发新的（原值只在弹窗里显示一次，弹窗里还有写好名字的安装命令和换掉已装好的 Agent 的凭据的几步）、吊销。还没连过控制面的名字用页头的「为新 Agent 签发凭据」先签发。吊销、停用的后果在确认框里写明。没有管理范围的人看不到这些按钮。命令行也能做同样的事（见下面）。
 
 **签发要先有管理员账号**：第一次给 Agent 签发凭据之前，控制面要先有平台管理员——部署时设置 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD` 建第一个平台管理员，或者用初始化码在 `/setup` 页建（见「用户」）。签发、列出、吊销凭据都要管理员（项目的「管理」范围）登录，没有登录是 401。在能运行 `sfly` 的机器上（比如上面装好的开发机）登录后签发：
 
