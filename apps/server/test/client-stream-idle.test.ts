@@ -35,7 +35,7 @@ describe("事件流长时间没有新事件", () => {
 	const proxied = async (options: Parameters<typeof startStreamingProxy>[1] = {}) => {
 		const proxy = await startStreamingProxy(cp.httpUrl, options);
 		proxies.push(proxy);
-		return { proxy, ...observedClient({ baseUrl: proxy.url }) };
+		return { proxy, ...observedClient({ baseUrl: proxy.url, token: await cp.users.token() }) };
 	};
 
 	async function start(heartbeatMs: number) {

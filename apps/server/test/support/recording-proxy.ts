@@ -1,5 +1,6 @@
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
+import { aliasCliServer } from "./sfly-cli.js";
 
 export interface RecordedRequest {
 	method: string;
@@ -49,6 +50,7 @@ export async function startRecordingProxy(
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const { port } = server.address() as AddressInfo;
+	aliasCliServer(`http://127.0.0.1:${port}`, target);
 	return {
 		url: `http://127.0.0.1:${port}`,
 		requests,

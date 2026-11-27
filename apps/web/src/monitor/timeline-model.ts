@@ -64,6 +64,44 @@ export function nodeSegments(node: NodeRunView, now: number): Segment[] {
 	return segments;
 }
 
+/**
+ * 一个节点的用时（时间线的节点行、选中节点的摘要共用，两处写的是同一个数）：
+ * - `total` 总耗时：各次尝试从排队到结束的合计（含排队、等待，不含尝试之间的间隔）；没有任何区段（还没开始）时是 null。
+ *   控制面的「节点耗时 Top 10」按同样的口径算（`metric-queries.ts` 的 `platform`：每次尝试的结束减排队时刻，加起来），
+ *   一次尝试时就是这次尝试的条（排队段加执行段）一样长；
+ * - `queued` 排队等待 Agent 的合计（各次尝试的排队段加起来：派发、安装节点包、启动执行器）；
+ * - `execution` 最近一次尝试的执行时长（执行、等待子流程的那一段；没有开始执行时是 null）；
+ * - `attempts` 尝试的次数。
+ */
+export interface NodeTiming {
+	total: number | null;
+	queued: number;
+	execution: number | null;
+	attempts: number;
+}
+
+export function timingOf(segments: Segment[]): NodeTiming {
+	if (segments.length === 0) return { total: null, queued: 0, execution: null, attempts: 0 };
+	const executions = segments.filter((s) => s.kind !== "queue");
+	const latest = executions.at(-1);
+	const byAttempt = new Map<number, { start: number; end: number }>();
+	for (const s of segments) {
+		const was = byAttempt.get(s.attempt);
+		byAttempt.set(s.attempt, {
+			start: Math.min(was?.start ?? s.start, s.start),
+			end: Math.max(was?.end ?? s.end, s.end),
+		});
+	}
+	return {
+		total: [...byAttempt.values()].reduce((sum, a) => sum + (a.end - a.start), 0),
+		queued: segments
+			.filter((s) => s.kind === "queue")
+			.reduce((sum, s) => sum + (s.end - s.start), 0),
+		execution: latest ? latest.end - latest.start : null,
+		attempts: byAttempt.size,
+	};
+}
+
 function executionKind(kind: NodeRunView["kind"], status: AttemptView["status"]): SegmentKind {
 	const segment = NODE_STATUS[status].segment;
 	// 停止子流程节点正常执行的时段就是在等子流程结束。

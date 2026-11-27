@@ -238,20 +238,22 @@ describe("运行预设的维护", () => {
 			const { id, preset } = await sceneWithPreset();
 			const other = await api.orchestrationWith(scenario(), "other");
 
-			for (const [scene, presetId] of [
-				[id, randomUUID()],
-				[id, "not-a-uuid"],
-				[other, preset.id],
-				[randomUUID(), preset.id],
-				["not-a-uuid", preset.id],
+			for (const [scene, presetId, code] of [
+				[id, randomUUID(), "preset_not_found"],
+				[id, "not-a-uuid", "preset_not_found"],
+				[other, preset.id, "preset_not_found"],
+				// 场景不存在：带凭据的请求在访问检查里找场景属于哪个项目时就是 404（not_found），到不了处理函数。
+				[randomUUID(), preset.id, "not_found"],
+				["not-a-uuid", preset.id, "not_found"],
 			] as const) {
 				const res = await updatePreset(api, scene, presetId, { name: "x" });
 				expect(res.status, `${scene} ${presetId}`).toBe(404);
-				expect((await errorOf(res)).code).toBe("preset_not_found");
+				expect((await errorOf(res)).code).toBe(code);
 			}
 
 			const anonymous = await cp.fetch(`/orchestrations/${id}/presets/${preset.id}`, {
 				method: "PATCH",
+				credentials: "omit",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "x" }),
 			});
@@ -357,19 +359,21 @@ describe("运行预设的维护", () => {
 			const { id, preset } = await sceneWithPreset();
 			const other = await api.orchestrationWith(scenario(), "other");
 
-			for (const [scene, presetId] of [
-				[id, randomUUID()],
-				[id, "not-a-uuid"],
-				[other, preset.id],
-				[randomUUID(), preset.id],
+			for (const [scene, presetId, code] of [
+				[id, randomUUID(), "preset_not_found"],
+				[id, "not-a-uuid", "preset_not_found"],
+				[other, preset.id, "preset_not_found"],
+				// 场景不存在：访问检查里就是 404（not_found），见上面「修改」的同一条。
+				[randomUUID(), preset.id, "not_found"],
 			] as const) {
 				const res = await copyPreset(api, scene, presetId, "副本");
 				expect(res.status, `${scene} ${presetId}`).toBe(404);
-				expect((await errorOf(res)).code).toBe("preset_not_found");
+				expect((await errorOf(res)).code).toBe(code);
 			}
 
 			const anonymous = await cp.fetch(`/orchestrations/${id}/presets/${preset.id}/copy`, {
 				method: "POST",
+				credentials: "omit",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "副本" }),
 			});
@@ -426,18 +430,24 @@ describe("运行预设的维护", () => {
 			const { id, preset } = await sceneWithPreset();
 			const other = await api.orchestrationWith(scenario(), "other");
 
-			for (const [scene, presetId] of [
-				[id, randomUUID()],
-				[id, "not-a-uuid"],
-				[other, preset.id],
-				[randomUUID(), preset.id],
+			for (const [scene, presetId, code] of [
+				[id, randomUUID(), "preset_not_found"],
+				[id, "not-a-uuid", "preset_not_found"],
+				[other, preset.id, "preset_not_found"],
+				// 场景不存在：访问检查里就是 404（not_found），见上面「修改」的同一条。
+				[randomUUID(), preset.id, "not_found"],
 			] as const) {
 				const res = await deletePreset(api, scene, presetId);
 				expect(res.status, `${scene} ${presetId}`).toBe(404);
-				expect((await errorOf(res)).code).toBe("preset_not_found");
+				expect((await errorOf(res)).code).toBe(code);
 			}
 			expect(
-				(await cp.fetch(`/orchestrations/${id}/presets/${preset.id}`, { method: "DELETE" })).status,
+				(
+					await cp.fetch(`/orchestrations/${id}/presets/${preset.id}`, {
+						method: "DELETE",
+						credentials: "omit",
+					})
+				).status,
 			).toBe(400);
 			expect(await listPresets(api, id)).toEqual([preset]);
 

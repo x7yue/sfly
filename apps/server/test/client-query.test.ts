@@ -168,11 +168,12 @@ describe("API 客户端查询测试控制面", () => {
 		for (const url of [artifactUrl, taskLogUrl, runLogUrl]) {
 			expect(new URL(url).origin).toBe(new URL(cp.httpUrl).origin);
 		}
-		const artifact = await fetch(artifactUrl);
+		const tester = await cp.users.as("tester");
+		const artifact = await fetch(artifactUrl, { headers: tester });
 		expect(artifact.status).toBe(200);
 		expect(await artifact.text()).toBe(seeded.artifact.body);
 		for (const url of [taskLogUrl, runLogUrl]) {
-			const res = await fetch(url);
+			const res = await fetch(url, { headers: tester });
 			expect(res.status, url).toBe(200);
 			const rows = (await res.text())
 				.trimEnd()

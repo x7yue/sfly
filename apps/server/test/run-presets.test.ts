@@ -180,6 +180,7 @@ describe("运行预设", () => {
 			const id = await api.orchestrationWith(scenario());
 			const anonymous = await cp.fetch(`/orchestrations/${id}/presets`, {
 				method: "POST",
+				credentials: "omit",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "p", params: [{ name: "host", value: "h" }] }),
 			});

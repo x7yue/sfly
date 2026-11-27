@@ -596,6 +596,7 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			const before = await query<{ n: number }>(cp, "select count(*)::int as n from sessions");
 			const res = await cp.fetch("/projects/default/sessions", {
 				method: "POST",
+				credentials: "omit",
 				headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
 				body: JSON.stringify({ text: "没有凭据" }),
 			});
