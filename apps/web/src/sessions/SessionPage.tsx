@@ -38,6 +38,7 @@ import {
 	sessionStatusText,
 } from "./session-text";
 import { hasBehind, type TimelineItem, type TimelineState } from "./timeline";
+import { LiveRunsContext, useLiveRunSet } from "./use-live-runs";
 import { useSessionTimeline } from "./use-session-timeline";
 
 /**
@@ -119,69 +120,73 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	const said = useAnnouncement(state);
 	const mode = composerMode(state);
 	const readiness = useReadiness(detail.readiness);
-	// 空闲的会话此刻说不了话（模型没有配置或连不上）：顶上写缺什么，「发送」不可用，输入框照常可以写（和助手页一样）。
+	// 空闲的会话此刻说不了话（模型没有配置或连不上）：输入框旁写缺什么、该找谁，「发送」不可用，输入框照常可以写（和助手页一样）。
 	const blocked = state.status === "idle" && hasModelProblem(readiness);
+	// 哪几个运行开着事件流（最近的 2 个在跑的）：时间线上的运行卡片和成果栏里的卡片读同一个结果，同一个运行最多一条连接。
+	const liveRuns = useLiveRunSet(results.runs);
 	return (
-		// 占满主区域：页头、（就绪提示）、输入框固定，时间线自己滚（`SessionTimeline`）。页头不会因为时间线长而滚到顶栏下面（#550）。
-		<div className="h-full px-8 pt-5 pb-4">
-			<div className="mx-auto flex h-full w-full max-w-300 flex-col">
-				<PageHeader
-					// 会话的标题是第一句话：别人写的文字（公共的不可信文字组件处理）。
-					title={detail.title}
-					untrustedTitle
-					actions={
-						<>
-							<StatusPill kind={status.kind} pulse className="text-sm">
-								<span data-testid="session-status" data-status={state.status}>
-									{sessionStatusText(state)}
-								</span>
-							</StatusPill>
-							{(state.status === "running" || state.status === "queued") && (
-								<StopButton
-									id={detail.id}
-									queued={state.status === "queued"}
-									behind={hasBehind(state.items)}
-									onGone={onGone}
-								/>
-							)}
-							{state.status !== "ended" && <EndSession id={detail.id} onGone={onGone} />}
-						</>
-					}
-				/>
-				{blocked && (
-					<div className="mb-3">
-						<ReadinessLine readiness={readiness} />
-					</div>
-				)}
-				{/* 读屏读一句：一轮结束、排到了、插话没有送到、会话被结束（时间线是逐字更新的，不整个播报）。 */}
-				<output aria-live="polite" className="sr-only">
-					{said}
-				</output>
-				{/* 左边是时间线和输入框，右边是「成果」（#547）：这个会话留下的提交、场景版本和运行，滚动时跟着。 */}
-				<div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_18rem] grid-rows-[minmax(0,1fr)] gap-6">
-					<div className="flex min-h-0 min-w-0 flex-col">
-						<SessionTimeline
-							state={state}
-							onLoadOlder={() => void loadOlder()}
-							loadingOlder={loadingOlder}
-							olderError={olderError}
-						/>
-						<Composer
-							id={detail.id}
-							mode={mode}
-							items={state.items}
-							lastSeq={state.lastSeq}
-							notReady={blocked}
-							onSent={syncQueue}
-							onGone={onGone}
-						/>
-					</div>
-					<div className="min-h-0 overflow-y-auto">
-						<ResultsPanel results={results} partial={state.hasMore} />
+		// 占满主区域：页头、输入框固定，时间线自己滚（`SessionTimeline`）。页头不会因为时间线长而滚到顶栏下面（#550）。
+		// `@container`：版面按这一块自己的宽度分（外壳的侧边栏占掉一部分），不按窗口宽度。
+		<LiveRunsContext.Provider value={liveRuns}>
+			<div className="h-full px-8 pt-5 pb-4">
+				<div className="@container mx-auto flex h-full w-full max-w-300 flex-col">
+					<PageHeader
+						// 会话的标题是第一句话：别人写的文字（公共的不可信文字组件处理）。
+						title={detail.title}
+						untrustedTitle
+						actions={
+							<>
+								<StatusPill kind={status.kind} pulse className="text-sm">
+									<span data-testid="session-status" data-status={state.status}>
+										{sessionStatusText(state)}
+									</span>
+								</StatusPill>
+								{(state.status === "running" || state.status === "queued") && (
+									<StopButton
+										id={detail.id}
+										queued={state.status === "queued"}
+										behind={hasBehind(state.items)}
+										onGone={onGone}
+									/>
+								)}
+								{state.status !== "ended" && <EndSession id={detail.id} onGone={onGone} />}
+							</>
+						}
+					/>
+					{/* 读屏读一句：一轮结束、排到了、插话没有送到、会话被结束（时间线是逐字更新的，不整个播报）。 */}
+					<output aria-live="polite" className="sr-only">
+						{said}
+					</output>
+					{/* 左边是时间线和输入框，右边是「成果」（#547，#551）：这个会话留下的场景、运行和提交。窄到放不下两栏时（这一块不到 52rem）
+				    成果收到时间线和输入框下面，自己最高占窗口高度的四成、超出的在里面滚，时间线仍然自己滚。 */}
+					<div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-4 @min-[52rem]:grid-cols-[minmax(0,1fr)_18rem] @min-[52rem]:grid-rows-[minmax(0,1fr)] @min-[52rem]:gap-6">
+						<div className="flex min-h-0 min-w-0 flex-col">
+							<SessionTimeline
+								state={state}
+								onLoadOlder={() => void loadOlder()}
+								loadingOlder={loadingOlder}
+								olderError={olderError}
+							/>
+							<Composer
+								id={detail.id}
+								mode={mode}
+								items={state.items}
+								lastSeq={state.lastSeq}
+								readiness={blocked ? readiness : null}
+								onSent={syncQueue}
+								onGone={onGone}
+							/>
+						</div>
+						<div
+							data-testid="session-results-scroll"
+							className="max-h-[40dvh] min-h-0 overflow-y-auto @min-[52rem]:max-h-none"
+						>
+							<ResultsPanel results={results} partial={state.hasMore} />
+						</div>
 					</div>
 				</div>
 			</div>
-		</div>
+		</LiveRunsContext.Provider>
 	);
 }
 
@@ -278,7 +283,7 @@ function Composer({
 	mode,
 	items,
 	lastSeq,
-	notReady,
+	readiness,
 	onSent,
 	onGone,
 }: {
@@ -286,8 +291,8 @@ function Composer({
 	mode: ComposerMode;
 	items: readonly TimelineItem[];
 	lastSeq: number;
-	/** 助手此刻不能用（就绪状态在页面顶上，这里不再写一遍）：「发送」不可用，输入框和按钮用 aria-describedby 指向那一块。 */
-	notReady: boolean;
+	/** 助手此刻不能用（模型有问题，空闲的会话说不了话）时的就绪状态：缺什么、该找谁写在输入框下面，「发送」不可用，输入框和按钮用 aria-describedby 指向那一块；能用时为 null。 */
+	readiness: Readiness | null;
 	/** 空闲的会话说完话之后：核对一次状态（排上了队时控制面可能没有推 `turn_queued`）；参数是发出这句话时页面上最大的序号。 */
 	onSent: (after: number) => void;
 	onGone: (error: unknown) => boolean;
@@ -336,6 +341,7 @@ function Composer({
 		setRecorded(true);
 		send.reset();
 	}, [items, unconfirmed, send.reset]);
+	const notReady = readiness !== null;
 	const canWrite = (mode.kind === "send" || mode.kind === "steer") && !ending;
 	const empty = text.trim() === "";
 	const canSend = canWrite && !empty && !send.isPending && !notReady;
@@ -425,6 +431,7 @@ function Composer({
 					}
 				}}
 			/>
+			{readiness !== null && <ReadinessLine readiness={readiness} />}
 			<div className="flex items-center gap-3">
 				<Button
 					type="submit"
