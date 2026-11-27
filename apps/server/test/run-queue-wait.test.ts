@@ -139,6 +139,25 @@ describe("排队中的尝试在等什么", () => {
 		await back.nextAssign();
 	});
 
+	it("恢复之后、还没重连：写不在线，since 是最后在线的时间（不是停用的时间）", async () => {
+		const gone = await connect({ name: "agent-a" });
+		clock.advance(30 * SECOND);
+		const lastSeen = clock.now().toISOString();
+		await disconnect(gone);
+		const runId = await api.triggerOk(await api.orchestrationWith(scenario("agent-a")));
+		clock.advance(30 * SECOND);
+		await setDisabled("agent-a", true);
+		clock.advance(MINUTE);
+		expect((await attemptOf(runId))?.queue_wait?.state).toBe("disabled");
+
+		await setDisabled("agent-a", false);
+		expect((await attemptOf(runId))?.queue_wait).toMatchObject({
+			state: "offline",
+			since: lastSeen,
+			slots: null,
+		});
+	});
+
 	it("已停用排在连接状态之前：停用到连接真的关掉之间还在线的 Agent，槽位占满也写已停用", async () => {
 		const agent = await connect({ name: "agent-a", slots: 1 });
 		const id = await api.orchestrationWith(scenario("agent-a"));

@@ -361,10 +361,13 @@ test.describe("凭据种类和停用（#492）", () => {
 	}) => {
 		const agent = await connectAgent({ name: "agent-off", agentVersion: "1.2.3", slots: 2 });
 		await connectAgent({ name: "agent-on", agentVersion: "1.2.3", slots: 2 });
+		// 最近一次连接没有带凭据（过渡期里的旧方式）：在线的时候告警，停用之后不写（它带什么都连不上）。
+		await setAuthKind(controlPlane, "agent-off", "none");
 		clock.advance(60_000);
 
 		await page.goto("/agents");
 		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("在线");
+		await expect(header(page, "agent-off")).toContainText("没有凭据 · 本版本内仍可连接");
 		await expect(slotCells(page, "agent-off")).toHaveCount(1);
 
 		// 管理员停用：控制面立即断开它的连接；页面按轮询更新。
@@ -375,6 +378,9 @@ test.describe("凭据种类和停用（#492）", () => {
 		});
 		await expect(header(page, "agent-off")).toContainText("停用于");
 		await expect(header(page, "agent-off")).not.toContainText("离线");
+		// 停用的 Agent 不写凭据提示：「本版本内仍可连接」是假的。
+		await expect(header(page, "agent-off")).not.toContainText("没有凭据");
+		await expect(header(page, "agent-off")).not.toContainText("本版本内仍可连接");
 		await expect(rack(page, "agent-off")).not.toContainText("占用");
 		await expect(slotCells(page, "agent-off")).toHaveCount(0);
 		// 别的 Agent 不受影响。

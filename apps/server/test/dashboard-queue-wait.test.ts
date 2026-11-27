@@ -134,6 +134,50 @@ describe("控制台运行块里排队中的节点在等什么", () => {
 		expect(node?.queue_wait).toEqual(attempt?.queue_wait);
 	});
 
+	it("一次读两台 Agent：一台停用、一台离线，各取各自的那一行，各写各的（#492）", async () => {
+		const offline = async (name: string) => {
+			const agent = await connect({ name });
+			await agent.disconnect();
+			agents.splice(agents.indexOf(agent), 1);
+			await eventually(async () => {
+				const list = (await (await cp.fetch("/agents")).json()) as {
+					agents: Array<{ name: string; status: string }>;
+				};
+				expect(list.agents.find((a) => a.name === name)?.status).toBe("offline");
+			});
+		};
+		await offline("agent-a");
+		const seenA = clock.now().toISOString();
+		clock.advance(10 * SECOND);
+		await offline("agent-b");
+		const seenB = clock.now().toISOString();
+		expect(seenA).not.toBe(seenB);
+		const runA = await api.triggerOk(await api.orchestrationWith(scenario("agent-a")));
+		const runB = await api.triggerOk(await api.orchestrationWith(scenario("agent-b")));
+		clock.advance(30 * SECOND);
+		const db = new pg.Client({ connectionString: cp.database.url });
+		await db.connect();
+		try {
+			await db.query("update agents set disabled_at = $1 where name = 'agent-b'", [clock.now()]);
+		} finally {
+			await db.end();
+		}
+		const disabledAt = clock.now().toISOString();
+		clock.advance(MINUTE);
+
+		// 停用的是 agent-b：它的 since 是停用的时间；agent-a 只是离线，since 是它自己最后在线的时间，不被另一台带偏。
+		expect((await activeNode(runA))?.queue_wait).toMatchObject({
+			agent: "agent-a",
+			state: "offline",
+			since: seenA,
+		});
+		expect((await activeNode(runB))?.queue_wait).toMatchObject({
+			agent: "agent-b",
+			state: "disabled",
+			since: disabledAt,
+		});
+	});
+
 	it("槽位占满：写明占着槽位的任务；别的项目的任务只给个数；派发之后不再有 queue_wait", async () => {
 		const agent = await connect({ name: "agent-a", slots: 2 });
 		const id = await api.orchestrationWith(scenario("agent-a"));

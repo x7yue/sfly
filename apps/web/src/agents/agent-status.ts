@@ -36,11 +36,13 @@ export const acceptsTasks = (
 /**
  * 这台 Agent 最近一次连接用的凭据要不要提示（ADR 0029「迁移与过渡」，#492）：`shared`（共享令牌）提示换成 Agent 自己的凭据，
  * `none`（没有凭据）告警本版本内仍可连接、下一个版本起拒绝；`agent` 是该有的样子，不写；`null`（还没记过：
- * 升级之前连接的，或没连过）也不写，不替没有记录的事下结论。
+ * 升级之前连接的，或没连过）也不写，不替没有记录的事下结论。**停用的 Agent 不写**：它带什么凭据都连不上，
+ * 「本版本内仍可连接」是假的，提示换凭据也没有意义（它不挡登记工作台，也不用换）；恢复之后再按最近一次连接写。
  */
 export function authNotice(
-	agent: Pick<AgentView, "auth_kind">,
+	agent: Pick<AgentView, "auth_kind" | "disabled_at">,
 ): { kind: "shared" | "none"; label: string; hint: string; severity: "info" | "warn" } | null {
+	if (isDisabled(agent)) return null;
 	switch (agent.auth_kind) {
 		case "shared":
 			return { kind: "shared", ...AGENT_AUTH.shared, severity: "info" };
@@ -50,6 +52,19 @@ export function authNotice(
 		case null:
 			return null;
 	}
+}
+
+/**
+ * 在线、停用的 Agent 各有几台（控制台 Agent 面板的标题计数、侧栏「Agent 管理」旁的数共用，口径一致）：
+ * `enabled` 不含已停用的（管理员停用它是决定，不是掉线了）；`online` 也不含停用的（停用到连接真的关掉之间还在线的那一瞬不算）。
+ */
+export function agentCounts(agents: readonly Pick<AgentView, "status" | "disabled_at">[]) {
+	const disabled = agents.filter(isDisabled).length;
+	return {
+		online: agents.filter((a) => !isDisabled(a) && a.status === "online").length,
+		enabled: agents.length - disabled,
+		disabled,
+	};
 }
 
 /**

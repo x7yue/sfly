@@ -147,6 +147,11 @@ def test_an_agent_preparing_its_environment_says_for_how_long() -> None:
     assert queue_wait_text(wait, QUEUED_AT) == "等 agent-a（准备环境中 1m10s）· 排队 3m05s"
 
 
+def test_an_agent_with_a_free_slot_says_it_is_dispatching() -> None:
+    wait = _wait(state="dispatching", slots=4)
+    assert queue_wait_text(wait, QUEUED_AT) == "等 agent-a（正在派发）· 排队 3m05s"
+
+
 def test_a_version_mismatch_says_no_new_tasks_are_dispatched() -> None:
     wait = _wait(state="version_mismatch", slots=4)
     assert queue_wait_text(wait, QUEUED_AT) == (
