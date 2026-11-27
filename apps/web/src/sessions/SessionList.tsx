@@ -4,6 +4,7 @@ import { MessageSquareIcon } from "lucide-react";
 import { EmptyState } from "#/components/feedback/states";
 import { Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { SESSION } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import {
@@ -15,11 +16,12 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Truncate } from "@/components/ui/truncate";
-import { SESSION_STATUS } from "./session-text";
+import { lastTurnFlag, SESSION_STATUS, statusWithQueue } from "./session-text";
 
 /**
- * 助手页的会话列表：本项目的会话，最近活动在前（接口给的顺序）：标题（第一句话截断）、发起人、状态、
- * 最近活动时间；点标题进会话页。没有会话时一句说明；会话多到接口只给了最近的一批（`truncated`）时，
+ * 助手页的会话列表（定稿 #551）：本项目的会话，在做和排队中的在前、其余最近活动在前（接口给的顺序）：标题（第一句话截断）、发起人（显示名）、状态
+ * （空闲、在做、排队中写「排队中 · 排在第 N 位」、已结束；停止途中说了话、排在这一轮后面的在做的会话也写排第几）、上一轮的结局不是「完成」时
+ * 在状态下面标出来（被打断、到了上限、模型不可用、出错、已停止）、最近活动时间；点标题进会话页。没有会话时一句说明；会话多到接口只给了最近的一批（`truncated`）时，
  * 列表上面写一句，免得读的人以为这就是全部。
  */
 export function SessionList({
@@ -61,10 +63,12 @@ export function SessionList({
 					<TableBody>
 						{sessions.map((session) => {
 							const status = SESSION_STATUS[session.status];
+							const flag = lastTurnFlag(session.last_turn_outcome);
 							return (
 								<TableRow key={session.id} data-list-item="" data-session={session.id}>
 									<TableCell width="grow">
 										<Truncate
+											untrusted
 											render={
 												<Link
 													to="/sessions/$id"
@@ -78,10 +82,27 @@ export function SessionList({
 										</Truncate>
 									</TableCell>
 									<TableCell width="fit" className="text-fg-2">
-										{session.created_by}
+										<UntrustedText text={session.created_by} />
 									</TableCell>
 									<TableCell width="fit">
-										<StatusPill kind={status.kind}>{status.label}</StatusPill>
+										<span className="flex flex-col items-start gap-0.5">
+											<StatusPill kind={status.kind}>
+												<span data-testid="list-status" data-status={session.status}>
+													{statusWithQueue(session.status, session.queue_position)}
+												</span>
+											</StatusPill>
+											{/* 上一轮的结局不是「完成」：标出来（被打断、到了上限、模型不可用、出错、已停止）；在做的会话标的是这一轮之前的那一轮。 */}
+											{flag !== null && (
+												<StatusPill kind={flag.kind}>
+													<span
+														data-testid="list-last-turn"
+														data-outcome={session.last_turn_outcome}
+													>
+														{flag.label}
+													</span>
+												</StatusPill>
+											)}
+										</span>
 									</TableCell>
 									<TableCell width="fit" className="font-mono text-xs text-fg-3">
 										{formatDateTime(session.last_activity_at)}

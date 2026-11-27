@@ -27,6 +27,7 @@ import type { ManualClock } from "./support/manual-clock.js";
 import { seedSession } from "./support/sessions.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
+import { asUsers, type UserFetch } from "./support/user-api.js";
 
 const json = async <T>(res: Response): Promise<T> => (await res.json()) as T;
 const WORKBENCH = "workbench-a";
@@ -108,6 +109,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 	let api: ApiClient;
 	let assistant: FakeAssistant;
 	let workbench: FakeAgent;
+	let users: UserFetch;
 
 	beforeAll(async () => {
 		assistant = await FakeAssistant.start();
@@ -117,7 +119,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
 		});
-		api = new ApiClient(cp);
+		users = asUsers(cp);
+		api = new ApiClient(users);
 		// 工作台：一台在线的 Agent，上报了能力端口。
 		workbench = await FakeAgent.connect(
 			cp.grpcUrl,
@@ -200,7 +203,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			text: "  给 http_check\n加一个超时参数  ",
 			steer: false,
 			author: "alice",
-			author_user_id: null,
+			// 建会话要带用户的凭据：说这句话的人是这个用户。
+			author_user_id: await users.userId("alice"),
 		});
 		expect(detail.events[1]).toMatchObject({ turn: 1 });
 		// 控制面自己产生的事件用控制面的时钟。
@@ -224,7 +228,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			);
 			await sse.next("tool_call");
 			// 不持久的没有 ID，持久的以会话内序号作 ID（接在建会话时的两条后面）。
-			const events = sse.received.filter((e) => e.event !== "time");
+			// 快照（#545）发在补发读完、切到实时的那一刻，不算在这条链路的事件里；位置见 session-snapshot.test.ts。
+			const events = sse.received.filter((e) => e.event !== "time" && e.event !== "snapshot");
 			expect(events.map((e) => [e.event, e.id])).toEqual([
 				["user_message", "1"],
 				["turn_started", "2"],
@@ -447,9 +452,10 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 	});
 
 	it("并发地给同一个项目里两个空闲的会话发话：撞上「每个项目至多一个在做」的唯一索引，一个开始、另一个排队，不是 500", async () => {
+		const creator = await users.userId("tester");
 		const [a, b] = await Promise.all([
-			seedSession(cp.database.url, { title: "甲", status: "idle" }),
-			seedSession(cp.database.url, { title: "乙", status: "idle" }),
+			seedSession(cp.database.url, { title: "甲", status: "idle", createdByUserId: creator }),
+			seedSession(cp.database.url, { title: "乙", status: "idle", createdByUserId: creator }),
 		]);
 		const results = await Promise.all(
 			[a, b].map((id) => api.post(`/sessions/${id}/messages`, { text: "开始" })),
@@ -743,6 +749,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			assistantSecret: FAKE_SECRET,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			// 事件流永远连不上（401）：不等它连上。
+			waitForAssistant: false,
 		});
 		const agent = await FakeAgent.connect(
 			other.grpcUrl,
@@ -750,7 +758,9 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			{ clock: other.clock },
 		);
 		try {
-			const res = await new ApiClient(other).post("/projects/default/sessions", { text: "你好" });
+			const res = await new ApiClient(asUsers(other)).post("/projects/default/sessions", {
+				text: "你好",
+			});
 			expect(res.status).toBe(503);
 			const text = await res.text();
 			expect(text).toContain("assistant_unavailable");
@@ -760,7 +770,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(wrong.prompts).toHaveLength(0);
 			// 就绪状态：助手服务连不上（健康检查被拒绝）。
 			const list = await json<SessionListResponse>(
-				await new ApiClient(other).get("/projects/default/sessions"),
+				await new ApiClient(asUsers(other)).get("/projects/default/sessions"),
 			);
 			expect(list.readiness.problems.map((p) => p.kind)).toContain("assistant_unreachable");
 			expect(JSON.stringify(list)).not.toContain(FAKE_SECRET);
@@ -834,19 +844,25 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
 		const before = (await events(view.id)).length;
 		const nul = "\u0000x";
+		// 昵称：不带凭据的请求（#494 之前会话的别的写接口照旧）。带了凭据的请求，身份是凭据的用户，昵称请求头不看；
+		// 建会话只认用户的凭据，没有凭据是 401，到不了昵称这一步。
 		for (const [path, body] of [
 			[`/sessions/${view.id}/messages`, { text: "你好" }],
 			[`/sessions/${view.id}/stop`, {}],
-			["/projects/default/sessions", { text: "你好" }],
 		] as const) {
-			const res = await api.post(path, body, nul);
+			const res = await cp.fetch(path, {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-sfly-nickname": encodeURIComponent(nul) },
+				body: JSON.stringify(body),
+			});
 			expect(res.status, `昵称 ${path}`).toBe(400);
 			expect((await json<{ error: { code: string } }>(res)).error.code).toBe("invalid_request");
 		}
+		const credential = { authorization: `Bearer ${await users.token("alice")}` };
 		for (const path of [`/sessions/${view.id}/messages`, "/projects/default/sessions"]) {
 			const res = await cp.fetch(path, {
 				method: "POST",
-				headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+				headers: { "content-type": "application/json", ...credential },
 				// JSON 里写 \ud800：解析出来是一个不成对的代理字符，数据库的 jsonb 拒收。
 				body: '{"text":"坏\\ud800字"}',
 			});
@@ -861,11 +877,14 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 	});
 
 	describe("助手服务没接住后面的一轮：用户的话还在历史里，补一条失败的结局，会话回到空闲", () => {
-		it("连不上助手服务", async () => {
+		it("连不上助手服务：事件流也断了，这时不开始新的一轮（#545）：503，用户的话不写进历史，会话仍是空闲；开始之后才发现 `prompt` 没接住的情形见下面各例（`promptReply`）", async () => {
 			const view = await json<SessionView>(await create());
 			assistant.emit(view.id, 1, turnEnd(1));
 			await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
+			const before = (await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`)))
+				.events.length;
 			await assistant.stop();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
 			try {
 				const res = await api.post(`/sessions/${view.id}/messages`, { text: "再来一次" });
 				expect(res.status).toBe(503);
@@ -875,21 +894,17 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			} finally {
 				await assistant.resume();
 				await assistant.connected();
+				await eventually(() => expect(cp.current.assistantConnected()).toBe(true));
 			}
 			const detail = await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`));
 			expect(detail.status).toBe("idle");
-			// 写进历史的 turn_end 的原因所有能读这个会话的人都看得到：同样不带地址和端口。
-			expect(JSON.stringify(detail.events.at(-1))).not.toContain(new URL(assistant.url).port);
-			const types = detail.events.map((e) => e.type);
-			expect(types.slice(-3)).toEqual(["user_message", "turn_started", "turn_end"]);
+			// 什么也没写：没有这句话、没有新的一轮。
+			expect(detail.events).toHaveLength(before);
 			expect(detail.events.at(-1)).toMatchObject({
 				type: "turn_end",
-				turn: 2,
-				outcome: "failed",
-				steps: 0,
-				model_calls: 0,
+				turn: 1,
+				outcome: "completed",
 			});
-			expect(detail.last_turn_outcome).toBe("failed");
 		});
 
 		it("模型不可用", async () => {
@@ -919,6 +934,9 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 
 	it("助手服务连不上时建会话：503 assistant_unavailable，库里没有这个会话", async () => {
 		await assistant.stop();
+		await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
+		// `/health` 的缓存（5 秒）过期之后问到的是连不上的原因；缓存里还是「通」时说明写事件流没连上（见 session-reconnect.test.ts）。
+		(cp.clock as ManualClock).advance(6_000);
 		try {
 			const res = await create();
 			expect(res.status).toBe(503);
@@ -931,6 +949,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		} finally {
 			await assistant.resume();
 			await assistant.connected();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(true));
+			(cp.clock as ManualClock).advance(6_000);
 		}
 		// 恢复之后同一个项目照常能建（之前失败的那次没有占着「在做」）。
 		expect((await create()).status).toBe(201);
@@ -950,7 +970,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(assistant.streams).toBe(1);
 		});
 
-		it("断了按退避重连：重连之后的事件照常落库（断线期间的丢掉，续传是 #545）", async () => {
+		it("断了按退避重连：重连之后的事件照常落库，断线期间的持久事件由助手服务补发（#545，细节见 session-reconnect.test.ts）", async () => {
 			const view = await json<SessionView>(await create());
 			assistant.dropStreams();
 			assistant.emit(view.id, 1, assistantMessage("断线期间的"));
@@ -961,7 +981,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 				const texts = detail.events.flatMap((e) =>
 					e.type === "assistant_message" ? [e.text] : [],
 				);
-				expect(texts).toEqual(["重连之后的"]);
+				expect(texts).toEqual(["断线期间的", "重连之后的"]);
 			});
 		});
 
@@ -1003,8 +1023,17 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(await readiness()).toEqual({ ready: true, problems: [], workbench: WORKBENCH });
 			// 5 秒内助手服务连不上也不重新问（读缓存）；之后问一遍，写明原因。
 			await assistant.stop();
+			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));
 			try {
-				expect((await readiness()).ready).toBe(true);
+				// 5 秒内不重新问 `/health`（缓存里是「通」），但事件流断了：就绪状态写事件流没连上（#545）。
+				const cached = await readiness();
+				expect(cached.ready).toBe(false);
+				expect(cached.problems).toEqual([
+					expect.objectContaining({
+						kind: "assistant_unreachable",
+						message: expect.stringContaining("事件流还没有连上"),
+					}),
+				]);
 				(cp.clock as ManualClock).advance(6_000);
 				const now = await readiness();
 				expect(now.ready).toBe(false);
@@ -1015,6 +1044,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			} finally {
 				await assistant.resume();
 				await assistant.connected();
+				await eventually(() => expect(cp.current.assistantConnected()).toBe(true));
 				(cp.clock as ManualClock).advance(6_000);
 			}
 			expect((await readiness()).ready).toBe(true);
@@ -1114,7 +1144,7 @@ describe("工作台的各种不能用", () => {
 			...options,
 		});
 		try {
-			await run(cp, new ApiClient(cp));
+			await run(cp, new ApiClient(asUsers(cp)));
 		} finally {
 			await cp.close();
 		}
@@ -1183,7 +1213,7 @@ describe("工作台的各种不能用", () => {
 			workbenchAgent: "w",
 		});
 		try {
-			const api = new ApiClient(cp);
+			const api = new ApiClient(asUsers(cp));
 			const list = await json<SessionListResponse>(await api.get("/projects/default/sessions"));
 			expect(list.readiness.problems[0]).toMatchObject({ kind: "assistant_not_configured" });
 			expect(list.readiness.problems[0]?.message).toContain("32");
@@ -1214,7 +1244,7 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 			assistantReconnectMs: { min: 20, max: 100 },
 			sessionSweepIntervalMs: 20,
 		});
-		api = new ApiClient(cp);
+		api = new ApiClient(asUsers(cp));
 		workbench = await FakeAgent.connect(
 			cp.grpcUrl,
 			{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },
@@ -1266,13 +1296,14 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 		await eventually(async () => expect((await sessionRow(cp, second.id))?.status).toBe("running"));
 	});
 
-	it("控制面启动时先收拾一遍：重启之前一直在做的会话回到空闲，没过期的不动", async () => {
-		// 单独起一个控制面，扫描间隔很长：只有启动时那一遍。
+	it("控制面重启：重启之前一直在做的会话，事件连接连上之后的第一次兜底回到空闲，没过期的不动（连不上助手服务时兜底不动，#545）", async () => {
+		// 单独起一个控制面：兜底的扫描调快；启动时那一遍在连接连上之前，不判（连不上不等于这一轮没在做）。
 		const other = await startTestControlPlane({
 			assistantUrl: assistant.url,
 			assistantSecret: assistant.secret,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			sessionSweepIntervalMs: 50,
 		});
 		try {
 			const stale = await seedSession(other.database.url, {
@@ -1281,12 +1312,17 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				lastActivityAt: new Date(other.clock.now().getTime() - 40 * 60_000),
 			});
 			await other.restart();
-			const list = await json<SessionListResponse>(
-				await new ApiClient(other).get("/projects/default/sessions"),
-			);
-			expect(list.sessions).toEqual([
-				expect.objectContaining({ id: stale, status: "idle", last_turn_outcome: "interrupted" }),
-			]);
+			// 30 分钟从连上的时刻算起：连上之后没过 30 分钟不扫（见 session-reconnect.test.ts），过了才补。
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			(other.clock as ManualClock).advance(31 * 60_000);
+			await eventually(async () => {
+				const list = await json<SessionListResponse>(
+					await new ApiClient(asUsers(other)).get("/projects/default/sessions"),
+				);
+				expect(list.sessions).toEqual([
+					expect.objectContaining({ id: stale, status: "idle", last_turn_outcome: "interrupted" }),
+				]);
+			}, 10_000);
 			// 新的在做的会话（刚有活动）重启之后不动。
 			const fresh = await seedSession(other.database.url, {
 				status: "running",
@@ -1294,8 +1330,11 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				lastActivityAt: other.clock.now(),
 			});
 			await other.restart();
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			// 连上之后至少扫过一遍，没过期的不动。
+			await new Promise((resolve) => setTimeout(resolve, 200));
 			const after = await json<SessionListResponse>(
-				await new ApiClient(other).get("/projects/default/sessions"),
+				await new ApiClient(asUsers(other)).get("/projects/default/sessions"),
 			);
 			expect(after.sessions.find((x) => x.id === fresh)?.status).toBe("running");
 		} finally {
@@ -1309,6 +1348,7 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 			assistantSecret: assistant.secret,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			sessionSweepIntervalMs: 50,
 		});
 		try {
 			const user = (n: number) =>
@@ -1333,10 +1373,17 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				],
 			});
 			await other.restart();
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			(other.clock as ManualClock).advance(31 * 60_000);
+			await eventually(async () => {
+				const view = await json<SessionDetailResponse>(
+					await new ApiClient(asUsers(other)).get(`/sessions/${id}`),
+				);
+				expect(view.status).toBe("idle");
+			}, 10_000);
 			const detail = await json<SessionDetailResponse>(
-				await new ApiClient(other).get(`/sessions/${id}`),
+				await new ApiClient(asUsers(other)).get(`/sessions/${id}`),
 			);
-			expect(detail.status).toBe("idle");
 			expect(detail.events.filter((e) => e.type === "turn_end")).toHaveLength(2);
 			expect(detail.events.at(-1)).toMatchObject({
 				type: "turn_end",
@@ -1354,6 +1401,7 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 			assistantSecret: assistant.secret,
 			workbenchAgent: WORKBENCH,
 			assistantReconnectMs: { min: 20, max: 100 },
+			sessionSweepIntervalMs: 50,
 		});
 		let agent: FakeAgent | undefined;
 		try {
@@ -1381,9 +1429,14 @@ describe("兜底：一直在做的会话不会让项目永远开不了新的一�
 				],
 			});
 			await other.restart();
-			const api = new ApiClient(other);
+			const api = new ApiClient(asUsers(other));
+			await eventually(() => expect(other.current.assistantConnected()).toBe(true), 10_000);
+			(other.clock as ManualClock).advance(31 * 60_000);
+			await eventually(async () => {
+				const view = await json<SessionDetailResponse>(await api.get(`/sessions/${id}`));
+				expect(view.status).toBe("idle");
+			}, 10_000);
 			const detail = await json<SessionDetailResponse>(await api.get(`/sessions/${id}`));
-			expect(detail.status).toBe("idle");
 			expect(detail.events.map((e) => e.type)).toEqual([
 				"user_message",
 				"turn_started",
@@ -1420,7 +1473,7 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			// 命令最多等 150 毫秒（默认 10 秒）：冷启动慢的助手服务会这样。
 			assistantCommandTimeoutMs: 150,
 		});
-		api = new ApiClient(cp);
+		api = new ApiClient(asUsers(cp));
 		workbench = await FakeAgent.connect(
 			cp.grpcUrl,
 			{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },
@@ -1861,7 +1914,7 @@ describe("事件流的心跳：静默的连接不会被掐断，死了的连接�
 			await eventually(() => expect(assistant.eventRequests).toBeGreaterThanOrEqual(3), 5000);
 			await assistant.connected();
 			// 连接又连上了：这时来的事件照常处理。
-			const api = new ApiClient(cp);
+			const api = new ApiClient(asUsers(cp));
 			const view = await json<SessionView>(
 				await api.post("/projects/default/sessions", { text: "你好" }),
 			);
@@ -1894,7 +1947,7 @@ describe("事件流的心跳：静默的连接不会被掐断，死了的连接�
 		);
 		try {
 			await assistant.connected();
-			const api = new ApiClient(cp);
+			const api = new ApiClient(asUsers(cp));
 			const view = await json<SessionView>(
 				await api.post("/projects/default/sessions", { text: "你好" }),
 			);
@@ -1942,7 +1995,7 @@ describe("停止的等待和助手服务的强制结束对齐", () => {
 		);
 		try {
 			await assistant.connected();
-			const api = new ApiClient(cp);
+			const api = new ApiClient(asUsers(cp));
 			const view = await json<SessionView>(
 				await api.post("/projects/default/sessions", { text: "第一句" }),
 			);
@@ -1998,7 +2051,7 @@ describe("日志里有原因、没有会话的内容", () => {
 		});
 		try {
 			await assistant.connected();
-			const api = new ApiClient(cp);
+			const api = new ApiClient(asUsers(cp));
 			const secretText = "我的私密的话 hunter2-不该出现在日志里";
 			const port = new URL(assistant.url).port;
 			// 1. 助手服务连不上。
@@ -2054,7 +2107,7 @@ describe("停止时中止的命令超时（结果未知）：照样等助手服�
 			assistantCommandTimeoutMs: 150,
 			sessionStopGraceMs: 1_500,
 		});
-		api = new ApiClient(cp);
+		api = new ApiClient(asUsers(cp));
 		workbench = await FakeAgent.connect(
 			cp.grpcUrl,
 			{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },

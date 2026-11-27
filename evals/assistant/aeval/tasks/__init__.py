@@ -210,10 +210,20 @@ def run_scenario(
 
 
 def node_outputs(run: dict[str, Any], node_id: str) -> dict[str, Any] | None:
-    """运行详情里主链上某个节点（最后一次尝试）的输出。"""
+    """运行详情里主链上某个节点（最后一次尝试）的输出。
+
+    输出被运行视图省略（单个超过 16 KiB，或整份视图内联的合计用完，#633）时不能悄悄返回 None：
+    明确报错，评分用的输出要取全文（`sfly run show <运行> --outputs --json`，
+    或 `GET /tasks/<任务>/io`）。"""
     for chain in run.get("chains", []):
         for task in chain.get("tasks", chain.get("nodes", [])):
             if task.get("node_id") == node_id and task.get("status") == "success":
+                omitted = task.get("outputs_omitted_bytes")
+                if omitted is not None:
+                    raise RuntimeError(
+                        f"节点 {node_id} 的输出没有随运行详情一起返回（约 {omitted} 字节）："
+                        "取全文用 sfly run show <运行> --outputs --json，或 GET /tasks/<任务>/io"
+                    )
                 outputs = task.get("outputs")
                 return outputs if isinstance(outputs, dict) else None
     return None

@@ -1557,8 +1557,12 @@ describe("动作的文字：写入时和读取时的打码（action-text.ts）",
 					agent_capped_at: null,
 				},
 			],
+			failed_total: 0,
+			names_complete: true,
+			unlisted: null,
 			running: [running],
 			running_complete: true,
+			lists_trimmed: false,
 			recent: [ended],
 			recent_failed: [ended],
 		};
@@ -1691,7 +1695,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 	const word = (n: number) =>
 		Array.from({ length: n }, () => alphabet[random(alphabet.length)]).join("");
 	const rep = (c: string, n: number) => c.repeat(n);
-	/** 几千个键的保密对象：一个值 20 个字符（假值）；`prefix` 是共同的开头（空串是互不相干的随机串）。 */
+	/** 几千个键的 secret 对象：一个值 20 个字符（假值）；`prefix` 是共同的开头（空串是互不相干的随机串）。 */
 	const bigObject = (keys: number, prefix: string) =>
 		Object.fromEntries(
 			Array.from({ length: keys }, (_, i) => [`key_${i}`, `${prefix}${word(20)}`]),
@@ -1856,7 +1860,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 		for (const [kind, prefix] of secretKinds) {
 			const object = bigObject(5000, prefix);
 
-			it(`${kind}的 5000 个键的保密对象：不超过总长上限；日志一页 300 行各 4000 个字符、一页 1000 行各 2000 个字符、一页 1000 行各 4000 个字符，一行不盖`, () => {
+			it(`${kind}的 5000 个键的 secret 对象：不超过总长上限；日志一页 300 行各 4000 个字符、一页 1000 行各 2000 个字符、一页 1000 行各 4000 个字符，一行不盖`, () => {
 				const set = secretSetOf([object]);
 				expect(set.oversize).toBe(false);
 				expect(set.texts.reduce((n, t) => n + t.length, 0)).toBeLessThanOrEqual(
@@ -1877,7 +1881,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 				}
 			});
 
-			it(`${kind}的 5000 个键的保密对象：动作一页 500 条、失败原因各 4000 个字符（名称、字段也都在），一条不盖`, () => {
+			it(`${kind}的 5000 个键的 secret 对象：动作一页 500 条、失败原因各 4000 个字符（名称、字段也都在），一条不盖`, () => {
 				const view = secretSetOf([object]).withBudget();
 				const reason = word(4000);
 				let masked = 0;
@@ -1888,7 +1892,7 @@ describe("读取的预算：一次读取共用一份，只记完整的出现的�
 				expect(masked).toBe(0);
 			});
 
-			it(`${kind}的 5000 个键的保密对象：一个运行 200 个任务、每个输出一段 5000 个字符的报告，一个不盖；24 个任务各输出 1 MiB 也一个不盖`, () => {
+			it(`${kind}的 5000 个键的 secret 对象：一个运行 200 个任务、每个输出一段 5000 个字符的报告，一个不盖；24 个任务各输出 1 MiB 也一个不盖`, () => {
 				const view = secretSetOf([object]).withBudget();
 				let masked = 0;
 				for (let i = 0; i < 200; i++) {
@@ -1970,7 +1974,7 @@ describe("预算只取决于完整的出现：部分匹配不改变输出，也�
 		Array.from({ length: n }, () => alphabet[random(alphabet.length)]).join("");
 	const rep = (c: string, n: number) => c.repeat(n);
 
-	/** 两组形状、长度都不同的保密值（都是假值）：一组有很长的值和周期性的值，一组都是随机串。 */
+	/** 两组形状、长度都不同的 secret 值（都是假值）：一组有很长的值和周期性的值，一组都是随机串。 */
 	const first = [
 		`FAKE-${word(30)}`,
 		rep("a", 1500) + word(10),
@@ -2046,10 +2050,10 @@ describe("预算只取决于完整的出现：部分匹配不改变输出，也�
 	});
 });
 
-describe("保密值和令牌原值一次打码：两种出现都在原文上找，合成一组，一次换掉，不分先后（#631）", () => {
+describe("secret 值和令牌原值一次打码：两种出现都在原文上找，合成一组，一次换掉，不分先后（#631）", () => {
 	const TOKEN = "sfly_pat_0123456789abcdef0123456789abcdef";
 	const TOKEN_B = "sfly_prj_fedcba9876543210fedcba9876543210";
-	/** 独立的参照：保密值每个写法的每个出现位置（indexOf）加上令牌的出现位置（正则），重叠的合成一段，每段一个掩码。 */
+	/** 独立的参照：secret 值每个写法的每个出现位置（indexOf）加上令牌的出现位置（正则），重叠的合成一段，每段一个掩码。 */
 	const unionMask = (text: string, values: readonly string[]): string => {
 		const spans: Array<[number, number]> = [];
 		for (const v of values) {
@@ -2076,20 +2080,20 @@ describe("保密值和令牌原值一次打码：两种出现都在原文上找�
 		return current ? out + text.slice(cursor, current[0]) + MASK + text.slice(current[1]) : text;
 	};
 
-	it("保密值落在令牌里面：整个令牌和那个值是一段、一个掩码（先换值的话令牌认不出，前缀和一半留着）", () => {
+	it("secret 值落在令牌里面：整个令牌和那个值是一段、一个掩码（先换值的话令牌认不出，前缀和一半留着）", () => {
 		const set = setOf("hunter2-secret-xyz");
 		const text = `x sfly_pat_aaaaaaaa${"hunter2-secret-xyz"}bbbbbbbb y`;
 		expect(set.mask(text)).toBe(`x ${MASK} y`);
 		expect(set.mask(text)).toBe(unionMask(text, set.texts));
 	});
 
-	it("令牌落在保密值里面（值本身带着一个令牌）：一段、一个掩码", () => {
+	it("令牌落在 secret 值里面（值本身带着一个令牌）：一段、一个掩码", () => {
 		const value = `Authorization: Bearer ${TOKEN} end`;
 		const set = setOf(value);
 		expect(set.mask(`log: ${value}.`)).toBe(`log: ${MASK}.`);
 	});
 
-	it("互相重叠（保密值的开头在令牌里、结尾在令牌外，反过来也一样）：合成一段，并集", () => {
+	it("互相重叠（secret 值的开头在令牌里、结尾在令牌外，反过来也一样）：合成一段，并集", () => {
 		const tail = "tail-abcdefgh";
 		const set = setOf(`${tail} and more`, "zz-head and more");
 		// 令牌一直到空格；值从令牌的尾巴开始、延伸到令牌外
@@ -2110,7 +2114,7 @@ describe("保密值和令牌原值一次打码：两种出现都在原文上找�
 		expect(set.mask(`a key=${TOKEN} secret-after b`)).toBe(`a ${MASK}${MASK}${MASK} b`);
 	});
 
-	it("没有保密值时只认令牌；令牌的前缀、后面太短的、别的以 sfly_ 开头的名字不动；多个令牌各是一段", () => {
+	it("没有 secret 值时只认令牌；令牌的前缀、后面太短的、别的以 sfly_ 开头的名字不动；多个令牌各是一段", () => {
 		expect(NO_SECRETS.mask(`a ${TOKEN} b ${TOKEN_B} c`)).toBe(`a ${MASK} b ${MASK} c`);
 		expect(maskTokens(`a ${TOKEN} b ${TOKEN_B} c`)).toBe(`a ${MASK} b ${MASK} c`);
 		const set = setOf("hunter2-secret-xyz");
@@ -2165,7 +2169,7 @@ describe("保密值和令牌原值一次打码：两种出现都在原文上找�
 				const got = set.mask(text);
 				const where = `${JSON.stringify(set.texts)} / ${JSON.stringify(text)}`;
 				expect(got, where).toBe(unionMask(text, set.texts));
-				// 令牌原值（完整的）、保密值（完整的）都不留下：原文里的每个完整的出现，输出里没有它的任何一个完整的样子
+				// 令牌原值（完整的）、secret 值（完整的）都不留下：原文里的每个完整的出现，输出里没有它的任何一个完整的样子
 				for (const m of text.matchAll(new RegExp(TOKEN_VALUE_PATTERN.source, "g")))
 					expect(got, where).not.toContain(m[0]);
 				for (const v of set.texts) {
@@ -2180,7 +2184,7 @@ describe("保密值和令牌原值一次打码：两种出现都在原文上找�
 		expect(both).toBeGreaterThan(300);
 	});
 
-	it("段数预算：令牌和保密值的段一起计入（合并之后的段数）；超过剩下的整段盖住，预算归零", () => {
+	it("段数预算：令牌和 secret 值的段一起计入（合并之后的段数）；超过剩下的整段盖住，预算归零", () => {
 		const set = setOf("hunter2-secret-xyz");
 		const budget = new WorkBudget(3);
 		const view = set.withBudget(budget);
@@ -2283,7 +2287,7 @@ describe("被 Agent 拆开的超长行：每一段带上下文，跨在拆分处
 		}
 	});
 
-	it("令牌原值跨在拆分处：同样只出现一个掩码；没有保密值时也一样", () => {
+	it("令牌原值跨在拆分处：同样只出现一个掩码；没有 secret 值时也一样", () => {
 		const half = 20;
 		const line = `x ${TOKEN} y`;
 		const cut = 2 + half;

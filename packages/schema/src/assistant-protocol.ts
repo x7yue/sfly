@@ -35,7 +35,7 @@ import {
  * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；`turn` 那一轮没有在做：409 `no_turn_running` | #544 |
  * | `POST /sessions/:id/abort` | {@link AbortCommandBody} | 202，总是；重复调用无害 | #540、#544 |
  * | `POST /sessions/:id/end` | — | 会话 ID 格式对的总是 202（不认识的会话也是）；重复调用无害；会话 ID 不合格式是 400 `invalid_request`，和别的命令一样 | #544 |
- * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳** | #540；续传 #545 |
+ * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳**；`after` 写得不对 400 `invalid_request`；**续传见 {@link AssistantEventsQuery}、{@link AssistantStreamHello}** | #540；续传 #545 |
  * | `GET /health` | — | 200 {@link AssistantHealth} | #540；模型 #548；进程数 #545 |
  *
  * 失败的回应体是 {@link AssistantErrorBody}。
@@ -250,6 +250,34 @@ import {
  * 3. 然后发 `end`。`end` 是尽力而为的收拾：发不出去（连不上、超时、5xx）时会话照样已经结束。这时助手服务那边这个会话的 pi 进程由什么收掉，照 dev 上实际的：
  *    进程数到了上限时关掉最久没有用的空闲进程（#545 会加空闲回收），除此之外留到助手服务重启（**标给 544-B / #545**：没有收到 `end` 的会话，进程留着不影响正确性，只占一个进程槽位）。
  *
+ * ## 一轮结束时提交工作区（#546 起）
+ *
+ * 工作区是工作台上的 git 仓库（`/work`），**每一轮结束由助手服务提交**（不经 pi、不经模型，模型看不到这一步；平台不托管 git、不推送到远端），
+ * 提交号、改了哪些文件、差异在这一刻记进时间线，模型事后改写 git 历史也改不了这份记录。做法和「提交不执行工作区里能被模型改的任何东西」
+ * 的细节在 `apps/assistant/src/workspace.ts` 的文件头。协议上看得见的是：
+ *
+ * - **`platform`（`kind` 是 `commit`）事件**，持久，在这一轮的 `turn_end` **之前**发出（在没送到的插话的 `steer_dropped` 之后）。助手服务只发这一种
+ *   `platform`：`run`、`scenario_version` 是控制面在记下那条记录的事务里自己写的，助手服务发来整行不收。
+ * - **一轮以任何结局结束**（完成、已停止、到了上限、模型不可用、其他错误、pi 进程退出）都尝试提交；**没有改动不提交、不发事件**；
+ *   这一轮从没有把 `prompt` 交给 pi（登记之前就撞上中止记号、起不了 pi、写不了 skill）、助手服务退出、这一轮因为工作台连不上而失败时不提交。
+ *   `diff` 超过 `SESSION_EVENT_LIMITS`（`sessions.ts`）的 `commitDiffBytes`（64 KB）只留开头，`truncated` 标出；`files` 是完整的。
+ * - **提交不成不影响这一轮的结局**：连不上工作台、git 出错、等不到（提交最多 30 秒；停止一轮时还不能超过 T0 加 {@link ASSISTANT_STOP_WAIT_MS}
+ *   之前 2 秒，剩下的时间不够就不做；提交进行中才收到停止或结束会话，期限缩到收到的那一刻加 {@link ASSISTANT_STOP_WAIT_MS} 减 2 秒；
+ *   先问一声工作台还在不在也算在期限里，放弃之后删临时仓库最多等半秒）：这一轮照常结束，不发 `platform` 事件，改动留给下一轮。**提交占用的时间在「T0 到 `turn_end`」之内**，
+ *   所以停止一轮的最晚时间不变：控制面补结局之后晚到的事件按「这一轮已经结束」丢掉，提交的预算就是为不走到这一步。
+ * - **一轮改了什么按平台自己上次记下的提交算，不和 `HEAD` 比**：模型自己 `git commit`、`reset --hard`、改写历史之后，`HEAD` 已经不是平台
+ *   上次看到的样子。助手服务按工作区（工作台地址加路径）在自己的数据目录里记着上次记下的提交号（不放工作台上、不是协议的一部分，
+ *   控制面和页面不知道它）；这一轮的树和它的树一样就不提交、不发事件，不一样就做一个提交（父提交是当前的 `HEAD`），事件里的 `files`、`diff` 是
+ *   「上次记下的树 → 这一轮的树」。从没记过（第一轮、数据目录丢了）或记的提交读不出来（不在仓库里、对象被写坏、取差异要读的对象不在），退回和 `HEAD` 比，`diff` 的第一行是平台写的一句说明
+ *   （协议里没有放这件事的字段，不改契约）。
+ * - **一轮开始之前**（把 `prompt` 交给 pi 之前）：工作区不是 git 仓库就 `git init`、写 `.gitignore`、做初次提交（说明「初始化工作区」，不发事件）；
+ *   是仓库、而且这一轮之前的改动没提交过（会话刚开始、上一轮被打断、助手服务重启过、提交出了错）就先把留下的改动单独提交：**第 1 轮**的说明是
+ *   「会话开始之前工作区里留下的改动」，**之后**是「第 N 轮被打断时留下的改动」（N 是上一轮），**同样发 `platform` 事件**；它的 `turn` 是 1（第 1 轮开始前）
+ *   或 N（被打断的那一轮），事件在这一轮的事件流里发出：所以事件里的 `turn` 可以比记录的 `turn` 小，控制面核对的是记录的 `turn`（此刻在做的那一轮）。
+ *   第 1 轮开始前补的提交和这一轮自己的提交 `turn` 都是 1，页面靠位置认（它在这一轮的模型说话、调工具之前）。
+ * - 提交的作者是会话的发起人（`PromptCommandBody.session.created_by`），说明是「<会话标题>（会话 <ID 前 8 位>）第 N 轮」。提交的命令
+ *   经能力端口执行，**不带 `secret_env`**（会话令牌不出现在这些命令的环境里）。
+ *
  * ## 各部分的进度（#544 拆成几个 PR：助手服务那一栏是 544-B 的实现，控制面那一栏是 #625 的实现，都已做）
  *
  * | 说明 | 助手服务（#544 的助手服务那一半） | 控制面（#544 的控制面那一半） |
@@ -261,6 +289,7 @@ import {
  * | 中止记号 | 已做（544-B）：只增不减，轮次不大于记号的 `prompt` 都挡住、不取走记号，`abort` 一律提到 N（过期、总数上限不变）；#618 固定旧行为的那条测试跟着改了 | 已做（#625）：假助手服务和这里一致 |
  * | 旧的一轮还在停止时来了新的一轮 | 已做（544-B）：登记、202、等旧的一轮结束再起，等不到以 `failed` 结束 | 已做（#625）：不用为此多等 |
  * | 排队 | 不知道项目，不排队 | 已做（#625）：同一个项目一次只把一轮交给助手服务，其余在控制面排队 |
+ * | 一轮结束时提交工作区 | 已做（#546）：`apps/assistant/src/workspace.ts`、`sessions.ts` 的 `#prepareWorkspace`、`#commitTurn` | 已做：`platform`（`commit`）和别的助手事件一样落库、发布（`apps/server/test/assistant-connection.test.ts`）；页面一行见 `apps/web/src/sessions/` |
  */
 
 /**
@@ -299,6 +328,13 @@ export const ASSISTANT_STOP_MARGIN_MS = 3_000;
  */
 export const ASSISTANT_STOP_WAIT_MS =
 	ASSISTANT_ABORT_SETTLE_MS + ASSISTANT_PROCESS_KILL_GRACE_MS + ASSISTANT_STOP_MARGIN_MS;
+
+/**
+ * 一轮最长做多久（毫秒）：助手服务照这个数执行（到了就按「停止一轮」以 `limit` 结束），控制面据此定这一轮的会话令牌的有效期
+ * （`apps/server/src/sessions/session-tokens.ts`：这个数，加停止一轮最晚的时间 {@link ASSISTANT_STOP_WAIT_MS}，再加余量）。
+ * 两边引用同一个数，改它时令牌的有效期自动跟着走。
+ */
+export const ASSISTANT_TURN_MAX_MS = 20 * 60 * 1000;
 
 /** 共享密钥放在助手服务和控制面各自的这个环境变量里。 */
 export const ASSISTANT_SECRET_ENV = "SFLY_ASSISTANT_SECRET";
@@ -373,7 +409,7 @@ export type WorkbenchTarget = z.infer<typeof WorkbenchTarget>;
  *   不按先后：这一轮的 `turn_end` 先到，照常落库、会话回到空闲，回应回来之后不会把它写回在做。所以助手服务**不用等回应送出之后才发
  *   这一轮的事件**；控制面也不能指望事件在回应之后才来。控制面这一侧的用例（#635）：`apps/server/test/session-assistant.test.ts` 的
  *   「一轮的 turn_end 比这一轮 prompt 的回应先到控制面（事件和回应走两条连接，先后没有保证）」，三种情形各一条；
- * - `secret_env`：要加的**保密**环境变量，#547 起里面有 `SFLY_API_TOKEN`（会话令牌）。工作台上的命令读得到它，模型一执行
+ * - `secret_env`：要加的 **secret** 环境变量，#547 起里面有 `SFLY_API_TOKEN`（会话令牌）。工作台上的命令读得到它，模型一执行
  *   列环境变量的命令，它就会进工具的输出和持久的 `tool_result`，所以单独成一份：**它不进任何事件、不进助手服务的日志；
  *   助手服务在发出事件之前，要把事件里出现的这些值按值打码**（#540 的要求）。
  */
@@ -441,8 +477,37 @@ export const AssistantEpoch = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 export type AssistantEpoch = z.infer<typeof AssistantEpoch>;
 
 /**
- * `GET /events` 的 query：`after` 写成 `<纪元>:<序号>`，从这条之后续传（#545 实现；在那之前 `after` 被忽略，
- * 只推实时的）。
+ * 助手服务在内存里留多少条**持久**的事件用来续传（{@link AssistantEventsQuery}）：最近的这么多条（同时受 {@link ASSISTANT_REPLAY_BUFFER_BYTES} 限制）；不持久的事件（增量、
+ * 工具输出、思考、排队状态）不留，断线期间错过的增量由控制面的 `snapshot` 补上（`sessions.ts` 的 `SnapshotEvent`）。
+ */
+export const ASSISTANT_REPLAY_BUFFER_EVENTS = 10_000;
+
+/**
+ * 续传缓冲（{@link ASSISTANT_REPLAY_BUFFER_EVENTS}）占的内存上限，按序列化后的行长（字节）加起来算：超过就从最早的挤出去，和条数的上限
+ * 谁先到按谁。一条持久事件常见几百字节，但 `tool_result` 的 `text` 和 `diff` 各最多 16 KB、`platform`（`commit`）的差异最多 64 KB，
+ * 1 万条都是大的就是几百 MB——助手容器的内存预算是按 pi 进程数算的（#539、#549），不留这么多余量，所以缓冲自己有上限。
+ * 被挤出去的事件立即释放；续传的 `after` 早于缓冲里最早的一条时 `hello.gap` 为真，和按条数挤出去时一样。
+ */
+export const ASSISTANT_REPLAY_BUFFER_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 事件流连接上写出去、对端还没读走的字节超过多少，助手服务就断开这条连接（对端读得太慢，不能把整段事件堆进助手服务的内存）：
+ * 控制面带着最后收到的（纪元、序号）重连，持久的事件从缓冲里补发，不持久的丢掉（由快照补上）。
+ */
+export const ASSISTANT_STREAM_BACKLOG_BYTES = 8 * 1024 * 1024;
+
+/**
+ * `GET /events` 的 query（#545）：`after` 写成 `<纪元>:<序号>`，是控制面**最后收到的那条持久事件**的纪元和助手服务内的序号
+ * （{@link AssistantStreamRecord} 的 `epoch`、`seq`）。助手服务在内存里留着最近 {@link ASSISTANT_REPLAY_BUFFER_EVENTS} 条持久的事件，
+ * 连上之后：
+ * - **没有 `after`**（控制面从没收过助手服务的事件）：不补发，只推实时的，`hello.gap` 为 false；
+ * - **纪元相同、`after` 之后的持久事件缓冲里都还在**（缓冲里最早的一条的序号不大于 `after` 的序号加一）：先把 `after` 之后的
+ *   持久事件按序号补发，再接实时的；补发和实时之间不漏、不重（补发的一批和订阅实时在同一步里切换）；`hello.gap` 为 false；
+ * - **纪元不同**（助手服务重启过）、**`after` 早于缓冲里最早的一条**（中间有事件被挤出去了）、或者 **`after` 的序号比助手服务已经发出的
+ *   最大序号还大**（对不上，不是这个助手服务给的）：不补发，只推实时的，`hello.gap` 为 true。
+ *
+ * 补发的事件是原样的 {@link AssistantStreamRecord}（`at` 还是当时盖的）；补发的写会看对端有没有读走（背压），实时的事件在补发期间先排着，
+ * 补发完再放出，排着的和还没读走的合计超过 {@link ASSISTANT_STREAM_BACKLOG_BYTES} 就断开这条连接（对端重连续传）。
  */
 export const AssistantEventsQuery = z.object({
 	after: z
@@ -454,7 +519,9 @@ export type AssistantEventsQuery = z.infer<typeof AssistantEventsQuery>;
 
 /**
  * 事件流的第一行：`epoch` 是助手服务当前的纪元；`gap` 为 true 表示 `after` 的纪元和当前的不同，或者 `after` 早于
- * 助手服务内存里保留的最早一条，中间有事件已经补不回来（控制面要写一条 `events_lost`，#545）。
+ * 助手服务内存里保留的最早一条，中间有事件已经补不回来（见 {@link AssistantEventsQuery}）。控制面据此：
+ * - **纪元和它记着的不同**（助手服务重启了）：在做的会话补一条 `interrupted` 的 `turn_end`、改回空闲，排队的接着开始；
+ * - **纪元相同、`gap` 为 true**（断开太久，事件被挤出缓冲）：在做的会话各补一条 `events_lost` 的提示，照常接着收。
  */
 export const AssistantStreamHello = z.object({
 	type: z.literal("hello"),
@@ -466,7 +533,7 @@ export type AssistantStreamHello = z.infer<typeof AssistantStreamHello>;
 /**
  * 事件流的心跳：助手服务每隔 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 在事件流里写一行 `{"type":"heartbeat"}`，不论有没有事件。
  * 没有会话在做时事件流可以几个小时没有任何内容；HTTP 客户端的响应体超时（Node 的 `fetch` 默认 300 秒）会把这样的连接
- * 掐断，而协议现在没有续传（#545），断开期间的事件就丢了。心跳让连接不空闲，也让控制面能分清「静默」和「死了」：
+ * 掐断，断开期间的持久事件靠续传（{@link AssistantEventsQuery}）补回，不持久的丢了。心跳让连接不空闲，也让控制面能分清「静默」和「死了」：
  * 超过 {@link ASSISTANT_STREAM_IDLE_INTERVALS} 个间隔没有收到任何字节（心跳、事件都算），控制面就认为连接已经死了
  * （半开的连接、对端挂住），主动断开重连，不等响应体超时。**只增，不影响已有的行**：不认识心跳的控制面按「不是约定的形状」
  * 跳过它（但会因此没有死连接检测）。
@@ -530,7 +597,13 @@ export type AssistantVersions = z.infer<typeof AssistantVersions>;
  * 助手服务看到的模型：配没配（`configured`）、连不连得上（`reachable`，没有配或还没检查过时为 null）、
  * 上次检查的时间和原因（`reason` 是一句话，`error_class` 是它按什么分；没有检查过或没有问题时都为 null），
  * 连的是哪个端点（`endpoint`：主机和端口，没有配时为 null；**只给主机和端口，不给路径和密钥**，就绪状态里
- * 显示连的是哪）。模型的检查和这些字段的取值由 #548 做。
+ * 显示连的是哪）。#548 起的取值：
+ * - 没有配置（`configured` 为 false）时 `reason` 写明缺的是哪一项（模型文件不在、不能解析、不支持的写法、`SFLY_ASSISTANT_MODEL`
+ *   没设或不在文件里、选中的提供方引用的环境变量没有值），**只有变量名和文件路径，没有任何值**；`endpoint`、`reachable`、
+ *   `checked_at`、`error_class` 都是 null；
+ * - 配好了：启动时和之后每 5 分钟试连一次、上一次连不上时每 30 秒复试一次（只建连接，不调模型），`reachable` 是上一次试连的结果（还没试过、提供方没写 `baseUrl`
+ *   因而不知道端点时为 null），`checked_at` 是它的时间，连不上时 `reason` 写「连不上模型端点 主机:端口：<原因>」、`error_class`
+ *   是 `unreachable` 或 `timeout`。
  */
 export const AssistantModelHealth = z.object({
 	configured: z.boolean(),

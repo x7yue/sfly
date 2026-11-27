@@ -4,9 +4,11 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useRef, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { NodeNameInline } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { TriggeredAt } from "#/components/via-tag";
 import { useRunFocus } from "#/focus/use-run-focus";
 import { apiQuery } from "#/lib/api";
@@ -14,6 +16,7 @@ import { ACTION, DURATION_LABEL, ELAPSED_LABEL, FOCUS, MESSAGE } from "#/lib/cop
 import { formatClock, formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { shortcutText } from "#/lib/shortcuts";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { runViewTransition } from "#/lib/view-transition";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -140,7 +143,12 @@ export function MonitorTopBar({
 				</h1>
 				<span className="flex min-w-0 text-xs text-fg-3">
 					<span className="min-w-0 truncate">
-						<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
+						<TriggeredAt
+							by={run.triggered_by}
+							via={run.triggered_via}
+							session={run.session}
+							at={run.started_at}
+						/>
 					</span>
 					<span className="flex-none whitespace-pre">
 						{" · "}
@@ -266,7 +274,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 	const actions = useMonitorActions();
 	return (
 		<Truncate
-			label={`${failureSummary(failure)}\n点击查看这个节点的尝试`}
+			label={`${untrustedPlain(failureSummary(failure))}\n点击查看这个节点的尝试`}
 			render={
 				<button
 					type="button"
@@ -289,7 +297,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 			{failure.message && (
 				<span className="text-danger-fg">
 					{failureMessageSeparator(failure)}
-					{failure.message}
+					<UntrustedText text={failure.message} />
 				</span>
 			)}
 		</Truncate>
@@ -321,7 +329,10 @@ function RunSwitcher({ run }: { run: RunView }) {
 					<DropdownMenuLabel>本场景的运行</DropdownMenuLabel>
 					{runs.isPending && <p className="m-0 px-1.5 py-1 text-xs text-fg-3">{MESSAGE.loading}</p>}
 					{runs.error && (
-						<p className="m-0 px-1.5 py-1 text-xs text-danger-fg">无法加载：{runs.error.message}</p>
+						<p className="m-0 px-1.5 py-1 text-xs text-danger-fg">
+							无法加载：
+							<ErrorMessage error={runs.error} />
+						</p>
 					)}
 					{runs.data?.runs.map((r) => {
 						const s = runStatusView(r.status, { cancelling: r.cancelling });

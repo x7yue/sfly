@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 发布版本号：Agent、SDK 运行时、控制面和 API 客户端共用一个版本号（控制面按「Agent 版本 == SDK wheel 版本」
-# 给 Agent 下发 SDK，见 apps/server/src/sdk/sdk-wheels.ts；API 客户端和控制面同版本，ADR 0022）。
+# 发布版本号：Agent、SDK 运行时、控制面、API 客户端和助手服务共用一个版本号（控制面按「Agent 版本 == SDK wheel 版本」
+# 给 Agent 下发 SDK，见 apps/server/src/sdk/sdk-wheels.ts；API 客户端和控制面同版本，ADR 0022；助手镜像随每个版本发布，
+# 它的 /health 报的助手服务版本读 apps/assistant/package.json，#549）。
 #
 #   version.sh show            列出各文件里的版本号
 #   version.sh check [vX.Y.Z]  各文件版本号一致（给出 tag 时还要与 tag 一致，并且发版性能报告
@@ -16,6 +17,7 @@ CARGO=agent/Cargo.toml
 PYPROJECT=sdk/python/pyproject.toml
 PYINIT=sdk/python/src/sfly/__init__.py
 SERVER=apps/server/package.json
+ASSISTANT=apps/assistant/package.json
 CLIENT=packages/client/package.json
 CLIENT_TS=packages/client/src/version.ts
 SEMVER='^[0-9]+\.[0-9]+\.[0-9]+$'
@@ -29,6 +31,7 @@ read_versions() {
 		"$PYPROJECT" "$(toml_version "$PYPROJECT")" \
 		"$PYINIT" "$(sed -nE 's/^__version__ = "([^"]*)".*/\1/p' "$PYINIT")" \
 		"$SERVER" "$(node -p "require('./$SERVER').version")" \
+		"$ASSISTANT" "$(node -p "require('./$ASSISTANT').version")" \
 		"$CLIENT" "$(node -p "require('./$CLIENT').version")" \
 		"$CLIENT_TS" "$(sed -nE 's/^export const CLIENT_VERSION = "([^"]*)".*/\1/p' "$CLIENT_TS")"
 }
@@ -109,7 +112,7 @@ cmd_set() {
 			const text = fs.readFileSync(file, "utf8");
 			fs.writeFileSync(file, text.replace(/("version":\s*)"[^"]*"/, `$1"${version}"`));
 		}
-	' "$version" "$SERVER" "$CLIENT"
+	' "$version" "$SERVER" "$ASSISTANT" "$CLIENT"
 	# 工作区成员的版本号变化只影响锁文件里的对应条目，不需要联网。
 	cargo update --offline --workspace --quiet
 	uv lock --offline --quiet

@@ -29,7 +29,7 @@ from collections.abc import Callable
 from typing import Any
 
 from sfly.cli import credentials
-from sfly.cli.client import ApiError, Client, resolve_nickname
+from sfly.cli.client import ApiError, Client, check_address, resolve_nickname, without_userinfo
 from sfly.cli.errors import EXIT_ERROR, CliError
 from sfly.cli.home import DEFAULT_SERVER, control_plane_url
 from sfly.cli.output import Output
@@ -150,8 +150,9 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     server = args.server
     if server is None and _interactive():
         default = control_plane_url(None)
-        server = _ask(f"控制面地址 [{default}]：") or default
+        server = _ask(f"控制面地址 [{without_userinfo(default)}]：") or default
     url = control_plane_url(server)
+    check_address(url)
     login_name = (args.login_name or "").strip()
     if not login_name:
         if not _interactive():
@@ -249,10 +250,10 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
     stored = credentials.load(url)
     from_env = bool(os.environ.get(credentials.TOKEN_ENV, "").strip())
     if stored is None:
-        message = f"本机没有登录过 {url}（凭据文件里没有这台控制面的令牌）"
+        message = f"本机没有登录过 {without_userinfo(url)}（凭据文件里没有这台控制面的令牌）"
         if from_env:
             message += f"；环境变量 {credentials.TOKEN_ENV} 里的令牌不归 sfly logout 管"
-        out.emit({"server": url, "logged_out": False}, message)
+        out.emit({"server": without_userinfo(url), "logged_out": False}, message)
         return 0
     revoked = False
     rejected = False
@@ -286,11 +287,24 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
         if from_env
         else ""
     )
-    text = f"已登出 {url}：" + ("令牌已吊销，" if revoked else "") + "本机的凭据已删除" + note
+    text = (
+        f"已登出 {without_userinfo(url)}："
+        + ("令牌已吊销，" if revoked else "")
+        + "本机的凭据已删除"
+        + note
+    )
     if rejected:
         text += (
             "\n注意：控制面拒绝了这次吊销（401）：令牌已经失效，或者已经被吊销了，这次登出没有吊销它。"
             "不放心的话，到控制台的「令牌」页（账号菜单里）核对，或者请管理员处理"
         )
-    out.emit({"server": url, "logged_out": True, "revoked": revoked, "rejected": rejected}, text)
+    out.emit(
+        {
+            "server": without_userinfo(url),
+            "logged_out": True,
+            "revoked": revoked,
+            "rejected": rejected,
+        },
+        text,
+    )
     return 0

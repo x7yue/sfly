@@ -51,7 +51,10 @@ ADMIN_LOGIN = "aeval_admin"
 ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
 # 两台 Agent 的配置文件（install.sh 写的）：凭据换了要改这里的 SFLY_TOKEN。
 AGENT_ENV_FILE = "/root/.sfly/agent.env"
-# install.sh --dev 的默认名称是 dev-<用户名>-<主机名>：容器里是 root、主机名 dev。
+# 开发环境容器里 Agent 的名称：沿用以前 `install.sh --dev` 默认的 dev-<用户名>-<主机名>
+# （容器里是 root、主机名 dev）。`install.sh --dev` 不给 --name 时现在向控制面注册，
+# 名字是 dev-<登录名>-<主机>、凭据记在登录的人名下（#492）；评测里不要换了名字就改了题目的前提，
+# 所以自己起名字：`--dev --name` 照旧可用，凭据是下面给这个名字签发的 Agent 凭据。
 DEV_AGENT = "dev-root-dev"
 SERVICE_PORT = 9000
 # 开发环境容器和被测机里放评测脚本（container/ 下的文件）的目录。
@@ -141,8 +144,33 @@ class Stack:
     assistant_model: str = "fake"
     # 控制面和助手服务共用的密钥：up 时随机生成，之后从助手容器读回来；不打印、不写文件。
     assistant_secret: str | None = field(default=None, repr=False)
-    # 初始管理员的密码：控制面每次建库（up、reset）时随机生成，只放在内存里。
+    # 初始管理员的密码：控制面每次建库（up、reset）时随机生成，放在内存里，
+    # 也写进 `admin_file`（0600，给人登录控制台用）。
     admin_password: str | None = field(default=None, repr=False)
+
+    @property
+    def admin_file(self) -> Path:
+        """这个槽位的初始管理员的登录名和密码（每次建库换一个）：只有属主能读的文件，
+        `up` 打印它的路径，不打印密码。"""
+        return DATA_HOME / f"admin-slot{self.slot}.txt"
+
+    def _write_admin_file(self) -> None:
+        """把初始管理员的登录名和密码写进 `admin_file`（0600）。控制面起来之后人要在浏览器里登录才能
+        建会话（#547），密码只在这个进程的内存里的话，人拿不到；写进文件、打印路径，密码本身不进终端、
+        不进命令行参数。"""
+        assert self.admin_password
+        path = self.admin_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # 先以 0600 创建（已经存在的文件 open 不改权限，所以之后再 chmod 一次）：
+        # 不让密码在任何时刻对别人可读。
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as file:
+            file.write(
+                f"# 槽位 {self.slot} 控制面的初始管理员（每次 up、reset 换密码；down 删掉）\n"
+                f"login_name={ADMIN_LOGIN}\n"
+                f"password={self.admin_password}\n"
+            )
+        os.chmod(path, 0o600)
 
     def name(self, role: str) -> str:
         return f"sfly-aeval-{self.slot}-{role}"
@@ -358,6 +386,7 @@ class Stack:
             self.wait_agents(timeout=180)
             self.wait_assistant_ready()
             log("助手就绪：工作台是 dev 上的 Agent")
+        log(f"初始管理员（登录控制台、建会话要先登录）：登录名和密码在 {self.admin_file}")
         log(f"环境就绪：控制面 {self.cp_url}")
 
     def down(self) -> None:
@@ -376,6 +405,7 @@ class Stack:
             d.docker("rm", "-f", self.name(role), check=False)
         d.docker("volume", "rm", self.name("cpdata"), check=False)
         d.docker("network", "rm", self.network, check=False)
+        self.admin_file.unlink(missing_ok=True)
 
     def _run(
         self,
@@ -391,7 +421,7 @@ class Stack:
         ports: list[str] | None = None,
         extra: list[str] | None = None,
     ) -> None:
-        """`secret_env`：保密的环境变量，参数里只写名字（`-e 名字`），
+        """`secret_env`：secret 环境变量，参数里只写名字（`-e 名字`），
         值经 docker 命令行进程的环境带进去。"""
         name = self.name(role)
         d.docker("rm", "-f", name, check=False)
@@ -441,6 +471,7 @@ class Stack:
         # 初始管理员（库里还没有任何用户时由环境变量建出来）：给 Agent 签发凭据要登录；
         # 密码每次建库都换一个新的，参数里只写变量名。
         self.admin_password = secrets.token_hex(16)
+        self._write_admin_file()
         env["SFLY_ADMIN_LOGIN"] = ADMIN_LOGIN
         secret_env: dict[str, str] = {ADMIN_PASSWORD_ENV: self.admin_password}
         if self.assistant:
@@ -662,7 +693,7 @@ class Stack:
         sut_token = self._agent_credential(self.sut, SUT_AGENT)
         d.sh(
             self.dev,
-            f"curl -fsSL {url} | sh -s -- --dev --no-service",
+            f"curl -fsSL {url} | sh -s -- --dev --name {DEV_AGENT} --no-service",
             secret_env={"SFLY_TOKEN": dev_token},
             timeout=600,
         )

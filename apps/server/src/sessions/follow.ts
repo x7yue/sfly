@@ -24,6 +24,12 @@ export interface FollowSource {
 	subscribe(listener: (event: SessionEvent) => void): () => void;
 	/** 序号大于 `after` 的持久事件，序号升序，最多 `limit` 条。 */
 	read(after: number, limit: number): Promise<PersistedSessionEvent[]>;
+	/**
+	 * 补发读完、切到实时的那一刻调用（**同步**，不能等任何东西：和切换在同一步里，之间不会漏进新事件）：返回要发给这一条连接的
+	 * `snapshot`；没有时（数据源不提供）不发。{@link follow} 把它放在缓冲的实时事件放完**之后**，所以它里面的状态已经包括了补发期间到的
+	 * 增量；页面按「取代」处理它（重叠的部分不会重复）。
+	 */
+	snapshot?(): SessionEvent | undefined;
 }
 
 /** {@link follow} 的出口：一条 SSE 流。 */
@@ -52,13 +58,21 @@ export interface FollowOptions {
  *   一轮进行中用户插话（`user_message`）、助手服务的提示（`notice`）、平台记录、一轮的开始，都会落在一条消息的增量中间
  *   （#544），它们不带这条消息的内容，增量前后夹着它们时，前半截增量也要留下，不然页面上这条消息只有后半截，要等整条消息
  *   落库才被换成完整的。（以前按先后判断——排在已经补发过的任何持久事件前面的增量都丢——假设增量中间不会夹着别的持久事件，
- *   插话让这个假设不成立。）其余不持久的事件（`steer_queue`、`turn_queued`、`snapshot`）每条都是完整的当前状态，按到达的
- *   先后放出，最后一条为准，不判断过时。
+ *   插话让这个假设不成立。）其余不持久的事件（`steer_queue`、`turn_queued`）每条都是完整的当前状态，按到达的
+ *   先后放出，最后一条为准，不判断过时；
+ * - **快照**（#545）：补发读完、切到实时的那一刻，缓冲的实时事件放完之后，**只给这一条连接**发一条 `snapshot`
+ *   （{@link FollowSource.snapshot}，同步生成）；带 `after` 重连的连接也一样。它发在补发**之后**：快照里的 `partial_text` 是相对「上一条
+ *   持久的助手消息」的，页面要先读完补发才知道是哪一条；发在前面会被补发里的那条整条消息盖掉。它也发在缓冲的实时事件**之后**：
+ *   快照在放完缓冲之后生成，里面已经包括了补发期间到的增量，页面按「取代」处理，不会重复；
+ *   它不持久，没有序号，不参与去重；
  *   助手事件的「落库加发布」和补发读库在这个会话的链上依次执行（`SessionStore.#serial`），所以缓冲里排在前面的一定先于它发布，
  *   助手事件不会「已经提交、还没发布就被补发读到」；**平台记录除外**：它的写在会话令牌的请求里，提交之后才交给链推送，补发读库
  *   可能读到一条已经提交、还没推出来的平台记录，补发给了客户端；之后实时推出来的这一条按 `seq` 去重丢掉（不重不漏仍成立）。
  *   （SessionStore 保证持久事件推送的顺序等于序号的顺序，平台记录也一样；平台记录夹在一条消息的增量中间时，前半截增量也留下，
  *   见上一条）；
+ * - **实时阶段遇到序号缺口就补读**（#545）：切到实时之后，一条持久事件的序号比「已经发到哪」大出一个以上（序号大的先到了），就回到补发的
+ *   状态——这一条和之后到的先缓冲，缺的那一段从库里读出来、按序号发了，再放缓冲的（同样按 `seq` 去重）；读不到缺的（库里没有、序号有跳跃）
+ *   就照到达的发，不空等；不再发快照。页面这一次连接里收到的持久事件因此连续、不缺；
  * - **慢客户端不会把整段历史顶进内存**：补发每发完一批等 {@link FollowSink.drained}，期间实时事件的缓冲有上限
  *   （{@link FollowOptions.maxBuffered}），超过就用 {@link FollowOverflowError} 报错并结束。
  *
@@ -101,12 +115,25 @@ export function follow(
 
 	unsubscribe = source.subscribe((event) => {
 		if (stopped) return;
-		if (!replaying) return deliver(event);
+		if (!replaying) {
+			// 实时阶段：持久的事件序号接不上（比「已经发到哪」多出一个以上）时，中间的还没有到——序号大的先到了，后到的序号小的会被
+			// 当成「已经发过」丢掉，这条连接上就少一条、刷新才回来。回到补发的状态：这一条先缓冲，把缺的那一段从库里读出来、按序号发了，
+			// 再放这一条和之后到的。（一个控制面进程里「落库加发布」在会话的链上依次执行，正常不会走到这里；这是收口子：平台记录的推送、
+			// 控制面重启后补收的事件……）
+			if ("seq" in event && event.seq > sent + 1) {
+				replaying = true;
+				pending.push(event);
+				replay(false).catch(fail);
+				return;
+			}
+			return deliver(event);
+		}
 		if (pending.length >= maxBuffered) return fail(new FollowOverflowError(maxBuffered));
 		pending.push(event);
 	});
 
-	const replay = async () => {
+	/** `initial`：这条连接的第一次补发（补发完发快照）；实时阶段遇到序号缺口时的补读不再发快照。 */
+	const replay = async (initial: boolean) => {
 		for (;;) {
 			const batch = await source.read(sent, batchSize);
 			if (stopped) return;
@@ -143,7 +170,11 @@ export function follow(
 			if (superseded.has(index)) continue;
 			deliver(event);
 		}
+		// 快照在缓冲的事件放完之后生成：此刻的状态已经包括它们。
+		if (!initial) return;
+		const snapshot = source.snapshot?.();
+		if (snapshot !== undefined) deliver(snapshot);
 	};
-	replay().catch(fail);
+	replay(true).catch(fail);
 	return stop;
 }

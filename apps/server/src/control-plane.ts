@@ -44,6 +44,7 @@ import { FeishuClient } from "./feishu/feishu-client.js";
 import { FeishuDelivery } from "./feishu/feishu-delivery.js";
 import { TaskNotifications } from "./feishu/task-notifications.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
+import { SourceLogLimit } from "./gateway/source-log-limit.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
 import { TaskLogs } from "./logs/task-logs.js";
@@ -54,7 +55,7 @@ import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { createStdIndex } from "./packages/std-index.js";
 import { PresetStore } from "./presets/preset-store.js";
-import type { Mirrors } from "./public-config.js";
+import { type Mirrors, publicMirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
@@ -67,7 +68,7 @@ import type { SessionRow } from "./sessions/session-store.js";
 import { SessionStore } from "./sessions/session-store.js";
 import { listening } from "./util/listen-error.js";
 import { Mutex } from "./util/mutex.js";
-import { printError, printInfo } from "./util/output.js";
+import { printError, printInfo, printWarning } from "./util/output.js";
 import { periodic } from "./util/periodic.js";
 import { safeError } from "./util/safe-error.js";
 
@@ -84,6 +85,8 @@ export interface ControlPlaneOptions {
 	clock?: Clock;
 	http?: ListenOptions;
 	grpc?: ListenOptions;
+	/** Agent 网关收一条消息最多多少字节（默认 `AGENT_MESSAGE_MAX_BYTES`，80 MiB）：测试用小的上限试超限。 */
+	agentMessageMaxBytes?: number;
 	/**
 	 * 打开 Fastify 的日志和控制面自己的控制台输出；给 `{ stream }` 时 Fastify 的日志写进这个流（测试用它检查日志里
 	 * 没有哈希、令牌这类不该出现的内容），控制台输出照常。
@@ -120,6 +123,8 @@ export interface ControlPlaneOptions {
 	artifactUploadIdleMs?: number;
 	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
 	retentionDays?: number;
+	/** 读日志的请求认出文件有问题后，最多等多久看保留期清理有没有在删（毫秒），默认 3 秒（#734）：不是部署者的配置，只有测试和嵌入时给。 */
+	purgeWaitMs?: number;
 	/** 指标的保留天数，默认 30 天，与日志和产物分开配置；整天超过保留期的分区被删除（#32）。 */
 	metricRetentionDays?: number;
 	/** 保留期清理（含指标分区维护）的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
@@ -179,8 +184,8 @@ export interface ControlPlaneOptions {
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
 	/**
-	 * 会话结束之后调用（会话令牌合入之后在这里吊销这个会话的令牌，#544 留好的接口）：抛的错只进日志，不影响结束。
-	 * 主要给测试用；生产里由令牌那条任务接上。
+	 * 会话结束之后调用（#544 留好的接口）：抛的错只进日志，不影响结束。会话令牌的吊销不在这里：它在会话结束的事务里
+	 * （`SessionStore.end`，#547），不靠一个事后的回调。主要给测试用。
 	 */
 	onSessionEnded?: (session: SessionRow) => Promise<void>;
 	/**
@@ -230,6 +235,8 @@ export interface ControlPlane {
 	readonly sessions: SessionStore;
 	/** 会话的写和后台（测试用：`idle()` 等排队中的会话开始完）。 */
 	readonly sessionService: SessionService;
+	/** 和助手服务的事件连接此刻连着没有（测试等它断开、重连用；没有配置助手服务时恒为 false）。 */
+	readonly assistantConnected: () => boolean;
 	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts）：测试用它给假 Agent 签发凭据。 */
 	readonly agentCredentials: AgentCredentialService;
 	/**
@@ -256,12 +263,18 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	}
 }
 
+/** 两个镜像在环境变量里的名字（警告里写它，不写地址）。 */
+const MIRROR_VARIABLES = {
+	pypi: "SFLY_PYPI_MIRROR",
+	githubRelease: "SFLY_GITHUB_RELEASE_MIRROR",
+} as const;
+
 async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
 	/**
 	 * 控制面自己往标准错误写错误日志的唯一出口：错误先过 `safeError`，数据库错误里的参数（密码的哈希、令牌的哈希、
-	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
+	 * secret 参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
 	 */
 	const logError = (what: string, error?: unknown): void => {
 		if (logger) printError(what, error);
@@ -317,11 +330,18 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
+	// 登录注销、用户停用、令牌吊销都从同一个广播出去：路由层据此关掉受影响的事件流。
+	const revocations = new RevocationBus();
 	// 会话令牌触发的运行、保存的场景版本，在同一个事务里给会话写平台记录（#547）：引擎和场景存储都用它。
+	// 一轮开始时签发会话令牌、一轮和会话结束时吊销它，也在这里的事务里（`./sessions/session-tokens.ts`）。
 	const sessions = new SessionStore({
 		db: database.db,
 		clock,
 		onError: (what, error) => logError(`sfly: ${what}`, error),
+		// 会话令牌吊销了（事务已经提交）：用它打开着的事件流跟着关掉。
+		onTokensRevoked: (tokenIds) => {
+			for (const tokenId of tokenIds) revocations.emit({ type: "token", tokenId });
+		},
 		...(options.sessionWriteLockTimeoutMs !== undefined && {
 			writeLockTimeoutMs: options.sessionWriteLockTimeoutMs,
 		}),
@@ -329,6 +349,16 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
+	// 不用登录就能读的地方（/install.sh、/sdk/project-settings）用去掉用户名和密码的地址（#755）；去不干净的那个当没配，打一条警告
+	// （只写是哪个环境变量，不写地址）。Welcome 用上面的原值。
+	const published = publicMirrors(mirrors);
+	for (const key of published.withheld) {
+		if (logger) {
+			printWarning(
+				`sfly: ${MIRROR_VARIABLES[key]} 地址里的用户名和密码没能去掉（写法认不出来），/install.sh 和 /sdk/project-settings 里把它当作没配；Agent 握手时下发的不受影响`,
+			);
+		}
+	}
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const preflight = createPreflight({ version });
@@ -439,11 +469,10 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		clock,
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
+		purgeWaitMs: options.purgeWaitMs,
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);
-	// 登录注销、用户停用、令牌吊销都从同一个广播出去：路由层据此关掉受影响的事件流。
-	const revocations = new RevocationBus();
 	const accounts = new AccountService({
 		db: database.db,
 		clock,
@@ -500,6 +529,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 				}),
 			})
 		: undefined;
+	// 助手服务的事件连接（下面、网关起来之后才建）：HTTP 在那之前就开始监听了，这几毫秒里进来的请求走就绪状态会问「连着没有」，
+	// 所以先声明；还没建好当作没连上（503，不是引用还没初始化的 ReferenceError → 500）。
+	let assistantConnection: AssistantConnection | undefined;
 	const sessionService = new SessionService({
 		sessions,
 		db: database.db,
@@ -510,6 +542,10 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
 		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
+		// 事件连接连不上时兜底不判中断、也不开始新的一轮；连接还没建好（只有配置了助手服务时才有这个函数）就是没连上。
+		...(assistantClient && {
+			assistantConnected: (): boolean => assistantConnection?.connected ?? false,
+		}),
 		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
 	const api = buildHttpApi({
@@ -535,7 +571,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			httpUrl: () => publicHttpUrl,
 			grpcUrl: () => publicGrpcUrl,
 			version,
-			mirrors,
+			// 公开的地方（不用登录的 /install.sh、/sdk/project-settings）不带用户名和密码；Welcome 用上面的原值（#755）。
+			mirrors: published.mirrors,
+			mirrorsWithheld: published.withheld,
 		},
 		sdkWheels,
 		stdIndex: createStdIndex({
@@ -589,11 +627,29 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	).replace(/\/+$/, "");
 
 	const sessionError = (error: unknown) => logError("agent session error:", error);
+	// 握手之前超限的日志的限频（同一个来源地址 10 秒一行，最多记 1000 个来源）。
+	const tooLargeLog = new SourceLogLimit(10_000, 1000);
 	let gateway: Awaited<ReturnType<typeof startAgentGateway>>;
 	try {
 		gateway = await startAgentGateway({
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
+			readMaxBytes: options.agentMessageMaxBytes,
+			// 只写是哪台 Agent（握手之前是来源地址）、声明的大小和上限，不带消息的任何内容。
+			// 握手之前的（没有认证）按来源地址限频：同一个来源在一个窗口里只写一行，带上这段时间里省掉的次数。
+			onMessageTooLarge: ({ agent, source, size, limit }) => {
+				let skipped = "";
+				if (agent === undefined) {
+					const admitted = tooLargeLog.admit(source, clock.now().getTime());
+					if (admitted === undefined) return;
+					if (admitted.suppressed > 0) {
+						skipped = `（这个来源地址之前还有 ${admitted.suppressed} 次没有写）`;
+					}
+				}
+				logError(
+					`sfly: ${agent === undefined ? `来源地址 ${source} 的连接（握手之前）` : `Agent ${agent}`}发来的消息超过上限（声明 ${size} 字节，上限 ${limit} 字节），关闭这条连接${skipped}`,
+				);
+			},
 			hub,
 			// 日志、进度、指标、ctx.notify 的通知、动作摘要和安装状态不改变运行状态，不经过引擎（src/logs/task-logs.ts、
 			// src/metrics/task-metrics.ts、src/feishu/task-notifications.ts、src/actions/task-actions.ts、src/agents/agent-hub.ts）。
@@ -628,10 +684,15 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	).replace(/\/+$/, "");
 
 	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
-	const assistantConnection = assistantClient
+	assistantConnection = assistantClient
 		? new AssistantConnection({
 				client: assistantClient,
 				sessions,
+				recovery: {
+					restarted: (candidates): Promise<number> => sessionService.assistantRestarted(candidates),
+					eventsLost: (): Promise<number> => sessionService.assistantEventsLost(),
+					connected: (): Promise<void> => sessionService.onAssistantConnected(),
+				},
 				log: (message, error) => logError(`sfly: ${message}`, error),
 				reconnect: options.assistantReconnectMs && {
 					minMs: options.assistantReconnectMs.min,
@@ -714,6 +775,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		grpcUrl: gateway.url,
 		sessions,
 		sessionService,
+		assistantConnected: () => assistantConnection?.connected ?? false,
 		agentCredentials,
 		close: () => {
 			closing ??= close();

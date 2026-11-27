@@ -7,12 +7,14 @@ docker 调用都换成记录，不起容器。
 from __future__ import annotations
 
 import argparse
+import http.client
 import http.server
 import json
 import re
 import subprocess
 import threading
 import time
+import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -52,6 +54,13 @@ class Recorder:
 
     def runs(self, role: str) -> list[tuple[tuple[str, ...], Mapping[str, str] | None]]:
         return [c for c in self.calls if c[0][:1] == ("run",) and f"sfly-aeval-9-{role}" in c[0]]
+
+
+@pytest.fixture(autouse=True)
+def data_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """评测的数据目录（初始管理员的登录名和密码的文件在里面）：每个用例用自己的，不写进真的目录。"""
+    monkeypatch.setattr("aeval.env.DATA_HOME", tmp_path)
+    return tmp_path
 
 
 @pytest.fixture
@@ -113,8 +122,44 @@ def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
     assert stack.admin_password != password
 
 
+def test_initial_admin_login_and_password_are_written_to_a_file_only_the_owner_can_read(
+    recorder: Recorder, data_home: Path
+) -> None:
+    """建会话要先登录（#547）：人在浏览器里登录要知道初始管理员的密码，而它只在 aeval 进程的内存里；
+    写进一个 0600 的文件（路径固定，每个槽位一个），每次建库换密码时跟着换。"""
+    stack = Stack(slot=9)
+    stack._start_control_plane()
+    path = stack.admin_file
+    assert path == data_home / "admin-slot9.txt"
+    assert (path.stat().st_mode & 0o777) == 0o600
+    lines = dict(
+        line.split("=", 1) for line in path.read_text().splitlines() if not line.startswith("#")
+    )
+    assert lines == {"login_name": ADMIN_LOGIN, "password": stack.admin_password}
+    first = lines["password"]
+    # 文件已经存在、权限被改宽了：重新写的时候收紧回 0600，内容换成新的密码。
+    path.chmod(0o644)
+    stack._start_control_plane()
+    assert (path.stat().st_mode & 0o777) == 0o600
+    assert f"password={stack.admin_password}" in path.read_text()
+    assert first not in path.read_text()
+    # 别的槽位各有自己的文件。
+    other = Stack(slot=8)
+    other._start_control_plane()
+    assert other.admin_file != path and other.admin_file.exists() and path.exists()
+
+
+def test_down_removes_the_admin_file(recorder: Recorder) -> None:
+    stack = Stack(slot=9)
+    stack._start_control_plane()
+    assert stack.admin_file.exists()
+    stack.down()
+    assert not stack.admin_file.exists()
+    stack.down()  # 没有文件时也不报错
+
+
 class Shell:
-    """记下每次在容器里执行的脚本、保密的环境变量和标准输入。"""
+    """记下每次在容器里执行的脚本、secret 环境变量和标准输入。"""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -166,6 +211,10 @@ def test_install_passes_the_agent_tokens_by_name_not_in_the_arguments(
         assert set(call["secret_env"]) == {"SFLY_TOKEN"}
         assert not call.get("env")
         assert "sfly_agt_" not in call["script"]
+    # 开发环境容器的 Agent：`--dev` 不给 --name 时 install.sh 要向控制面注册、
+    # 不能再用 SFLY_TOKEN，所以自己起名字。
+    dev_install = next(c for c in installs if c["container"].endswith("-dev"))
+    assert "--dev --name dev-root-dev" in dev_install["script"]
 
 
 def test_reset_reissues_the_credentials_and_swaps_them_into_agent_env(
@@ -501,8 +550,12 @@ def test_up_with_the_assistant_starts_it_and_never_prints_the_secret(
     monkeypatch.setattr(Stack, "wait_assistant_ready", lambda self: waited.append(self.slot))
     printed: list[str] = []
     stack = Stack(slot=9, assistant=True)
+    stack.admin_password = "p" * 32
     stack.up(log=printed.append)
     assert started == [9]
+    # 初始管理员：打印的是登录名和密码文件的路径，密码本身不在终端里。
+    assert any(str(stack.admin_file) in line for line in printed)
+    assert not any("p" * 32 in line for line in printed)
     # up 完就能用：等到控制面说助手就绪才结束。
     assert waited == [9]
     assert stack.assistant_secret and len(stack.assistant_secret) >= 32
@@ -586,3 +639,65 @@ def test_follow_stops_at_the_turn_end(monkeypatch: pytest.MonkeyPatch) -> None:
         assert (events, error) == (GOOD, None)
     finally:
         server.close()
+
+
+class _LoginResponse:
+    """`urlopen` 返回的响应：只有登录用到的两样（响应头和读出来的内容）。"""
+
+    def __init__(self, cookies: list[str]) -> None:
+        self.headers = http.client.HTTPMessage()
+        for cookie in cookies:
+            self.headers.add_header("Set-Cookie", cookie)
+
+    def __enter__(self) -> _LoginResponse:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+def test_requests_log_in_as_the_initial_admin_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    """建会话只认用户的凭据（#547）：e2e 用初始管理员登录，拿登录 Cookie 去建会话。"""
+    sent: list[tuple[str, str, bytes | None, dict[str, str]]] = []
+
+    def urlopen(request: Any, timeout: float = 0) -> Any:
+        sent.append((request.method, request.full_url, request.data, dict(request.header_items())))
+        if request.full_url.endswith("/auth/login"):
+            return _LoginResponse(["sfly_login=abc123; Path=/; HttpOnly; SameSite=Lax"])
+        return _Json({"id": "s1"})
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    stack = Stack(slot=7)
+    stack.admin_password = "p" * 32
+    assert e2e._request(stack, "POST", "/projects/default/sessions", {"text": "做点事"}) == {
+        "id": "s1"
+    }
+    login, create = sent
+    assert login[1].endswith("/auth/login")
+    assert json.loads(login[2] or b"") == {"login_name": ADMIN_LOGIN, "password": "p" * 32}
+    # 请求头的名字 urllib 首字母大写；Cookie 只对同源的请求有效。
+    assert create[3]["Cookie"] == "sfly_login=abc123"
+    assert create[3]["Sec-fetch-site"] == "same-origin"
+    assert create[3]["X-sfly-nickname"] == e2e.NICKNAME
+
+
+def test_login_without_the_admin_password_says_what_to_do() -> None:
+    stack = Stack(slot=7)
+    with pytest.raises(e2e.ControlPlaneError, match="初始管理员的密码"):
+        e2e.login_cookie(stack)
+
+
+class _Json:
+    """`urlopen` 返回的响应：读出来是一段 JSON。"""
+
+    def __init__(self, value: Any) -> None:
+        self._body = json.dumps(value).encode()
+
+    def __enter__(self) -> _Json:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body

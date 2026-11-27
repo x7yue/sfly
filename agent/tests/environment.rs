@@ -614,3 +614,50 @@ async fn a_failed_uv_update_only_warns_while_the_old_uv_still_works() {
         .unwrap();
     assert!(stderr.contains("更新 uv 失败"), "{stderr}");
 }
+
+/// 记录环境里 `SFLY_TOKEN` 的 uv：每次调用把「`SFLY_TOKEN` 的值（没有时写 unset） 参数」写进 `log` 一行；
+/// `self update` 直接成功，其余转给测试机的 uv。
+fn credential_recording_uv(dir: &Path, log: &Path) -> std::path::PathBuf {
+    let path = dir.join("credential-recording-uv");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"${{SFLY_TOKEN-unset}} $*\" >> '{}'\n[ \"$1 $2\" = 'self update' ] && exit 0\nexec '{}' \"$@\"\n",
+            log.display(),
+            host_uv().display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// Agent 凭据可以经环境变量 `SFLY_TOKEN` 交给 Agent（#492）：Agent 为准备运行环境起的进程（更新 uv、检查 uv……）
+/// 不需要它，环境里去掉。
+#[tokio::test]
+async fn the_agent_credential_is_not_in_the_environment_of_the_processes_that_prepare_the_environment()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let log = dir.path().join("uv.log");
+    installed_home(&home, credential_recording_uv(dir.path(), &log));
+    let cp = FakeControlPlane::start().await;
+
+    let _agent = agent(&home, &cp, "agent-env-credential")
+        .env_remove("SFLY_UV")
+        .env("SFLY_TOKEN", "sfly_agt_0123456789abcdef0123456789abcdef")
+        .arg("--venv")
+        .arg(stub_venv())
+        .spawn_agent();
+    let hello = cp.hello(0).await;
+    // Agent 自己拿到了凭据（Hello 里带着它）……
+    assert_eq!(hello.token, "sfly_agt_0123456789abcdef0123456789abcdef");
+    run_echo(&cp, "task-1").await;
+    // ……起的 uv 进程（`self update`、`--version`）的环境里没有。
+    let log = std::fs::read_to_string(&log).unwrap();
+    let calls: Vec<&str> = log.lines().collect();
+    assert!(calls.iter().any(|l| l.contains("self update")), "{log}");
+    assert!(calls.iter().any(|l| l.contains("--version")), "{log}");
+    assert!(calls.iter().all(|l| l.starts_with("unset ")), "{log}");
+}

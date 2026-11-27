@@ -113,7 +113,7 @@ describe("拉起 pi", () => {
 		await harness.sessions.shutdown();
 		await eventually(() => expect(existsSync(agentDir)).toBe(false));
 		await eventually(() => expect(existsSync(tmpDir)).toBe(false));
-		// 这一轮的配置（里面有保密的环境变量）在这一轮结束时删掉。
+		// 这一轮的配置（里面有 secret 环境变量）在这一轮结束时删掉。
 		expect(existsSync(join(harness.dataDir, "sessions", id, "turn.json"))).toBe(false);
 	});
 
@@ -146,7 +146,8 @@ describe("一轮的结局", () => {
 		await harness.prompt(id, { text: "settle" });
 		const first = await harness.turnEnd(id);
 		expect(first, first.reason).toMatchObject({ outcome: "completed" });
-		expect(harness.connections).toEqual({ opened: 1, closed: 1 });
+		// 三个：写 skill、一轮开始前整理工作区、一轮结束时提交（#546），各自用完就关。
+		expect(harness.connections).toEqual({ opened: 3, closed: 3 });
 		// 不只数 close() 被调用的次数：假工作台上的连接真的关了（#618 审查）。
 		await eventually(() => expect(harness.workbench.openConnections).toBe(0));
 		const port = await silentPort();
@@ -157,7 +158,8 @@ describe("一轮的结局", () => {
 				workbench: { name: "silent", address: port.address, workdir: harness.workdir },
 			});
 			expect(await harness.turnEnd(other, 1, 40_000)).toMatchObject({ outcome: "failed" });
-			expect(harness.connections).toEqual({ opened: 2, closed: 2 });
+			// 写 skill 就失败了：这一轮没有开始（没有整理工作区，也没有提交）。
+			expect(harness.connections).toEqual({ opened: 4, closed: 4 });
 		} finally {
 			await port.close();
 		}
@@ -255,7 +257,7 @@ describe("一轮的结局", () => {
 		expect(await harness.turnEnd(id)).toMatchObject({
 			outcome: "model_unavailable",
 			// 不带「模型不可用」：页面按结局加这个前缀（#640）。
-			reason: "上游出错（上游返回 503）",
+			reason: "模型端点出错（503）",
 			error_class: "upstream",
 		});
 		const notices = harness.events
@@ -322,7 +324,7 @@ describe("同时活着的 pi 进程数的上限", () => {
 	});
 });
 
-describe("保密环境变量按值打码", () => {
+describe("secret 环境变量按值打码", () => {
 	it("模型的话、工具的输出和结果、提示里出现的值（含跨两条增量、JSON 转义的）：事件、pi 原始事件、日志里都没有", async () => {
 		const harness = await start();
 		const value = 'tok-"9f3a\\b7c1-secret-value';
@@ -344,7 +346,7 @@ describe("保密环境变量按值打码", () => {
 		const output = events.flatMap((e) => (e.type === "tool_output" ? [e.text] : [])).join("");
 		expect(output).toContain("TOKEN=******");
 		expect(events.find((e) => e.type === "tool_call")).toMatchObject({ title: "echo ******" });
-		// 上游的错误原文（里面有这个值）不进提示，只进日志，进日志之前打码（#640）：保密值、模型文件引用的环境变量的值、
+		// 上游的错误原文（里面有这个值）不进提示，只进日志，进日志之前打码（#640）：secret 环境变量的值、模型文件引用的环境变量的值、
 		// 请求头和地址里的凭据都打码，截到上限；同一次失败（模型调用出错，接着是重试的提示）只记一次。
 		expect(events.find((e) => e.type === "notice")?.type).toBe("notice");
 		expect(JSON.stringify(events)).not.toContain("bad key");
@@ -713,7 +715,7 @@ describe("审查补的守护", () => {
 		expect(end).toMatchObject({
 			outcome: "model_unavailable",
 			error_class: "auth",
-			reason: "上游拒绝了密钥（上游返回 401）",
+			reason: "密钥被拒绝（401）",
 		});
 		expect(harness.logs.join("\n")).toContain("上游模型出错：401 unauthorized");
 	});
@@ -803,8 +805,9 @@ describe("审查补的守护", () => {
 		expect(harness.logs.join("\n")).toContain("MARKER-local-31");
 	});
 
-	it("一轮开头写 skill 之外的步骤出错（这里是读不到模型文件）：原因不放行本机的原文，原文进日志", async () => {
-		const harness = await start();
+	it("一轮开头写 skill 之外的步骤出错（这里是检查之后模型文件没了）：原因不放行本机的原文，原文进日志", async () => {
+		// 新的一轮开始之前会检查模型文件（#548），文件没了会 503：这里要的是检查之后才出的错，所以不检查。
+		const harness = await start({ noModelGate: true });
 		const models = join(harness.root, "config", "models.json");
 		rmSync(models);
 		const id = crypto.randomUUID();
@@ -848,7 +851,7 @@ describe("审查补的守护", () => {
 });
 
 describe("启动时清掉上次留下的东西", () => {
-	it("设置目录、每一轮的配置文件（有保密值的原文）、pi 的临时目录", async () => {
+	it("设置目录、每一轮的配置文件（有 secret 环境变量的值的原文）、pi 的临时目录", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "sfly-leftover-"));
 		const session = join(dataDir, "sessions", crypto.randomUUID());
 		mkdirSync(session, { recursive: true });

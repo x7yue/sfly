@@ -281,6 +281,20 @@
       "when": 1795528996083,
       "tag": "0040_session_queued_at",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795696014866,
+      "tag": "0041_session_token_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1795726459892,
+      "tag": "0042_session_event_assistant_source",
+      "breakpoints": true
     }
   ]
 }

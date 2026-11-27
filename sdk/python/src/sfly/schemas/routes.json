@@ -96,6 +96,12 @@
             ],
             "description": "同 `capped_at`，用 Agent 时间表示。"
           },
+          "failed_total": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "全部名称合计失败的动作数：包括没进 `names` 的名称的失败（`names` 里各项的 `failed` 加起来会少算它们）。\n控制台的失败数用它。"
+          },
           "names": {
             "type": "array",
             "items": {
@@ -153,7 +159,44 @@
                 "agent_capped_at"
               ]
             },
-            "description": "每种名称一项，按第一次出现的先后。"
+            "description": "每种名称一项，按第一次出现的先后，最多 `ACTION_LIMITS.summaryNames` 种，名称很长时更少（名称表的字节预算\n`ACTION_LIMITS.summaryNamesBytes`）。没进表的名称合在一起写在 `unlisted`；`names_complete` 为 false。"
+          },
+          "names_complete": {
+            "type": "boolean",
+            "description": "`names` 是不是全部的名称。"
+          },
+          "unlisted": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "failed": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "reported": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "total",
+                  "failed",
+                  "reported"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "没进 `names` 的名称合在一起的计数（动作和标记的个数、其中失败的动作数、有明细的个数）：`names_complete` 为\nfalse 时有，否则为 null。不写名称，也没有它们有几种名称的数（SDK 不记）。"
           },
           "running": {
             "type": "array",
@@ -215,11 +258,15 @@
                 "agent_started_at"
               ]
             },
-            "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。"
+            "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列；摘要装不下\n（`ACTION_LIMITS.summaryBytes`）时更少，优先级低的先省。"
           },
           "running_complete": {
             "type": "boolean",
-            "description": "`running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。"
+            "description": "`running` 是不是全部正在做的动作：没列全（超过 `ACTION_LIMITS.running` 个，或因为摘要的大小被省去了）时为 false。"
+          },
+          "lists_trimmed": {
+            "type": "boolean",
+            "description": "`running`、`recent`、`recent_failed` 里有没有因为摘要的大小（`ACTION_LIMITS.summaryBytes`）被省去的项。"
           },
           "recent": {
             "type": "array",
@@ -422,9 +469,13 @@
           "control_plane_capped",
           "capped_at",
           "agent_capped_at",
+          "failed_total",
           "names",
+          "names_complete",
+          "unlisted",
           "running",
           "running_complete",
+          "lists_trimmed",
           "recent",
           "recent_failed"
         ]
@@ -874,6 +925,12 @@
               ],
               "description": "同 `capped_at`，用 Agent 时间表示。"
             },
+            "failed_total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "description": "全部名称合计失败的动作数：包括没进 `names` 的名称的失败（`names` 里各项的 `failed` 加起来会少算它们）。\n控制台的失败数用它。"
+            },
             "names": {
               "type": "array",
               "items": {
@@ -931,7 +988,44 @@
                   "agent_capped_at"
                 ]
               },
-              "description": "每种名称一项，按第一次出现的先后。"
+              "description": "每种名称一项，按第一次出现的先后，最多 `ACTION_LIMITS.summaryNames` 种，名称很长时更少（名称表的字节预算\n`ACTION_LIMITS.summaryNamesBytes`）。没进表的名称合在一起写在 `unlisted`；`names_complete` 为 false。"
+            },
+            "names_complete": {
+              "type": "boolean",
+              "description": "`names` 是不是全部的名称。"
+            },
+            "unlisted": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "reported": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "failed",
+                    "reported"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "没进 `names` 的名称合在一起的计数（动作和标记的个数、其中失败的动作数、有明细的个数）：`names_complete` 为\nfalse 时有，否则为 null。不写名称，也没有它们有几种名称的数（SDK 不记）。"
             },
             "running": {
               "type": "array",
@@ -993,11 +1087,15 @@
                   "agent_started_at"
                 ]
               },
-              "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。"
+              "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列；摘要装不下\n（`ACTION_LIMITS.summaryBytes`）时更少，优先级低的先省。"
             },
             "running_complete": {
               "type": "boolean",
-              "description": "`running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。"
+              "description": "`running` 是不是全部正在做的动作：没列全（超过 `ACTION_LIMITS.running` 个，或因为摘要的大小被省去了）时为 false。"
+            },
+            "lists_trimmed": {
+              "type": "boolean",
+              "description": "`running`、`recent`、`recent_failed` 里有没有因为摘要的大小（`ACTION_LIMITS.summaryBytes`）被省去的项。"
             },
             "recent": {
               "type": "array",
@@ -1200,9 +1298,13 @@
             "control_plane_capped",
             "capped_at",
             "agent_capped_at",
+            "failed_total",
             "names",
+            "names_complete",
+            "unlisted",
             "running",
             "running_complete",
+            "lists_trimmed",
             "recent",
             "recent_failed"
           ]
@@ -5298,6 +5400,21 @@
             "type": "boolean",
             "description": "运行已超过保留期、日志已被清理（此时是空页）。"
           },
+          "file_problem": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "missing",
+                  "short"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "这个任务的日志文件的问题（`LogFileProblem`）：写过日志但文件不在了（页是空的）或者比记录的短（页里只有剩下的行）；\n没有问题时、运行已过保留期（`expired` 已经说了）时为 null。每次读页都按读那一刻的文件判断，和下载同一个标准。"
+          },
           "locate": {
             "anyOf": [
               {
@@ -5342,6 +5459,7 @@
           "last_seq",
           "truncated",
           "expired",
+          "file_problem",
           "locate"
         ]
       },
@@ -5500,6 +5618,21 @@
             "task_id",
             "lines",
             "offset"
+          ]
+        },
+        "file_problem": {
+          "type": "object",
+          "properties": {
+            "file_problem": {
+              "type": "string",
+              "enum": [
+                "missing",
+                "short"
+              ]
+            }
+          },
+          "required": [
+            "file_problem"
           ]
         }
       },
@@ -5769,6 +5902,56 @@
           "expired": {
             "type": "boolean",
             "description": "运行已超过保留期、日志已被清理（此时是空页）。"
+          },
+          "file_problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string"
+                },
+                "chain_instance_id": {
+                  "type": "string"
+                },
+                "subflow": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "problem": {
+                  "type": "string",
+                  "enum": [
+                    "missing",
+                    "short"
+                  ]
+                }
+              },
+              "required": [
+                "task_id",
+                "chain_instance_id",
+                "subflow",
+                "node_id",
+                "attempt",
+                "problem"
+              ]
+            },
+            "description": "范围（`nodes`）内日志文件有问题的任务（写过日志但文件不在了，或者比记录的短），按运行视图里的顺序，最多 `LOG_FILE_PROBLEMS_LIMIT`\n个；总数在 `file_problems_total`。有问题的任务页里读不到（或只读到剩下的）它的行：页面和命令行据此说明，不要当成「没有日志」。\n运行已过保留期时为空（`expired` 已经说了）。每个页都带，按读那一刻的文件判断，和下载同一个标准。"
+          },
+          "file_problems_total": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "范围内日志文件有问题的任务的总数（可能大于 `file_problems` 列出的个数）。"
           }
         },
         "required": [
@@ -5780,7 +5963,9 @@
           "reached_end",
           "live_after",
           "truncated_tasks",
-          "expired"
+          "expired",
+          "file_problems",
+          "file_problems_total"
         ]
       },
       "notes": [
@@ -6022,6 +6207,63 @@
         "reload": {
           "type": "object",
           "properties": {}
+        },
+        "file_problems": {
+          "type": "object",
+          "properties": {
+            "file_problems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "task_id": {
+                    "type": "string"
+                  },
+                  "chain_instance_id": {
+                    "type": "string"
+                  },
+                  "subflow": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "node_id": {
+                    "type": "string"
+                  },
+                  "attempt": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "problem": {
+                    "type": "string",
+                    "enum": [
+                      "missing",
+                      "short"
+                    ]
+                  }
+                },
+                "required": [
+                  "task_id",
+                  "chain_instance_id",
+                  "subflow",
+                  "node_id",
+                  "attempt",
+                  "problem"
+                ]
+              }
+            },
+            "file_problems_total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "file_problems",
+            "file_problems_total"
+          ]
         }
       },
       "notes": [
@@ -18379,6 +18621,45 @@
                 },
                 "node_id": {
                   "type": "string"
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "defaults"
+                        },
+                        "preset_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_ids"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "preset"
+                        },
+                        "preset_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_id"
+                      ]
+                    }
+                  ]
                 }
               },
               "required": [
@@ -18401,6 +18682,45 @@
                 },
                 "node_id": {
                   "type": "string"
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "defaults"
+                        },
+                        "preset_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_ids"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "preset"
+                        },
+                        "preset_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_id"
+                      ]
+                    }
+                  ]
                 }
               },
               "required": [
@@ -19071,6 +19391,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -19147,6 +19479,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -19155,6 +19499,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -19509,7 +19865,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -19529,6 +19887,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -19566,6 +19925,76 @@
           "cancel",
           "run_notification",
           "chains"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/io",
+      "key": [
+        "runs",
+        "taskIo"
+      ],
+      "kind": "endpoint",
+      "summary": "读一次尝试的输入和输出的全文（运行视图里被省略的大输入、输出在这里取）",
+      "effect": "read",
+      "resource": {
+        "kind": "task",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outputs": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "task_id",
+          "inputs",
+          "outputs"
         ]
       },
       "notes": []
@@ -19913,6 +20342,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -19989,6 +20430,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -19997,6 +20450,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -20351,7 +20816,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -20371,6 +20838,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -20755,6 +21223,18 @@
                           }
                         ]
                       },
+                      "outputs_omitted_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "error": {
                         "anyOf": [
                           {
@@ -20831,6 +21311,18 @@
                                 }
                               ]
                             },
+                            "inputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "outputs": {
                               "anyOf": [
                                 {
@@ -20839,6 +21331,18 @@
                                     "type": "string"
                                   },
                                   "additionalProperties": {}
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outputs_omitted_bytes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 },
                                 {
                                   "type": "null"
@@ -21193,7 +21697,9 @@
                             "status",
                             "agent",
                             "inputs",
+                            "inputs_omitted_bytes",
                             "outputs",
+                            "outputs_omitted_bytes",
                             "error",
                             "queued_at",
                             "started_at",
@@ -21213,6 +21719,7 @@
                       "status",
                       "agent",
                       "outputs",
+                      "outputs_omitted_bytes",
                       "error",
                       "attempts"
                     ]
@@ -21595,6 +22102,18 @@
                             }
                           ]
                         },
+                        "outputs_omitted_bytes": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "error": {
                           "anyOf": [
                             {
@@ -21671,6 +22190,18 @@
                                   }
                                 ]
                               },
+                              "inputs_omitted_bytes": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "outputs": {
                                 "anyOf": [
                                   {
@@ -21679,6 +22210,18 @@
                                       "type": "string"
                                     },
                                     "additionalProperties": {}
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "outputs_omitted_bytes": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
                                   },
                                   {
                                     "type": "null"
@@ -22033,7 +22576,9 @@
                               "status",
                               "agent",
                               "inputs",
+                              "inputs_omitted_bytes",
                               "outputs",
+                              "outputs_omitted_bytes",
                               "error",
                               "queued_at",
                               "started_at",
@@ -22053,6 +22598,7 @@
                         "status",
                         "agent",
                         "outputs",
+                        "outputs_omitted_bytes",
                         "error",
                         "attempts"
                       ]
@@ -23800,24 +24346,31 @@
               "maximum": 9007199254740991
             },
             "waiting_for": {
-              "type": "object",
-              "properties": {
-                "session_id": {
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "created_by": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "session_id",
+                    "title",
+                    "created_by"
+                  ]
                 },
-                "title": {
-                  "type": "string"
-                },
-                "created_by": {
-                  "type": "string"
+                {
+                  "type": "null"
                 }
-              },
-              "required": [
-                "session_id",
-                "title",
-                "created_by"
               ]
             }
           },
@@ -24580,6 +25133,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "queue_position": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -24588,7 +25153,8 @@
             "partial_text",
             "running_tool",
             "steer_queue",
-            "waiting_for"
+            "waiting_for",
+            "queue_position"
           ]
         }
       },

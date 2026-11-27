@@ -926,7 +926,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("pull 得到的文件里 secret 默认值是占位符，普通参数的默认值照旧，并提示怎么处理", async () => {
-			const id = await createScenario("保密-拉取", withSecret());
+			const id = await createScenario("secret-拉取", withSecret());
 			const file = newFile();
 			const result = await cli("scenario", "pull", id, "-o", file);
 			expect(result.code, result.stderr).toBe(0);
@@ -940,14 +940,14 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				{ name: "region", secret: false, default: "cn-east" },
 			]);
 			// 不含 secret 的场景没有这条提示。
-			const plain = await createScenario("保密-拉取-没有", echoDocument());
+			const plain = await createScenario("secret-拉取-没有", echoDocument());
 			expect((await cli("scenario", "pull", plain, "-o", newFile())).stdout).not.toContain(
 				"占位符",
 			);
 		});
 
 		it("pull 之后不改动直接 push：新版本里的默认值仍是原值，文件里写回的还是占位符", async () => {
-			const id = await createScenario("保密-原样推送", withSecret());
+			const id = await createScenario("secret-原样推送", withSecret());
 			const file = await pull(id);
 			const result = await cli("scenario", "push", file);
 			expect(result.code, result.stderr).toBe(0);
@@ -967,7 +967,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("改成新的值再 push：存的是新值，文件里写回的是占位符", async () => {
-			const id = await createScenario("保密-新值", withSecret());
+			const id = await createScenario("secret-新值", withSecret());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			const [token] = entryOf(edited.document).params;
@@ -982,7 +982,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("--version 拉旧版本再 push：占位符沿用的是最新版本的值，pull 时写明", async () => {
-			const id = await createScenario("保密-旧版本", withSecret("test-secret-old"));
+			const id = await createScenario("secret-旧版本", withSecret("test-secret-old"));
 			await api.saveVersion(id, withSecret("test-secret-latest"));
 			const file = newFile();
 			const pulled = await cli("scenario", "pull", id, "-o", file, "--version", "1");
@@ -993,7 +993,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("参数改了名、占位符还在：控制面拒绝，写明哪个参数，没有产生版本，文件不变", async () => {
-			const id = await createScenario("保密-改名", withSecret());
+			const id = await createScenario("secret-改名", withSecret());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			const [token] = entryOf(edited.document).params;
@@ -1012,27 +1012,27 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("create --from 带着占位符的文件：新场景没有上一个版本可以沿用，报错，不新建场景", async () => {
-			const source = await createScenario("保密-新建来源", withSecret());
+			const source = await createScenario("secret-新建来源", withSecret());
 			const file = await pull(source);
-			const result = await cli("scenario", "create", "--name", "保密-新建副本", "--from", file);
+			const result = await cli("scenario", "create", "--name", "secret-新建副本", "--from", file);
 			expect(result.code).toBe(2);
 			expect(result.stderr).toContain("没有新建场景");
 			expect(result.stderr).toContain("节点 entry 的参数 token");
 			expect(result.stderr).toContain(`sfly scenario copy ${source} --name <新名称>`);
-			const listing = await cli("scenario", "list", "--json", "--search", "保密-新建副本");
+			const listing = await cli("scenario", "list", "--json", "--search", "secret-新建副本");
 			expect(JSON.parse(listing.stdout)).toEqual([]);
 			// 写上默认值（或删掉 default）就能新建。
 			const edited = await readScenarioFile(file);
 			const [token] = entryOf(edited.document).params;
 			if (token) token.default = "test-secret-fresh";
 			await writeScenarioFile(file, edited);
-			const created = await cli("scenario", "create", "--name", "保密-新建副本", "--from", file);
+			const created = await cli("scenario", "create", "--name", "secret-新建副本", "--from", file);
 			expect(created.code, created.stderr).toBe(0);
 		});
 
 		it("copy：secret 默认值跟着复制，读副本仍是占位符；show 和 versions 的输出里没有原值", async () => {
-			const source = await createScenario("保密-复制来源", withSecret());
-			const copied = await cli("scenario", "copy", source, "--name", "保密-复制副本", "--json");
+			const source = await createScenario("secret-复制来源", withSecret());
+			const copied = await cli("scenario", "copy", source, "--name", "secret-复制副本", "--json");
 			expect(copied.code, copied.stderr).toBe(0);
 			const { id } = JSON.parse(copied.stdout) as { id: string };
 			expect(paramsOf(await storedDocument(cp, id, 1))[0]?.default).toBe(SECRET);

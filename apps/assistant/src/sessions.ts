@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import {
 	ASSISTANT_ABORT_SETTLE_MS,
 	ASSISTANT_STOP_WAIT_MS,
+	ASSISTANT_TURN_MAX_MS,
 	type AssistantErrorCode,
 	type AssistantEvent,
 	type ErrorClass,
@@ -24,15 +25,24 @@ import { type AgentClient, WORKBENCH_UNREACHABLE, WorkbenchError } from "./agent
 import type { EventBus } from "./bus.js";
 import { type Clock, realClock, type Timer } from "./clock.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
+import type { ModelGate } from "./model-health.js";
 import { modelEnvRefs } from "./models.js";
 import { describeError } from "./output.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
+import { RecordedCommits } from "./recorded-commits.js";
 import { forLog, Redactor } from "./redact.js";
 import { mirrorSkillsLocally, workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
 import { quote, type Steer, SteerBook } from "./steers.js";
 import { TurnTranslator } from "./translate.js";
 import type { TurnConfig } from "./turn-config.js";
 import type { UpstreamError } from "./upstream-error.js";
+import {
+	type CommitEvent,
+	commitChanges,
+	commitEventBody,
+	ensureRepository,
+	PLATFORM_IDENTITY,
+} from "./workspace.js";
 
 /**
  * 看管 pi 进程和一轮（#540）：一个会话一个 pi 进程（RPC 模式），一轮从 `prompt` 开始，到 pi 报告 `agent_settled`、
@@ -48,14 +58,18 @@ import type { UpstreamError } from "./upstream-error.js";
  * - 同时活着的 pi 进程数有上限（{@link MAX_PROCESSES}）。到了上限时，先关掉最久没用的**空闲**进程（关 stdin：
  *   它没有在做的一轮，#539 第 8 题）；没有空闲的就拒绝（503 `process_limit`，控制面把这一轮记成 `failed`）。
  *   为了回收而关 stdin 只对空闲的进程做（一轮进行中关了，pi 不等这一轮做完）。
- * - 保密环境变量的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（redact.ts）。
+ * - secret 环境变量的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（redact.ts）。
+ * - 工作区的提交（#546，workspace.ts）：一轮开始、把 `prompt` 交给 pi 之前，保证工作区是 git 仓库（不是就初始化），这一轮之前留下的
+ *   改动（会话开始之前就在的、上一轮被打断或提交没做成的）先单独提交；一轮以任何结局结束时（`turn_end` 之前）提交这一轮的改动，
+ *   发 `platform`（`commit`）事件。这一轮改了什么按平台上次记下的提交算（{@link RecordedCommits}），不看模型自己的 `HEAD`。
+ *   连不上工作台、提交不成的，记日志，这一轮照常结束（留给下一轮开始前）。提交的命令不带会话令牌。
  */
 
 export const TURN_LIMITS = {
 	/** 一轮最多调用模型的次数（数 pi 的 `turn_start`，第 41 次之前结束）。 */
 	modelCalls: 40,
-	/** 一轮最长的时间。 */
-	durationMs: 20 * 60 * 1000,
+	/** 一轮最长的时间（协议里的 {@link ASSISTANT_TURN_MAX_MS}：控制面的会话令牌按它定有效期）。 */
+	durationMs: ASSISTANT_TURN_MAX_MS,
 } as const;
 
 /**
@@ -73,6 +87,21 @@ export const MAX_PROCESSES = 8;
 export const ABORT_MARK_TTL_MS = 10 * 60 * 1000;
 export const ABORT_MARK_LIMIT = 1000;
 
+/**
+ * 一轮结束时的提交最多用多久；停止一轮时再受「离 T0 加 {@link ASSISTANT_STOP_WAIT_MS} 还剩多少」限制：控制面在那之后会自己补结局、
+ * 丢掉晚到的事件（协议「停止一轮」），所以剩下的时间不够（不到 {@link MIN_COMMIT_BUDGET_MS}）就不做，留给下一轮开始之前。
+ * **提交已经在进行时才收到停止**（用户停止、结束会话）：期限缩到「收到的这一刻加 {@link ASSISTANT_STOP_WAIT_MS} 减余量」，
+ * 不然一个卡住的提交会让这一轮的 `turn_end` 晚于控制面自己补结局的时间。
+ */
+export const COMMIT_BUDGET_MS = 30_000;
+export const MIN_COMMIT_BUDGET_MS = 2_000;
+/**
+ * 停止一轮时给发结局留的余量：放弃提交之后还要删临时仓库（最多等半秒）、发事件，加上控制面那一头计时比这里早起一个来回的网络时间。
+ */
+const COMMIT_STOP_MARGIN_MS = 2_000;
+/** 一轮开始前整理工作区（初始化、补提交）最多用多久；超过了这一轮照常开始。 */
+export const PREPARE_BUDGET_MS = 60_000;
+
 /** 模型没给超时的命令用多少秒：和一轮的时间上限一样（到了上限这一轮反正要结束）。 */
 const DEFAULT_COMMAND_TIMEOUT_SECONDS = TURN_LIMITS.durationMs / 1000;
 
@@ -86,6 +115,11 @@ export interface SessionManagerOptions {
 	skillsDir: string;
 	hostEnv: NodeJS.ProcessEnv;
 	bus: EventBus;
+	/**
+	 * 新的一轮能不能开始之前问的：模型没有配置、或者上次试连连不上时返回 503 的原因（#548，`ModelHealth.gate`）。不给就不检查
+	 * （测试里单独看看管 pi 的那部分时）。
+	 */
+	modelGate?: () => ModelGate | undefined;
 	/** 连到一台 Agent 的能力端口；`log` 是认不出的错误的原文的去处（带工作台的地址）。 */
 	connect: (address: string, log?: (line: string) => void) => AgentClient;
 	/** 助手服务的日志。写进去的原文（上游的错误、连接上的报错）先经 `#forLog`。 */
@@ -98,6 +132,9 @@ export interface SessionManagerOptions {
 	abortSettleMs?: number;
 	/** 停止一轮的硬上限，默认协议的 `ASSISTANT_STOP_WAIT_MS`。 */
 	stopWaitMs?: number;
+	/** 一轮结束时的提交、一轮开始前整理工作区最多用多久（测试里改短）。 */
+	commitBudgetMs?: number;
+	prepareBudgetMs?: number;
 	/** 计时（测试里换成手动推进的时钟）。 */
 	clock?: Clock;
 	/**
@@ -161,6 +198,19 @@ interface Turn {
 	probing: boolean;
 	/** 探的时候 pi 报告停下来了：探完再定结局。 */
 	settled: Record<string, unknown> | undefined;
+	/** 开始前整理工作区时的取消（这一轮被停止、结束时用）。 */
+	prepare: AbortController | undefined;
+	/** 结束时在进行的提交（取消、期限）：助手服务退出、收到停止时用；没有在提交时 undefined。 */
+	commit: CommitRun | undefined;
+	/** 结局已经定了、正在提交：提交做完发 `turn_end`。没有在提交时 undefined。 */
+	concluding: Promise<void> | undefined;
+}
+
+/** 一轮结束时在进行的提交：到了期限（`deadline`，时钟上的时刻）就取消；收到停止时期限可以缩短（{@link SessionManager.#shortenCommit}）。 */
+interface CommitRun {
+	controller: AbortController;
+	deadline: number;
+	timer: Timer | undefined;
 }
 
 interface Session {
@@ -197,10 +247,23 @@ export class SessionManager {
 	readonly #clock: Clock;
 	readonly #settleMs: number;
 	readonly #stopWaitMs: number;
+	readonly #commitBudgetMs: number;
+	readonly #prepareBudgetMs: number;
+	/** 平台在每个工作区上次记下的提交号（助手服务自己的数据目录里）：一轮改了什么按它算。 */
+	readonly #recorded: RecordedCommits;
+	/**
+	 * 工作区里没有没提交的改动：这个工作区最近一次的提交做成了（或者没有改动），或者刚初始化。**按工作区记**（工作台地址加路径，和
+	 * {@link RecordedCommits} 的键一样），不按会话：同一个工作区上别的会话被打断、提交没做成留下的改动，这个会话下一轮开始前也要先单独提交，
+	 * 不能记进它自己的那一轮。助手服务刚启动时没有记录、一轮开始时记成 false：下一轮开始前不是 true 就查一遍有没有留下的改动。
+	 */
+	readonly #clean = new Map<string, boolean>();
 	/** 正在关的 pi 进程（关 stdin 之后、退出之前）。 */
 	readonly #closing = new Set<PiProcess>();
 	/** 中止记号：会话 ID → 中止到第几轮（见 {@link abort}）。按最近一次提高的先后排，满了丢最早的。 */
 	readonly #abortMarks = new Map<string, { turn: number; at: number }>();
+
+	/** 助手服务在退出：结束的一轮不再提交。 */
+	#shuttingDown = false;
 
 	/** 模型文件引用的环境变量的值（模型的密钥）：写日志时也打码。第一次用到时读。 */
 	#modelSecrets: Redactor | undefined;
@@ -211,13 +274,16 @@ export class SessionManager {
 		this.#clock = options.clock ?? realClock;
 		this.#settleMs = options.abortSettleMs ?? ASSISTANT_ABORT_SETTLE_MS;
 		this.#stopWaitMs = options.stopWaitMs ?? ASSISTANT_STOP_WAIT_MS;
+		this.#commitBudgetMs = options.commitBudgetMs ?? COMMIT_BUDGET_MS;
+		this.#prepareBudgetMs = options.prepareBudgetMs ?? PREPARE_BUDGET_MS;
+		this.#recorded = new RecordedCommits(join(options.dataDir, "workspaces"));
 		mkdirSync(join(options.dataDir, "sessions"), { recursive: true });
 		this.#cleanLeftovers();
 	}
 
 	/**
 	 * 上次（被强行结束时）留下的东西：每个 pi 进程的设置目录（里面有模型文件的副本）、每一轮的配置文件（里面有
-	 * 保密值的原文）、pi 的临时目录。正常退出时这些都已经删了；被 SIGKILL、容器被杀时会留下，启动时清掉。
+	 * secret 环境变量的值的原文）、pi 的临时目录。正常退出时这些都已经删了；被 SIGKILL、容器被杀时会留下，启动时清掉。
 	 */
 	#cleanLeftovers(): void {
 		const { dataDir } = this.options;
@@ -229,7 +295,7 @@ export class SessionManager {
 	}
 
 	/**
-	 * 一段原文（上游的错误、工作台连接上的报错）写进日志之前：按这个会话的保密值和模型文件引用的环境变量的值打码，
+	 * 一段原文（上游的错误、工作台连接上的报错）写进日志之前：按这个会话的 secret 环境变量的值和模型文件引用的环境变量的值打码，
 	 * 再按形状打码（`Authorization`、`Bearer`、地址里的用户名密码），截到上限（redact.ts 的 `forLog`）。
 	 */
 	#forLog(session: Session, text: string): string {
@@ -239,7 +305,7 @@ export class SessionManager {
 				const { names } = modelEnvRefs(readFileSync(this.options.modelsFile, "utf8"));
 				this.#modelSecrets.add(names.map((name) => this.options.hostEnv[name] ?? ""));
 			} catch {
-				// 读不了模型文件（启动时已经检查过，这里不会发生）：只按形状打码。
+				// 读不了模型文件（模型没有配置时助手服务也照常启动，#548，所以会发生）：没有密钥可以按值打码，只按形状打码。
 			}
 		}
 		return forLog(text, [session.redactor, this.#modelSecrets]);
@@ -272,8 +338,10 @@ export class SessionManager {
 	 * `POST /sessions/:id/prompt`（协议「`prompt` 的判断」，先后固定）：
 	 * 1. 轮次不大于中止记号：202，以 `stopped` 结束，不起 pi；不改任何别的状态；
 	 * 2. 这个会话有一轮「在做」（包括在等的第 k 轮）：409 `turn_running`；
-	 * 3. 否则登记、202：没有一轮在停止就在后台开始；有的话等它的 `turn_end`（{@link #finish}）再开始。
-	 * 503 只在登记之前决定（进程数满了）。
+	 * 3. 模型没有配置、或上次试连连不上（{@link SessionManagerOptions.modelGate}，#548）：503 `model_not_configured`、`model_unreachable`，
+	 *    不登记、不起 pi；
+	 * 4. 否则登记、202：没有一轮在停止就在后台开始；有的话等它的 `turn_end`（{@link #finish}）再开始。
+	 * 503 只在登记之前决定（模型有问题、进程数满了）。
 	 */
 	prompt(sessionId: string, body: PromptCommandBody): CommandResult {
 		const session = this.#session(sessionId);
@@ -290,6 +358,9 @@ export class SessionManager {
 		if (session.turn) {
 			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
 		}
+		// 模型没有配置、或上次试连连不上：503，不登记、不起 pi（登记之前决定，和进程数满了一样）。
+		const blocked = this.options.modelGate?.();
+		if (blocked) return { ok: false, ...blocked };
 		const needsProcess = !session.stopping && (!session.process || session.process.exited);
 		if (needsProcess && this.activeProcesses >= this.#maxProcesses && !this.#evictIdle()) {
 			return {
@@ -353,6 +424,9 @@ export class SessionManager {
 			workbenchName: body.workbench.name,
 			probing: false,
 			settled: undefined,
+			prepare: undefined,
+			commit: undefined,
+			concluding: undefined,
 		};
 	}
 
@@ -394,6 +468,7 @@ export class SessionManager {
 		}
 		const turn = session.turn;
 		if (turn) {
+			this.#shortenCommit(turn);
 			this.#stop(session, turn, ending);
 			if (turn.stop && !turn.ended) {
 				turn.stop.closeAfter = true;
@@ -446,6 +521,8 @@ export class SessionManager {
 		const session = this.#sessions.get(sessionId);
 		const current = session?.turn;
 		if (!session || !current || current.number > turn) return;
+		// 这一轮已经结束、提交还在进行：停止的期限从现在起算，提交的期限不能超过它。
+		this.#shortenCommit(current);
 		const ending: Ending = { outcome: "stopped", reason: "用户停止了这一轮" };
 		if (session.stopping) this.#end(session, current, ending);
 		else this.#stop(session, current, ending);
@@ -453,14 +530,24 @@ export class SessionManager {
 
 	/** 助手服务退出：在做的、在停止的一轮都以 `interrupted` 结束，直接结束全部 pi 进程（不等 `abort`）。 */
 	async shutdown(): Promise<void> {
+		// 退出时不提交（容器停止只给十几秒）：留给下一轮开始前。
+		this.#shuttingDown = true;
 		const ending: Ending = { outcome: "interrupted", reason: "助手服务停止了" };
+		const concluding: Array<Promise<void>> = [];
 		for (const session of this.#sessions.values()) {
+			// 正在提交的不等了（留给下一轮开始前）：放弃提交，照原来的结局发 `turn_end`。
+			for (const turn of [session.stopping, session.turn]) {
+				turn?.commit?.controller.abort();
+				turn?.prepare?.abort();
+				if (turn?.concluding) concluding.push(turn.concluding);
+			}
 			if (session.stopping && session.turn) this.#end(session, session.turn, ending);
 			const active = session.stopping ?? session.turn;
 			if (!active || active.ended) continue;
 			if (!active.stop) this.#beginStop(session, active, ending);
 			if (!session.process || session.process.exited) this.#finish(session, active);
 		}
+		await Promise.all(concluding);
 		await Promise.all([
 			...[...this.#sessions.values()].map((session) => session.process?.terminate()),
 			...[...this.#closing].map((process) => process.terminate()),
@@ -596,9 +683,13 @@ export class SessionManager {
 					);
 				}
 			}
+			// 交给 pi 之前：工作区是 git 仓库（不是就初始化），上一轮没能提交的改动先单独提交。
+			await this.#prepareWorkspace(session, turn);
 			const process = session.process;
 			if (!process || process.exited || turn.ended || turn.stop) return;
 			turn.prompted = true;
+			// 这一轮开始改工作区了：做完提交之前它不算干净。
+			this.#setClean(turn, false);
 			const response = await process.request({ type: "prompt", message: body.text });
 			if (spawned) {
 				// 冷启动：从收到这句话到新起的 pi 接受它（写 skill、起进程、加载扩展、恢复会话）。
@@ -961,25 +1052,34 @@ export class SessionManager {
 				if (session.stuck === process) session.stuck = undefined;
 			});
 		}
-		this.#end(session, turn, stop.ending);
-		if (stop.closeAfter && !stuck) this.#close(session);
-		const next = session.turn;
-		if (!next || next.ended) return;
-		if (stuck) {
-			this.#end(session, next, {
-				outcome: "failed",
-				reason: `上一轮（第 ${turn.number} 轮）的 pi 进程没有退出，所以这一轮没有开始`,
-			});
-			return;
-		}
-		void this.#start(session, next, true);
+		// 这一轮的 `turn_end` 发出（含提交的时间）之后才关进程、开始在等的那一轮。
+		this.#end(session, turn, stop.ending, () => {
+			if (stop.closeAfter && !stuck) this.#close(session);
+			const next = session.turn;
+			if (!next || next.ended) return;
+			if (stuck) {
+				this.#end(session, next, {
+					outcome: "failed",
+					reason: `上一轮（第 ${turn.number} 轮）的 pi 进程没有退出，所以这一轮没有开始`,
+				});
+				return;
+			}
+			void this.#start(session, next, true);
+		});
 	}
 
-	#end(session: Session, turn: Turn, end: Ending): void {
+	/**
+	 * 这一轮的结局定了：发没送到的插话的 `steer_dropped`，（做过事的一轮）提交工作区，发 `platform`（`commit`）事件，**然后**发
+	 * `turn_end`、收尾、执行 `after`。提交是异步的：这时这一轮已经算结束（`ended`：不再收插话、不再看 pi 的事件），但 `turn_end`
+	 * 还没发，会话仍是「在做」或「在停止」，直到它发出。没有东西要提交的（还没有把 `prompt` 交给 pi、助手服务在退出）同步收尾，
+	 * 和以前一样。
+	 */
+	#end(session: Session, turn: Turn, end: Ending, after?: () => void): void {
 		if (turn.ended) return;
 		turn.ended = true;
 		this.#clock.clearTimeout(turn.timer);
 		for (const timer of turn.stop?.timers ?? []) this.#clock.clearTimeout(timer);
+		turn.prepare?.abort();
 		// 不变式：每句收下的插话在 `turn_end` 之前要么送到了，要么有它的 `steer_dropped`（协议「插话」）。
 		// 交给了 pi、pi 停下或者清过队列之后还没送到的是确定没送到；进程没了、结局之前没等到的只能说没有确认送到。
 		const sure = turn.settledByPi || turn.stop?.cleared === true;
@@ -987,6 +1087,46 @@ export class SessionManager {
 			const confirmed = steer.state === "held" || steer.state === "cleared" || sure;
 			this.#emitDropped(session, turn, steer, confirmed ? "没有送到" : "没有确认送到");
 		}
+		if (!turn.prompted || this.#shuttingDown) {
+			this.#conclude(session, turn, end, undefined, after);
+			return;
+		}
+		// 这一轮就是因为工作台连不上而失败的（探过了）：不去提交，不多等；改动留给下一轮开始之前。
+		if (end.outcome === "failed" && end.reason.startsWith(WORKBENCH_UNREACHABLE)) {
+			this.#setClean(turn, false);
+			this.#conclude(session, turn, end, undefined, after);
+			return;
+		}
+		// 停止的期限快到了（控制面在那之后自己补结局、丢掉晚到的事件）：不提交，同步收尾，改动留给下一轮开始之前。
+		const budget = this.#commitBudget(turn);
+		if (budget < MIN_COMMIT_BUDGET_MS) {
+			this.#setClean(turn, false);
+			this.options.log(
+				`会话 ${session.id} 第 ${turn.number} 轮：离停止的期限太近，这一轮的提交留给下一轮开始之前`,
+			);
+			this.#conclude(session, turn, end, undefined, after);
+			return;
+		}
+		turn.concluding = this.#commitTurn(session, turn, budget).then((commit) =>
+			this.#conclude(session, turn, end, commit, after),
+		);
+		// 收尾里出了意外（不该发生）：记下来，不让一个没人接的拒绝带走别的会话。
+		turn.concluding.catch((error) =>
+			this.options.log(
+				`会话 ${session.id} 第 ${turn.number} 轮：收尾出错：${this.#forLog(session, error instanceof Error ? error.message : String(error))}`,
+			),
+		);
+	}
+
+	/** 发 `platform`（`commit`）事件（有的话）和 `turn_end`，收尾，执行 `after`。 */
+	#conclude(
+		session: Session,
+		turn: Turn,
+		end: Ending,
+		commit: CommitEvent | undefined,
+		after: (() => void) | undefined,
+	): void {
+		if (commit) this.#emit(session, turn, commit);
 		const t = turn.translator;
 		this.#emit(session, turn, {
 			type: "turn_end",
@@ -1001,6 +1141,7 @@ export class SessionManager {
 			...(end.limit && { limit_kind: end.limit }),
 			...(end.errorClass && { error_class: end.errorClass }),
 		});
+		turn.concluding = undefined;
 		if (session.turn === turn) session.turn = undefined;
 		if (session.stopping === turn) session.stopping = undefined;
 		// 撞上记号直接结束的、在等就被结束的那一轮没用过配置和临时文件：别的一轮还在的话留给它。
@@ -1014,6 +1155,184 @@ export class SessionManager {
 			if (session.tmpDir) emptyDir(session.tmpDir);
 		}
 		session.lastActive = this.#clock.now();
+		after?.();
+	}
+
+	/** 提交说明开头的那一段：「<会话标题>（会话 <ID 前 8 位>）」。 */
+	#label(session: Session, turn: Turn): string {
+		const title = turn.body.session.title.replace(/[\r\n\0]+/g, " ").trim();
+		return `${title}（会话 ${session.id.slice(0, 8)}）`;
+	}
+
+	/** 提交的作者：这个会话的发起人（昵称）。 */
+	#author(turn: Turn): { name: string; email: string } {
+		return { name: turn.body.session.created_by, email: PLATFORM_IDENTITY.email };
+	}
+
+	/**
+	 * 一轮开始、交给 pi 之前整理工作区：不是 git 仓库就初始化（初次提交，不发事件）；是仓库、而且这个工作区不是干净的（{@link SessionManager.#clean}
+	 * 不是 true：刚开始、被打断、助手服务重启过、提交出了错，包括同一个工作区上别的会话留下的）就先把留下的改动单独提交，发 `platform` 事件：
+	 * 第 1 轮是「会话开始之前工作区里留下的改动」（`turn` 是 1），之后是「第 N-1 轮被打断时留下的改动」（`turn` 是被打断的那一轮，
+	 * 事件在这一轮的事件流里发出）。这些改动按平台上次记下的提交算，没记过的退回和 `HEAD` 比（差异开头有说明）。
+	 * 出了错只记日志，这一轮照常开始。这一轮被停止、结束时放弃。
+	 */
+	async #prepareWorkspace(session: Session, turn: Turn): Promise<void> {
+		const { name, address, workdir } = turn.body.workbench;
+		const controller = new AbortController();
+		turn.prepare = controller;
+		const timer = this.#clock.setTimeout(() => controller.abort(), this.#prepareBudgetMs);
+		const agent = this.options.connect(address, (line) =>
+			this.options.log(`会话 ${session.id} 第 ${turn.number} 轮：${this.#forLog(session, line)}`),
+		);
+		try {
+			if (!(await agent.reachable(controller.signal))) {
+				throw new WorkbenchError(`${WORKBENCH_UNREACHABLE}：${name}`);
+			}
+			const created = await ensureRepository(agent, workdir, { signal: controller.signal });
+			if (created.created) {
+				this.#remember(session, address, workdir, created.recorded);
+				this.#setClean(turn, true);
+				return;
+			}
+			if (this.#isClean(turn)) return;
+			const first = turn.number === 1;
+			const outcome = await commitChanges(agent, workdir, {
+				message: `${this.#label(session, turn)}${first ? "会话开始之前工作区里留下的改动" : `第 ${turn.number - 1} 轮被打断时留下的改动`}`,
+				author: this.#author(turn),
+				signal: controller.signal,
+				diffExtraBytes: session.redactor.longestBytes,
+				recorded: this.#recorded.get(address, workdir),
+			});
+			this.#remember(session, address, workdir, outcome.recorded);
+			this.#logIndex(session, turn, outcome.indexError);
+			this.#setClean(turn, true);
+			if (outcome.result && !turn.ended) {
+				this.#emit(
+					session,
+					turn,
+					commitEventBody(first ? 1 : turn.number - 1, outcome.result, session.redactor),
+				);
+			}
+		} catch (error) {
+			this.options.log(
+				`会话 ${session.id} 第 ${turn.number} 轮：开始前整理工作区（工作台 ${name}）${controller.signal.aborted ? "被放弃了" : "失败"}：${this.#forLog(session, error instanceof Error ? error.message : String(error))}`,
+			);
+		} finally {
+			this.#clock.clearTimeout(timer);
+			agent.close();
+			turn.prepare = undefined;
+		}
+	}
+
+	#workspaceKey(turn: Turn): string {
+		const { address, workdir } = turn.body.workbench;
+		return `${address}\0${workdir}`;
+	}
+
+	#isClean(turn: Turn): boolean {
+		return this.#clean.get(this.#workspaceKey(turn)) === true;
+	}
+
+	#setClean(turn: Turn, clean: boolean): void {
+		this.#clean.set(this.#workspaceKey(turn), clean);
+	}
+
+	/** 提交成功之后把临时索引换到真的索引的位置没做成：提交已经做成了，只记日志（模型那边的索引是旧的）。 */
+	#logIndex(session: Session, turn: Turn, error: string | undefined): void {
+		if (error === undefined) return;
+		this.options.log(
+			`会话 ${session.id} 第 ${turn.number} 轮：提交已经做成，但把索引换到真的位置没做成（工作台上的 git status 会是旧的）：${this.#forLog(session, error)}`,
+		);
+	}
+
+	/** 记下平台这一刻在这个工作区的提交（下一轮的基准）。写不了（数据目录满了）只记日志：下一轮退回和 `HEAD` 比。 */
+	#remember(session: Session, address: string, workdir: string, commit: string | undefined): void {
+		if (!commit) return;
+		try {
+			this.#recorded.set(address, workdir, commit);
+		} catch (error) {
+			this.options.log(
+				`会话 ${session.id}：记不下工作区上次提交的提交号：${this.#forLog(session, error instanceof Error ? error.message : String(error))}`,
+			);
+		}
+	}
+
+	/** 这一轮的提交最多还能用多久（毫秒）：停止一轮时不能超过停止的期限。 */
+	#commitBudget(turn: Turn): number {
+		if (!turn.stop) return this.#commitBudgetMs;
+		const left = turn.stop.t0 + this.#stopWaitMs - this.#clock.now() - COMMIT_STOP_MARGIN_MS;
+		return Math.min(this.#commitBudgetMs, left);
+	}
+
+	/**
+	 * 这一轮已经结束、提交还在进行时收到停止（用户停止、结束会话）：停止的期限（协议「停止一轮」，从现在起算）之后控制面自己补结局、
+	 * 丢掉晚到的事件，所以提交的期限缩到「现在加 {@link ASSISTANT_STOP_WAIT_MS} 减余量」（已经更早就不动）；
+	 * 剩下的时间不够（不到 {@link MIN_COMMIT_BUDGET_MS}）就放弃，留给下一轮开始之前。
+	 */
+	#shortenCommit(turn: Turn): void {
+		const commit = turn.commit;
+		// 在停止的一轮提交的期限本来就是从停止的那一刻算的（#commitBudget）。
+		if (!commit || turn.stop) return;
+		const now = this.#clock.now();
+		const deadline = now + this.#stopWaitMs - COMMIT_STOP_MARGIN_MS;
+		if (deadline >= commit.deadline) return;
+		this.#clock.clearTimeout(commit.timer);
+		commit.deadline = deadline;
+		if (deadline - now < MIN_COMMIT_BUDGET_MS) {
+			commit.timer = undefined;
+			commit.controller.abort();
+			return;
+		}
+		commit.timer = this.#clock.setTimeout(() => commit.controller.abort(), deadline - now);
+	}
+
+	/**
+	 * 一轮结束时提交工作区，返回要发的 `platform`（`commit`）事件（没有改动、提交不成时 undefined）。**不抛错**：连不上工作台、
+	 * git 出错、到了期限都只记日志，这一轮照常结束，改动留给下一轮开始前提交。
+	 */
+	async #commitTurn(
+		session: Session,
+		turn: Turn,
+		budget: number,
+	): Promise<CommitEvent | undefined> {
+		const { name, address, workdir } = turn.body.workbench;
+		const controller = new AbortController();
+		const run: CommitRun = {
+			controller,
+			deadline: this.#clock.now() + budget,
+			timer: this.#clock.setTimeout(() => controller.abort(), budget),
+		};
+		turn.commit = run;
+		const agent = this.options.connect(address, (line) =>
+			this.options.log(`会话 ${session.id} 第 ${turn.number} 轮：${this.#forLog(session, line)}`),
+		);
+		try {
+			// 工作台不回话时不等整个期限：先问一声（几秒内没有回应就放弃）。问也在期限里：期限先到就不再等。
+			if (!(await agent.reachable(controller.signal))) {
+				throw new WorkbenchError(`${WORKBENCH_UNREACHABLE}：${name}`);
+			}
+			const outcome = await commitChanges(agent, workdir, {
+				message: `${this.#label(session, turn)}第 ${turn.number} 轮`,
+				author: this.#author(turn),
+				signal: controller.signal,
+				diffExtraBytes: session.redactor.longestBytes,
+				recorded: this.#recorded.get(address, workdir),
+			});
+			this.#remember(session, address, workdir, outcome.recorded);
+			this.#logIndex(session, turn, outcome.indexError);
+			this.#setClean(turn, true);
+			return outcome.result && commitEventBody(turn.number, outcome.result, session.redactor);
+		} catch (error) {
+			this.#setClean(turn, false);
+			this.options.log(
+				`会话 ${session.id} 第 ${turn.number} 轮：提交工作区（工作台 ${name}）${controller.signal.aborted ? "被放弃了" : "失败"}：${this.#forLog(session, error instanceof Error ? error.message : String(error))}`,
+			);
+			return undefined;
+		} finally {
+			this.#clock.clearTimeout(run.timer);
+			agent.close();
+			turn.commit = undefined;
+		}
 	}
 
 	#emit(session: Session, turn: Turn, event: AssistantEvent): void {

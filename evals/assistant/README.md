@@ -59,7 +59,7 @@ docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-versi
 | `mirror` | 镜像站：PyPI 和 GitHub Release，缺的文件从中科大镜像取并缓存在 `~/.local/share/sfly/evals/mirror-cache/`，控制面把它下发给 Agent 和 `sfly init` |
 | `pg` | PostgreSQL，数据在内存里 |
 | `cp` | 控制面，HTTP 映射到宿主机 `127.0.0.1:<18100 + 槽位>`，可以在浏览器里看 |
-| `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi |
+| `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`，`--dev --name` 起的名字：评测里不走注册，凭据是给这个名字签发的 Agent 凭据）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi |
 | `sut` | 被测机：普通的 Agent（`sut-01`），上面常驻一个通用的 HTTP 被测服务（`http://sut:9000`，见 `container/demo_svc.py`） |
 | `assistant` | 只有 `up --assistant` 时：平台的助手服务，见下面「平台的助手」 |
 
@@ -96,10 +96,12 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
 - **模型**：默认 `fake`，网络里的假的模型端点认出题目（第一句话里有 `tasks/<题目>/prompt.md` 的原文）就照剧本执行这道题的
   参考答案，不花钱，只验证这条路走得通。`--assistant-model` 写模型配置里的名字（见下面「模型」），助手容器挂的模型文件指向
   宿主机的转发口，里面的 `apiKey` 是占位值，凭据由转发口加上：转发口要先起好（Linux 上照「模型」一节监听 docker0 的地址）。
-- **浏览器**：打开 `http://127.0.0.1:<18100 + 槽位>`（槽位 1 是 `http://127.0.0.1:18101`）。第一次打开时页面让你填一个昵称（不用登录，
-  会话和操作记在这个昵称下），点侧边栏的「助手」（`/sessions`）：上面是助手此刻能不能用，输入框里说一句话就开始一个会话，
-  点进一个会话看它的时间线（`/sessions/<ID>`），在做时可以停止。也可以经接口（`POST /projects/default/sessions`、
-  `GET /sessions/<ID>`，写请求带 `x-sfly-nickname`）或下面的 `e2e` 看会话。
+- **浏览器**：打开 `http://127.0.0.1:<18100 + 槽位>`（槽位 1 是 `http://127.0.0.1:18101`）。**建会话要先登录**（#547：会话令牌代发起人干活，
+  会话要有发起人的用户）：第一次打开时登录页用初始管理员登录，登录名和密码在 `~/.local/share/sfly/evals/admin-slot<槽位>.txt`
+  （`AEVAL_HOME` 改目录；`up` 结束时打印这个路径，只有你能读；每次 `up`、`reset` 密码都换一个，`down` 删掉这个文件，密码不打印到终端）。
+  点侧边栏的「助手」（`/sessions`）：上面是助手此刻能不能用，输入框里说一句话就开始一个会话，
+  点进一个会话看它的时间线（`/sessions/<ID>`），在做时可以停止。也可以经接口（`POST /projects/default/sessions` 要带登录的 Cookie（`POST /auth/login`）或个人令牌（`POST /account/tokens`），
+  不带是 401；`GET /sessions/<ID>`）或下面的 `e2e` 看会话（`e2e` 自己用初始管理员登录）。
   在被测机上起着的被测服务、`seed` 准备好的节点包和场景都照常在。
   用假的模型端点在页面上看各种情况时，第一句话里写 `AEVAL-SCRIPT:<剧本>` 选 `container/` 下的剧本：
   `walkthrough`（带换行和引号的命令、控制字符和颜色码、写读改、被截断的长输出、失败的命令、带 Markdown 的长回复）、

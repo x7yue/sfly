@@ -64,7 +64,17 @@ DEFAULT_GRACE = 10.0
 #: 处理读到的日志与事件、检查取消和进程状态的间隔（秒）。
 _TICK = 0.05
 #: 一行日志的最大字节数；更长的行被拆成多行（与 Agent 相同）。
+#: 事件管道里的日志（SDK 日志的消息、不认识的内容）也一样。
 _MAX_LINE_BYTES = 64 * 1024
+#: 事件管道一行的最大字节数；更长的一行整行丢弃，写一行警告日志，写明丢的是哪一种事件、
+#: 后果是什么（与 Agent 相同，#674；Agent 写的来源是 agent，这里是 system）。
+#: 这个数够不够用要看动作摘要（SDK 能写出的最长的一行）：摘要里每种动作名称一项，名称的种类
+#: 没有上限的时候（旧版本的 SDK），名称每种都在文档上限以内、种类够多（约 2.5 万种）就超过
+#: 4 MiB，整份摘要被丢弃，警告里写明丢的是动作摘要；名称的种类有上限、摘要有字节上界之后
+#: （#726：名称最多 1000 种，一份摘要序列化之后不超过 1 MiB），新的 SDK 写的摘要碰不到这个上限。
+_MAX_EVENT_LINE_BYTES = 4 * 1024 * 1024
+#: 被丢弃的一行开头留下的字节数：认出 `type` 够了（与 Agent 相同）。固定大小，不随行的长度变。
+_EVENT_HEAD_BYTES = 256
 #: 执行器退出后，等待仍持有标准输出（或事件管道）的后台子进程关闭管道的最长时间（秒）。
 _DRAIN_TIMEOUT = 2.0
 #: 失败时附带的标准错误尾部的最大字节数。
@@ -86,6 +96,75 @@ def _split_line(line: bytes) -> list[bytes]:
         start = cut
     pieces.append(line[start:])
     return pieces
+
+
+@dataclass(frozen=True)
+class _Dropped:
+    """事件管道里被丢弃的一行：只留下大小和开头的一小段，不留内容（与 Agent 相同，#674）。"""
+
+    #: 这一行的字节数（不含换行）。
+    size: int
+    #: True：管道关闭时最后一行没有写完（没有换行结尾）；False：超过 `_MAX_EVENT_LINE_BYTES`
+    #: （管道在超长行的中间关闭也算）。
+    unfinished: bool = False
+    #: 这一行开头最多 `_EVENT_HEAD_BYTES` 个字节（固定大小，不随行的长度变），只用来认出事件的种类，
+    #: 不写进日志；没写完的一行不认种类，不留。
+    head: bytes = b""
+
+
+#: 超过上限被丢弃的一行：认出的事件种类（`type`）→ （叫什么，丢了以后会怎样）。种类的集合是
+#: `_EVENT_HANDLERS` 的键，与 Agent 相同。警告里只写这些固定的文字，不写这一行的内容。
+_DROPPED_KINDS: dict[str, tuple[str, str]] = {
+    "log": ("日志", "这条日志没有记下来。日志写得太长，请拆开写"),
+    "progress": ("进度", "进度没有更新，停在之前的一次"),
+    "metric": ("指标", "这个指标点没有记下来"),
+    "notify": ("通知", "这条通知没有发出"),
+    "action_summary": (
+        "动作摘要",
+        "动作摘要没有更新，停在之前的一份（动作名称的种类太多，摘要太大了）",
+    ),
+    "action_start": ("动作开始的明细", "这条动作明细没有记下来"),
+    "action_end": ("动作结束的明细", "这条动作明细没有记下来"),
+    "mark": ("标记", "这条动作明细没有记下来"),
+}
+#: 认不出种类的一行。
+_UNKNOWN_DROPPED = ("认不出种类的内容", "这一行开头认不出是哪一种事件，说不清丢掉的是什么")
+
+
+def _kind_of_head(head: bytes) -> str | None:
+    """从一行开头的一小段认出事件的种类（与 Agent 相同）：`{"type": "名字"` 开头（`type` 是
+    第一个字段，前后可以有 JSON 允许的空白），名字是认识的种类。认不出（不是对象、`type` 不是
+    第一个字段、种类不认识、开头被截断）是 None。不解析整行：这一行被丢了，也不是一个能解析的
+    完整 JSON。"""
+    space = b" \t\n\r"
+    rest = head.lstrip(space)
+    for token in (b"{", b'"type"', b":"):
+        if not rest.startswith(token):
+            return None
+        rest = rest[len(token) :].lstrip(space)
+    if not rest.startswith(b'"'):
+        return None
+    name, quote, _ = rest[1:].partition(b'"')
+    kind = name.decode("utf-8", errors="replace")
+    return kind if quote and kind in _DROPPED_KINDS else None
+
+
+def _too_long_warning(kind: str | None, size: int) -> str:
+    """超过上限的一行被丢弃时写的警告：只写种类、大小和上限；认得出种类时写这一种丢了以后会怎样。"""
+    name, what = _DROPPED_KINDS.get(kind or "", _UNKNOWN_DROPPED)
+    return (
+        f"事件管道里的一行有 {size} 字节，超过上限 {_MAX_EVENT_LINE_BYTES} 字节，已丢弃："
+        f"这一行是{name}，{what}"
+    )
+
+
+def _unfinished_warning(size: int) -> str:
+    return f"事件管道关闭时最后一行没有写完（没有换行结尾，有 {size} 字节），已丢弃"
+
+
+def _drop_total_warning(kind: str | None, lines: int, largest: int) -> str:
+    name = _DROPPED_KINDS.get(kind or "", _UNKNOWN_DROPPED)[0]
+    return f"这个任务事件管道里超过上限的{name}一共被丢弃了 {lines} 行，最大的一行有 {largest} 字节"
 
 
 Status = Literal["running", "success", "failed", "cancelled"]
@@ -187,7 +266,9 @@ class ActionSummary:
     - `total`：记录的动作和标记的个数，`marks`：其中标记的个数，`reported`：上报了明细的个数；
       `capped_ts`：第一个因为合计已满而被丢弃明细的时刻（之后仍可能有已上报的明细），
       没有丢弃过时为 None；
-    - `names`：每种名称的计数；
+    - `names`：每种名称的计数（最多 1000 种，名称很长时更少）；`names_complete` 为 false 时
+      还有名称没有列出，它们合计的个数、失败数、有明细的个数在 `unlisted`；
+    - `failed`：全部名称合计失败的动作数（包括没有列出的名称）；
     - `running`：正在做的动作（最多 50 个，层级浅的优先，按 ID 排列）；
     - `recent`：最近结束的 20 个动作，最近的在前；`recent_failed`：最近失败的 5 个，最近的在前。
 
@@ -203,6 +284,10 @@ class ActionSummary:
     running: list[ActionRecord]
     recent: list[ActionRecord]
     recent_failed: list[ActionRecord]
+    failed: int = 0
+    names_complete: bool = True
+    #: 没有列出的名称合在一起的 `total`、`failed`、`reported`；名称都列出了时为 None。
+    unlisted: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -511,6 +596,13 @@ def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
         running=[_summary_record(e) for e in event["running"]],
         recent=[_summary_record(e) for e in event["recent"]],
         recent_failed=[_summary_record(e) for e in event["recent_failed"]],
+        failed=int(event.get("failed", 0)),
+        names_complete=bool(event.get("names_complete", True)),
+        unlisted=(
+            {key: int(value) for key, value in event["unlisted"].items()}
+            if event.get("unlisted")
+            else None
+        ),
     )
 
 
@@ -543,7 +635,12 @@ class _Pump:
         self._events = events
         #: 读到的标准输出 / 标准错误的行和事件管道的行，各带读到它时的单调时钟读数（毫秒）。
         self._lines: queue.Queue[tuple[int, LogLine]] = queue.Queue()
-        self._event_lines: queue.Queue[tuple[int, bytes]] = queue.Queue()
+        #: 事件管道的行；被丢弃的行（超过 `_MAX_EVENT_LINE_BYTES`、最后没写完）只留 `_Dropped`，
+        #: 排在它原来的位置。
+        self._event_lines: queue.Queue[tuple[int, bytes | _Dropped]] = queue.Queue()
+        #: 超过上限被丢弃的行，按种类（None = 认不出）合计：（行数，最大的一行的字节数）。
+        #: 每一种只在第一次写警告，读完时写合计（`drain`）。
+        self._too_long: dict[str | None, tuple[int, int]] = {}
         self._readers: list[threading.Thread] = []
         self._on_log = on_log
         self._on_progress = on_progress
@@ -565,17 +662,40 @@ class _Pump:
         self._readers.append(thread)
 
     def _read_events(self) -> None:
-        partial = b""
+        partial = bytearray()
+        #: 正在丢弃的一行（已经超过上限）：到现在为止的字节数，和这一行开头的一小段。
+        discarding: int | None = None
+        head = b""
         fd = self._events.read_fd
         try:
             while data := os.read(fd, 64 * 1024):
                 read_at = monotonic_ms()
-                complete, sep, partial = (partial + data).rpartition(b"\n")
-                if not sep:
-                    continue
-                for line in complete.split(b"\n"):
-                    if line:
-                        self._event_lines.put((read_at, line))
+                pieces = data.split(b"\n")
+                for index, piece in enumerate(pieces):
+                    ended = index < len(pieces) - 1  # 最后一段后面没有换行，还没读完
+                    if discarding is not None:
+                        discarding += len(piece)
+                        if ended:
+                            self._event_lines.put((read_at, _Dropped(discarding, head=head)))
+                            discarding = None
+                        continue
+                    partial += piece
+                    if len(partial) > _MAX_EVENT_LINE_BYTES:
+                        head = bytes(partial[:_EVENT_HEAD_BYTES])
+                        if ended:
+                            self._event_lines.put((read_at, _Dropped(len(partial), head=head)))
+                        else:
+                            discarding = len(partial)
+                        partial.clear()
+                    elif ended:
+                        if partial:
+                            self._event_lines.put((read_at, bytes(partial)))
+                        partial.clear()
+            # 管道关闭：还在丢弃的超长行、没有写完的最后一行都要说一声。
+            if discarding is not None:
+                self._event_lines.put((monotonic_ms(), _Dropped(discarding, head=head)))
+            elif partial:
+                self._event_lines.put((monotonic_ms(), _Dropped(len(partial), unfinished=True)))
         finally:
             os.close(fd)
 
@@ -630,10 +750,40 @@ class _Pump:
         for thread in self._readers:
             thread.join(max(0.0, deadline - time.monotonic()))
         self.poll()
+        self._drop_totals()
+        self.poll()
         self._end_unfinished_actions()
 
-    def _event(self, raw: bytes, read_at: int) -> None:
-        """处理事件管道里的一行；`read_at` 是读到它时的单调时钟读数。"""
+    def _warn(self, read_at: int, text: str) -> None:
+        """平台写一行警告日志（来源 system、级别 warn）。"""
+        self._changes.append((read_at, LogLine(_now_ms(), "system", "warn", text)))
+
+    def _dropped(self, read_at: int, dropped: _Dropped) -> None:
+        """事件管道里一行被丢弃：写一行警告。超过上限的行认出种类，写这一种丢了以后会怎样；同一种在这个任务里
+        第一次丢时写完整的警告，之后只计数，读完时写一行合计（`_drop_totals`）。"""
+        if dropped.unfinished:
+            self._warn(read_at, _unfinished_warning(dropped.size))
+            return
+        kind = _kind_of_head(dropped.head)
+        lines, largest = self._too_long.get(kind, (0, 0))
+        self._too_long[kind] = (lines + 1, max(largest, dropped.size))
+        if lines == 0:
+            self._warn(read_at, _too_long_warning(kind, dropped.size))
+
+    def _drop_totals(self) -> None:
+        """读完了：这一种事件被丢弃过不止一行的，写一行合计（丢了几行、最大的一行多大）。"""
+        read_at = monotonic_ms()
+        for kind, (lines, largest) in self._too_long.items():
+            if lines > 1:
+                self._warn(read_at, _drop_total_warning(kind, lines, largest))
+        self._too_long.clear()
+
+    def _event(self, raw: bytes | _Dropped, read_at: int) -> None:
+        """处理事件管道里的一行；`read_at` 是读到它时的单调时钟读数。
+        `raw` 是 `_Dropped` 时是一行被丢弃了（太长、或最后没写完）。"""
+        if isinstance(raw, _Dropped):
+            self._dropped(read_at, raw)
+            return
         try:
             event = _loads_strict(raw)
             handler = _EVENT_HANDLERS.get(event["type"])
@@ -642,14 +792,24 @@ class _Pump:
                 return
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
-        # 不认识的内容原样记成一行 SDK 日志。
-        line = LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace"))
-        self._changes.append((read_at, line))
+        # 不认识的内容原样记成一行 SDK 日志（太长就拆开，同下）。
+        self._sdk_log(read_at, _now_ms(), "info", raw.decode("utf-8", errors="replace"))
+
+    def _sdk_log(self, read_at: int, ts: int, level: str, text: str) -> None:
+        """一条 SDK 日志；超过 `_MAX_LINE_BYTES` 字节时和标准输出的超长行一样拆成几条
+        （与 Agent 相同，#674）：
+        消息里的换行不拆，只按字节拆在字符边界上。"""
+        encoded = text.encode("utf-8", errors="surrogatepass")
+        if len(encoded) <= _MAX_LINE_BYTES:
+            self._changes.append((read_at, LogLine(ts, "sdk", level, text)))
+            return
+        for piece in _split_line(encoded):
+            line = LogLine(ts, "sdk", level, piece.decode("utf-8", errors="replace"))
+            self._changes.append((read_at, line))
 
     def _log(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
         level = _SDK_LEVELS.get(str(event.get("level", "")), "info")
-        line = LogLine(ts, "sdk", level, str(event.get("message", "")))
-        self._changes.append((read_at, line))
+        self._sdk_log(read_at, ts, level, str(event.get("message", "")))
 
     def _progress(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
         total = event.get("total")

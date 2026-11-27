@@ -2,7 +2,10 @@ import { PanelRightCloseIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 
-/** 检查器的标题区：上面一行是种类和 ID（`row`）、操作按钮和收起按钮，下面是标题。 */
+/**
+ * 检查器的标题区：上面一行是种类和 ID（`row`）、操作按钮和收起按钮，下面是标题。
+ * 标题可能是节点包里的节点标题（别人写的）：这样的标题传 `UntrustedText` 组件，不要传先写成纯文字的字符串，纯文字没有方向隔离。
+ */
 export function Header({
 	row,
 	title,
@@ -10,7 +13,7 @@ export function Header({
 	onCollapse,
 }: {
 	row: ReactNode;
-	title: string;
+	title: ReactNode;
 	actions?: ReactNode;
 	onCollapse(): void;
 }) {

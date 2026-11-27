@@ -25,7 +25,7 @@ const run = promisify(execFile);
 
 const PACKAGE = "loop-demo";
 const NODE = "probe";
-/** 本机 Agent：skill 要求的名称 `dev-<用户名>-<主机名>`。 */
+/** 本机 Agent：skill 里写的名称 `dev-<登录名>-<主机>`。 */
 const LOCAL_AGENT = "dev-tester-box";
 const PROD_AGENT = "prod-agent";
 const NICKNAME = "测试员";

@@ -1,8 +1,24 @@
-import type { Readiness, SessionStatus, SessionTool } from "@sfly/schema";
+import type {
+	Readiness,
+	ReadinessProblemKind,
+	SessionStatus,
+	SessionTool,
+	TurnOutcome,
+	WaitingFor,
+} from "@sfly/schema";
 import type { StatusKind } from "#/components/status";
 import { SESSION } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
-import type { TimelineItem, ToolResultInfo } from "./timeline";
+import { terminalOutputText } from "#/lib/terminal-text";
+import {
+	hasBehind,
+	type SteerDelivery,
+	type TimelineItem,
+	type TimelineQueue,
+	type TimelineState,
+	type ToolResultInfo,
+	type UserRole,
+} from "./timeline";
 
 /** 助手页和会话页写的文字：由事件和状态算出一句话，纯函数（`session-text.test.ts`）。 */
 
@@ -14,14 +30,57 @@ export const SESSION_STATUS: Record<SessionStatus, { label: string; kind: Status
 	ended: { label: SESSION.status.ended, kind: "stopped" },
 };
 
-/** 助手页顶部的就绪状态：就绪的写一行，不就绪的逐条写缺什么（每条取就绪状态里给人看的那句话）。 */
-export function readinessProblems(readiness: Readiness): string[] {
-	return readiness.problems.map((problem) =>
-		problem.kind === "workbench_offline" &&
-		readiness.workbench !== null &&
-		!problem.message.includes(readiness.workbench)
-			? SESSION.workbenchOffline(readiness.workbench)
-			: problem.message,
+/** 就绪状态里的一条问题：缺什么（控制面写的一句，带具体的变量名、哪一台）和该找谁、做什么（页面按种类写，{@link SESSION.readinessHint}）。 */
+export interface ReadinessItem {
+	kind: ReadinessProblemKind;
+	/** 缺什么：控制面的话，可能嵌着别人写的文字（助手服务报的原因、工作台的名字），经不可信文字组件显示。 */
+	what: string;
+	/** 该找谁、做什么：控制台自己的话。 */
+	hint: string;
+}
+
+/**
+ * 助手和会话页输入框旁的就绪状态：不就绪时逐条写缺什么、该找谁（每条取就绪状态里给人看的那句话，后面接按种类写的「找谁」）；
+ * 工作台不在线而那句话里没有写出是哪一台时补上名字。就绪时没有问题。
+ */
+export function readinessItems(readiness: Readiness): ReadinessItem[] {
+	return readiness.problems.map((problem) => ({
+		kind: problem.kind,
+		what:
+			problem.kind === "workbench_offline" &&
+			readiness.workbench !== null &&
+			!problem.message.includes(readiness.workbench)
+				? SESSION.workbenchOffline(readiness.workbench)
+				: problem.message,
+		hint: SESSION.readinessHint[problem.kind],
+	}));
+}
+
+/**
+ * 会话列表里状态下面标出来的上一轮的结局（`last_turn_outcome`）：完成的、还没有结束过一轮的（null）不标；其余写「上一轮被打断」这样的一句，
+ * 出了问题的（被打断、出错、模型不可用）用失败的形状，到了上限用提醒的，用户自己停的是中性的。在做的会话标的是这一轮之前的那一轮。
+ */
+export function lastTurnFlag(
+	outcome: TurnOutcome | null,
+): { label: string; kind: StatusKind } | null {
+	if (outcome === null || outcome === "completed") return null;
+	const label = SESSION.list.lastTurn(SESSION.list.outcome[outcome]);
+	switch (outcome) {
+		case "interrupted":
+		case "failed":
+		case "model_unavailable":
+			return { label, kind: "failed" };
+		case "limit":
+			return { label, kind: "warn" };
+		case "stopped":
+			return { label, kind: "stopped" };
+	}
+}
+
+/** 就绪状态里有模型的问题（没有配置、连不上，#548）：空闲的会话说不了话。别的问题（助手、工作台）在助手页的就绪状态里写，会话页不管。 */
+export function hasModelProblem(readiness: Readiness): boolean {
+	return readiness.problems.some(
+		(problem) => problem.kind === "model_not_configured" || problem.kind === "model_unreachable",
 	);
 }
 
@@ -42,13 +101,45 @@ export function toolLine(tool: SessionTool | null, title: string): string {
 }
 
 /**
- * 工具结果的摘要（放在那一行的右边）：命令写「退出码 N · 用时 …」，其余写「用时 …」；出错的开头写「出错」；
- * 结果太长只留了头尾的，写明「只显示了头尾」。
+ * 工具那一行的标题：有调用的就是 {@link toolLine}；**只有结果、没有对上的调用**（会话超过一页，调用在更早的一页里，翻页边界上最早的那一条）
+ * 写明是哪一次调用的结果：命令的结果带退出码、编辑的结果带差异，能判断的写出是命令还是编辑（读和写分不出来，写「工具调用」），
+ * 再写调用在哪里——还有更早的内容就是「加载更早的内容后显示」，已经没有更早的了、调用还是没有，就是它没有记在时间线上。
  */
-export function toolResultSummary(tool: SessionTool | null, result: ToolResultInfo): string {
+export function toolRowTitle(
+	item: { tool: SessionTool | null; title: string; result: ToolResultInfo | null },
+	hasMore: boolean,
+): string {
+	if (item.tool !== null || item.result === null) return toolLine(item.tool, item.title);
+	const earlier = SESSION.tool.earlier;
+	const kind =
+		item.result.exitCode !== undefined
+			? earlier.command
+			: item.result.diff !== undefined
+				? earlier.edit
+				: earlier.other;
+	return `${kind}的结果 · ${hasMore ? earlier.note : earlier.missing}`;
+}
+
+/**
+ * 结果正文在页面上显示的文字：**命令**的输出先整理（去掉整段的终端序列、压连续的空行，`lib/terminal-text.ts`）；读、写、改文件的结果是
+ * 文件的内容，显示原文——两个空行是文件自己的（PEP 8 的两个空行不能压成一个），文件里恰好有颜色码也不当成终端的输出去掉
+ * （不可信文字组件会把 ESC 写成占位，如实反映文件）。只有结果、没有对上的调用（翻页边界，`tool` 是 null）：有退出码的是命令；
+ * 没有的认不出是什么，显示原文。页面上选中复制得到的是这里返回的文字；存的、接口里的仍是原文。
+ */
+export function resultDisplayText(tool: SessionTool | null, result: ToolResultInfo): string {
+	const isCommand = tool === "command" || (tool === null && result.exitCode !== undefined);
+	return isCommand ? terminalOutputText(result.text) : result.text;
+}
+
+/**
+ * 工具结果的摘要（放在那一行的右边）：命令写「退出码 N · 用时 …」，其余写「用时 …」；出错的开头写「出错」；
+ * 结果太长、只显示了一部分的，写明「输出太长，只显示了一部分」（事件里的文字超过上限只留头尾，pi 自己只留末尾，两种都是它）。
+ */
+export function toolResultSummary(result: ToolResultInfo): string {
 	const parts: string[] = [];
 	if (result.isError) parts.push(SESSION.tool.failed);
-	if (tool === "command" && result.exitCode !== undefined) {
+	// 退出码只有命令的结果才有（所以只有结果、没有对上的调用，翻页边界上，也能照写）。
+	if (result.exitCode !== undefined) {
 		parts.push(SESSION.tool.exitCode(result.exitCode));
 	}
 	parts.push(SESSION.tool.duration(formatDuration(result.durationMs)));
@@ -56,7 +147,17 @@ export function toolResultSummary(tool: SessionTool | null, result: ToolResultIn
 	return parts.join(" · ");
 }
 
-/** 一轮结束的分隔行：六种结局各一句；到了上限按 `limit_kind` 写是哪一种，不看 `reason` 的文字。 */
+/**
+ * 连续的空白（含换行、制表符）压成一个空格：结局的原因是上游给的原文，可能有好几行；分隔行和读屏播报是单行的写法，
+ * 交给不可信文字组件之前先压平（组件的单行写法会把换行写成「⟨U+000A⟩」）。别的看不见的字符照旧由组件写出来。
+ */
+export const oneLine = (text: string): string => text.replace(/[\t\n\r\f\v ]+/g, " ").trim();
+
+/**
+ * 一轮结束的分隔行：六种结局各一句；到了上限按 `limit_kind` 写是哪一种，不看 `reason` 的文字。
+ * **「已停止」不写 `reason`**：结局的原因是助手服务写的「用户停止了这一轮」，而这一轮不一定是用户点了停止才停的（控制面发给助手服务的
+ * 中止命令超时、随后补发的中止让助手服务马上结束了这一轮，用户其实没有点过停止），页面不把它原样说成用户的操作。
+ */
 export function turnEndText(item: Extract<TimelineItem, { kind: "turn_end" }>): string {
 	const t = SESSION.turnEnd;
 	switch (item.outcome) {
@@ -75,13 +176,42 @@ export function turnEndText(item: Extract<TimelineItem, { kind: "turn_end" }>): 
 					: t.modelCalls(item.modelCalls),
 			);
 		case "interrupted":
-			return t.interrupted(item.reason);
+			return t.interrupted(oneLine(item.reason));
 		case "model_unavailable":
-			return t.modelUnavailable(item.reason);
+			return item.errorClass === "context_overflow"
+				? t.contextOverflow
+				: t.modelUnavailable(oneLine(item.reason), item.steps);
 		case "failed":
-			return t.failed(item.reason);
+			return t.failed(oneLine(item.reason));
 	}
 }
+
+/** 一个提交里全部文件的增、删行数（二进制文件没有行数，不算）。 */
+export function commitTotals(
+	files: readonly { additions: number | null; deletions: number | null }[],
+) {
+	let additions = 0;
+	let deletions = 0;
+	for (const file of files) {
+		additions += file.additions ?? 0;
+		deletions += file.deletions ?? 0;
+	}
+	return { files: files.length, additions, deletions };
+}
+
+/** 提交那一行的文字：「这一轮改了 N 个文件 +a −b」；补提交的写是哪一轮留下的、或者是会话开始之前就有的。 */
+export function commitSummary(item: Extract<TimelineItem, { kind: "commit" }>): string {
+	const total = commitTotals(item.files);
+	if (item.beforeSession) {
+		return SESSION.commit.beforeSession(total.files, total.additions, total.deletions);
+	}
+	return item.leftover
+		? SESSION.commit.leftover(item.turn, total.files, total.additions, total.deletions)
+		: SESSION.commit.summary(total.files, total.additions, total.deletions);
+}
+
+/** 提交的短号：前 7 位。 */
+export const shortHash = (hash: string): string => hash.slice(0, 7);
 
 /** 一轮结束那一行的语气：完成和停止是中性的，到了上限是提醒，其余是出了问题。 */
 export function turnEndTone(
@@ -98,4 +228,120 @@ export function turnEndTone(
 		case "failed":
 			return "danger";
 	}
+}
+
+/** 时间线上用户的一句话的标记：开一轮的话没有标记；插话、排在这一轮后面的话、被撤掉的话各一个。 */
+export function userRoleLabel(role: UserRole): string | null {
+	switch (role) {
+		case "turn":
+			return null;
+		case "steer":
+			return SESSION.message.steer;
+		case "behind":
+			return SESSION.message.behind;
+		case "cancelled":
+			return SESSION.message.cancelled;
+	}
+}
+
+/** 插话送到了没有：等待送达、已送到、没有送到各一个字样；不知道（刷新后读到在做的一轮里的插话）时没有。 */
+export function steerDeliveryLabel(delivery: SteerDelivery | null): string | null {
+	switch (delivery) {
+		case "waiting":
+			return SESSION.message.waiting;
+		case "delivered":
+			return SESSION.message.delivered;
+		case "dropped":
+			return SESSION.message.dropped;
+		case "unknown":
+		case null:
+			return null;
+	}
+}
+
+/** 会话的状态那一格：排队中（和停止途中说了话、排在这一轮后面的在做的会话）后面写排第几。 */
+export function statusWithQueue(status: SessionStatus, position: number | null): string {
+	const label = SESSION_STATUS[status].label;
+	return position === null ? label : `${label} · ${SESSION.list.queuePosition(position)}`;
+}
+
+/**
+ * 输入框此刻是什么样（只由状态算）：
+ * - `send` 空闲：接着说；
+ * - `steer` 在做：发出去的是插话；
+ * - `behind` 在做、而且停止途中说的话排在这一轮后面：不能再说，停止按钮写「撤掉排着的话」、点它是撤掉那句话（按钮的字只由这个状态定）；
+ * - `queued` 排队中：不能说，写排在第几位、在等谁；
+ * - `ended` 已结束：不显示输入框。
+ */
+export type ComposerMode =
+	| { kind: "send" }
+	| { kind: "steer" }
+	| { kind: "behind"; position: number | null }
+	| { kind: "queued"; position: number | null; waitingFor: WaitingFor | null }
+	| { kind: "ended" };
+
+export function composerMode(
+	state: Pick<TimelineState, "status" | "queue" | "items">,
+): ComposerMode {
+	switch (state.status) {
+		case "idle":
+			return { kind: "send" };
+		case "ended":
+			return { kind: "ended" };
+		case "queued":
+			return {
+				kind: "queued",
+				position: state.queue?.position ?? null,
+				waitingFor: state.queue?.waitingFor ?? null,
+			};
+		case "running":
+			return hasBehind(state.items)
+				? { kind: "behind", position: state.queue?.position ?? null }
+				: { kind: "steer" };
+	}
+}
+
+/** 顶栏状态那一格的字：排队中写排第几。 */
+export function sessionStatusText(state: Pick<TimelineState, "status" | "queue">): string {
+	return statusWithQueue(
+		state.status,
+		state.status === "queued" ? (state.queue?.position ?? null) : null,
+	);
+}
+
+/** 排队的话在会话视图里是 `TimelineQueue`：列表项只有位置。 */
+export const queueOf = (
+	position: number | null,
+	waitingFor: WaitingFor | null,
+): TimelineQueue | null => (position === null ? null : { position, waitingFor });
+
+/**
+ * 读屏要播报的一句：状态变了、看得见却听不到的几件事——这个会话轮到了、有一句插话没有送到、这一轮结束了、会话被结束了（可能是别人结束的）。
+ * 两份状态之间没有这些变化时返回 `null`。页面用它填「一轮结束」那块 `aria-live` 的区域（时间线是逐字更新的，不整个播报）。
+ *
+ * **只看新到的事件**：序号大于之前最大序号（`before.lastSeq`）的那几行。往前翻页（`prependHistory`）把更早的行放到前面，最大序号不变，
+ * 所以读进来的旧事件永远不播；打开页面时前后是同一份状态，也不播。一次到了好几条（重连之后补发，被合成一次渲染）时，播的是这一批的
+ * 事实：一句「有一句插话没有送到」、**最近的一个结局**一句，不把过去几轮逐条念一遍。
+ */
+export function announcement(
+	before: Pick<TimelineState, "status" | "items" | "lastSeq">,
+	after: Pick<TimelineState, "status" | "items" | "lastSeq">,
+): string | null {
+	const lines: string[] = [];
+	const fresh = after.items.filter(
+		(item) => "seq" in item && item.seq !== null && item.seq > before.lastSeq,
+	);
+	if (fresh.some((item) => item.kind === "notice" && item.noticeKind === "steer_dropped")) {
+		lines.push(SESSION.page.announce.steerDropped);
+	}
+	if (before.status === "queued" && after.status === "running") {
+		lines.push(SESSION.page.announce.started);
+	}
+	const lastEnd = fresh.filter((item) => item.kind === "turn_end").at(-1);
+	if (lastEnd?.kind === "turn_end") lines.push(turnEndText(lastEnd));
+	if (after.status === "ended" && before.status !== "ended") {
+		const ended = fresh.filter((item) => item.kind === "session_ended").at(-1);
+		lines.push(SESSION.page.announce.ended(ended?.kind === "session_ended" ? ended.by : ""));
+	}
+	return lines.length === 0 ? null : lines.join("。");
 }

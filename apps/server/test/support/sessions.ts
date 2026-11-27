@@ -96,6 +96,8 @@ export interface SeededSession {
 	title?: string;
 	status?: "idle" | "running" | "queued" | "ended";
 	createdBy?: string;
+	/** 发起人的用户 ID；不写是没有（建于登录之前的会话：不能再开始新的一轮，#547）。 */
+	createdByUserId?: string;
 	createdAt?: Date;
 	lastActivityAt?: Date;
 	/** 此刻在做的那一轮（会话表的 `current_turn`）；不写时是事件里 `turn_started` 的条数，和控制面自己写的一样。 */
@@ -114,8 +116,8 @@ export async function seedSession(databaseUrl: string, seed: SeededSession = {})
 	await client.connect();
 	try {
 		await client.query(
-			`insert into sessions (id, project_id, title, status, created_by, created_at, last_activity_at, current_turn, queued_at)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at, current_turn, queued_at)
+			values ($1, $2, $3, $4, $5, $10, $6, $7, $8, $9)`,
 			[
 				id,
 				seed.project ?? "default",
@@ -127,6 +129,7 @@ export async function seedSession(databaseUrl: string, seed: SeededSession = {})
 				seed.currentTurn ?? events.filter((event) => event.type === "turn_started").length,
 				// 排队中的会话有排队时间（库里的约束 `sessions_queued_at`）。
 				seed.status === "queued" ? (seed.createdAt ?? at) : null,
+				seed.createdByUserId ?? null,
 			],
 		);
 		for (const [index, body] of events.entries()) {
@@ -140,4 +143,15 @@ export async function seedSession(databaseUrl: string, seed: SeededSession = {})
 		await client.end();
 	}
 	return id;
+}
+
+/** 把一个会话连同它的事件从库里删掉（模拟新建会话没接住、等结局期间被删掉的会话）。 */
+export async function deleteSession(databaseUrl: string, id: string): Promise<void> {
+	const client = new pg.Client({ connectionString: databaseUrl });
+	await client.connect();
+	try {
+		await client.query("delete from sessions where id = $1", [id]);
+	} finally {
+		await client.end();
+	}
 }

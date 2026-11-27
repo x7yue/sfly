@@ -5,6 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { HistoryIcon, PencilRulerIcon, RotateCcwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
 import { EmptyState, ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
@@ -176,7 +177,7 @@ export function VersionHistory({
 							{pane.query.data && (
 								<span className="truncate">
 									{pane.query.data.author}
-									<ViaTag via={pane.query.data.author_via} /> ·{" "}
+									<ViaTag via={pane.query.data.author_via} session={pane.query.data.session} /> ·{" "}
 									{formatDateTime(pane.query.data.created_at)}
 								</span>
 							)}
@@ -280,7 +281,8 @@ function VersionRow({
 				</span>
 				<span className="text-xs break-words text-fg-3">
 					{version.author}
-					<ViaTag via={version.author_via} /> · {formatDateTime(version.created_at)}
+					<ViaTag via={version.author_via} session={version.session} /> ·{" "}
+					{formatDateTime(version.created_at)}
 				</span>
 			</div>
 			{!latest && (
@@ -373,7 +375,8 @@ function RestoreDialog({
 								)}
 								{restore.error && (
 									<p role="alert" className="m-0 text-sm text-danger-fg">
-										恢复失败：{restore.error.message}
+										恢复失败：
+										<ErrorMessage error={restore.error} />
 									</p>
 								)}
 							</DialogBody>

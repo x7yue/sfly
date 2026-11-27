@@ -27,7 +27,9 @@ pub mod peer;
 pub mod process_tree;
 pub mod retention;
 pub mod sdk;
+pub mod secret;
 mod socket;
+pub mod subprocess;
 pub mod time_jump;
 pub mod update;
 pub mod venv;
@@ -46,6 +48,8 @@ use tonic::Streaming;
 pub mod proto {
     tonic::include_proto!("sfly.agent.v1");
 }
+// 带凭据的消息（`AssignTask`、`Hello`）的 `Debug`：凭据的位置写 `<redacted>`。
+mod proto_debug;
 
 use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
 use environment::{Mirrors, Setup};
@@ -68,22 +72,41 @@ pub const DEFAULT_SLOTS: u32 = 4;
 /// 终止任务时从优雅终止到强制杀掉进程树的默认宽限期（docs/SEMANTICS.md §3.4）。
 pub const DEFAULT_TERMINATE_GRACE: Duration = Duration::from_secs(10);
 
-/// 重连等待：从 MIN 开始翻倍，最多 MAX；成功连上后重置。
+/// 重连等待：从 MIN 开始翻倍，最多 MAX；连得稳（撑过 [`STABLE_CONNECTION`]）之后才重置，握手成功不重置。
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(10);
+/// 连上之后至少撑过这么久才算连得稳：重连的等待只在连得稳之后才回到 [`RECONNECT_MIN`]。握手一成功就重置的话，
+/// 握手成功、马上又被断开（比如重发的结果超过控制面一条消息的上限，每次都被拒）的 Agent 会每半秒重连一次，
+/// 控制面每次都要为它走一遍握手、续约（#723）。
+pub const STABLE_CONNECTION: Duration = Duration::from_secs(30);
+
+/// 控制面明确拒绝了这条连接（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）之后的重试等待：从 MIN 开始翻倍，
+/// 最多 MAX，连上一次就重置（[`Config::rejected_retry_min`]、[`Config::rejected_retry_max`] 默认取这两个值，测试里改短）。
+/// 比普通的重连慢得多：被拒绝不是网络问题，要管理员在控制面改好才会变，快速重试只会刷屏、白白占用控制面。
+pub const REJECTED_RETRY_MIN: Duration = Duration::from_secs(30);
+pub const REJECTED_RETRY_MAX: Duration = Duration::from_secs(300);
 
 /// Welcome 没有给出心跳间隔时的默认值（控制面默认租约 30 秒的三分之一）。
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Agent 配置。
-#[derive(Debug, Clone)]
+///
+/// `Debug` 是手写的（见下）：控制面地址（`server`）可以带用户名和密码，被 `{:?}` 打印时换成掩码（#733）；
+/// 凭据 `token` 本来就是 [`secret::Secret`]，镜像地址的 `Debug` 在 [`environment::LocalMirrors`] 里处理。
+#[derive(Clone)]
 pub struct Config {
     /// 控制面 Agent 网关地址，例如 `http://127.0.0.1:50051`。
     pub server: String,
     /// Agent 名称，全局唯一。
     pub name: String,
-    /// 可选的共享注册令牌。
-    pub token: Option<String>,
+    /// Agent 凭据（`sfly_agt_` 开头，按台签发，管理员在控制台或命令行签发）；过渡期里也可以是共享注册令牌或没有。
+    /// 用 [`secret::Secret`] 包着：配置被 `{:?}` 打印时不会把它写出去。
+    pub token: Option<secret::Secret>,
+    /// 被控制面拒绝之后的重试等待的起点和封顶（[`REJECTED_RETRY_MIN`]、[`REJECTED_RETRY_MAX`]），
+    /// 以及加不加抖动（默认加：每次等待取算出来的时长的一半到全部）。
+    pub rejected_retry_min: Duration,
+    pub rejected_retry_max: Duration,
+    pub rejected_retry_jitter: bool,
     /// 并发槽位数（随 Hello 上报，控制面按它限制派发）。
     pub slots: u32,
     /// 共享 venv 路径。
@@ -120,8 +143,12 @@ pub struct Config {
     pub metric_queue_points: usize,
     /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制，[`logs::Pump::start`]）。
     pub log_forward_rate: u64,
+    /// 连上之后撑过这么久才算连得稳、重连的等待才回到最短（默认 [`STABLE_CONNECTION`]，测试里改短）。
+    pub stable_connection: Duration,
     /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
     pub update_read_timeout: Duration,
+    /// 上传一个产物的请求没有进展多久算卡住（[`artifacts::DEFAULT_IDLE_TIMEOUT`]）。
+    pub upload_idle_timeout: Duration,
     /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
     /// 让同一个二进制扮演新旧两个版本。与控制面版本比较、选择 SDK 运行时都用它。
     pub version: String,
@@ -140,12 +167,92 @@ pub struct Config {
     pub watch_queue_events: usize,
 }
 
+/// 每个字段都列出来、不用 `..`：加了字段这里编译不过，不会悄悄漏掉一个带凭据的字段。
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Config {
+            server,
+            name,
+            token,
+            rejected_retry_min,
+            rejected_retry_max,
+            rejected_retry_jitter,
+            slots,
+            venv,
+            work_dir,
+            procs_dir,
+            task_dir_retention,
+            task_dir_sweep_interval,
+            mirrors,
+            user_agent,
+            uv,
+            manage_uv,
+            local_socket,
+            terminate_grace,
+            python,
+            telemetry_queue_bytes,
+            metric_queue_points,
+            log_forward_rate,
+            stable_connection,
+            update_read_timeout,
+            upload_idle_timeout,
+            version,
+            agent_time_offset_file,
+            self_update,
+            trial,
+            listen_port,
+            public_address,
+            watch_queue_events,
+        } = self;
+        f.debug_struct("Config")
+            .field("server", &secret::Masked(server))
+            .field("name", name)
+            .field("token", token)
+            .field("rejected_retry_min", rejected_retry_min)
+            .field("rejected_retry_max", rejected_retry_max)
+            .field("rejected_retry_jitter", rejected_retry_jitter)
+            .field("slots", slots)
+            .field("venv", venv)
+            .field("work_dir", work_dir)
+            .field("procs_dir", procs_dir)
+            .field("task_dir_retention", task_dir_retention)
+            .field("task_dir_sweep_interval", task_dir_sweep_interval)
+            .field("mirrors", mirrors)
+            .field("user_agent", user_agent)
+            .field("uv", uv)
+            .field("manage_uv", manage_uv)
+            .field("local_socket", local_socket)
+            .field("terminate_grace", terminate_grace)
+            .field("python", python)
+            .field("telemetry_queue_bytes", telemetry_queue_bytes)
+            .field("metric_queue_points", metric_queue_points)
+            .field("log_forward_rate", log_forward_rate)
+            .field("stable_connection", stable_connection)
+            .field("update_read_timeout", update_read_timeout)
+            .field("upload_idle_timeout", upload_idle_timeout)
+            .field("version", version)
+            .field("agent_time_offset_file", agent_time_offset_file)
+            .field("self_update", self_update)
+            .field("trial", trial)
+            .field("listen_port", listen_port)
+            .field("public_address", public_address)
+            .field("watch_queue_events", watch_queue_events)
+            .finish()
+    }
+}
+
 impl Config {
     pub fn new(server: impl Into<String>, name: impl Into<String>) -> Self {
+        let server = server.into();
+        // 控制面地址可以带用户名和密码：从这一刻起写进日志的文字里它的原文按值换成掩码（[`secret::register_address`]，#757）。
+        secret::register_address(&server);
         Self {
-            server: server.into(),
+            server,
             name: name.into(),
             token: None,
+            rejected_retry_min: REJECTED_RETRY_MIN,
+            rejected_retry_max: REJECTED_RETRY_MAX,
+            rejected_retry_jitter: true,
             slots: DEFAULT_SLOTS,
             venv: PathBuf::from("venv"),
             work_dir: PathBuf::from("work"),
@@ -162,7 +269,9 @@ impl Config {
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
             metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
             log_forward_rate: 0,
+            stable_connection: STABLE_CONNECTION,
             update_read_timeout: update::DEFAULT_READ_TIMEOUT,
+            upload_idle_timeout: artifacts::DEFAULT_IDLE_TIMEOUT,
             version: AGENT_VERSION.to_string(),
             agent_time_offset_file: None,
             self_update: update::SelfUpdate::detect(true, None),
@@ -170,6 +279,22 @@ impl Config {
             listen_port: peer::DEFAULT_LISTEN_PORT,
             public_address: None,
             watch_queue_events: capabilities::file_watch::DEFAULT_QUEUE_EVENTS,
+        }
+    }
+}
+
+impl Config {
+    /// 把配置里可能带用户名和密码的地址（控制面地址和本机覆盖的三个镜像）登记给打码（[`secret::register_address`]）。
+    /// 字段是公开的、构造之后还会改，所以连接和运行之前再登记一遍（同一个地址只占一项）。
+    pub fn register_known_addresses(&self) {
+        secret::register_address(&self.server);
+        let environment::LocalMirrors {
+            pypi,
+            github_release,
+            python_install,
+        } = &self.mirrors;
+        for address in [pypi, github_release, python_install].into_iter().flatten() {
+            secret::register_address(address);
         }
     }
 }
@@ -198,6 +323,7 @@ pub struct HelloContent {
 
 /// 连接控制面，发送 Hello（带上已安装的节点包、开发版本和手上的任务）并等待 Welcome。
 pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<Connection> {
+    config.register_known_addresses();
     let HelloContent {
         installed_packages,
         dev_packages,
@@ -206,7 +332,12 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
     } = content;
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
-        .with_context(|| format!("connect to control plane at {}", config.server))?;
+        .with_context(|| {
+            format!(
+                "connect to control plane at {}",
+                secret::without_userinfo(&config.server)
+            )
+        })?;
 
     let (outbound, rx) = mpsc::channel(64);
     let now = clock::Reading::now();
@@ -214,7 +345,11 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
         .send(AgentMessage {
             body: Some(agent_message::Body::Hello(Hello {
                 name: config.name.clone(),
-                token: config.token.clone().unwrap_or_default(),
+                token: config
+                    .token
+                    .as_ref()
+                    .map(|token| token.expose().to_string())
+                    .unwrap_or_default(),
                 agent_version: config.version.clone(),
                 os: std::env::consts::OS.to_string(),
                 arch: std::env::consts::ARCH.to_string(),
@@ -240,11 +375,15 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
     match inbound.message().await.context("wait for welcome")? {
         Some(ServerMessage {
             body: Some(server_message::Body::Welcome(welcome)),
-        }) => Ok(Connection {
-            welcome,
-            outbound,
-            inbound,
-        }),
+        }) => {
+            // Welcome 里控制面下发的镜像等地址可以带用户名和密码：在 Agent 写任何一个之前登记（#757）。
+            environment::register_welcome_addresses(&welcome);
+            Ok(Connection {
+                welcome,
+                outbound,
+                inbound,
+            })
+        }
         Some(other) => bail!("expected Welcome, got {other:?}"),
         None => bail!("control plane closed the stream before Welcome"),
     }
@@ -348,6 +487,7 @@ struct Runtime {
 
 impl Runtime {
     async fn run_task(&self, task: AssignTask, cancel: executor::CancelSignal) {
+        let upload_cancel = cancel.clone();
         let result = match self.start_task(&task).await {
             // 安装期间收到的取消在子进程启动后立即生效。
             Ok(running) => {
@@ -358,8 +498,11 @@ impl Runtime {
                     self.ledger.cancel(&task.task_id, task.attempt, false);
                 };
                 let result = running.wait(cancel, wind_down).await;
-                // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
-                self.uploader.finish(&task, &dir, result).await
+                // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。上传期间到的取消请求打断上传
+                // （开始上传之前已经有的，包括超时进入收尾时间时发的那一次，不打断）。
+                self.uploader
+                    .finish(&task, &dir, result, upload_cancel)
+                    .await
             }
             Err(result) => result,
         };
@@ -585,7 +728,11 @@ impl Runtime {
                 emit(serde_json::json!({ "event": "sdk_installed", "version": version }));
                 self.inventory.refresh().await;
             }
-            Err(error) => eprintln!("cannot install SDK runtime {version}: {error:#}"),
+            // 下载地址和 reqwest 的报错里的地址：用户名和密码换成掩码（#733）。
+            Err(error) => eprintln!(
+                "cannot install SDK runtime {version}: {}",
+                secret::mask_userinfo(&format!("{error:#}"))
+            ),
         }
     }
 
@@ -649,10 +796,13 @@ impl Runtime {
 }
 
 /// Agent 主循环：连接控制面并执行任务；连接失败或断开后按退避时间自动重连。
-/// 只有不可恢复的错误（例如令牌被拒绝、环境准备失败 [`environment::EnvironmentError`]）才会返回。
+/// 只有不可恢复的错误（例如环境准备失败 [`environment::EnvironmentError`]）才会返回。控制面拒绝这台 Agent 的连接
+/// （凭据无效或被吊销、名字和凭据不一致、被停用……）**不退出**：按 [`REJECTED_RETRY_MIN`] 起的退避重试，管理员在
+/// 控制面改好之后它自己连上（[`Rejections`]）。
 ///
 /// 任务结果在收到控制面的 Ack 之前一直保留，每次重新连接后再次上报（控制面按 task_id + attempt 幂等处理）。
 pub async fn run(config: Config) -> anyhow::Result<()> {
+    config.register_known_addresses();
     if let Some(file) = &config.agent_time_offset_file {
         clock::use_offset_file(file.clone());
     }
@@ -709,6 +859,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             package_index: std::sync::Mutex::new(None),
             uv: config.uv.clone(),
             http: http.clone(),
+            token: config.token.clone(),
         },
         work_dir: work_dir.clone(),
         procs_dir,
@@ -722,6 +873,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         uploader: artifacts::Uploader {
             http: http.clone(),
             token: config.token.clone(),
+            idle_timeout: config.upload_idle_timeout,
         },
         http,
         uv: config.uv.clone(),
@@ -737,6 +889,11 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     // 端口监听不了时照常运行，只是能力不能被其它 Agent 调用（原因随 Hello 上报）。
     let endpoint = peer::serve(config.listen_port, config.public_address.clone(), host).await;
     let mut delay = RECONNECT_MIN;
+    let mut rejections = Rejections::new(
+        config.rejected_retry_min,
+        config.rejected_retry_max,
+        config.rejected_retry_jitter,
+    );
     // 启动时扫描一次工作目录，之后每隔 task_dir_sweep_interval 一次（断线重连期间也照常进行）。
     let mut sweep = Sweep {
         next: tokio::time::Instant::now(),
@@ -778,11 +935,17 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         match &connected {
             Ok(_) => {}
             Err(error) if unreachable(error) => config.trial.end(update::Attempt::Unreachable),
+            // 被控制面拒绝（凭据、停用……）也在这里：试用中的新版本一启动就被拒绝，多半是它自己的毛病
+            // （握手写错了、没带上凭据）；算作失败，连续失败后回滚到旧版本，回滚之后的旧版本被拒绝时照旧
+            // 不退出（下面）。不算的话它永远不回滚，也收不到修好的下一个版本。
             Err(_) => config.trial.end(update::Attempt::Failed),
         }
         match connected {
             Ok(connection) => {
-                delay = RECONNECT_MIN;
+                // 握手成功不重置重连的等待：连得稳了才重置（[`STABLE_CONNECTION`]，见下面 serve 结束之后）。
+                if rejections.accepted() {
+                    eprintln!("控制面接受了这台 Agent 的连接（之前被拒绝）");
+                }
                 // uv 和共享 venv 在收到 Welcome 之后才准备：控制面在 Welcome 里下发镜像配置（ADR 0012）。
                 // 准备失败时 Agent 退出，不带着坏环境继续连接。
                 // 本机的覆盖优先。节点包依赖（`uv pip install`）是 Agent 唯一访问 PyPI 的 uv 调用：
@@ -824,16 +987,44 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
                 };
+                let served_at = tokio::time::Instant::now();
                 match serve(connection, &runtime, channels, &updater, &mut sweep).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
-                    Err(error) => eprintln!("connection lost: {error:#}"),
+                    Err(error) => {
+                        eprintln!("connection lost: {error:#}");
+                        // 控制面用「消息超过上限」拒绝了这条连接：超过上限的结果不能再原样重发（每次重连都先重发
+                        // 没 Ack 的结果，每次都被拒），换成失败再发（#723）。被拒的是遥测时没有结果超过上限，不动。
+                        if let Some(limit) = message_limit_exceeded(&error) {
+                            let replaced = runtime.ledger.replace_results_over(limit);
+                            if replaced > 0 {
+                                eprintln!(
+                                    "控制面收一条消息最多 {limit} 字节：{replaced} 个任务的结果超过它，已换成失败，重连后发出"
+                                );
+                            }
+                        }
+                    }
+                }
+                if served_at.elapsed() >= config.stable_connection {
+                    delay = RECONNECT_MIN;
                 }
             }
             Err(error) => {
-                if let Some(status) = error.downcast_ref::<tonic::Status>()
-                    && status.code() == tonic::Code::Unauthenticated
-                {
-                    return Err(error);
+                // 控制面明确拒绝了这条连接：不退出（退出了 systemd 每 5 秒拉起一次，等于快速重试），退避重试；
+                // 原因只在第一次和变了的时候打一行，不带凭据的任何部分（只有控制面回的说明）。
+                if let Some(status) = rejection(&error) {
+                    let (wait, report) = rejections.rejected(status);
+                    if report {
+                        eprintln!(
+                            "控制面拒绝了这台 Agent 的连接（{:?}）：{}。Agent 不会退出，等管理员在控制面处理好之后自己连上；\
+                             重试的间隔从 {} 秒翻倍到最长 {} 秒，原因不变时不再重复提示",
+                            status.code(),
+                            status.message(),
+                            config.rejected_retry_min.as_secs_f64(),
+                            config.rejected_retry_max.as_secs_f64(),
+                        );
+                    }
+                    tokio::time::sleep(wait).await;
+                    continue;
                 }
                 eprintln!("cannot connect: {error:#}");
             }
@@ -841,6 +1032,18 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RECONNECT_MAX);
     }
+}
+
+/// 控制面因为一条消息超过它的上限（`readMaxBytes`，#674）结束了这条连接：返回它说的上限（字节）。
+/// 控制面回的状态是 `resource_exhausted`，说明是 `message size <声明的大小> is larger than configured readMaxBytes <上限>`。
+fn message_limit_exceeded(error: &anyhow::Error) -> Option<usize> {
+    let status = error
+        .chain()
+        .find_map(|e| e.downcast_ref::<tonic::Status>())
+        .filter(|status| status.code() == tonic::Code::ResourceExhausted)?;
+    let (_, after) = status.message().split_once("readMaxBytes ")?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// 任务目录的定期扫描（[`Runtime::sweep`]）。
@@ -859,6 +1062,72 @@ impl Sweep {
         self.next = now + self.interval;
         true
     }
+}
+
+/// 控制面明确拒绝了这条连接（握手时回 `Unauthenticated` 或 `PermissionDenied`）：凭据无效、被吊销、名字和凭据不一致、
+/// Agent 被停用、旧方式的连接顶不掉带凭据的同名连接……返回控制面的状态（里面是它写的原因）。
+fn rejection(error: &anyhow::Error) -> Option<&tonic::Status> {
+    error
+        .chain()
+        .find_map(|e| e.downcast_ref::<tonic::Status>())
+        .filter(|status| {
+            matches!(
+                status.code(),
+                tonic::Code::Unauthenticated | tonic::Code::PermissionDenied
+            )
+        })
+}
+
+/// 被控制面拒绝之后的重试：下一次等多久，和上一次打印过的原因。
+///
+/// 等待从 `min` 开始每次翻倍、最多 `max`，连上一次就重置；加抖动时每次实际等的是算出来的时长的一半到全部
+/// （[`jittered`]）：管理员一次吊销、停用很多台 Agent 之后，它们不按同一个节奏一起重试。原因（状态码加说明）和上一次
+/// 打印的不同才再打一行，同一个原因反复被拒绝时不刷屏。
+struct Rejections {
+    min: Duration,
+    max: Duration,
+    jitter: bool,
+    next: Duration,
+    reported: Option<(tonic::Code, String)>,
+}
+
+impl Rejections {
+    fn new(min: Duration, max: Duration, jitter: bool) -> Self {
+        Self {
+            min,
+            max,
+            jitter,
+            next: min,
+            reported: None,
+        }
+    }
+
+    /// 又被拒绝了一次：返回这次要等多久，和要不要打印原因（第一次，或原因和上一次打印的不同）。
+    fn rejected(&mut self, status: &tonic::Status) -> (Duration, bool) {
+        let reason = (status.code(), status.message().to_string());
+        let report = self.reported.as_ref() != Some(&reason);
+        if report {
+            self.reported = Some(reason);
+        }
+        let wait = self.next;
+        self.next = (self.next * 2).min(self.max);
+        (if self.jitter { jittered(wait) } else { wait }, report)
+    }
+
+    /// 连上了：重置等待；之前被拒绝过时返回 true。
+    fn accepted(&mut self) -> bool {
+        self.next = self.min;
+        self.reported.take().is_some()
+    }
+}
+
+/// `wait` 的一半到全部之间的一个随机时长（上限不变，所以「最长 5 分钟」仍然成立）。
+/// 随机数取自标准库的 `RandomState`（每个进程的种子由系统随机给出），不为这一处多引入一个依赖。
+fn jittered(wait: Duration) -> Duration {
+    use std::hash::BuildHasher as _;
+    let half = wait / 2;
+    let span = u64::try_from(half.as_nanos()).unwrap_or(u64::MAX).max(1);
+    half + Duration::from_nanos(std::collections::hash_map::RandomState::new().hash_one(0u8) % span)
 }
 
 /// 连不上控制面（建立连接失败，或 gRPC 报告不可用）：与「连上了却握手失败」区分，前者不算新版本的失败。
@@ -922,6 +1191,18 @@ fn result_message(result: TaskResult) -> AgentMessage {
     AgentMessage {
         body: Some(agent_message::Body::Result(result)),
     }
+}
+
+/// `AgentMessage.result` 的字段号（`proto/sfly/agent/v1/agent.proto`）：[`result_message_size`] 用；测试把它和真的编码对一遍。
+const RESULT_FIELD: u32 = 6;
+
+/// 这条结果作为一条 `AgentMessage`（[`result_message`]）发出时编码之后的大小：控制面的网关拿一条消息的上限比的是它
+/// （长度前缀里的长度），不是结果自己的编码长度，差一个字段标签加长度前缀（4 到 5 个字节）。不复制结果，直接算。
+pub(crate) fn result_message_size(result: &TaskResult) -> usize {
+    use prost::Message as _;
+    use prost::encoding::{encoded_len_varint, key_len};
+    let len = result.encoded_len();
+    key_len(RESULT_FIELD) + encoded_len_varint(len as u64) + len
 }
 
 /// 任务执行方发往控制面的消息。
@@ -1061,5 +1342,223 @@ async fn serve(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    fn exhausted(message: &str) -> anyhow::Error {
+        anyhow::Error::from(tonic::Status::resource_exhausted(message)).context("wrapped")
+    }
+
+    #[test]
+    fn the_limit_is_read_from_the_control_planes_status() {
+        let error =
+            exhausted("message size 83886081 is larger than configured readMaxBytes 83886080");
+        assert_eq!(message_limit_exceeded(&error), Some(83_886_080));
+        let at_the_end = exhausted("larger than configured readMaxBytes 4194304");
+        assert_eq!(message_limit_exceeded(&at_the_end), Some(4_194_304));
+    }
+
+    #[test]
+    fn other_errors_are_not_a_message_limit() {
+        assert_eq!(
+            message_limit_exceeded(&exhausted("too many requests")),
+            None
+        );
+        assert_eq!(
+            message_limit_exceeded(&exhausted("readMaxBytes unknown")),
+            None
+        );
+        let other_code = anyhow::Error::from(tonic::Status::internal(
+            "message size 9 is larger than configured readMaxBytes 8",
+        ));
+        assert_eq!(message_limit_exceeded(&other_code), None);
+        assert_eq!(message_limit_exceeded(&anyhow::anyhow!("plain")), None);
+    }
+
+    /// 控制面比的是整条消息：这个数和真的编码一样，长度前缀的字节数变化的几个边界（127/128、16383/16384、2 MiB）两侧都对。
+    #[test]
+    fn the_size_of_a_result_message_is_the_size_of_the_whole_message() {
+        use prost::Message as _;
+        let sizes = [
+            0, 1, 100, 120, 124, 125, 126, 127, 128, 129, 16_380, 16_383, 16_384, 16_385,
+        ];
+        let big = [
+            2 * 1024 * 1024 - 1,
+            2 * 1024 * 1024,
+            2 * 1024 * 1024 + 1,
+            40 * 1024 * 1024,
+        ];
+        for text in sizes.into_iter().chain(big) {
+            let result = TaskResult {
+                task_id: "t".into(),
+                attempt: 1,
+                outputs_json: "x".repeat(text),
+                ..Default::default()
+            };
+            assert_eq!(
+                result_message_size(&result),
+                result_message(result.clone()).encoded_len(),
+                "输出 {text} 字节"
+            );
+            assert!(result_message_size(&result) > result.encoded_len());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 配置被 `{:?}` 打印时（#733）：控制面地址、镜像地址里的用户名和密码是掩码，Agent 凭据是 `<redacted>`。
+    #[test]
+    fn config_debug_masks_addresses_and_hides_the_credential() {
+        let mut config = Config::new("http://srvuser:srvpass-9@cp.example:50051", "agent-x");
+        config.token = Some(secret::Secret::from("sfly_agt_0123456789abcdef"));
+        config.mirrors = environment::LocalMirrors {
+            pypi: Some("https://idxuser:idxpass-7a2d@pypi.example/simple".into()),
+            github_release: Some("https://ghuser:ghpass-1c3e@gh.example/github-release".into()),
+            python_install: Some("https://pyuser:pypass-5c4f@py.example/".into()),
+        };
+        for shown in [format!("{config:?}"), format!("{config:#?}")] {
+            for secret in [
+                "srvuser",
+                "srvpass-9",
+                "sfly_agt_",
+                "idxuser",
+                "idxpass-7a2d",
+                "ghuser",
+                "ghpass-1c3e",
+                "pyuser",
+                "pypass-5c4f",
+            ] {
+                assert!(!shown.contains(secret), "{secret}：{shown}");
+            }
+            assert!(shown.contains("http://***@cp.example:50051"), "{shown}");
+            assert!(shown.contains("https://***@pypi.example/simple"), "{shown}");
+            assert!(shown.contains("agent-x"), "{shown}");
+        }
+    }
+
+    /// 凭据里有文字规则认不出的字符（`"`、空格、反引号、`<`、`>`、`\`）时（#757）：`Config::new` 登记了控制面地址，
+    /// `register_known_addresses` 登记了本机覆盖的三个镜像（这些字段构造之后才赋值）：`{:?}` 里没有用户名和密码。
+    #[test]
+    fn config_debug_masks_addresses_whose_credentials_have_awkward_characters() {
+        let mut config = Config::new(
+            "http://cfguser1:Hd1\"xq Tl1yz@cfg1.example:50051",
+            "agent-x",
+        );
+        // 控制面地址在 `Config::new` 里就登记了（镜像是构造之后才赋值的，下面再登记）。
+        let at_construction = format!("{config:?}");
+        for secret in ["cfguser1", "Hd1", "Tl1yz"] {
+            assert!(
+                !at_construction.contains(secret),
+                "{secret}：{at_construction}"
+            );
+        }
+        config.mirrors = environment::LocalMirrors {
+            pypi: Some("https://cfguser2:Hd2`xq<Tl2yz>@cfg2.example/simple".into()),
+            github_release: Some("https://cfguser3:Hd3 xq\"Tl3yz@cfg3.example/gh".into()),
+            // 读法不一致：`\` 在用户名位置，整个地址不写出来。
+            python_install: Some(r"https://CFG4\cfguser4:Hd4xqTl4yz@cfg4.example/py/".into()),
+        };
+        config.register_known_addresses();
+        for shown in [format!("{config:?}"), format!("{config:#?}")] {
+            for secret in [
+                "cfguser1",
+                "Hd1",
+                "Tl1yz",
+                "cfguser2",
+                "Hd2",
+                "Tl2yz",
+                "cfguser3",
+                "Hd3",
+                "Tl3yz",
+                "cfguser4",
+                "CFG4",
+                "Hd4xqTl4yz",
+            ] {
+                assert!(!shown.contains(secret), "{secret}：{shown}");
+            }
+            assert!(shown.contains("http://***@cfg1.example:50051"), "{shown}");
+            assert!(shown.contains("https://***@cfg2.example/simple"), "{shown}");
+            assert!(shown.contains("https://***@cfg3.example/gh"), "{shown}");
+        }
+    }
+
+    fn status(code: tonic::Code, message: &str) -> tonic::Status {
+        tonic::Status::new(code, message)
+    }
+
+    #[test]
+    fn only_unauthenticated_and_permission_denied_are_rejections() {
+        for code in [tonic::Code::Unauthenticated, tonic::Code::PermissionDenied] {
+            let error = anyhow::Error::new(status(code, "no")).context("wait for welcome");
+            assert!(rejection(&error).is_some(), "{code:?}");
+        }
+        for code in [
+            tonic::Code::Unavailable,
+            tonic::Code::InvalidArgument,
+            tonic::Code::Internal,
+            tonic::Code::Unknown,
+        ] {
+            let error = anyhow::Error::new(status(code, "no")).context("open agent stream");
+            assert!(rejection(&error).is_none(), "{code:?}");
+        }
+        assert!(rejection(&anyhow::anyhow!("connect refused")).is_none());
+    }
+
+    #[test]
+    fn the_wait_doubles_up_to_the_cap_and_resets_after_a_connection() {
+        let mut rejections =
+            Rejections::new(Duration::from_secs(30), Duration::from_secs(300), false);
+        let rejected = status(tonic::Code::Unauthenticated, "吊销了");
+        let waits: Vec<u64> = (0..7)
+            .map(|_| rejections.rejected(&rejected).0.as_secs())
+            .collect();
+        assert_eq!(waits, [30, 60, 120, 240, 300, 300, 300]);
+        assert!(rejections.accepted(), "之前被拒绝过");
+        assert!(!rejections.accepted(), "没有被拒绝过的不再提示");
+        assert_eq!(rejections.rejected(&rejected).0.as_secs(), 30);
+    }
+
+    #[test]
+    fn with_jitter_every_wait_is_between_half_and_all_of_the_backoff_and_they_differ() {
+        let rejected = status(tonic::Code::Unauthenticated, "吊销了");
+        let mut distinct = std::collections::HashSet::new();
+        for _ in 0..200 {
+            let mut rejections =
+                Rejections::new(Duration::from_secs(30), Duration::from_secs(300), true);
+            for base in [30, 60, 120, 240, 300, 300] {
+                let wait = rejections.rejected(&rejected).0;
+                assert!(
+                    wait >= Duration::from_secs(base) / 2 && wait <= Duration::from_secs(base),
+                    "{wait:?} 不在 {base} 秒的一半到全部之间"
+                );
+                if base == 30 {
+                    distinct.insert(wait);
+                }
+            }
+        }
+        // 第一次重试的等待在 15 到 30 秒之间随机：200 次里不会只有几个值（没有抖动时恰好是 30 秒一个值）。
+        assert!(distinct.len() > 100, "只有 {} 个不同的值", distinct.len());
+    }
+
+    #[test]
+    fn a_reason_is_reported_the_first_time_and_when_it_changes() {
+        let mut rejections = Rejections::new(Duration::from_secs(1), Duration::from_secs(8), false);
+        let revoked = status(tonic::Code::Unauthenticated, "吊销了");
+        let disabled = status(tonic::Code::PermissionDenied, "停用了");
+        let reports: Vec<bool> = [&revoked, &revoked, &revoked, &disabled, &disabled, &revoked]
+            .into_iter()
+            .map(|s| rejections.rejected(s).1)
+            .collect();
+        assert_eq!(reports, [true, false, false, true, false, true]);
+        // 说明一样、状态码不一样也是不同的原因。
+        let same_text = status(tonic::Code::PermissionDenied, "吊销了");
+        assert!(rejections.rejected(&same_text).1);
     }
 }

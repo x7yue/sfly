@@ -141,7 +141,7 @@ describe("失效的运行预设", () => {
 			});
 		});
 
-		it("新增参数、改默认值、改是否必填、改是否敏感以后，预设仍然可用", async () => {
+		it("新增参数、改默认值、改是否必填、改是否 secret 以后，预设仍然可用", async () => {
 			const { id, preset } = await sceneWithPreset();
 			await api.saveVersion(
 				id,
@@ -287,7 +287,7 @@ describe("失效的运行预设", () => {
 			expect(invalidated(await saveWarnings(id, declared({ verbose: null })))).toHaveLength(1);
 		});
 
-		it("没有让预设失效的改动没有这类警告：新增参数、改默认值、改是否必填、改是否敏感，没有预设的场景也一样", async () => {
+		it("没有让预设失效的改动没有这类警告：新增参数、改默认值、改是否必填、改是否 secret，没有预设的场景也一样", async () => {
 			const { id } = await sceneWithPreset();
 			const warnings = await saveWarnings(
 				id,

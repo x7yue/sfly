@@ -2,7 +2,8 @@
 //!
 //! - [`HttpFixture`]：本地 HTTP 服务（随机端口），既充当控制面的节点包下载地址，
 //!   也充当内网 PyPI 镜像（PEP 503 simple index，`<url>/simple/`）；可以给某个文件加延迟，并记录请求。
-//!   还接受 PUT（产物上传，#18）：记录路径、Authorization 头和请求体，默认回 201，可以改成别的状态码。
+//!   还接受 PUT（产物上传，#18）：记录路径、Authorization 头和请求体，默认回 201，可以改成别的状态码，
+//!   也可以按顺序先回几个指定的状态码，或者读完请求体之后一直不回应（#648）。
 //! - [`build_node_package`]：用 `sfly build` 把桩节点源码（testdata/stub-package）按指定的包名、版本、依赖构建成 `.sflypkg`。
 //! - [`dependency_wheel`]：手工生成一个只含空模块的纯 Python wheel，放进镜像当作第三方依赖。
 //! - [`fresh_venv`]：每个测试独立的共享 venv（安装测试会修改 venv）。
@@ -40,14 +41,29 @@ pub struct Upload {
     pub at: tokio::time::Instant,
 }
 
-/// 收到的 GET 请求：(路径, User-Agent)。
-type Requests = Arc<Mutex<Vec<(String, Option<String>)>>>;
+/// 收到的一次 GET 请求。
+#[derive(Debug, Clone)]
+struct Request {
+    path: String,
+    user_agent: Option<String>,
+    authorization: Option<String>,
+}
+
+type Requests = Arc<Mutex<Vec<Request>>>;
 
 #[derive(Default)]
 struct Files {
     uploads: Vec<Upload>,
     /// PUT 的响应状态码；None 为 201。
     upload_status: Option<u16>,
+    /// 先按顺序回这些状态码（每个 PUT 用掉一个），用完之后回 `upload_status`。
+    upload_script: Vec<u16>,
+    /// 读完请求体之后一直不回应（连接留着）。
+    upload_hang: bool,
+    /// 慢慢读请求体：每次最多读这么多字节，读完一次等这么久（控制面一直在读、只是读得慢的样子）。
+    upload_throttle: Option<(usize, Duration)>,
+    /// PUT 失败时响应的正文；None 为 `{}`。
+    upload_body: Option<String>,
     by_path: HashMap<String, File>,
     /// 镜像中的项目（规范化名）→ wheel 文件名。
     projects: HashMap<String, Vec<String>>,
@@ -171,7 +187,7 @@ impl HttpFixture {
     /// 收到的请求路径（按到达顺序）。
     pub fn requests(&self) -> Vec<String> {
         let requests = self.requests.lock().unwrap();
-        requests.iter().map(|(path, _)| path.clone()).collect()
+        requests.iter().map(|r| r.path.clone()).collect()
     }
 
     /// 对 `path` 的每次请求带的 User-Agent（没有这个头时为 None）。
@@ -179,8 +195,18 @@ impl HttpFixture {
         let requests = self.requests.lock().unwrap();
         requests
             .iter()
-            .filter(|(p, _)| p == path)
-            .map(|(_, ua)| ua.clone())
+            .filter(|r| r.path == path)
+            .map(|r| r.user_agent.clone())
+            .collect()
+    }
+
+    /// 对 `path` 的每次请求带的 `Authorization`（没有这个头时为 None）。
+    pub fn authorizations(&self, path: &str) -> Vec<Option<String>> {
+        let requests = self.requests.lock().unwrap();
+        requests
+            .iter()
+            .filter(|r| r.path == path)
+            .map(|r| r.authorization.clone())
             .collect()
     }
 
@@ -196,6 +222,28 @@ impl HttpFixture {
     /// 之后的 PUT 都回这个状态码。
     pub fn reject_uploads(&self, status: u16) {
         self.files.lock().unwrap().upload_status = Some(status);
+    }
+
+    /// 之后的 PUT 先按顺序回这些状态码（每个用掉一个），用完之后回默认的 201。
+    pub fn reply_to_uploads_with(&self, statuses: &[u16]) {
+        self.files.lock().unwrap().upload_script = statuses.to_vec();
+    }
+
+    /// 之后的 PUT 慢慢读请求体：每次最多读 `bytes` 字节，读完一次等 `tick`：控制面一直在读、只是读得慢。
+    pub fn throttle_uploads(&self, bytes: usize, tick: Duration) {
+        self.files.lock().unwrap().upload_throttle = Some((bytes, tick));
+    }
+
+    /// 之后的 PUT 读完请求体就不再回应：接了连接、收下内容，只是一直不说话（控制面卡住的样子）。
+    pub fn hang_uploads(&self) {
+        self.files.lock().unwrap().upload_hang = true;
+    }
+
+    /// 之后的 PUT 都回这个状态码和这段正文。
+    pub fn reject_uploads_with_body(&self, status: u16, body: &str) {
+        let mut files = self.files.lock().unwrap();
+        files.upload_status = Some(status);
+        files.upload_body = Some(body.to_string());
     }
 }
 
@@ -234,6 +282,18 @@ async fn serve(
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
         let mut body = buf[end..].to_vec();
+        let throttle = files.lock().unwrap().upload_throttle;
+        if let Some((bytes, tick)) = throttle {
+            let mut slow = vec![0u8; bytes];
+            while body.len() < length {
+                let n = stream.read(&mut slow).await?;
+                if n == 0 {
+                    break;
+                }
+                body.extend_from_slice(&slow[..n]);
+                tokio::time::sleep(tick).await;
+            }
+        }
         while body.len() < length {
             let n = stream.read(&mut chunk).await?;
             if n == 0 {
@@ -241,7 +301,7 @@ async fn serve(
             }
             body.extend_from_slice(&chunk[..n]);
         }
-        let status = {
+        let status_and_body = {
             let mut files = files.lock().unwrap();
             files.uploads.push(Upload {
                 path: head.split_whitespace().nth(1).unwrap_or("/").to_string(),
@@ -250,10 +310,22 @@ async fn serve(
                 body,
                 at: tokio::time::Instant::now(),
             });
-            files.upload_status.unwrap_or(201)
+            let response_body = files.upload_body.clone().unwrap_or_else(|| "{}".into());
+            if files.upload_hang {
+                None
+            } else if files.upload_script.is_empty() {
+                Some((files.upload_status.unwrap_or(201), response_body))
+            } else {
+                Some((files.upload_script.remove(0), response_body))
+            }
+        };
+        let Some((status, response_body)) = status_and_body else {
+            // 不回应：连接留着，直到测试结束、运行时关掉。
+            return std::future::pending().await;
         };
         let reply = format!(
-            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{response_body}",
+            response_body.len()
         );
         stream.write_all(reply.as_bytes()).await?;
         return stream.shutdown().await;
@@ -266,10 +338,11 @@ async fn serve(
         .next()
         .unwrap_or("/")
         .to_string();
-    requests.lock().unwrap().push((
-        path.clone(),
-        header(&head, "user-agent").map(str::to_string),
-    ));
+    requests.lock().unwrap().push(Request {
+        path: path.clone(),
+        user_agent: header(&head, "user-agent").map(str::to_string),
+        authorization: header(&head, "authorization").map(str::to_string),
+    });
     let redirect = files.lock().unwrap().redirects.get(&path).cloned();
     if let Some(location) = redirect {
         let reply = format!(

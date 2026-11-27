@@ -1,4 +1,4 @@
-// 保密环境变量的值按值打码（src/redact.ts 写着规则和做不到的）。
+// secret 环境变量的值按值打码（src/redact.ts 写着规则和做不到的）。
 import { SECRET_MASK } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { forLog, LOG_TEXT_LIMIT, Redactor } from "../src/redact.js";

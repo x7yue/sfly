@@ -18,7 +18,7 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注）；`--json` 里包节点还带 `inputs`、异步任务节点带 `params`（原样） |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 参数的值打码，什么是 secret 参数见 [运行场景](run-scenario.md) 的「运行抽屉」），最后是注释框（标题、成员、备注）；`--json` 里包节点还带 `inputs`、异步任务节点带 `params`（原样） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
 | `sfly scenario edit <场景> <操作> [--dry-run]` / `sfly scenario edit <场景> --file <文件>` | 局部编辑：加节点（`add 包/节点 [--after 节点]`）、删节点（`remove`）、连线（`connect`）、断开（`disconnect`）、改节点的字段（`set`），存成一个新版本；`--dry-run` 只检查 |
@@ -38,6 +38,8 @@ uv run sfly api --list runs
 | `sfly run actions <运行> [--failed] [--node 链:节点]… [--limit N]` | 各任务的动作摘要：各名称的个数和失败数、最近结束的和失败的动作；节点是业务阶段时，失败点在动作里 |
 | `sfly run metrics <运行> [--node 链:节点]… [--limit N]` | 各任务的指标摘要：每个指标的最后值、最大、最小、平均和点数 |
 | `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
+| `sfly agent credentials issue <名称> [--token-only]` / `list <名称>` / `revoke <名称> <凭据 id>` | 给一台 Agent 签发、列出、吊销 Agent 凭据（`sfly_agt_` 开头，只对这个名字有效；要管理员，项目的「管理」范围）。签发的原值只显示这一次：文本输出里单独一行，`--token-only` 只往 stdout 写原值一行（给管道用，交给远程机器上的 `read`，不经过命令行参数和 shell 历史），`--json` 带 `token`；`list` 只有前缀、状态和最后使用时间，没有原值；吊销立即生效，用它连着的连接断开。安装和轮换见 [安装 Agent](install-agent.md) 的「Agent 凭据」 |
+| `sfly agent register-dev [--host 主机名] [--env]` / `sfly agent revoke-dev <名称>` | 在开发机上注册、吊销**我的开发 Agent**：名字由控制面按你的登录生成（`dev-<登录名>-<主机>`），请求里不能给名字，凭据记在你名下；没有登录凭据（没有 `SFLY_API_TOKEN`、没有 `sfly login`）退出码是 5，不发请求；同一个人用同一个主机名只能注册一次，名字被占用时退出码是 6，换 `--host`（经 `install.sh` 是 `--dev-host`），名字是你自己以前注册的先 `sfly agent revoke-dev`。`--env` 往 stdout 写 `SFLY_AGENT_NAME=…`、`SFLY_TOKEN=…` 两行（`install.sh --dev` 用它）。装开发机直接用 `install.sh --dev`，它替你调用这条命令 |
 | `sfly package list` / `sfly package show <包>[@版本] [--agent Agent]` | 节点包和它们的版本；一个版本里每个节点类型的标题、声明了默认超时的写出默认超时、输入（类型、默认值、是否必填）和输出。`<包>@dev` 看用 `sfly dev` 加载在 Agent 上的开发版本的节点定义（它不在已发布的节点包列表里）；只算在线的 Agent（和触发运行时的检查一致，离线的 Agent 上次上报的定义不算）；同一个开发包加载在不止一台在线的 Agent 上时用 `--agent` 指定看哪一台的，没有加载在任何在线的 Agent 上时报错并提示 `sfly dev` |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` / `sfly api --describe <METHOD> <路径>` | 直接调用上面没有覆盖的接口；`--list` 列出全部接口；`--describe` 说明一个接口：它做什么、会不会改东西、请求和响应的字段 |
 | `sfly login [--server 地址] [--login-name 登录名] [--password-stdin] [--name 令牌名称] [--scope 范围]… [--expires-in-days 天数]` | 登录：问控制面地址、登录名和密码（终端里不回显；脚本里用 `--password-stdin` 从标准输入读一行，密码不能写在命令行参数里），换一个个人令牌，存进 `$SFLY_HOME/credentials.json`（权限 0600）；之后平台命令都带着它。令牌的原值不打印；这台控制面已经存过令牌时，先换到新的、存好，再吊销旧的（密码输错时原来的登录不受影响） |
@@ -51,8 +53,8 @@ uv run sfly api --list runs
 
 ### 控制面地址、令牌和昵称
 
-- **地址**按 `--server` > 环境变量 `SFLY_SERVER` > `$SFLY_HOME/agent.env`（默认 `~/.sfly/agent.env`）里的 `SFLY_CONTROL_PLANE_URL` > 默认地址 `http://127.0.0.1:8080` 的顺序取值，`sfly publish` 用同样的顺序。`install.sh --dev` 装好的开发机不用传 `--server`。
-- **令牌**按环境变量 `SFLY_API_TOKEN` > 凭据文件 `$SFLY_HOME/credentials.json` 里这台控制面的令牌（`sfly login` 写的）的顺序取值，放在请求头 `Authorization: Bearer` 里。脚本、CI 直接设 `SFLY_API_TOKEN`，不用登录；不用 `SFLY_TOKEN`：它是安装脚本和 `agent.env` 里 Agent 的共享令牌，在同一台机器上会混。令牌的范围不会超过签发人此刻的角色；个人令牌在控制台账号菜单的「令牌」页也能签发、查看和吊销。收到 401（没有登录，或令牌已失效、被吊销）时，错误信息的下一步写明 `sfly login`。令牌只发给控制面：请求被重定向到另一个源（协议、主机、端口任一不同）时不再带；在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码是明文）；凭据文件的权限别人也读得到时提示一次。`sfly logout` 收到 401（令牌已经失效）时本机的凭据照样删，但会说明令牌没有被这次登出吊销；403、500、连不上时不删本机的，并说明令牌没有被吊销、本机的凭据保留着。账号被停用期间令牌照样能吊销它自己（别的请求都拒绝，吊销自己的凭据例外），所以停用的账号登出时令牌会被吊销，启用之后不会再有效。`sfly publish` 也带令牌（发布要「发布」范围）。
+- **地址**按 `--server` > 环境变量 `SFLY_SERVER` > `$SFLY_HOME/agent.env`（默认 `~/.sfly/agent.env`）里的 `SFLY_CONTROL_PLANE_URL` > 默认地址 `http://127.0.0.1:8080` 的顺序取值，`sfly publish` 用同样的顺序。`install.sh --dev` 装好的开发机不用传 `--server`。地址里不能带用户名和密码（`http://用户名:密码@主机`）：带了就在发请求之前报错，用 `SFLY_API_TOKEN` 或 `sfly login` 提供身份。
+- **令牌**按环境变量 `SFLY_API_TOKEN` > 凭据文件 `$SFLY_HOME/credentials.json` 里这台控制面的令牌（`sfly login` 写的）的顺序取值，放在请求头 `Authorization: Bearer` 里。脚本、CI 直接设 `SFLY_API_TOKEN`，不用登录；不用 `SFLY_TOKEN`：它是安装脚本和 `agent.env` 里 Agent 的 Agent 凭据，在同一台机器上会混。令牌的范围不会超过签发人此刻的角色；个人令牌在控制台账号菜单的「令牌」页也能签发、查看和吊销。收到 401（没有登录，或令牌已失效、被吊销）时，错误信息的下一步写明 `sfly login`。令牌只发给控制面：请求被重定向到另一个源（协议、主机、端口任一不同）时不再带；在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码是明文）；凭据文件的权限别人也读得到时提示一次。`sfly logout` 收到 401（令牌已经失效）时本机的凭据照样删，但会说明令牌没有被这次登出吊销；403、500、连不上时不删本机的，并说明令牌没有被吊销、本机的凭据保留着。账号被停用期间令牌照样能吊销它自己（别的请求都拒绝，吊销自己的凭据例外），所以停用的账号登出时令牌会被吊销，启用之后不会再有效。`sfly publish` 也带令牌（发布要「发布」范围）。
 - **昵称**：有令牌时身份由令牌决定，保存场景版本、触发和取消运行时，控制面把令牌所属用户的显示名记为作者、触发人、取消人；`--nickname` 和 `SFLY_NICKNAME` 被忽略，并在 stderr 提示一次。没有令牌时（过渡期，强制鉴权之前）按 `--nickname` > 环境变量 `SFLY_NICKNAME` > 系统用户名的顺序取值，控制面同样把它记为作者、触发人、取消人；只读命令也会带上它，控制面不依赖它。
 
 ### 「经 …」只是标注
@@ -104,6 +106,7 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 
 - 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、节点上写了节点类型没有声明的输入名（写明节点、写错的名字、声明了哪些输入，差一两个字符时问是不是想写另一个；锁定开发版本的节点用它派发到的 Agent 上报的元信息检查，Agent 不在线、没有加载或几台的内容不一样时不查）、Agent 的版本不满足节点包的要求、节点用的开发版本（`包名@dev`）没有在它派发到的在线 Agent 上加载（下一步：在那台 Agent 所在的机器上、节点包源码目录下运行 `sfly dev`）这类问题会全部列出，退出码 2，不触发运行。预检的警告不阻断触发（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到它）：运行照常触发，警告写在触发之后的输出里；`--json` 时 stdout 的对象带 `warnings`（每项 `{code, message, node_id}`），警告和下一步提示也写到 stderr；`--wait` 时写在 stderr 里「已触发运行」那一行之后。没有警告时输出不变。
 - 入口参数整个接到某个节点的输入、值的类型不对时（例如 `--param concurrency=8.5` 接到 `integer` 输入），报「入口参数的值和它接到的节点输入的类型不符」（其余参数问题仍报「入口参数不对」），写明是哪个参数、接到哪个节点的哪个输入、值从哪来，下一步写出可以直接执行的命令（例如 `sfly run start <场景> --param concurrency=<整数>`；值来自运行预设或默认值时写去哪里改），退出码 2，不触发运行。8 和 8.0 都是整数。
+- secret 参数的值合计太大（所有写法合计超过 1048576 个字符，见 [运行场景](run-scenario.md)「secret 参数的大小上限」）时，触发前就被拒绝：说明分行写明原因（合计约多少、上限多少）、占得最多的是哪几个参数、怎么办，原样给出（不再列参数的声明），下一步是换一个更短的值再触发，退出码 2，不触发运行；`--json` 时错误对象带 `details`（每项 `{code, message, node_id?}`，`code` 是 `secret_params_too_large`）。触发时改不了的值（子流程里节点传的常量、子流程入口节点上的默认值）超限时，是预检的阻断项，和别的预检问题一起列出（说明缩进对齐），下一步是 `sfly scenario pull` 下载场景去改。场景里的默认值或运行预设已经超限时只有警告：`sfly run start` 在触发成功之后才打印警告（触发时给了更小的值才会成功），被拒绝时打印的是上面的错误，不另打印警告。
 - Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟，可以写 1 到 4294967295 秒；写得更大的保存和 `scenario check` 都会被拒绝，错误信息写明是哪个节点）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
 - 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数（参数表的「说明」列最前面是搭场景的人写的参数说明），退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
 - 场景保存了运行预设时，用 `--preset 名称` 按预设触发，见下面的「运行预设」。
@@ -183,7 +186,8 @@ sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集
 
 - `--tail N` 改行数；`--failed` 只看失败的任务；`--node 链:节点`（例如 `main:build`）和 `--level warn,error` 筛选，`--node` 可以重复。
 - 前面还有日志时，最后一行写明用 `--before <游标>` 继续往前读；`--after <游标>` 往后接续。游标只对同一组 `--failed`、`--node`、`--level` 有效。
-- `--all <文件>` 把完整日志下载成 JSONL 文件（每行一条日志，带所属任务、节点、尝试），stdout 只写文件路径和行数；需要完整内容时用 grep 去搜，不必读进上下文。`--json` 时每行输出一个 JSON 对象。
+- 有任务的**日志文件不在了或者比数据库记的短**（被删除、截短，主机掉电，或数据库和数据目录分开恢复；控制面在页里说明，#721）时，命令行把说明写到标准错误：哪几个任务（`链:节点#尝试`，各是文件不在了还是比记录的短，控制面最多列 20 个、总数另写）和可能的来路，说明这些任务只有剩下的日志；这条说明不写到标准输出（不带 `--json` 时标准输出里本来还有继续读的提示和截断提示；`--json` 时标准输出只有日志行），没有行时标准输出什么也不写（不是「没有日志」）。`--failed`、`--node` 时只列选中的尝试。`--json` 时标准错误里是一行和命令行的错误同一种形状的 JSON：`{"warning": {"code": "log_file_problems", "message": ..., "next": ..., "details": {"file_problems": [...], "file_problems_total": N}}}`。**退出码不变**（读到的是真的、剩下的内容）：只读标准输出、只看退出码的脚本看不到这件事；**要确认日志完整用 `--all`**——下载在文件有问题时报错、退出码非 0。
+- `--all <文件>` 把完整日志下载成 JSONL 文件（每行一条日志，带所属任务、节点、尝试），stdout 只写文件路径和行数；需要完整内容时用 grep 去搜，不必读进上下文。`--json` 时每行输出一个 JSON 对象。下载没下完（控制面发现日志文件在下载时被删除或截短了，连接中途断开，或者网络断了）时报错 `download_incomplete`、退出码 2、不写出文件（已有的同名文件不动），错误里写明重新下载的命令（带着原来的 `--failed`、`--node` 和加了引号的路径）；运行里有任务的日志文件已经不在了（超过保留期被清理，或者被删除）是控制面的 410 `expired` 错误，同样退出码 2（错误的 `details` 写明是哪几个任务、各是不见了还是变短了：除了保留期清理、被删除、被截短，主机掉电、数据库和数据目录分开恢复也会让日志文件比数据库记的短）。反向代理用 HTTP/1.0 连控制面时，下载中途的断开在传输层看不出来（见 README「反向代理」），命令行靠响应头 `x-sfly-log-expect: tasks=<m>; last_seq_sum=<S>` 核对：读完后按任务记下读到的最大序号，任务数或合计比头里的少就是没下完，报 `download_incomplete`（说明里写明是代理没让断开看出来）；没有这个头（旧的控制面）时不核对，部署时仍要配 `proxy_http_version 1.1`。
 
 `sfly run artifacts <运行>` 列出各任务的产物（名称、大小、sha256）；`--download <目录>` 下载到 `<目录>/<任务 id>/<产物名称>` 并校验 sha256；`--task` 只看某个任务（任务 id、`链:节点` 或 `链:节点#尝试`）。
 
@@ -193,7 +197,7 @@ sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集
 
 判断一次运行「成功且结果对」要看四样：节点的输出对不对，业务阶段（动作）在哪里失败，指标有没有数据，失败的节点出在哪。各有一条命令，都支持 `--json`；文本里被截断的地方写明怎么读剩下的。
 
-**节点的输出**：`sfly run show <运行> --outputs`。每个有输出的节点一段：`链:节点[#尝试]`、状态，下面是缩进的 JSON，取节点最后一次尝试的输出（下游节点引用的就是它）；入口节点、没执行完、失败或被跳过的节点没有输出，不列。`--node 链:节点` 只看这个节点（可以重复，写法同 `run logs --node`）；节点多时用 `--limit N`（默认 50）。文本里每个节点的输出最多写前 2000 个字符，被截断时写明共多少个字符和完整输出的命令（`sfly run show <运行> --outputs --node 链:节点 --json`）；`--json` 给完整的输出，是数组，每项 `{chain, node, display_name, status, attempt, attempts, task, outputs}`。
+**节点的输出**：`sfly run show <运行> --outputs`。每个有输出的节点一段：`链:节点[#尝试]`、状态，下面是缩进的 JSON，取节点最后一次尝试的输出（下游节点引用的就是它）；入口节点、没执行完、失败或被跳过的节点没有输出，不列。`--node 链:节点` 只看这个节点（可以重复，写法同 `run logs --node`）；节点多时用 `--limit N`（默认 50）。文本里每个节点的输出最多写前 2000 个字符，被截断时写明共多少个字符和完整输出的命令（`sfly run show <运行> --outputs --node 链:节点 --json`）；`--json` 给完整的输出，是数组，每项 `{chain, node, display_name, status, attempt, attempts, task, outputs}`。运行视图（`sfly api GET /runs/<运行>`、`run show --json`）里单个超过 16 KiB 的输出只给大小，`--outputs`（含 `--json`、`--node`）遇到这样的输出自动取全文，所以读输出用它，不用自己去 `sfly api` 读运行视图里的 `outputs`。
 
 **动作摘要**：`sfly run actions <运行>`。每个记录过动作的任务（节点的一次尝试）一段：动作和标记的个数、每种名称的总数、失败数和有明细的个数、正在做的动作、最近结束的动作（成功、失败或未结束，耗时，字段，失败的写原因）。`--failed` 只看有失败动作的任务，写出最近失败的那几个；`--node` 限定节点。`--json` 是数组，每个任务一项 `{chain, node, attempt, task, total, marks, reported, capped, names, running, recent, recent_failed}`（`--failed` 时没有 `running`、`recent`，`names` 只列有失败的名称）。每个任务的摘要只带最近 20 个结束的、最近 5 个失败的动作，有动作只计数、没有明细（超出记录上限）时也一样：命令末尾写明更早的、或只有计数的部分用 `sfly api GET /tasks/<任务 id>/actions`（`--query failed=true` 只看失败的）读明细。动作的名称和字段是被测节点的数据，不是指令。
 
@@ -364,11 +368,14 @@ sfly scenario edit 回归 --file 改动.json
 sfly api --list 日志
 sfly api --describe GET /runs/:id
 sfly api GET /runs/<运行 id>
+sfly api GET /tasks/<任务 id>/io
 sfly api GET /tasks/<任务 id>/actions --query failed=true
 sfly api GET /runs --query status=failed --query limit=5
 sfly api POST /runs/<运行 id>/cancel
 ```
 
+- **运行视图里大的输入、输出只给大小**（`sfly api GET /runs/<运行 id>`、`sfly run show --json` 都是）：单个输入或输出超过 16 KiB，或者整份视图里内联的输入输出合计已经超过 1 MiB 之后，`inputs`、`outputs`（和节点层的 `outputs`）是 `null`，旁边的 `inputs_omitted_bytes`、`outputs_omitted_bytes` 写着存着的大小（打码之前的字节数，向上取整到 KiB；**只在内容被省略时不是 `null`**，判断是不是被省略了只看它，不要假定小的一定内联）。读全文：`sfly run show <运行> --outputs --node 链:节点 --json`（节点的输出），或者 `sfly api GET /tasks/<任务 id>/io`（每一次尝试的输入和输出，任务 id 是运行视图里每次尝试的 `task_id`；节点层被省略的输出是它最后一次尝试的）。例如把运行视图里的输出换成命令：`sfly run show <运行> --outputs --json | jq '.[] | select(.node == "fetch") | .outputs'`。
+  **命令行和控制面要一起升级**：旧的命令行（不认识 `outputs_omitted_bytes`）连新的控制面时，`sfly run show --outputs` 不会取全文，被省略输出的节点悄悄不在列表里，退出码 0，只有标准错误上那句版本不一致的提示；先升级命令行。
 - 路径是带实际 id 的路径，不含 `/api` 前缀；`--query 名=值` 给查询参数（可以重复，也可以直接写在路径后面，`/runs?limit=5`），`--body` 给请求体：JSON 文本，或 `@文件` 从文件读（`@-` 从标准输入读）。
 - 发请求前按随 SDK 打包的路由清单校验方法、路径、查询参数和请求体；对不上时报错并列出最接近的路由，不发请求。上传节点包的接口会被拒绝，上传用 `sfly publish`。
 - `sfly api --list [关键字…]` 列出全部接口：方法、路径、种类（普通、SSE、下载、上传）、效果、一句话说明和参数（带 `*` 的必填）；后面的关键字筛选接口（要同时出现在「方法 路径 说明」里，可以按用途找，例如 `输出`、`日志`、`产物`、`预设`、`取消`），加 `--json` 看匹配接口完整的 JSON Schema。

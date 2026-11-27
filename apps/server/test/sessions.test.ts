@@ -25,13 +25,16 @@ import type { ManualClock } from "./support/manual-clock.js";
 import { messageId, persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
+import { asUsers, type UserFetch } from "./support/user-api.js";
 import { diffFootprints, settledFootprint } from "./support/write-footprint.js";
 
 let cp: TestControlPlane;
 let api: ApiClient;
+let users: UserFetch;
 beforeAll(async () => {
 	cp = await startTestControlPlane();
-	api = new ApiClient(cp);
+	users = asUsers(cp);
+	api = new ApiClient(users);
 }, 60_000);
 afterAll(async () => {
 	await cp?.close();
@@ -338,8 +341,11 @@ describe("读：一页事件、列表、上一轮的结局", () => {
 });
 
 describe("事件流：补发加实时", () => {
-	const idsOf = (sse: SseClient) =>
-		sse.received.filter((e) => e.event !== "time").map((e) => [e.event, e.id]);
+	/** 收到的事件（事件名和 ID），不含控制面时间；`snapshot` 另说：它发在补发读完、切到实时的那一刻（#545，位置见 session-snapshot.test.ts）。 */
+	const idsOf = (sse: SseClient, { snapshot = false } = {}) =>
+		sse.received
+			.filter((e) => e.event !== "time" && (snapshot || e.event !== "snapshot"))
+			.map((e) => [e.event, e.id]);
 
 	it("连上先从库里补发全部持久事件（事件名是类型，以序号作事件 ID），再接实时的；不持久的事件没有 ID", async () => {
 		const { id } = await newSession();
@@ -349,6 +355,8 @@ describe("事件流：补发加实时", () => {
 		try {
 			await sse.next("user_message");
 			await sse.next("turn_started");
+			// 补发读完、切到实时的那一刻，给这一条连接发一条快照（不持久，没有 ID）。
+			await sse.next("snapshot");
 			// 实时：不持久的（文字增量）和持久的（助手的消息）。
 			store().publish(id, { type: "assistant_delta", text: "我先" });
 			const live = await store().append(id, {
@@ -359,9 +367,10 @@ describe("事件流：补发加实时", () => {
 			expect(live.seq).toBe(3);
 			await sse.next("assistant_delta");
 			await sse.next("assistant_message");
-			expect(idsOf(sse)).toEqual([
+			expect(idsOf(sse, { snapshot: true })).toEqual([
 				["user_message", "1"],
 				["turn_started", "2"],
+				["snapshot", undefined],
 				["assistant_delta", undefined],
 				["assistant_message", "3"],
 			]);
@@ -413,6 +422,7 @@ describe("事件流：补发加实时", () => {
 				["user_message", "5"],
 				["user_message", "6"],
 			]);
+			await both.next("snapshot");
 			await both.expectNone(150);
 		} finally {
 			both.close();
@@ -475,12 +485,14 @@ describe("事件流：补发加实时", () => {
 			);
 			// 不持久的：三条按到达先后排在补发读到的最后一条（450）之后、新落库的第一条（451）之前。
 			const order = events.map((e) => (e.id === undefined ? e.event : Number(e.id)));
-			expect(order.slice(448, 454)).toEqual([
+			// 快照发在缓冲的实时事件放完之后、切到实时之后的第一条之前。
+			expect(order.slice(448, 455)).toEqual([
 				449,
 				450,
 				"thinking",
 				"assistant_delta",
 				"assistant_delta",
+				"snapshot",
 				451,
 			]);
 			// 补发完以后接着是实时的。
@@ -522,6 +534,8 @@ describe("事件流：补发加实时", () => {
 		const afterMax = await SseClient.open(cp, `/sessions/${id}/events?after=${SESSION_SEQ_MAX}`);
 		try {
 			await afterMax.next("time");
+			// 没有更晚的事件：只有连上时的快照（补发读完的那一刻发的）。
+			await afterMax.next("snapshot");
 			await afterMax.expectNone(150);
 			expect(afterMax.ended).toBe(false);
 		} finally {
@@ -539,6 +553,7 @@ describe("事件流：补发加实时", () => {
 					idsOf(sse).map(([, eventId]) => eventId),
 					huge,
 				).toEqual(["1", "2", "3"]);
+				await sse.next("snapshot");
 				await sse.expectNone(100);
 				expect(sse.ended, huge).toBe(false);
 			} finally {
@@ -552,6 +567,7 @@ describe("事件流：补发加实时", () => {
 		const sse = await SseClient.open(cp, `/sessions/${a.id}/events`);
 		try {
 			await sse.next("time");
+			await sse.next("snapshot");
 			await store().append(b.id, userBody(1));
 			store().publish(b.id, { type: "thinking" });
 			await sse.expectNone(150);
@@ -600,7 +616,14 @@ describe("助手没有配置：写接口 503，读接口照常", () => {
 
 	it("写接口先查请求：没有昵称 400、正文不合格 400、项目或会话不存在 404，然后才是 503", async () => {
 		const id = await seedSession(cp.database.url);
-		const noNickname = await cp.fetch("/projects/default/sessions", {
+		// 建会话只认用户的凭据：不带凭据是 401（不是 400 缺昵称）；别的会话接口在 #494 之前照旧，没有昵称 400。
+		const noCredential = await cp.fetch("/projects/default/sessions", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ text: "你好" }),
+		});
+		expect(noCredential.status).toBe(401);
+		const noNickname = await cp.fetch(`/sessions/${id}/messages`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ text: "你好" }),
@@ -802,6 +825,8 @@ async function using_project(id: string, run: (project: string) => Promise<void>
 	const accounts = new TestAccounts(cp.database.url);
 	try {
 		await accounts.project(id);
+		// 请求带的是用户的凭据（建会话只认它）：这个用户在这个项目里是编辑者。
+		await accounts.member(id, await users.userId("tester"), "editor");
 	} finally {
 		await accounts.close();
 	}

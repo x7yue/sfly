@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/db/database.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../src/projects/project-id.js";
 import { SessionStore } from "../src/sessions/session-store.js";
+import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { messageId } from "./support/sessions.js";
@@ -44,12 +45,20 @@ describe("会话事件的落库和发布顺序", () => {
 	/** 每个用例换一个：afterDetailRow 在构造时给。 */
 	let holdDetail: ((sessionId: string) => Promise<void>) | undefined;
 	let store: SessionStore;
+	/** 会话的发起人（用户）：开始一轮要签发会话令牌，没有发起人的用户的会话不开始新的一轮（#547）。 */
+	let author: string;
 	const clock = new ManualClock(new Date("2026-01-01T00:00:00.000Z"));
 
 	beforeAll(async () => {
 		testDb = await createTestDatabase();
 		database = openDatabase(testDb.url, () => {});
 		await database.migrate();
+		const accounts = new TestAccounts(testDb.url);
+		try {
+			author = await accounts.user("store_author");
+		} finally {
+			await accounts.close();
+		}
 		store = new SessionStore({
 			db: database.db,
 			clock,
@@ -71,7 +80,7 @@ describe("会话事件的落库和发布顺序", () => {
 			title: "顺序",
 			status,
 			createdBy: "alice",
-			createdByUserId: null,
+			createdByUserId: author,
 		});
 
 	/** 一个新项目：每个用例用自己的，「每个项目至多一个在做」的约束互不影响。 */
@@ -84,20 +93,30 @@ describe("会话事件的落库和发布顺序", () => {
 		return id as ProjectId;
 	};
 
-	/** 订阅一个会话的实时事件（和事件流的补发一起用 `store.follow`）。 */
+	/**
+	 * 订阅一个会话的实时事件（和事件流的补发一起用 `store.follow`）。`out` 是补发和实时的事件；补发读完切到实时的那一刻
+	 * 控制面还会发一条 `snapshot`（#545，只给这一条连接）：这些用例看的是持久事件的顺序，它另放在 `snapshots` 里，位置和内容见
+	 * session-snapshot.test.ts。
+	 */
 	const collect = (sessionId: string, after = 0) => {
 		const out: SessionEvent[] = [];
+		const snapshots: SessionEvent[] = [];
 		const stop = store.follow(
 			sessionId,
 			after,
-			{ emit: (event) => out.push(event), drained: () => Promise.resolve() },
+			{
+				emit: (event) => (event.type === "snapshot" ? snapshots : out).push(event),
+				drained: () => Promise.resolve(),
+			},
 			(error) => {
 				throw error;
 			},
 		);
-		return { out, stop };
+		return { out, snapshots, stop };
 	};
-	const shape = (out: SessionEvent[]) => out.map((e) => ("seq" in e ? e.seq : e.type));
+	/** 事件的序号（不持久的写类型）；快照（#545）不算：它的位置和内容见 session-snapshot.test.ts。 */
+	const shape = (out: SessionEvent[]) =>
+		out.filter((e) => e.type !== "snapshot").map((e) => ("seq" in e ? e.seq : e.type));
 
 	it("并发写同一个会话：发布的顺序等于序号的顺序；前一条还没发布完，后一条不开始落库", async () => {
 		const { id } = await newSession();
@@ -468,7 +487,7 @@ describe("会话事件的落库和发布顺序", () => {
 				title: "补推出错",
 				status: kind === "beginTurn" ? "idle" : "running",
 				createdBy: "alice",
-				createdByUserId: null,
+				createdByUserId: author,
 			});
 			const out: SessionEvent[] = [];
 			const stop = local.follow(
@@ -809,7 +828,7 @@ describe("会话事件的落库和发布顺序", () => {
 
 		it("createWithTurn：会话、用户的话、一轮开始在一个事务里；项目里已经有在做的就排队；事件写不进去，不留下行", async () => {
 			const project = await newProject();
-			const input = { project, title: "新", createdBy: "alice", createdByUserId: null };
+			const input = { project, title: "新", createdBy: "alice", createdByUserId: author };
 			const created = await store.createWithTurn(input, userBody(1));
 			expect(created.session).toMatchObject({ status: "running", currentTurn: 1 });
 			expect(created.queued).toBe(false);

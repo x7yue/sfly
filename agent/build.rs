@@ -14,6 +14,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `result_large_err` 门槛（128 字节），所以把 error 放进 Box，TaskResult 回到几十字节。
     let mut config = tonic_prost_build::Config::new();
     config.boxed("TaskResult.error");
+    // 带凭据的消息（任务凭据、Agent 凭据）不用 prost 生成的 `Debug`（它会把凭据原样打出来）：src/proto_debug.rs 手写，
+    // 凭据的位置写 `<redacted>`。Welcome 里的镜像地址可以带用户名和密码（#733）：同样手写，地址里写掩码。
+    config.skip_debug([
+        ".sfly.agent.v1.AssignTask",
+        ".sfly.agent.v1.Hello",
+        ".sfly.agent.v1.Welcome",
+    ]);
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)

@@ -10,6 +10,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
 import { Button } from "@/components/ui/button";
@@ -89,7 +90,7 @@ export function ConflictDialog({
 			const created = await callApi(orchestrationsApi.create, { body: { name } });
 			await callApi(orchestrationsApi.saveVersion, {
 				params: { id: created.id },
-				// 敏感默认值读不回来，带不到另一个场景：去掉，下面的提示说明。
+				// secret 默认值读不回来，带不到另一个场景：去掉，下面的提示说明。
 				body: { base_version: 0, document: withoutSecretPlaceholders(savableDocument(doc)) },
 			});
 			return created;
@@ -121,7 +122,8 @@ export function ConflictDialog({
 					<div className="rounded-lg border border-border-soft bg-sunk px-3 py-2.5">
 						{latest.error ? (
 							<p role="alert" className="m-0 text-sm text-danger-fg">
-								读取最新版本失败：{latest.error.message}
+								读取最新版本失败：
+								<ErrorMessage error={latest.error} />
 							</p>
 						) : loadLatestDiff && fresh ? (
 							<DocumentDiffView
@@ -157,13 +159,14 @@ export function ConflictDialog({
 				</form>
 				{secretDefaults > 0 && (
 					<p className="m-0 text-xs text-fg-3">
-						已设置的敏感默认值（{secretDefaults}{" "}
+						已设置的 secret 默认值（{secretDefaults}{" "}
 						个）读不回来，另存为新场景时不会带过去，需要的话到新场景里重新填写。
 					</p>
 				)}
 				{saveAsNew.error && (
 					<p role="alert" className="m-0 text-sm text-danger-fg">
-						另存失败：{saveAsNew.error.message}
+						另存失败：
+						<ErrorMessage error={saveAsNew.error} />
 					</p>
 				)}
 				<DialogFooter>

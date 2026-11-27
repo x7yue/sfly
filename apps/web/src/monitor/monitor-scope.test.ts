@@ -28,7 +28,9 @@ const attempt = (
 	status,
 	agent: "agent-a",
 	inputs: {},
+	inputs_omitted_bytes: null,
 	outputs: null,
+	outputs_omitted_bytes: null,
 	error: status === "failed" ? { kind: "node_error", message: "boom", location: null } : null,
 	queued_at: iso(0),
 	started_at: startedAt === null ? null : iso(startedAt),
@@ -46,6 +48,7 @@ const node = (id: string, status: NodeRunView["status"], attempts: AttemptView[]
 	status,
 	agent: "agent-a",
 	outputs: null,
+	outputs_omitted_bytes: null,
 	error: attempts.at(-1)?.error ?? null,
 	attempts,
 });

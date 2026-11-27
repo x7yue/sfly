@@ -93,7 +93,7 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	await expect(summary.getByRole("img", { name: "主链 2/2" })).toBeVisible();
 	await expect(drawer.getByRole("button", { name: "取消运行" })).toHaveCount(0);
 
-	// 运行参数：敏感参数已打码。
+	// 运行参数：secret 参数已打码。
 	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
 	const run = await (await controlPlane.fetch(`/runs/${runId}`)).json();
 	expect(run.params).toMatchObject({ host: "10.0.0.8", steps: 5, dry_run: true });
@@ -332,7 +332,7 @@ test("同时有不在线和准备环境中的 Agent 时，两种提醒都写", a
 	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeEnabled();
 });
 
-test("敏感参数默认隐藏，可以临时显示 5 秒", async ({ page, controlPlane, connectAgent }) => {
+test("secret 参数默认隐藏，可以临时显示 5 秒", async ({ page, controlPlane, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);
 	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);

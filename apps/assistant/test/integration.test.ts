@@ -206,7 +206,9 @@ describe("真的 pi：上游的错误原文不外传（#640）", () => {
 			expect(await h.turnEnd(id, 1, 60_000)).toMatchObject({ outcome: "completed" });
 			const events = h.events.of(id).map((r) => r.event);
 			expect(events.find((e) => e.type === "notice" && e.kind === "retry")).toMatchObject({
-				message: "上游出错（上游返回 502），正在重试第 1 次",
+				message: expect.stringMatching(
+					/^模型暂时不可用（502 模型端点出错），正在第 1\/\d 次重试，\d+ 秒后$/,
+				),
 				error_class: "upstream",
 			});
 			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
@@ -227,7 +229,7 @@ describe("真的 pi：上游的错误原文不外传（#640）", () => {
 			expect(end).toMatchObject({
 				outcome: "model_unavailable",
 				error_class: "auth",
-				reason: "上游拒绝了密钥（上游返回 401）",
+				reason: "密钥被拒绝（401）",
 			});
 			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
 			expect(h.logs.join("\n")).toContain(MARKER);
@@ -279,8 +281,8 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			const id = crypto.randomUUID();
 			await h.prompt(id, { text: "剧本：字面的连不上" });
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed", steps: 2, model_calls: 3 });
-			// 写 skill 一次、探工作台一次，用完都关了（不留下空闲的连接一直 ping）。
-			await eventually(() => expect(h.connections).toEqual({ opened: 2, closed: 2 }));
+			// 写 skill 一次、整理工作区一次、探工作台一次、提交一次，用完都关了（不留下空闲的连接一直 ping）。
+			await eventually(() => expect(h.connections).toEqual({ opened: 4, closed: 4 }));
 		} finally {
 			await h.close();
 		}
@@ -535,7 +537,7 @@ describe("真的 pi：一轮进行中被结束，工作台上的命令不留下�
 	}, 120_000);
 });
 
-describe("真的 pi：保密环境变量不出助手服务", () => {
+describe("真的 pi：secret 环境变量不出助手服务", () => {
 	it("工作台上的命令打印出 secret_env 的值：发出的所有事件、pi 原始事件、助手服务的日志里都没有它", async () => {
 		const h = await Harness.start();
 		try {

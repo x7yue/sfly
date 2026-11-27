@@ -5,6 +5,7 @@ import { PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
 import { KIND_CHIP } from "#/components/canvas/zoom-text";
+import { UntrustedText } from "#/components/untrusted-text";
 import { firstParagraph } from "#/lib/node-description";
 import { shortcutKeys, shortcutText } from "#/lib/shortcuts";
 import {
@@ -270,7 +271,10 @@ export function AddNodeMenu({
 								))}
 							</CommandGroup>
 							{groups.map((g) => (
-								<CommandGroup key={g.name} heading={`${g.name} @${g.version}`}>
+								<CommandGroup
+									key={g.name}
+									heading={<UntrustedText text={`${g.name} @${g.version}`} />}
+								>
 									{g.items.map((item) => (
 										<CommandItem
 											key={item.node}
@@ -312,11 +316,17 @@ function PackageRow({ item, detail }: { item: PackageItem; detail: string }) {
 			<KindChip kind="package" />
 			{summary ? (
 				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-					<span className="truncate">{item.title}</span>
-					<span className="line-clamp-2 text-xs text-fg-3">{summary}</span>
+					<span className="truncate">
+						<UntrustedText text={item.title} />
+					</span>
+					<span className="line-clamp-2 text-xs text-fg-3">
+						<UntrustedText text={summary} />
+					</span>
 				</span>
 			) : (
-				<span className="truncate">{item.title}</span>
+				<span className="truncate">
+					<UntrustedText text={item.title} />
+				</span>
 			)}
 			<span
 				className={cn(
@@ -324,7 +334,7 @@ function PackageRow({ item, detail }: { item: PackageItem; detail: string }) {
 					summary && "max-w-[40%] shrink-0",
 				)}
 			>
-				{detail}
+				<UntrustedText text={detail} />
 			</span>
 		</>
 	);
