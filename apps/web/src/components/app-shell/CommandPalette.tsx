@@ -30,6 +30,7 @@ import { ACTION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { useIdentity } from "#/lib/identity";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
+import { PROJECT } from "#/lib/project";
 import type { PaletteShortcutId } from "#/lib/shortcuts";
 import {
 	Command,
@@ -74,12 +75,12 @@ export function CommandPalette({
 	const pageCommands = usePaletteCommands();
 	// 「场景」分组只列出没有归档的场景。
 	const orchestrations = useQuery({
-		...apiQuery(orchestrationsApi.list, { query: {} }),
+		...apiQuery(orchestrationsApi.list, { params: { project: PROJECT }, query: {} }),
 		enabled: open,
 	});
 	// 「运行」分组：最近的运行（跨场景）。
 	const runs = useQuery({
-		...apiQuery(runListApi.list, { query: { limit: RECENT_RUNS } }),
+		...apiQuery(runListApi.list, { params: { project: PROJECT }, query: { limit: RECENT_RUNS } }),
 		enabled: open,
 	});
 	const scenarios = orchestrations.data?.orchestrations ?? [];

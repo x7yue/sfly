@@ -61,7 +61,7 @@ export class ApiClient {
 	}
 
 	async createOrchestration(name: string): Promise<string> {
-		const res = await this.post("/orchestrations", { name });
+		const res = await this.post("/projects/default/orchestrations", { name });
 		expect(res.status).toBe(201);
 		return ((await res.json()) as { id: string }).id;
 	}

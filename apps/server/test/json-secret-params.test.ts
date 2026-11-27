@@ -220,13 +220,13 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			const text = async (path: string) => (await cp.fetch(path)).text();
 			const outputs: Array<[string, string]> = [
 				["运行视图", await text(`/runs/${runId}`)],
-				["运行列表", await text("/runs")],
+				["运行列表", await text("/projects/default/runs")],
 				["场景的运行", await text(`/orchestrations/${id}/runs`)],
 				["运行的日志", await text(`/runs/${runId}/logs`)],
 				["任务的日志", await text(`/tasks/${a.taskId}/logs`)],
 				["任务日志的下载", await text(`/tasks/${a.taskId}/logs/download`)],
 				["运行日志的下载", await text(`/runs/${runId}/logs/download`)],
-				["仪表盘", await text("/dashboard")],
+				["仪表盘", await text("/projects/default/dashboard")],
 				["关注项", await text(`/runs/${runId}/focus?points=0`)],
 				["Agent 列表", await text("/projects/default/agents")],
 				["场景预检", await text(`/orchestrations/${id}/preflight`)],

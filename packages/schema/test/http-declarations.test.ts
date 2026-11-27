@@ -92,10 +92,10 @@ describe("契约里全部接口的声明", () => {
 			creates: "scenario",
 		});
 		// 新建、没有定位到已有资源：不写 creates
-		expect(find("POST /orchestrations")).toMatchObject({
+		expect(find("POST /projects/:project/orchestrations")).toMatchObject({
 			resource: { kind: "scenario", target: "collection" },
 		});
-		expect(find("POST /orchestrations")?.creates).toBeUndefined();
+		expect(find("POST /projects/:project/orchestrations")?.creates).toBeUndefined();
 		// 让资源（或它的一部分）不再可用
 		const removing = httpContract
 			.filter((def) => def.removes)
@@ -730,10 +730,13 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 
 	it("把 /dashboard 写成 system + global：拦住，说明写 system 就是公开，也说明怎么改", () => {
 		const wrong = withResource(dashboardApi.get, { kind: "system", target: "global" });
-		const [problem, ...rest] = problems(wrong);
-		expect(rest).toEqual([]);
+		const found = problems(wrong);
+		// 路径带项目（#488）：system 不属于项目这一条也拦住它。
+		expect(found).toHaveLength(2);
+		expect(found.join("\n")).toContain("system 不属于项目，路径里不能有 /projects/:project");
+		const problem = found.find((p) => p.includes("PATH_KINDS")) ?? "";
 		expect(problem).toContain(
-			"GET /dashboard：resource.kind 写的是 system，PATH_KINDS 里 /dashboard 对应 run",
+			"GET /projects/:project/dashboard：resource.kind 写的是 system，PATH_KINDS 里 /projects/:project/dashboard 对应 run",
 		);
 		expect(problem).toContain("声明成 system 就等于这个接口不带项目、不需要凭据（公开）");
 		expect(problem).toContain("声明写错了就改成 run");

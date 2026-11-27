@@ -374,14 +374,34 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 
 	it("列表（Agent、场景、运行、节点包、飞书机器人、控制台统计）里没有项目乙的行", async () => {
 		expect((await json("/projects/default/agents")).agents).toEqual([]);
-		expect((await json("/orchestrations")).orchestrations).toEqual([]);
-		expect(await json("/runs")).toMatchObject({
+		expect((await json("/projects/default/orchestrations")).orchestrations).toEqual([]);
+		expect(await json("/projects/default/runs")).toMatchObject({
 			runs: [],
 			counts: { running: 0, success: 0, failed: 0, cancelled: 0 },
 		});
 		expect((await json("/projects/default/packages")).packages).toEqual([]);
 		expect((await json("/feishu-bots")).bots).toEqual([]);
-		expect(await json("/dashboard")).toMatchObject({
+		// 按项目乙的场景筛选运行：路径里的项目是默认项目，筛出来是空的（运行记着自己的项目）。
+		expect(
+			(await json("/projects/default/runs?orchestration_id=00000000-0000-4000-8000-0000000000b1"))
+				.runs,
+		).toEqual([]);
+		// 对照：项目乙自己的路径下看得到它的场景、运行、Agent，控制台统计算的是它的。
+		expect(
+			((await json(`/projects/${OTHER}/orchestrations`)).orchestrations as { name: string }[]).map(
+				(x) => x.name,
+			),
+		).toEqual(["场景乙"]);
+		expect(
+			((await json(`/projects/${OTHER}/runs`)).runs as { id: string }[]).map((x) => x.id),
+		).toEqual(["00000000-0000-4000-8000-0000000000b3"]);
+		const theirDashboard = (await json(`/projects/${OTHER}/dashboard`)) as {
+			runs: { running: number };
+			agents: { online: number; offline: number };
+		};
+		expect(theirDashboard.runs.running).toBe(1);
+		expect(theirDashboard.agents.online + theirDashboard.agents.offline).toBe(1);
+		expect(await json("/projects/default/dashboard")).toMatchObject({
 			runs: { running: 0 },
 			running_runs: [],
 			agents: { online: 0, offline: 0 },
@@ -442,6 +462,11 @@ describe("默认项目的列表和按名字定位的接口看不到项目乙的�
 		expect(((await json("/feishu-bots")).bots as { name: string }[]).map((x) => x.name)).toEqual([
 			"bot-a",
 		]);
+		// 在默认项目下新建的场景不出现在项目乙的列表里。
+		const theirs = (await json(`/projects/${OTHER}/orchestrations`)).orchestrations as {
+			id: string;
+		}[];
+		expect(theirs.map((x) => x.id)).not.toContain(scenario);
 	});
 });
 
@@ -479,8 +504,11 @@ describe("标准节点包升级后在公共项目里：默认项目的接口照�
 		expect(archive.status).toBe(200);
 		expect(await archive.arrayBuffer()).toEqual(before);
 		expect(
-			(await api.getJson<{ setup: { package: { done: boolean; count: number } } }>("/dashboard"))
-				.setup.package,
+			(
+				await api.getJson<{ setup: { package: { done: boolean; count: number } } }>(
+					"/projects/default/dashboard",
+				)
+			).setup.package,
 		).toMatchObject({ done: true, count: 1 });
 	});
 });

@@ -11,7 +11,7 @@ import type {
 import { type PreparedEdits, prepareEdits } from "../orchestrations/scenario-edits.js";
 import { describeSecretDefaultProblem } from "../orchestrations/secret-defaults.js";
 import { versionCheck, versionDiff, versionWarnings } from "../orchestrations/version-check.js";
-import { DEFAULT_PROJECT } from "../projects/project-id.js";
+import { DEFAULT_PROJECT, pathProject } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
@@ -70,15 +70,15 @@ export function registerOrchestrationRoutes(
 		);
 	};
 
-	contractRoute(app, orchestrationsApi.create, async ({ body }, reply, raw) => {
+	contractRoute(app, orchestrationsApi.create, async ({ params, body }, reply, raw) => {
 		if (!requireNickname(raw, reply)) return reply;
 		return reply
 			.code(201)
-			.send(await orchestrations.create(DEFAULT_PROJECT, body.name, body.description));
+			.send(await orchestrations.create(pathProject(params), body.name, body.description));
 	});
 
-	contractRoute(app, orchestrationsApi.list, ({ query }) =>
-		listOrchestrationSummaries(db, DEFAULT_PROJECT, query),
+	contractRoute(app, orchestrationsApi.list, ({ params, query }) =>
+		listOrchestrationSummaries(db, pathProject(params), query),
 	);
 
 	contractRoute(app, orchestrationsApi.head, async ({ params }, reply) => {

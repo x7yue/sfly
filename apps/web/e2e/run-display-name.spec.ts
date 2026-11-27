@@ -51,7 +51,8 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 
 	const verify = await driveToRetry(agent, clock, fetch);
 	await expect(active.getByRole("listitem")).toHaveText([/^执行中核对结果（verify）agent-a/]);
-	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
+	const runId = (await (await controlPlane.fetch("/projects/default/runs?limit=1")).json()).runs[0]
+		.id as string;
 	await page.keyboard.press("Escape");
 
 	await page.clock.setFixedTime(clock.now());

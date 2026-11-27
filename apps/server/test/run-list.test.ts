@@ -48,7 +48,7 @@ describe("跨场景的运行列表", () => {
 	});
 
 	async function list(query = "") {
-		const res = await api.get(`/runs${query}`);
+		const res = await api.get(`/projects/default/runs${query}`);
 		expect(res.status, await res.clone().text()).toBe(200);
 		return runListApi.list.response.parse(await res.json());
 	}
@@ -258,7 +258,7 @@ describe("跨场景的运行列表", () => {
 			["sub", "c"],
 			["entry", "main"],
 		]);
-		const ended = (await api.getJson("/dashboard")) as {
+		const ended = (await api.getJson("/projects/default/dashboard")) as {
 			recent_ended: Array<{ id: string; failure?: { node_id: string } }>;
 		};
 		expect(ended.recent_ended.find((r) => r.id === runId)?.failure?.node_id).toBe("c");
@@ -452,7 +452,7 @@ describe("跨场景的运行列表", () => {
 			"?id_prefix=xyz",
 			"?id_prefix=%25",
 		]) {
-			const res = await api.get(`/runs${query}`);
+			const res = await api.get(`/projects/default/runs${query}`);
 			expect(res.status, query).toBe(400);
 			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
 				"invalid_request",

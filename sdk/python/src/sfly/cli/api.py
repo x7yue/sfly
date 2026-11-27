@@ -237,6 +237,10 @@ _MOVED_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", "/packages/:name/versions/:version"),
     ("GET", "/packages/:name/versions/:version/nodes/:node"),
     ("GET", "/packages/:name/versions/:version/archive"),
+    ("GET", "/orchestrations"),
+    ("POST", "/orchestrations"),
+    ("GET", "/runs"),
+    ("GET", "/dashboard"),
 )
 #: 旧写法里用查询参数 `project` 选项目的路由（发布到公共项目的过渡参数，#565）：新写法的项目取它。
 _PROJECT_QUERY_ROUTES = frozenset({("POST", "/packages")})

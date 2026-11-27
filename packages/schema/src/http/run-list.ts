@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { SessionRef } from "../sessions.js";
-import { endpoint, Timestamp } from "./contract.js";
+import { endpoint, ProjectParams, Timestamp } from "./contract.js";
 import { RunListPreset } from "./runs.js";
 
 /**
@@ -115,12 +115,13 @@ export const runListApi = {
 	 */
 	list: endpoint({
 		method: "GET",
-		path: "/runs",
+		path: "/projects/:project/runs",
 		summary: "列出运行（执行记录），可按状态、场景、关键字筛选",
 		effect: "read",
 		resource: { kind: "run", target: "collection" },
 		client: true,
 		key: ["runs", "list"],
+		params: ProjectParams,
 		query: RunListQuery,
 		response: z.object({
 			runs: z.array(RunListItem),

@@ -455,7 +455,7 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			expect(forScenario.runs.find((run) => run.id === mine.id)?.session).toEqual(ref);
 			expect("session" in (forScenario.runs.find((run) => run.id === byPerson) ?? {})).toBe(false);
 			const records = await api.getJson<{ runs: Array<{ id: string; session?: unknown }> }>(
-				"/runs",
+				"/projects/default/runs",
 			);
 			expect(records.runs.find((run) => run.id === mine.id)?.session).toEqual(ref);
 			expect("session" in (records.runs.find((run) => run.id === byPerson) ?? {})).toBe(false);
@@ -478,7 +478,7 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 
 			const dashboard = await api.getJson<{
 				running_runs: Array<{ id: string; session?: unknown }>;
-			}>("/dashboard");
+			}>("/projects/default/dashboard");
 			expect(dashboard.running_runs.find((run) => run.id === mine.id)?.session).toEqual(ref);
 			expect("session" in (dashboard.running_runs.find((run) => run.id === byPerson) ?? {})).toBe(
 				false,

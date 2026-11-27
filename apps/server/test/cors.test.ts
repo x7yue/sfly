@@ -100,8 +100,8 @@ describe("跨域：默认允许所有来源", () => {
 		cp = await startTestControlPlane();
 		const responses = await Promise.all([
 			cp.fetch("/projects/default/agents", { headers: { origin: PAGE } }),
-			cp.fetch("/api/runs", { headers: { origin: PAGE } }),
-			cp.fetch("/orchestrations", {
+			cp.fetch("/api/projects/default/runs", { headers: { origin: PAGE } }),
+			cp.fetch("/projects/default/orchestrations", {
 				method: "POST",
 				credentials: "omit",
 				headers: { "content-type": "application/json", origin: PAGE },

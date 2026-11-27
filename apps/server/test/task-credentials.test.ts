@@ -116,7 +116,7 @@ describe("任务凭据", () => {
 			cp.fetch(path, { method, headers: bearer(task.taskToken) });
 		expect((await upload(task.taskId, "x.txt", "x", task.taskToken)).status).toBe(403);
 		for (const [method, path] of [
-			["GET", "/orchestrations"],
+			["GET", "/projects/default/orchestrations"],
 			["GET", `/orchestrations/${scenario}`],
 			["POST", `/runs/${runId}/cancel`],
 			["GET", "/projects/default/agents"],

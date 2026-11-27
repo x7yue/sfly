@@ -552,7 +552,7 @@ test("表格：场景列吃掉多出来的宽度，其余列按内容收紧；�
 test("新建场景：名称为空也能提交，错误写在名称下并把焦点放回输入框；服务端拒绝的原因写在弹窗里，不发通知", async ({
 	page,
 }) => {
-	await page.route("**/api/orchestrations", async (route) => {
+	await page.route("**/api/projects/default/orchestrations", async (route) => {
 		if (route.request().method() !== "POST") return route.continue();
 		await route.fulfill({
 			status: 409,

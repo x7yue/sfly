@@ -66,9 +66,9 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "feishu_bot",
 		why: "飞书机器人的登记、改、删、引用、测试消息：路径里的 :name 是机器人名称",
 	},
-	"/dashboard": {
+	"/projects/:project/dashboard": {
 		kind: "run",
-		why: "控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；以后按项目隔离时，它的运行部分要按项目过滤",
+		why: "项目的控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；都只算路径里这个项目的",
 	},
 	"/auth": {
 		kind: "account",
@@ -92,6 +92,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/projects/:project/workbench": {
 		kind: "project",
 		why: "项目的工作台（助手的会话在哪台 Agent 上做事）：登记属于项目自己的设置，定位用路径里的 :project，要「管理」范围",
+	},
+	"/projects/:project/orchestrations": {
+		kind: "scenario",
+		why: "项目里的场景：列出和新建，路径里的 :project 是项目标识（场景的集合属于项目）",
+	},
+	"/projects/:project/runs": {
+		kind: "run",
+		why: "项目里的运行记录：跨场景的运行列表，路径里的 :project 是项目标识",
 	},
 	"/projects/:project/sessions": {
 		kind: "session",
@@ -188,10 +196,6 @@ export interface DeclarationRules {
  * 分几个 PR 搬，每搬一个领域就从这里删掉它的接口。键是 `方法 路径`；契约测试检查表里的接口都在契约里（搬了就不在了）。
  */
 export const PROJECT_PATH_PENDING: Readonly<Record<string, string>> = {
-	"GET /orchestrations": "#488 场景、运行、控制台统计",
-	"POST /orchestrations": "#488 场景、运行、控制台统计",
-	"GET /runs": "#488 场景、运行、控制台统计",
-	"GET /dashboard": "#488 场景、运行、控制台统计",
 	"GET /feishu-bots": "#488 飞书机器人",
 	"POST /feishu-bots": "#488 飞书机器人",
 	"PATCH /feishu-bots/:name": "#488 飞书机器人",

@@ -40,9 +40,15 @@ describe("API 客户端的错误和控制面时间", () => {
 	});
 
 	it("请求不符合契约时的 ApiError 带控制面给的详情，路径含查询参数", async () => {
-		const error = await client.runs.list({ query: { limit: 0 } }).catch((e: unknown) => e);
+		const error = await client.runs
+			.list({ params: { project: "default" }, query: { limit: 0 } })
+			.catch((e: unknown) => e);
 		expect(error).toBeInstanceOf(ApiError);
-		expect(error).toMatchObject({ status: 400, code: "invalid_request", path: "/runs?limit=0" });
+		expect(error).toMatchObject({
+			status: 400,
+			code: "invalid_request",
+			path: "/projects/default/runs?limit=0",
+		});
 		expect((error as ApiError).details).toEqual(
 			expect.arrayContaining([expect.objectContaining({ path: ["query", "limit"] })]),
 		);
@@ -75,7 +81,7 @@ describe("API 客户端的错误和控制面时间", () => {
 		const seen = controlPlaneTimes.length;
 		await client.system.health();
 		clock.advance(5_000);
-		await client.dashboard.get();
+		await client.dashboard.get({ params: { project: "default" } });
 		clock.advance(5_000);
 		await client.runs.get({ params: { id: "missing" } }).catch(() => {});
 		expect(controlPlaneTimes.slice(seen)).toEqual([

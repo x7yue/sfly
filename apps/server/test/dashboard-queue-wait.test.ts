@@ -56,7 +56,7 @@ describe("控制台运行块里排队中的节点在等什么", () => {
 		return agent;
 	};
 	const dashboard = async (): Promise<DashboardView> => {
-		const res = await cp.fetch("/dashboard");
+		const res = await cp.fetch("/projects/default/dashboard");
 		expect(res.status).toBe(200);
 		return dashboardApi.get.response.parse(await res.json());
 	};
@@ -201,7 +201,7 @@ describe("控制台运行块里排队中的节点在等什么", () => {
 		});
 		expect(node?.queue_wait?.holders.map((h) => h.run_id)).toEqual([holderRun]);
 		// 别的项目的场景名、运行编号一个字都不在响应里。
-		const body = JSON.stringify(await (await cp.fetch("/dashboard")).json());
+		const body = JSON.stringify(await (await cp.fetch("/projects/default/dashboard")).json());
 		expect(body).not.toContain("甲的秘密场景");
 		expect(body).not.toContain(foreign.run);
 		// 执行中的节点没有这两个字段的值。
