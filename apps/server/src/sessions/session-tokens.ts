@@ -16,6 +16,7 @@
 // 原值只出现在 {@link issueSessionToken} 的返回值里：交给 `commandEnv`（`./command-env.ts`）放进 `secret_env`，随 `prompt` 命令
 // 发给助手服务；控制面不落库、不写日志（这个文件里没有任何日志输出）。
 import { randomBytes, randomUUID } from "node:crypto";
+import { shortId } from "@sfly/orchestration";
 import {
 	ASSISTANT_STOP_WAIT_MS,
 	ASSISTANT_TURN_MAX_MS,
@@ -56,7 +57,7 @@ type SessionFields = Pick<
  */
 export function sessionTokenName(session: Pick<SessionFields, "id" | "title">): string {
 	const name = `会话：${session.title}`;
-	return nameProblem(name) === undefined ? name : `会话：${session.id.slice(0, 8)}`;
+	return nameProblem(name) === undefined ? name : `会话：${shortId(session.id)}`;
 }
 
 /** 签发的结果：原值（只在这里出现一次），和这次一并吊销的上一枚（通知打开着的事件流）。 */

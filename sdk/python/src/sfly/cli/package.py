@@ -6,6 +6,7 @@ import argparse
 from typing import Any
 
 from sfly.cli.client import ApiError, segment
+from sfly.cli.dev_version import DEV_VERSION
 from sfly.cli.errors import CliError
 from sfly.cli.output import add_limit_option, apply_limit, dump_json, format_table, more_note
 from sfly.cli.session import Session, command, common_options
@@ -16,7 +17,6 @@ _VERSIONS_SHOWN = 5
 _EXTENDED_TYPES = {"agent": "Agent 名称", "feishu_bot": "飞书机器人", "run_state": "运行状态"}
 
 # sfly dev 加载的开发版本的版本号（Agent 上登记为 包名@dev）。
-DEV_VERSION = "dev"
 
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
