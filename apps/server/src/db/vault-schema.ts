@@ -15,7 +15,7 @@ export const vaultKey = pgTable(
 	(t) => [check("vault_key_single", sql`${t.id} = 1`)],
 );
 
-/** 运行的加密副本（`secrets/run-vault.ts`）：原值集合、保密参数的原值、原样输出；运行删除时一起删。 */
+/** 运行的加密副本（`secrets/run-vault.ts`）：原值集合、secret 参数的原值、原样输出；运行删除时一起删。 */
 export const runVaults = pgTable("run_vaults", {
 	runId: uuid("run_id")
 		.primaryKey()

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import type { Tx } from "../db/database.js";
 import { runVaults } from "../db/vault-schema.js";
 
-/** 副本的内容：原值集合、保密参数的原值（按链实例 ID）、和打码后不一样的原样输出（按任务 ID）。 */
+/** 副本的内容：原值集合、secret 参数的原值（按链实例 ID）、和打码后不一样的原样输出（按任务 ID）。 */
 export interface RunVault {
 	values: unknown[];
 	params: Record<string, Record<string, unknown>>;
