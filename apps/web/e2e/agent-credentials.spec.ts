@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { FakeAgent } from "../../server/test/support/fake-agent.js";
-import { signInAs, signInAsAdmin } from "./agent-admin-support";
+import { setAuthKind, signInAs, signInAsAdmin } from "./agent-admin-support";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
@@ -458,6 +458,36 @@ test.describe("谁看得到这些按钮", () => {
 		const refused = await controlPlane.fetch("/agents/agent-a/credentials");
 		expect(refused.status).toBe(401);
 	});
+});
+
+test("机架头部：凭据提示排在名称、版本后面（不把名称推到右边），右侧是「凭据」「停用」按钮", async ({
+	page,
+	context,
+	controlPlane,
+	connectAgent,
+}) => {
+	await signInAsAdmin(context, controlPlane);
+	await connectAgent({ name: "agent-shared", agentVersion: "1.2.3" });
+	await setAuthKind(controlPlane, "agent-shared", "shared");
+	await page.goto("/agents");
+	const header = rack(page, "agent-shared").locator("header");
+	await expect(header.locator('[data-slot="auth-notice"]')).toContainText("用共享令牌连接");
+	const name = await header.getByRole("heading", { name: "agent-shared" }).boundingBox();
+	const notice = await header.locator('[data-slot="auth-notice"]').boundingBox();
+	const credentials = await header
+		.getByRole("button", { name: "agent-shared 的凭据" })
+		.boundingBox();
+	// 名称在提示前面（同一行时在左边，换行时在上面）；提示在「凭据」按钮的左边或上面，不压住它。
+	expect(name).not.toBeNull();
+	expect(notice).not.toBeNull();
+	const before = (name?.y ?? 0) < (notice?.y ?? 0) - 1 || (name?.x ?? 0) < (notice?.x ?? 0);
+	expect(before).toBe(true);
+	const overlaps =
+		(notice?.x ?? 0) < (credentials?.x ?? 0) + (credentials?.width ?? 0) &&
+		(credentials?.x ?? 0) < (notice?.x ?? 0) + (notice?.width ?? 0) &&
+		(notice?.y ?? 0) < (credentials?.y ?? 0) + (credentials?.height ?? 0) &&
+		(credentials?.y ?? 0) < (notice?.y ?? 0) + (notice?.height ?? 0);
+	expect(overlaps).toBe(false);
 });
 
 test("「如何接入 Agent」弹窗：写的是按台签发，命令用 read -rs 传凭据；不再说「配置了共享令牌时加上 --token」", async ({

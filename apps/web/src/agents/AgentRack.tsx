@@ -60,6 +60,7 @@ export function AgentRack({
 					<UntrustedText text={agent.name} />
 				</h2>
 				<RackFacts agent={agent} controlPlaneVersion={controlPlaneVersion} />
+				<AuthNotice agent={agent} />
 				<span className="flex-1" />
 				<span className="text-xs text-fg-3">
 					{agent.referencing_orchestrations > 0
@@ -120,7 +121,7 @@ export function AgentRack({
 
 /**
  * 状态（已停用最优先，其次更新中、更新失败这些，再是在线、离线）和跟在它后面的告警：停用的时间、
- * 最近一次连接用的凭据（共享令牌、没有凭据）、准备环境、更新的说明、安装、时钟偏差、
+ * 准备环境、更新的说明、安装、时钟偏差、
  * 能力不能被其它 Agent 调用、节点包安装失败。
  */
 function RackStatus({ agent }: { agent: AgentView }) {
@@ -135,7 +136,6 @@ function RackStatus({ agent }: { agent: AgentView }) {
 	const unavailable =
 		online && agent.endpoint.port !== null ? agent.endpoint.unavailable_reason : null;
 	const status = agentStatusView(agent);
-	const auth = authNotice(agent);
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
@@ -145,14 +145,6 @@ function RackStatus({ agent }: { agent: AgentView }) {
 					title={`停用于 ${formatFullDateTime(agent.disabled_at)}`}
 				>
 					停用于 <span className="font-mono">{formatDateTime(agent.disabled_at)}</span>
-				</span>
-			)}
-			{auth && (
-				<span className="text-xs">
-					<span className={auth.severity === "warn" ? "text-warn-fg" : "text-fg-2"}>
-						{auth.label}
-					</span>
-					<span className="text-fg-3"> · {auth.hint}</span>
 				</span>
 			)}
 			{online && agent.preparing_since && <PreparingBadge since={agent.preparing_since} />}
@@ -189,6 +181,21 @@ function RackStatus({ agent }: { agent: AgentView }) {
 				</span>
 			)}
 		</div>
+	);
+}
+
+/**
+ * 最近一次连接用的凭据的提示（共享令牌、没有凭据，`authNotice`）：放在名称和版本、系统这些事实后面，不在状态后面：
+ * 它比别的告警长，放在前面会把名称推到右边，扫一列名称就不方便了。头部右侧的「凭据」按钮就是它说的「换成 Agent 自己的凭据」的地方。
+ */
+function AuthNotice({ agent }: { agent: AgentView }) {
+	const auth = authNotice(agent);
+	if (auth === null) return null;
+	return (
+		<span data-slot="auth-notice" className="text-xs">
+			<span className={auth.severity === "warn" ? "text-warn-fg" : "text-fg-2"}>{auth.label}</span>
+			<span className="text-fg-3"> · {auth.hint}</span>
+		</span>
 	);
 }
 
