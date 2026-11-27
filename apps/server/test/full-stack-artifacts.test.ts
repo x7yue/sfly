@@ -91,7 +91,11 @@ describeWithAgent("全栈：产物与完整日志", () => {
 		]);
 		// SDK 返回的引用就是控制面给出的下载地址。
 		expect(refs).toEqual(Object.fromEntries(listed.artifacts.map((a) => [a.name, a.url])));
-		expect(await (await fetch(refs["图/截图.txt"] as string)).text()).toBe("像素");
+		expect(
+			await (
+				await fetch(refs["图/截图.txt"] as string, { headers: await cp.users.as("tester") })
+			).text(),
+		).toBe("像素");
 		// 后续节点拿到的是同一份引用。
 		expect((await api.node(runId, "use")).outputs).toEqual({ text: refs });
 	}, 60_000);

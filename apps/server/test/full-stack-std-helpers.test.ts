@@ -509,7 +509,9 @@ describeWithAgent("全栈：用 sfly-std 的辅助函数写的节点", () => {
 		expect((check.outputs as { samples: number }).samples).toBeGreaterThanOrEqual(1);
 		// 服务日志被收集成产物，服务已经停掉：端口不再有人监听。
 		const log = (check.outputs as { log: string }).log;
-		expect((await (await fetch(log)).text()).trim()).toBe("服务就绪");
+		expect((await (await fetch(log, { headers: await cp.users.as("tester") })).text()).trim()).toBe(
+			"服务就绪",
+		);
 		await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow();
 	}, 300_000);
 });
