@@ -6,6 +6,7 @@ import {
 } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { type ChartGroup, failedFirst } from "./chart-groups";
+import type { ChartBucket } from "./charts";
 import {
 	appendIncrement,
 	attemptWindow,
@@ -21,6 +22,8 @@ import {
 	hasSpread,
 	latestLine,
 	pickShown,
+	pointsOutsideAttempt,
+	timeRangeText,
 	valueExtent,
 } from "./charts";
 
@@ -69,6 +72,54 @@ describe("图表的时间范围", () => {
 		expect(
 			chartWindow({ started_at: at(10), ended_at: null }, { start: s(0), end: s(10) }, s(10)),
 		).toEqual({ start: s(10), end: s(11) });
+	});
+});
+
+describe("点都不在尝试的时段里（#389）", () => {
+	const bucket = (seconds: number): ChartBucket => ({
+		time: at(seconds),
+		agent_time: null,
+		points: 1,
+		min: 1,
+		max: 1,
+		avg: 1,
+		last: 1,
+	});
+	const line = (...seconds: number[]) => ({ name: "cpu", buckets: seconds.map(bucket) });
+	const running = { started_at: at(10), ended_at: null };
+
+	it("点落在尝试开始之前和现在之后：返回点所在的范围", () => {
+		expect(pointsOutsideAttempt([line(70, 130)], running, s(60), 60)).toEqual({
+			start: s(70),
+			end: s(190),
+		});
+		expect(
+			pointsOutsideAttempt([line(0)], { started_at: at(100), ended_at: at(200) }, s(300), 1),
+		).toEqual({
+			start: s(0),
+			end: s(1),
+		});
+	});
+
+	it("有一个点落在时段里就不算", () => {
+		expect(pointsOutsideAttempt([line(70), line(20)], running, s(60), 1)).toBeNull();
+		// 桶的结束伸进时段里也算。
+		expect(pointsOutsideAttempt([line(9)], running, s(60), 5)).toBeNull();
+	});
+
+	it("没有点、还没开始执行时不算", () => {
+		expect(pointsOutsideAttempt([line()], running, s(60), 1)).toBeNull();
+		expect(
+			pointsOutsideAttempt([line(70)], { started_at: null, ended_at: null }, s(60), 1),
+		).toBeNull();
+	});
+
+	it("范围和现在同一天只写钟点，否则写日期", () => {
+		const local = new Date(2026, 10, 17, 18, 2, 34).getTime();
+		expect(timeRangeText({ start: local, end: local + 60_000 }, local)).toBe("18:02:34 – 18:03:34");
+		expect(timeRangeText({ start: local, end: local + 60_000 }, local + 86_400_000)).toBe(
+			"2026-11-17 18:02:34 – 2026-11-17 18:03:34",
+		);
 	});
 });
 

@@ -1026,6 +1026,8 @@ export const MESSAGE = {
 	noData: MESSAGE_NO_DATA,
 	/** 运行监控详情的图表：缩放到的时间段里没有点。 */
 	noDataInRange: "所选时间段内无数据",
+	/** 有点，但都不在这次尝试的时段里（#389）：`range` 是点所在的时间范围。 */
+	clockOffset: (range: string) => `这台 Agent 的时间换算可能有偏差：点在 ${range}（控制面时间）`,
 	/** 尝试已经结束，一个点都没有上报。 */
 	noDataEnded: "这次尝试没有上报数据",
 	/** 没有节点处于执行中：运行监控的概览。 */

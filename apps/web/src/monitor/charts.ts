@@ -10,7 +10,7 @@ import {
 	seriesName,
 	sortedLabels,
 } from "@sfly/schema";
-import { formatFullDateTime, formatMetric, TIME_NOT_RECORDED } from "#/lib/format";
+import { formatClock, formatFullDateTime, formatMetric, TIME_NOT_RECORDED } from "#/lib/format";
 import type { ChartLine } from "./MetricChart";
 import type { TimeRange } from "./timeline-model";
 
@@ -61,6 +61,33 @@ export function chartWindow(
 	const start = Math.max(span.start, visible.start);
 	const end = Math.min(span.end, visible.end);
 	return { start, end: Math.max(end, start + MIN_CHART_SPAN) };
+}
+
+/**
+ * 有点、却没有一个落在这次尝试的时段里（开始到结束，还没结束就到 `now`）时，点所在的时间范围（第一个桶的开始到最后一个桶的
+ * 结束）；否则 null。Agent 的时间换算有偏差时，点换算成控制面时间以后会落到尝试时段之外（#389）。
+ */
+export function pointsOutsideAttempt(
+	lines: readonly ChartLine[],
+	attempt: AttemptTimes,
+	now: number,
+	bucketSeconds: number,
+): TimeRange | null {
+	const span = attemptSpan(attempt, now);
+	const starts = lines.flatMap((l) => l.buckets.map(bucketStartMs));
+	if (span === null || starts.length === 0) return null;
+	const width = bucketSeconds * 1000;
+	if (starts.some((t) => t + width > span.start && t <= span.end)) return null;
+	return { start: Math.min(...starts), end: Math.max(...starts) + width };
+}
+
+/** 一段时间怎么写：两端都和 `now` 同一天时只写钟点（`10:23:20 – 10:43:20`），否则写日期和钟点。 */
+export function timeRangeText(range: TimeRange, now: number): string {
+	const day = (t: number) => new Date(t).toDateString();
+	const today = day(range.start) === day(now) && day(range.end) === day(now);
+	const text = (t: number) =>
+		today ? formatClock(t) : formatFullDateTime(new Date(t).toISOString());
+	return `${text(range.start)} – ${text(range.end)}`;
 }
 
 /**
