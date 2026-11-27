@@ -245,7 +245,7 @@ test("Agent 列表：凭据种类和停用（Agent 自己的凭据、共享令�
 	clock,
 }) => {
 	for (const name of ["agent-own", "agent-shared", "agent-none", "agent-stopped"]) {
-		await connectAgent({ name, agentVersion: "1.2.3", os: "linux", arch: "x86_64", slots: 2 });
+		await connectAgent({ name, os: "linux", arch: "x86_64", slots: 2 });
 	}
 	await setAuthKind(controlPlane, "agent-shared", "shared");
 	await setAuthKind(controlPlane, "agent-none", "none");
@@ -253,7 +253,7 @@ test("Agent 列表：凭据种类和停用（Agent 自己的凭据、共享令�
 	await setAgentDisabled(controlPlane, "agent-stopped", true);
 
 	// 四个机架一屏放下：只有深色主题，没有浅色。
-	await page.setViewportSize({ width: 1440, height: 800 });
+	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.goto("/agents");
 	await expect(page.getByRole("region", { name: "agent-stopped", exact: true })).toContainText(
 		"已停用",
@@ -261,6 +261,9 @@ test("Agent 列表：凭据种类和停用（Agent 自己的凭据、共享令�
 	await expect(page.getByRole("region", { name: "agent-none", exact: true })).toContainText(
 		"没有凭据",
 	);
+	// 四个机架都在视口里（第一次的视口放不下，第四个被截了）。
+	const last = await page.getByRole("region", { name: "agent-stopped", exact: true }).boundingBox();
+	expect((last?.y ?? 0) + (last?.height ?? 0)).toBeLessThanOrEqual(1000);
 	await expect(page).toHaveScreenshot("agents-credentials.png");
 });
 

@@ -25,7 +25,7 @@ export async function setAgentDisabled(
 ): Promise<void> {
 	const accounts = new TestAccounts(controlPlane.database.url);
 	try {
-		const boss = await accounts.userNamed("agent-admin");
+		const boss = await accounts.userNamed("agentadmin");
 		await accounts.member("default", boss, "project_admin");
 		const token = await accounts.personalToken(boss);
 		const response = await controlPlane.fetch(

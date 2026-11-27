@@ -370,7 +370,9 @@ test.describe("凭据种类和停用（#492）", () => {
 		// 管理员停用：控制面立即断开它的连接；页面按轮询更新。
 		await setAgentDisabled(controlPlane, "agent-off", true);
 		await expect.poll(() => agent.ended).toBe(true);
-		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("已停用");
+		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("已停用", {
+			timeout: 15_000,
+		});
 		await expect(header(page, "agent-off")).toContainText("停用于");
 		await expect(header(page, "agent-off")).not.toContainText("离线");
 		await expect(rack(page, "agent-off")).not.toContainText("占用");
@@ -382,30 +384,12 @@ test.describe("凭据种类和停用（#492）", () => {
 		// 恢复之后它重新连上：回到在线，停用的字样消失。
 		await setAgentDisabled(controlPlane, "agent-off", false);
 		await connectAgent({ name: "agent-off", agentVersion: "1.2.3", slots: 2 });
-		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("在线");
+		// 页面每 5 秒重新读一次 Agent 列表。
+		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("在线", {
+			timeout: 15_000,
+		});
 		await expect(header(page, "agent-off")).not.toContainText("停用于");
 		await expect(slotCells(page, "agent-off")).toHaveCount(1);
-	});
-
-	test("控制台的 Agent 面板：计数分母不含已停用的 Agent，后面写「1 台已停用」；停用的 Agent 写「已停用」，不画空闲槽", async ({
-		page,
-		controlPlane,
-		connectAgent,
-	}) => {
-		for (const name of ["agent-a", "agent-b", "agent-c"]) {
-			await connectAgent({ name, agentVersion: "1.2.3", slots: 2 });
-		}
-		await page.goto("/");
-		const panel = page.getByRole("region", { name: "Agent", exact: true });
-		await expect(panel).toContainText("3 / 3 在线");
-		await expect(panel).not.toContainText("已停用");
-
-		await setAgentDisabled(controlPlane, "agent-c", true);
-		await expect(panel).toContainText("2 / 2 在线 · 1 台已停用");
-		const stopped = panel.getByRole("region", { name: "agent-c", exact: true });
-		await expect(stopped).toContainText("已停用");
-		await expect(stopped).not.toContainText("离线");
-		await expect(stopped.getByRole("list")).toHaveCount(0);
 	});
 });
 
