@@ -180,6 +180,27 @@ describe("真的 pi：恢复不了时换新的会话、放摘要", () => {
 		);
 	}
 
+	it("工作区换过去又换回来：旧的会话文件已经挪走，不会被 pi 在换回来之后找到（找到的话它缺第 2 轮，pi 又不报错、认不出来）：换回来的那一轮再换一次新会话，摘要里有第 1、2 轮", async () => {
+		const { h, id } = await reclaimed();
+		const other = join(h.root, "workbench", "other");
+		mkdirSync(other, { recursive: true });
+		const there = { name: "fake-workbench", address: h.workbench.address, workdir: other };
+		expect(
+			(await h.prompt(id, { turn: 2, text: "第二句话：在新的工作区", workbench: there })).status,
+		).toBe(202);
+		expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+		expect(notices(h, id, 2)).toHaveLength(1);
+		// 换回原来的工作区：pi 按工作目录找会话，会话目录里只剩第 2 轮的那份（cwd 是新的工作区），找不到。
+		const before = h.model.requests.length;
+		expect((await h.prompt(id, { turn: 3, text: "第三句话：换回来了" })).status).toBe(202);
+		expect(await h.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+		expect(notices(h, id, 3)).toHaveLength(1);
+		const first = text(firstRequestAfter(h, before)[1]?.content);
+		expect(first).toContain(`用户：${FIRST}`);
+		expect(first).toContain("用户：第二句话：在新的工作区");
+		expect(first.endsWith(`${BOUNDARY}\n第三句话：换回来了`)).toBe(true);
+	}, 120_000);
+
 	it("回收之后再被弄坏第二次：摘要里是全部的话（第 1、2 轮各一份），没有套着上一份摘要", async () => {
 		const { h, id, clock } = await reclaimed();
 		const dir = join(h.dataDir, "sessions", id, "pi-session");

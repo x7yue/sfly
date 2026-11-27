@@ -4,7 +4,14 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
+// `batch`：这一句 prompt 的回应和后面的事件攒起来、一次写出（和真的 pi 在一块数据里连着到的情形一样：助手服务收到回应之后，
+// 紧接着同一块数据里的事件先于「收到回应之后的那一步」被处理）。
+let batch;
+const out = (record) => {
+	const line = `${JSON.stringify(record)}\n`;
+	if (batch) batch.push(line);
+	else process.stdout.write(line);
+};
 out({
 	type: "fake_env",
 	env: process.env,
@@ -149,6 +156,10 @@ function handle(command) {
 	if (command.type !== "prompt") return respond(command);
 	const full = String(command.message);
 	let text = full;
+	if (text.startsWith("batch-")) {
+		batch = [];
+		text = text.slice("batch-".length);
+	}
 	// 恢复不了时助手服务把摘要放在第一句前面（#545）：剧本照用户自己的那句话选。
 	const marker = "【以上是之前的对话；下面是用户这一次说的话】\n";
 	if (full.startsWith("【平台说明】") && full.includes(marker)) {
@@ -510,4 +521,8 @@ function handle(command) {
 		settle();
 	}
 	// 其余（hang）：开始了，不结束。
+	if (batch) {
+		process.stdout.write(batch.join(""));
+		batch = undefined;
+	}
 }

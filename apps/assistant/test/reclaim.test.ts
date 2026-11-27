@@ -336,15 +336,20 @@ describe("恢复", () => {
 		]);
 	});
 
-	it("`prompt` 的回应和后面的事件（用户消息、助手的话、停下）在同一块数据里到：用户的话仍记在助手的话前面", async () => {
+	it("`prompt` 的回应和后面的事件（用户消息、助手的话、停下）在同一块数据里到：用户的话仍记下来，记在助手的话前面", async () => {
 		const { h } = await start();
-		for (let i = 0; i < 12; i += 1) {
-			const id = await oneTurn(h, `say:回答${i}||`);
-			const lines = readFileSync(join(h.dataDir, "sessions", id, "transcript.jsonl"), "utf8")
+		for (let i = 0; i < 5; i += 1) {
+			// 假 pi 把回应和这一轮的全部事件一次写出：助手服务在处理回应之后的那一步之前，这一轮已经做完了。
+			const id = await oneTurn(h, `batch-say:回答${i}||`);
+			const rows = readFileSync(join(h.dataDir, "sessions", id, "transcript.jsonl"), "utf8")
 				.trim()
 				.split("\n")
-				.map((l) => (JSON.parse(l) as { role: string }).role);
-			expect(lines, `第 ${i} 个会话`).toEqual(["user", "assistant"]);
+				.map((l) => JSON.parse(l) as { role: string; text: string });
+			expect(
+				rows.map((r) => r.role),
+				`第 ${i} 个会话`,
+			).toEqual(["user", "assistant"]);
+			expect(rows[0]?.text).toBe(`batch-say:回答${i}||`);
 		}
 	});
 
