@@ -56,6 +56,7 @@ import { NodeFilter } from "./NodeFilter";
 import { nodeKey } from "./node-ref";
 import { chainLabel, documentNodes, findNode } from "./run-model";
 import type { TimeRange } from "./timeline-model";
+import { useRevealGroup } from "./use-reveal-group";
 import {
 	attemptsSignature,
 	seriesQuery,
@@ -255,10 +256,17 @@ export function ChartWorkspace({
 		if (result.data && !entry.loaded.includes(result.data)) entry.loaded.push(result.data);
 	}
 
+	// 打开页面时滚到选中节点或第一个执行中 / 失败的组；之后选中节点时展开它的组并滚到可见处，版面变了再对准。
+	const {
+		reveal,
+		stop: stopRevealing,
+		userScroll,
+	} = useRevealGroup({ scroller, content, toolbar });
 	const changeFilter = (next: ReadonlySet<string> | null, open: Record<string, boolean> = {}) => {
 		actions.setFilter(next);
 		setOpened(open);
 		// 筛选变化时回到顶部。
+		stopRevealing();
 		if (scroller.current) scroller.current.scrollTop = 0;
 	};
 	const setAll = (open: boolean) =>
@@ -266,7 +274,6 @@ export function ChartWorkspace({
 			Object.fromEntries([...groups.map((g) => g.key), PLATFORM_KEY].map((k) => [k, open])),
 		);
 
-	// 打开页面时滚到选中节点或第一个执行中 / 失败的组；之后选中节点时展开它的组并滚到可见处。
 	const [scrollTo, setScrollTo] = useState<string | null>(null);
 	const selectedKey = selected ? nodeKey(selected) : null;
 	const lastSelected = useRef<string | null | undefined>(undefined);
@@ -289,20 +296,8 @@ export function ChartWorkspace({
 	useLayoutEffect(() => {
 		if (!scrollTo) return;
 		setScrollTo(null);
-		const box = scroller.current;
-		const el = box?.querySelector<HTMLElement>(`[data-group="${CSS.escape(scrollTo)}"]`);
-		if (!box || !el) return;
-		const top = el.offsetTop - (toolbar.current?.offsetHeight ?? 0) - 8;
-		// 看得见：组的上沿在工具栏下面，第一张图表露出大半（组标题和节点摘要在图表上面，只露出它们看不到曲线）。
-		// 图表还没有渲染出来时（组刚展开）只要求露出组标题那一截。
-		const chart = el.querySelector<HTMLElement>("[data-chart]");
-		const boxTop = box.getBoundingClientRect().top;
-		const needed = chart
-			? chart.getBoundingClientRect().top - boxTop + box.scrollTop + chart.offsetHeight * 0.75
-			: el.offsetTop + 40;
-		const visible = top >= box.scrollTop && needed <= box.scrollTop + box.clientHeight;
-		if (!visible) box.scrollTop = Math.max(0, top);
-	}, [scrollTo]);
+		reveal(scrollTo);
+	}, [scrollTo, reveal]);
 
 	const nodes = filter ? [...filter].filter((k) => k !== PLATFORM_KEY) : [];
 	const only = groups.find((g) => g.key === nodes[0])?.node;
@@ -319,6 +314,7 @@ export function ChartWorkspace({
 	return (
 		<section
 			ref={scrollerRef}
+			{...userScroll}
 			aria-label="图表工作区"
 			className={cn(
 				"relative flex-initial overflow-auto px-3 [scrollbar-gutter:stable]",
