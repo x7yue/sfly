@@ -241,6 +241,12 @@ _MOVED_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/orchestrations"),
     ("GET", "/runs"),
     ("GET", "/dashboard"),
+    ("GET", "/feishu-bots"),
+    ("POST", "/feishu-bots"),
+    ("PATCH", "/feishu-bots/:name"),
+    ("GET", "/feishu-bots/:name/references"),
+    ("DELETE", "/feishu-bots/:name"),
+    ("POST", "/feishu-bots/:name/test"),
 )
 #: 旧写法里用查询参数 `project` 选项目的路由（发布到公共项目的过渡参数，#565）：新写法的项目取它。
 _PROJECT_QUERY_ROUTES = frozenset({("POST", "/packages")})

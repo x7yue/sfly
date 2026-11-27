@@ -14,15 +14,14 @@ import type { z } from "zod";
  *
  * - `none`：不属于项目（`system`：健康检查、文档、SDK 与 Agent 二进制、安装脚本、API 客户端安装包、Python 索引），不需要凭据；
  * - `account`：账号类接口（登录、登出、当前用户、改密码、管理账号），不属于项目，不走范围表：认哪种凭据看 {@link ACCOUNT_ROUTES}；
- * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人）：取路径里的 `:project`。
- *   还没有搬到 `/projects/:project/…` 下的接口（#488 分领域搬，`PROJECT_PATH_PENDING`）路径里没有项目，`param` 是 null，项目就是默认项目；
+ * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人，#488）：取路径里的 `:project`；
  * - `scenario`、`run`、`task`、`session`：经场景、运行、任务或会话（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
  *   （任务经它所属的运行）。`param` 是路径里 ID 的参数名。
  */
 export type ProjectLocator =
 	| { from: "none" }
 	| { from: "account" }
-	| { from: "path"; param: string | null }
+	| { from: "path"; param: typeof PROJECT_PARAM }
 	| { from: "scenario" | "run" | "task" | "session"; param: string };
 
 /**
@@ -64,12 +63,12 @@ function locatorOfScoped(
 	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "dev_agent" | "feishu_bot",
 	target: ResourceTarget,
 ): ProjectLocator | undefined {
+	// 列表、新建、上传和按名字定位的，路径一定带 `:project`（契约检查 `checkProjectInPath` 保证）；按 ID 定位的一定不带。
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
 		return { from: "path", param: PROJECT_PARAM };
-	if (target === "collection" || target === "upload") return { from: "path", param: null };
 	if (typeof target === "object" && "params" in target) {
 		if (kind === "agent" || kind === "dev_agent" || kind === "package" || kind === "feishu_bot") {
-			return { from: "path", param: null };
+			return undefined;
 		}
 		return { from: kind, param: target.params };
 	}
