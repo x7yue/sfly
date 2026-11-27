@@ -786,6 +786,50 @@ test.describe("窄窗口", () => {
 	});
 });
 
+test("时间线停在底部时，窗口变矮（窄窗口里成果栏变高、时间线的可视高度变小）也停在底部；往上翻看的人不被拉回去", async ({
+	page,
+	controlPlane,
+}) => {
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const talk = Array.from({ length: 40 }, (_, n) => ({
+		type: "assistant_message" as const,
+		text: `第 ${n + 1} 句话，说点什么占个位置。`,
+		usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+	}));
+	const id = await seedSession(controlPlane.database.url, {
+		title: TITLE,
+		status: "idle",
+		events: [
+			...scenarioEvents(...talk),
+			{
+				type: "turn_end",
+				turn: 1,
+				outcome: "completed",
+				reason: "助手已完成",
+				steps: 1,
+				model_calls: 1,
+				duration_ms: 1000,
+			},
+		],
+	});
+	await page.goto(`/sessions/${id}`);
+	const scroller = page.getByTestId("session-scroll");
+	const fromBottom = () =>
+		scroller.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+	await expect.poll(fromBottom).toBeLessThan(2);
+	// 窗口变矮：时间线的可视高度变小，没有新内容，滚动位置不变——在底部的人要还在底部（最后一行不被切掉）。
+	await page.setViewportSize({ width: 1280, height: 600 });
+	await expect.poll(fromBottom).toBeLessThan(2);
+	// 往上翻看之后窗口再变化：不把人拉回底部。
+	await scroller.evaluate((el) => {
+		el.scrollTop = 100;
+	});
+	await expect.poll(fromBottom).toBeGreaterThan(200);
+	await page.setViewportSize({ width: 1280, height: 500 });
+	await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeLessThan(110);
+	expect(await fromBottom()).toBeGreaterThan(200);
+});
+
 test("成果：场景名当作别人写的文字、限宽：太长的在时间线的行里和成果栏里截断，悬停给全文，行还是一行、不超出成果栏", async ({
 	page,
 	controlPlane,
