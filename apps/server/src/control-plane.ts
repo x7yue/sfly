@@ -366,7 +366,10 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	}
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
-	const preflight = createPreflight({ version });
+	// 控制台里运行页的链接：配置了对外地址时是完整的地址，否则是路径（#449 的说明里用）。
+	const runLink = (runId: string) =>
+		`${options.publicHttpUrl?.replace(/\/+$/, "") ?? ""}/runs/${runId}`;
+	const preflight = createPreflight({ version, now: () => clock.now(), runLink });
 	const logs = new TaskLogs({
 		db: database.db,
 		clock,
@@ -407,6 +410,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	});
 	const metricQueries = new MetricQueries({ db: database.db, clock, metrics });
 	const engine = new Engine({
+		runLink,
 		db: database.db,
 		clock,
 		mutex,

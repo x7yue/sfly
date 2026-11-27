@@ -1171,3 +1171,4 @@ export const platformAdminActions = pgTable(
 );
 
 export * from "./vault-schema.js";
+export * from "./version-conflict-schema.js";

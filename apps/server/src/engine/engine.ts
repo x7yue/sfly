@@ -100,6 +100,11 @@ import {
 	type TaskRow,
 } from "./step.js";
 import { platformTimeoutHint } from "./timeout-hint.js";
+import {
+	otherVersionsInUse,
+	recordVersionConflicts,
+	versionInUseMessage,
+} from "./version-conflict.js";
 
 export { DEFAULT_LEASE_MS } from "./leases.js";
 
@@ -235,6 +240,8 @@ export class Engine implements AgentSessionHandler {
 			leaseMs?: number;
 			/** Welcome 里和调度无关的部分：目标版本、SDK wheel、镜像、Agent 二进制（src/agents/agent-environment.ts）。 */
 			agentEnvironment: AgentEnvironmentFor;
+			/** 运行的链接（控制台里的运行页），派发时版本冲突的说明里用（version-conflict.ts）。 */
+			runLink: (runId: string) => string;
 		},
 	) {}
 
@@ -269,7 +276,14 @@ export class Engine implements AgentSessionHandler {
 			// 会话令牌的触发：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
 			if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(step.tx);
 			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
-			if (!admitted.ok) return admitted;
+			if (!admitted.ok) {
+				// 版本冲突的拒绝要计数（#449）：这一步没有别的写入，提交的只有这几行。
+				await recordVersionConflicts(
+					step.tx,
+					(admitted.versionConflicts ?? []).map((c) => ({ ...c, at: step.now, stage: "trigger" })),
+				);
+				return admitted;
+			}
 			const { projectId, version, plan, params, runPreset } = admitted;
 			this.#documents.set(version.id, version.document);
 			this.#plans.set(version.id, plan);
@@ -1412,13 +1426,37 @@ export class Engine implements AgentSessionHandler {
 			return undefined;
 		}
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
+		const packageVersion = document.packages[node.package] ?? "";
+		// 这台 Agent 上同一个节点包的另一个版本正在执行：装上这个版本会换掉它的代码（#449）。预检拦过，这里是预检之后
+		// 别的运行先派发到这台 Agent 上的。任务以 env_error 失败、不重试，不发给 Agent。
+		const inUse = await otherVersionsInUse(step.tx, conn.name, node.package, packageVersion);
+		if (inUse.length > 0) {
+			const message = versionInUseMessage(node, packageVersion, conn.name, inUse, {
+				project: run.projectId,
+				now: step.now,
+				runLink: this.deps.runLink,
+			});
+			await recordVersionConflicts(step.tx, [
+				{
+					at: step.now,
+					stage: "dispatch",
+					projectId: run.projectId,
+					agentName: conn.name,
+					package: node.package,
+					version: packageVersion,
+					message,
+				},
+			]);
+			await this.#failTask(step, task, "env_error", message);
+			return undefined;
+		}
 		const content = await this.#assignContent(step, conn, task, {
 			run,
 			chain,
 			plan,
 			index,
 			node,
-			packageVersion: document.packages[node.package] ?? "",
+			packageVersion,
 		});
 		if (!content.ok) {
 			if (content.inputs) {
