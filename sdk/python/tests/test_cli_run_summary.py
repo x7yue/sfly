@@ -87,6 +87,38 @@ def test_a_single_line_error_is_unchanged() -> None:
     )
 
 
+def test_the_log_tail_does_not_repeat_the_traceback_shown_under_the_error() -> None:
+    message = (
+        "RuntimeError: 磁盘满了\n\nTraceback (most recent call last):\n"
+        '  File "node.py", line 3, in fail\n'
+        '    raise RuntimeError("磁盘满了")\n'
+        "RuntimeError: 磁盘满了"
+    )
+    data = summary(message)
+
+    def log(text: str, source: str = "stderr", level: str = "error") -> dict[str, Any]:
+        return {"time": "2026-01-01T00:00:01.000Z", "level": level, "source": source, "text": text}
+
+    data["failed"][0]["logs"] = [
+        log("开始写入", "sdk", "info"),
+        log("Traceback (most recent call last):"),
+        log('  File "node.py", line 3, in fail'),
+        log('    raise RuntimeError("磁盘满了")'),
+        log("RuntimeError: 磁盘满了"),
+        log("出错位置：node.fail 第 3 行", "sdk"),
+    ]
+    text = render_summary(data)
+
+    # 堆栈只在「错误：」下面出现一次；日志里那 4 行收成一行说明，别的日志照旧。
+    assert text.count("Traceback (most recent call last):") == 1
+    assert "      （4 行标准错误和上面「错误：」下面的堆栈相同，略去）" in text
+    assert "开始写入" in text
+    assert "出错位置：node.fail 第 3 行" in text
+    # 内容不同的标准错误照常显示。
+    data["failed"][0]["logs"] = [log("别的报错")]
+    assert "别的报错" in render_summary(data)
+
+
 def test_no_error_message_is_still_said_so() -> None:
     assert "    错误：没有错误信息" in render_summary(summary(None))
 

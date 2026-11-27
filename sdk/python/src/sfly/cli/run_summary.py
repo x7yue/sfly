@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sfly.cli.client import ApiError, Client, segment
@@ -312,6 +312,29 @@ def render_extra_sections(summary: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+def _log_tail(logs: Sequence[Mapping[str, Any]], shown: Sequence[str]) -> list[str]:
+    """最后几行日志。执行器把节点的堆栈同时写进了标准错误（成了日志）和错误信息（上面「错误：」下面已经显示），
+    标准错误里和那段逐行相同的连续几行收成一行说明，同一段堆栈不读两遍（#404）。"""
+    known = {line.rstrip() for line in shown if line.strip()}
+    out: list[str] = []
+    skipped = 0
+    for line in logs:
+        if line.get("source") == "stderr" and str(line["text"]).rstrip() in known:
+            skipped += 1
+            continue
+        if skipped:
+            out.append(_skipped_note(skipped))
+            skipped = 0
+        out.append(format_log_line(line, indent="      "))
+    if skipped:
+        out.append(_skipped_note(skipped))
+    return out
+
+
+def _skipped_note(count: int) -> str:
+    return f"      （{count} 行标准错误和上面「错误：」下面的堆栈相同，略去）"
+
+
 def _render_failed(item: Mapping[str, Any]) -> list[str]:
     tries = ""
     if item["attempt"] is not None:
@@ -335,7 +358,7 @@ def _render_failed(item: Mapping[str, Any]) -> list[str]:
     logs = item.get("logs") or []
     if logs:
         lines.append(f"    最后 {len(logs)} 行日志：")
-        lines.extend(format_log_line(line, indent="      ") for line in logs)
+        lines.extend(_log_tail(logs, split_error(error["message"])[1] if error else []))
     elif item.get("logs_note") is None and item.get("task"):
         lines.append("    没有日志")
     if item.get("logs_note"):
