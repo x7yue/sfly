@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ShellIndexRouteImport } from './routes/_shell/index'
 import { Route as ShellAgentsRouteImport } from './routes/_shell/agents'
+import { Route as ShellDashboardRouteImport } from './routes/_shell/dashboard'
 import { Route as ShellFeishuBotsRouteImport } from './routes/_shell/feishu-bots'
 import { Route as ShellPackagesRouteImport } from './routes/_shell/packages'
 import { Route as OrchestrationsIdRouteImport } from './routes/orchestrations/$id'
@@ -50,6 +51,11 @@ const ShellIndexRoute = ShellIndexRouteImport.update({
 const ShellAgentsRoute = ShellAgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellDashboardRoute = ShellDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellFeishuBotsRoute = ShellFeishuBotsRouteImport.update({
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/agents': typeof ShellAgentsRoute
+  '/dashboard': typeof ShellDashboardRoute
   '/feishu-bots': typeof ShellFeishuBotsRoute
   '/packages': typeof ShellPackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
@@ -144,6 +151,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/agents': typeof ShellAgentsRoute
+  '/dashboard': typeof ShellDashboardRoute
   '/feishu-bots': typeof ShellFeishuBotsRoute
   '/packages': typeof ShellPackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
@@ -165,6 +173,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/_shell/agents': typeof ShellAgentsRoute
+  '/_shell/dashboard': typeof ShellDashboardRoute
   '/_shell/feishu-bots': typeof ShellFeishuBotsRoute
   '/_shell/packages': typeof ShellPackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
@@ -187,6 +196,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/agents'
+    | '/dashboard'
     | '/feishu-bots'
     | '/packages'
     | '/orchestrations/$id'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/agents'
+    | '/dashboard'
     | '/feishu-bots'
     | '/packages'
     | '/orchestrations/$id'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/_shell/agents'
+    | '/_shell/dashboard'
     | '/_shell/feishu-bots'
     | '/_shell/packages'
     | '/orchestrations/$id'
@@ -284,6 +296,13 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents'
       preLoaderRoute: typeof ShellAgentsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/dashboard': {
+      id: '/_shell/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof ShellDashboardRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/feishu-bots': {
@@ -382,6 +401,7 @@ declare module '@tanstack/react-router' {
 
 interface ShellRouteChildren {
   ShellAgentsRoute: typeof ShellAgentsRoute
+  ShellDashboardRoute: typeof ShellDashboardRoute
   ShellFeishuBotsRoute: typeof ShellFeishuBotsRoute
   ShellPackagesRoute: typeof ShellPackagesRoute
   ShellIndexRoute: typeof ShellIndexRoute
@@ -398,6 +418,7 @@ interface ShellRouteChildren {
 
 const ShellRouteChildren: ShellRouteChildren = {
   ShellAgentsRoute: ShellAgentsRoute,
+  ShellDashboardRoute: ShellDashboardRoute,
   ShellFeishuBotsRoute: ShellFeishuBotsRoute,
   ShellPackagesRoute: ShellPackagesRoute,
   ShellIndexRoute: ShellIndexRoute,

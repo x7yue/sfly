@@ -19,7 +19,7 @@ import type { ShortcutId } from "#/lib/shortcuts";
 export interface NavItem {
 	to:
 		| "/"
-		| "/sessions"
+		| "/dashboard"
 		| "/orchestrations"
 		| "/runs"
 		| "/agents"
@@ -29,11 +29,19 @@ export interface NavItem {
 	label: string;
 	icon: LucideIcon;
 	shortcut: ShortcutId;
+	/** 这个前缀下的页面也算这一项（侧边栏高亮）：会话页在 `/sessions/` 下，属于首页的「助手」。 */
+	nested?: string;
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
-	{ to: "/", label: PAGE.dashboard, icon: LayoutDashboardIcon, shortcut: "go-dashboard" },
-	{ to: "/sessions", label: PAGE.assistant, icon: MessageSquareIcon, shortcut: "go-assistant" },
+	{
+		to: "/",
+		label: PAGE.assistant,
+		icon: MessageSquareIcon,
+		shortcut: "go-assistant",
+		nested: "/sessions/",
+	},
+	{ to: "/dashboard", label: PAGE.dashboard, icon: LayoutDashboardIcon, shortcut: "go-dashboard" },
 	{ to: "/orchestrations", label: PAGE.scenarios, icon: WorkflowIcon, shortcut: "go-scenarios" },
 	{ to: "/runs", label: PAGE.runs, icon: PlayIcon, shortcut: "go-runs" },
 	{ to: "/agents", label: PAGE.agents, icon: ServerIcon, shortcut: "go-agents" },

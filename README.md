@@ -188,7 +188,7 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
    ```
 
    `workbench` 换成工作台那台 Agent 的名字。**登记之后控制面只接受 Agent 凭据，共享令牌（`SFLY_AGENT_TOKEN`）和不带凭据的连接都被拒绝**，对整个部署生效、不只这个项目；条件、被拒绝时怎么办见下面「登记工作台」。
-6. 确认：`docker compose --profile assistant ps` 里三个服务都在；控制台的 Agent 页上 `workbench` 在线、「与控制面一致」是「是」；「助手」页顶上的就绪状态是可以用（没有就绪时它写明缺什么：模型没配、没有登记工作台、工作台不在线……）。
+6. 确认：`docker compose --profile assistant ps` 里三个服务都在；控制台的 Agent 页上 `workbench` 在线、「与控制面一致」是「是」；「助手」页（首页）顶上的就绪状态是可以用（没有就绪时它写明缺什么：模型没配、没有登记工作台、工作台不在线……）。
 
 **登记工作台**（`PUT /projects/<项目>/workbench`，请求体 `{"agent": "<Agent 的名字>"}`，项目管理员；用 `sfly login` 登录的个人令牌或控制台的登录，项目令牌、会话令牌不行）：
 

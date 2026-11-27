@@ -103,7 +103,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	/** 会话已经没有了（新建会话等第一轮结局期间点了停止，没有被碰过的会话被删掉）：回到列表。是这个错误就返回 true。 */
 	const goBack = useCallback(() => {
 		notify.info(SESSION.page.gone);
-		void navigate({ to: "/sessions" });
+		void navigate({ to: "/" });
 	}, [navigate]);
 	const onGone = useCallback(
 		(error: unknown) => {

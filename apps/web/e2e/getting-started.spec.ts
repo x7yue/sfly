@@ -16,7 +16,7 @@ const whiteButtons = (page: Page) => page.locator('[data-variant="primary"]');
 test("全新环境：控制台只有四步，没有统计、运行和 Agent 面板，也没有页头的计数和「运行场景」", async ({
 	page,
 }) => {
-	await page.goto("/");
+	await page.goto("/dashboard");
 
 	await expect(panel(page)).toBeVisible();
 	await expect(panel(page).getByRole("heading", { level: 2 })).toHaveText("开始使用");
@@ -43,7 +43,7 @@ test("每完成一步，白色按钮移到下一步；出现第一个运行后�
 	context,
 }) => {
 	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-	await page.goto("/");
+	await page.goto("/dashboard");
 
 	// 1. 没有 Agent：白色按钮是「复制安装命令」，把接入命令写进剪贴板。
 	await expect(whiteButtons(page)).toHaveCount(1);
@@ -113,7 +113,7 @@ test("白色按钮跟着第一个没完成的步骤：Agent 掉线后回到第 1
 	const agent = await connectAgent({ name: "verify-agent", slots: 2 });
 	await publishPackage(controlPlane);
 	await createScenario(controlPlane, "巡检", scenarioUsing("verify-agent"));
-	await page.goto("/");
+	await page.goto("/dashboard");
 
 	await expect(step(page, "run")).toHaveAttribute("data-state", "next");
 	await expect(whiteButtons(page)).toHaveCount(1);
@@ -143,7 +143,7 @@ test("有多个 Agent、节点包和场景时，完成的步骤写出个数和�
 	await publishPackage(controlPlane, { name: "other-checks" });
 	await createScenario(controlPlane, "巡检");
 	await createScenario(controlPlane, "压测");
-	await page.goto("/");
+	await page.goto("/dashboard");
 
 	await expect(step(page, "agent")).toContainText("agent-a 等 2 台在线");
 	await expect(step(page, "package")).toContainText("已发布 2 个节点包，最近是 ");

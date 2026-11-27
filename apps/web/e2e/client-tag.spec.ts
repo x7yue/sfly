@@ -65,7 +65,7 @@ test("运行记录：经 AI 编程助手触发的运行，卡片、历史表格�
 	await expect(triggeredBy(viaDone)).toHaveText("tester 经 Claude Code");
 	await expect(triggeredBy(byHandDone)).toHaveText("tester");
 
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const block = (id: string) =>
 		page
 			.getByRole("region", { name: "正在运行", exact: true })

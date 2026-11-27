@@ -11,7 +11,7 @@ const block = (page: Page, scenario: string) =>
 
 async function openDashboard(page: Page, clock: { now(): Date }) {
 	await page.clock.setFixedTime(clock.now());
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("region", { name: "正在运行" })).toBeVisible();
 }
 

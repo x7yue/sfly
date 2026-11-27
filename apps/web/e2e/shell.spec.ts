@@ -10,17 +10,17 @@ const breadcrumb = (page: import("@playwright/test").Page) =>
 
 test("侧边栏在八个一级页面之间切换，当前页高亮，面包屑跟随", async ({ page }) => {
 	await page.goto("/");
-	await expect(breadcrumb(page)).toHaveText(/控制台/);
+	await expect(breadcrumb(page)).toHaveText(/助手/);
 
 	for (const [label, url] of [
-		["助手", /\/sessions\/?$/],
+		["控制台", /\/dashboard$/],
 		["场景编排", /\/orchestrations$/],
 		["运行记录", /\/runs$/],
 		["Agent 管理", /\/agents$/],
 		["节点包管理", /\/packages$/],
 		["飞书机器人", /\/feishu-bots$/],
 		["开发文档", /\/docs$/],
-		["控制台", /\/$/],
+		["助手", /\/$/],
 	] as const) {
 		await sidebar(page).getByRole("link", { name: label }).click();
 		await expect(page).toHaveURL(url);
@@ -79,7 +79,7 @@ test("侧边栏可以折叠成一列图标，刷新后保持", async ({ page }) 
 
 test("命令面板：Ctrl K 打开，搜索并跳转到页面或场景", async ({ page, controlPlane }) => {
 	const scenarioId = await createScenario(controlPlane, "日终数据处理");
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 
 	await page.keyboard.press("Control+k");
@@ -124,7 +124,7 @@ test("命令面板：Ctrl K 后马上输入，字落在搜索框里，回车执�
 test("命令面板刚打开时，输入框的 aria-activedescendant 就指向高亮的那一项；输入停顿后读出匹配到几条结果", async ({
 	page,
 }) => {
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 	await page.keyboard.press("Control+k");
 	const palette = page.getByRole("dialog", { name: "命令面板" });
@@ -210,7 +210,7 @@ test("命令面板执行命令：打开快捷键面板", async ({ page }) => {
 });
 
 test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快捷键都生效", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 	await page.keyboard.press("?");
 	const panel = page.getByRole("dialog", { name: "快捷键" });
@@ -221,8 +221,8 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"快捷键面板",
 		"关闭浮层",
 		"跳到通知",
-		"控制台",
 		"助手",
+		"控制台",
 		"场景编排",
 		"运行记录",
 		"Agent 管理",
@@ -248,8 +248,8 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		["g h", /\/docs$/],
 		["g r", /\/runs$/],
 		["g s", /\/orchestrations$/],
-		["g i", /\/sessions\/?$/],
-		["g d", /\/$/],
+		["g i", /\/$/],
+		["g d", /\/dashboard$/],
 	] as const) {
 		for (const key of keys.split(" ")) await page.keyboard.press(key);
 		await expect(page).toHaveURL(url);

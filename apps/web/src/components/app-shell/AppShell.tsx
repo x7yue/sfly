@@ -1,6 +1,6 @@
 import { agentsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useMatches } from "@tanstack/react-router";
+import { Link, useLocation, useMatches } from "@tanstack/react-router";
 import { cn } from "cn";
 import {
 	ChevronRightIcon,
@@ -57,6 +57,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
 	// 在线 / 总数，口径和控制台 Agent 面板的标题一样：已停用的不算在总数里（`agentCounts`）。
 	const { online, enabled } = agentCounts(agents.data?.agents ?? []);
+	const pathname = useLocation({ select: (l) => l.pathname });
 	const counts: Partial<Record<NavItem["to"], string>> = {
 		"/agents": agents.data && agents.data.agents.length > 0 ? `${online}/${enabled}` : undefined,
 	};
@@ -84,6 +85,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 						<Link
 							to={item.to}
 							activeOptions={{ exact: item.to === "/" }}
+							aria-current={item.nested && pathname.startsWith(item.nested) ? "page" : undefined}
 							className={cn("group", navItemClass(collapsed))}
 							activeProps={{ "aria-current": "page" }}
 						>

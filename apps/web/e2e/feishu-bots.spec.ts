@@ -23,7 +23,7 @@ const row = (page: import("@playwright/test").Page, name: string) =>
 		.getByRole("row", { name: new RegExp(`^${name}`) });
 
 test("还没有机器人时显示空状态和登记入口；侧边栏、快捷键 G F 都能到这个页面", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await page
 		.getByRole("navigation", { name: "主导航" })
 		.getByRole("link", { name: "飞书机器人" })
@@ -34,7 +34,7 @@ test("还没有机器人时显示空状态和登记入口；侧边栏、快捷�
 	await expect(empty).toContainText("Agent 不需要访问外网");
 	await expect(empty).toContainText("不支持签名校验");
 
-	await page.goto("/");
+	await page.goto("/dashboard");
 	// `goto` 在 load 事件就返回了，应用这时还没有渲染（#app 是空的，页面在等第一次渲染）；这时按的键没有人接，
 	// 「G F」要有两个键：等控制台页渲染出来再按（#623）。
 	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();

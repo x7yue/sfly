@@ -54,7 +54,7 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 	await page.keyboard.press("Escape");
 
 	await page.clock.setFixedTime(clock.now());
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const running = runBlock(page, "日终对账");
 	await expect(
 		running.getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
@@ -92,7 +92,7 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 	);
 	await expect(row.getByRole("img", { name: /^子流程 压测监控 \d\/2$/ })).toBeVisible();
 
-	await page.goto("/");
+	await page.goto("/dashboard");
 	const ended = dashboardPanel(page, "最近结束").getByRole("listitem");
 	await expect(ended).toHaveCount(1);
 	await expect(ended.first()).toContainText(
@@ -250,7 +250,7 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 	);
 	await expect(oldRow.getByRole("img", { name: /^子流程 压测监控 / })).toBeVisible();
 
-	await page.goto("/");
+	await page.goto("/dashboard");
 	await expect(
 		runBlock(page, "日终对账").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
 	).toHaveText([/^拉取全部订单（fetch）/]);

@@ -22,7 +22,7 @@ test("工作台不在线：就绪状态写明是哪一台工作台不在线，�
 	page,
 }) => {
 	// 控制面配置了助手，但工作台的 Agent 没有上线。
-	await page.goto("/sessions");
+	await page.goto("/");
 	const readiness = page.getByTestId("readiness");
 	await expect(readiness).toHaveAttribute("data-ready", "false");
 	await expect(readiness).toContainText(`工作台 ${WORKBENCH} 不在线`);
@@ -36,7 +36,7 @@ test("就绪：可以用 · 工作台在线；输入一句话 → 会话页依�
 	workbench,
 }) => {
 	void workbench;
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("readiness")).toHaveText(`可以用 · 工作台 ${WORKBENCH} 在线`);
 
 	const id = await startSession(page, "给 http_check 加一个超时参数");
@@ -247,7 +247,7 @@ test("同一个项目另一个会话在做时开始：新会话排队，会话�
 	await expect(statusText(page)).toHaveText("排队中 · 排在第 1 位");
 	await expect(page.getByTestId("composer-blocked")).toContainText("第一个会话（tester）正在做");
 	// 列表：在做的和排队的在前，排队的写排在第几位。
-	await page.goto("/sessions");
+	await page.goto("/");
 	const listed = (id: string) => page.locator(`[data-session="${id}"]`).getByTestId("list-status");
 	await expect(listed(first)).toHaveText("在做");
 	await expect(listed(second)).toHaveText("排队中 · 排在第 1 位");
@@ -433,7 +433,7 @@ test("结束会话：确认之后助手服务收到 end，会话页写会话已�
 	await page.reload();
 	await expect(statusText(page)).toHaveText("已结束");
 	await expect(page.getByTestId("session-ended")).toHaveText("会话已结束（tester）");
-	await page.goto("/sessions");
+	await page.goto("/");
 	await expect(page.getByTestId("list-status")).toHaveText("已结束");
 });
 
@@ -452,7 +452,7 @@ test("会话已经没有了：会话在库里被删掉（新建会话等第一�
 		.getByRole("dialog", { name: "结束这个会话？" })
 		.getByRole("button", { name: "结束会话" })
 		.click();
-	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(page).toHaveURL(/\/$/);
 	await expect(
 		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
 	).toBeVisible();
