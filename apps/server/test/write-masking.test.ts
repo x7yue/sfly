@@ -394,7 +394,9 @@ describe("ctx.notify：存下和发到群里的消息都是掩码", () => {
 				},
 			],
 		});
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", feishu.webhookUrl("tok-ops-1a2b3c4d"));
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 2 });
 	});
