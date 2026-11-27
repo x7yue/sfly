@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type PreparedEvent, planBatch } from "../src/actions/action-details.js";
+import { makeTempDirSync } from "./support/temp-dir.js";
 
 /**
  * 真实的 SDK 写出的事件，原样按 Agent 的分批（一批 1000 个）交给控制面的兜底（`planBatch`，纯函数，不连库）：
@@ -16,7 +16,7 @@ const repoRoot = join(import.meta.dirname, "../../..");
 
 /** 用真实的 SDK 写一份事件文件。`body` 是用 `ctx` 记动作的 Python 代码。 */
 function writeEvents(body: string): string[] {
-	const dir = mkdtempSync(join(tmpdir(), "sdk-replay-"));
+	const dir = makeTempDirSync("sdk-replay-");
 	try {
 		const file = join(dir, "events.jsonl");
 		execFileSync(

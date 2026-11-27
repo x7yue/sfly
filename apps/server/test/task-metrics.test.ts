@@ -1,7 +1,6 @@
 // 切入点 A：指标上报与存储（#29）。假 Agent 经 gRPC 上报 MetricBatch，
 // 通过运行的指标摘要接口 `GET /runs/:id/metrics/summary` 观察。
-import { cp as copy, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp as copy, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type MetricSummary, metricsApi, type RunMetricSummary } from "@sfly/schema";
 import pg from "pg";
@@ -13,6 +12,7 @@ import { type AssignedTask, agentClock, FakeAgent, type HelloInit } from "./supp
 import type { ManualClock } from "./support/manual-clock.js";
 import { appendStartupStubs, dropStartupStubs } from "./support/migrations.js";
 import { publishPackage } from "./support/package-archive.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 2026-01-01T00:00:00Z 之后第 s 秒（Unix 秒）。 */
@@ -566,7 +566,7 @@ describe("迁移前的指标数据", () => {
 	 * 由真正的迁移重新加上。
 	 */
 	const migrationsBeforeLabels = async () => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
+		const dir = await makeTempDir("sfly-migrations-");
 		await copy(defaultMigrationsDir, dir, { recursive: true });
 		const journalPath = join(dir, "meta", "_journal.json");
 		const journal = JSON.parse(await readFile(journalPath, "utf8")) as {

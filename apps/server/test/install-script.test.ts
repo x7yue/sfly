@@ -1,11 +1,11 @@
 // 切入点 A：在测试机上运行控制面生成的 install.sh（ADR 0011）。用 PATH 上的桩代替 systemctl、id、uname，
 // 安装到临时的 HOME / SFLY_HOME，检查生成的文件和打印的命令。
 import { execFile, spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 冒充 Agent 二进制的脚本：只回答 --version。 */
@@ -25,7 +25,7 @@ describe("install.sh", () => {
 	let stubs: string;
 
 	beforeAll(async () => {
-		binDir = await mkdtemp(join(tmpdir(), "sfly-install-bin-"));
+		binDir = await makeTempDir("sfly-install-bin-");
 		await writeFile(join(binDir, "x86"), fakeAgent("x86_64"));
 		await writeFile(join(binDir, "arm"), fakeAgent("aarch64"));
 		cp = await startTestControlPlane({
@@ -39,7 +39,7 @@ describe("install.sh", () => {
 	});
 
 	beforeEach(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-install-"));
+		dir = await makeTempDir("sfly-install-");
 		home = join(dir, "home");
 		stubs = join(dir, "stubs");
 		await mkdir(home, { recursive: true });

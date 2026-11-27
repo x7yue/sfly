@@ -1,9 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import packageJson from "../../package.json" with { type: "json" };
+import { makeTempDir } from "./temp-dir.js";
 
 const serverDir = join(import.meta.dirname, "..", "..");
 
@@ -79,7 +79,7 @@ export async function startSourceServer(options: {
 	production?: boolean;
 }): Promise<SourceServer> {
 	const ownsDataDir = options.dataDir === undefined;
-	const dataDir = options.dataDir ?? (await mkdtemp(join(tmpdir(), "sfly-source-server-")));
+	const dataDir = options.dataDir ?? (await makeTempDir("sfly-source-server-"));
 	const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
 		cwd: serverDir,
 		stdio: ["ignore", "pipe", "pipe"],

@@ -1,7 +1,6 @@
 // sfly scenario edit（#470）：真实的 sfly 进程对测试控制面里的场景做局部编辑。
 // 操作由控制面执行（POST /orchestrations/:id/edits 和 /edits/check），命令行只把参数变成操作、把结果写成文本。
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -10,6 +9,7 @@ import { FakeAgent } from "./support/fake-agent.js";
 import { packageMetadata, publishPackage } from "./support/package-archive.js";
 import { startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 只有警告时的退出码（和 scenario check 一样）。 */
@@ -80,7 +80,7 @@ describe("sfly scenario edit → 控制面", () => {
 				},
 			},
 		});
-		dir = await mkdtemp(join(tmpdir(), "sfly-scenario-edit-ops-"));
+		dir = await makeTempDir("sfly-scenario-edit-ops-");
 	}, 120_000);
 
 	afterAll(async () => {

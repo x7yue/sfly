@@ -1,10 +1,10 @@
 // 性能测试（docs/ARCHITECTURE.md §7.6）里的三个基准测试：读取各自工具的输出，换算成报告里的数值。
 // 基准测试本身不进 CI，这里只检查读取与换算。
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readCriterion, readTimeit, readVitestBench } from "../perf/bench.js";
+import { makeTempDir } from "./support/temp-dir.js";
 
 describe("timeit 的结果（SDK 基准测试）", () => {
 	it("每种情况各轮的单次耗时取中位数与最小值（微秒）", () => {
@@ -92,7 +92,7 @@ describe("criterion 的结果（Agent 基准测试）", () => {
 	};
 
 	it("每个函数一项：平均每次迭代的耗时，按吞吐量换算成每秒的元素数或字节数；只读最近一次（new）", async () => {
-		const home = await mkdtemp(join(tmpdir(), "crit-"));
+		const home = await makeTempDir("crit-");
 		dirs.push(home);
 		await writeBench(home, "merge", "merge_events", { Elements: 10_000 }, 250_000);
 		await writeBench(home, "merge", "merge_events", { Elements: 10_000 }, 1, "base");
@@ -107,7 +107,7 @@ describe("criterion 的结果（Agent 基准测试）", () => {
 	});
 
 	it("目录里没有结果时返回空列表", async () => {
-		const home = await mkdtemp(join(tmpdir(), "crit-"));
+		const home = await makeTempDir("crit-");
 		dirs.push(home);
 		expect(await readCriterion(home)).toEqual([]);
 		expect(await readCriterion(join(home, "missing"))).toEqual([]);

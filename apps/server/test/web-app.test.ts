@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { actAs } from "./support/credentials.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const INDEX_HTML = '<!doctype html><html><body><div id="app"></div></body></html>';
@@ -15,7 +15,7 @@ describe("控制面托管前端（SPA）", () => {
 	let cp: TestControlPlane | undefined;
 
 	beforeAll(async () => {
-		webDir = await mkdtemp(join(tmpdir(), "sfly-web-"));
+		webDir = await makeTempDir("sfly-web-");
 		await mkdir(join(webDir, "assets"));
 		await writeFile(join(webDir, "index.html"), INDEX_HTML);
 		await writeFile(join(webDir, "assets", "app-abc123.js"), APP_JS);
@@ -88,7 +88,7 @@ describe("控制面托管前端（SPA）", () => {
 	});
 
 	it("浏览器打开文档原文与 llms.txt 时得到原文，不回退到入口页", async () => {
-		const docsDir = await mkdtemp(join(tmpdir(), "sfly-web-docs-"));
+		const docsDir = await makeTempDir("sfly-web-docs-");
 		try {
 			await writeFile(
 				join(docsDir, "pages.json"),

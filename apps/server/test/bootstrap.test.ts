@@ -1,8 +1,7 @@
 // 第一个管理员怎么来（ADR 0029「认证的几处细节」）：环境变量给出的初始管理员只在没有任何用户时生效；
 // 控制面启动时有了用户就不再生成初始化码。直接在数据库上测启动时的那一步（bootstrapFirstAdmin）。
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { AccountService } from "../src/auth/accounts.js";
@@ -10,6 +9,7 @@ import { bootstrapFirstAdmin, parseInitialAdmin } from "../src/auth/bootstrap.js
 import { SETUP_CODE_FILE, SetupCode } from "../src/auth/setup-code.js";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const SMALL = { logN: 10, r: 8, p: 1 } as const;
@@ -73,7 +73,7 @@ describe("启动时建第一个管理员（bootstrapFirstAdmin）", () => {
 		testDb = await createTestDatabase();
 		database = openDatabase(testDb.url, () => {});
 		await database.migrate();
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-bootstrap-"));
+		dataDir = await makeTempDir("sfly-bootstrap-");
 		const clock = new ManualClock();
 		setupCode = new SetupCode(dataDir);
 		accounts = new AccountService({ db: database.db, clock, setupCode, scrypt: SMALL });

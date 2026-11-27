@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	ApiError,
@@ -20,6 +19,7 @@ import {
 import { eventually } from "./support/eventually.js";
 import { startFakeFeishu } from "./support/fake-feishu.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import type { TestControlPlane } from "./support/test-control-plane.js";
 
 const NICKNAME = "小明";
@@ -393,7 +393,7 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 	});
 
 	it("地址是绝对地址时，警告里的 npm install 命令指向这个控制面真正提供的安装包", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-client-warning-"));
+		const dir = await makeTempDir("sfly-client-warning-");
 		cleanups.push(() => rm(dir, { recursive: true, force: true }));
 		await writeFile(join(dir, "sfly-client-9.9.9.tgz"), "安装包内容");
 		const cp = await controlPlane("9.9.9", { clientPackageDir: dir });

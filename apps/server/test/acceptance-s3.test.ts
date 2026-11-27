@@ -2,8 +2,7 @@
 // Agent 断线后按重试配置重新派发；超时杀掉进程树；取消时 always 节点照常执行，再次取消则强制终止；
 // 依赖冲突以 env_error 失败且不重试（PyPI 镜像是本地桩）；控制面重启后运行继续推进。
 // 控制面用手动时钟（租约何时到期由测试决定）；超时与取消宽限由 Agent 按真实时间执行。
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { chainOf, isAlive, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
@@ -15,6 +14,7 @@ import type { ManualClock } from "./support/manual-clock.js";
 import { dependencyWheel, type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { buildStubPackage, publishArchive, publishStubPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const readPids = async (file: string) =>
@@ -39,7 +39,7 @@ describeWithAgent("验收 S3：故障", () => {
 			startTestControlPlane(),
 			createStubVenv(),
 			createStubVenv({ sdkOnly: true }),
-			mkdtemp(join(tmpdir(), "sfly-s3-")),
+			makeTempDir("sfly-s3-"),
 		]);
 		api = new ApiClient(cp);
 		clock = cp.clock as ManualClock;

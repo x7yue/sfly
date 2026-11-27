@@ -8,12 +8,12 @@
 // fixtures/ 在 biome.json 的 files.includes 里被排除，`pnpm lint:ts` 不检查它们，否则「应该命中」的样例会让它失败。
 // 每个规则单独跑一遍（只加载这一个规则），报出的诊断才对得上这个规则。
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
 import { retryOnWorkspaceRace } from "./support/biome-lint.js";
+import { makeTempDirSync } from "./support/temp-dir.js";
 
 const pluginsDir = join(repoRoot, "biome-plugins");
 const fixturesDir = join(pluginsDir, "fixtures");
@@ -61,7 +61,7 @@ type Diagnostic = {
 	location?: { path: string; start: { line: number } };
 };
 
-const scratch = mkdtempSync(join(tmpdir(), "sfly-biome-plugins-"));
+const scratch = makeTempDirSync("sfly-biome-plugins-");
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 /** 只加载 `plugin` 这一个规则，用 biome lint 检查 `dir`，返回诊断和检查过的文件数。 */

@@ -6,9 +6,8 @@
 //    排队的请求客户端断开之后不再占着闸；
 // 5. 登出总是清掉 Cookie（哪怕这次请求没被当作已登录），带着有效的登录 Cookie 就注销库里的这条登录（不看同源判定）；
 // 6. 限速用的来源地址去掉端口、IPv6 按 /64 归在一起。
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import pg from "pg";
@@ -20,6 +19,7 @@ import { loginCookie, TestAccounts } from "./support/credentials.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { seedTask } from "./support/seed-task.js";
 import { SseClient } from "./support/sse-client.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const ADMIN = { loginName: "root", password: "admin-password-1" };
@@ -436,7 +436,7 @@ const startLogin = (c: TestControlPlane, body: unknown) => startRequest(c, "/aut
 describe("密码验证的并发上限", () => {
 	it("登录风暴期间读文件的接口不被拖慢（真实的 scrypt 参数，限速放开，只看并发闸）", async () => {
 		// 读文件的接口：下载 SDK 的 wheel，每次请求都从磁盘读（走 libuv 的线程池，和 scrypt 同一个）。
-		const dir = await mkdtemp(join(tmpdir(), "sfly-storm-"));
+		const dir = await makeTempDir("sfly-storm-");
 		const wheel = `sfly-${packageJson.version}-py3-none-any.whl`;
 		await writeFile(join(dir, wheel), "wheel".repeat(1000));
 		try {

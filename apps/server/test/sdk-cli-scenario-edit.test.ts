@@ -1,6 +1,5 @@
 // sfly scenario pull / push / create / copy / rename：真实的 sfly 进程编辑测试控制面里的场景。
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -11,6 +10,7 @@ import { type RecordingProxy, startRecordingProxy } from "./support/recording-pr
 import { sfly } from "./support/sfly-cli.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { storeNodeField } from "./support/stored-over-limit.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const SAVED_AT = "2026-03-04T05:06:07.000Z";
@@ -101,7 +101,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		api = new ApiClient(cp);
 		// 文档里的包节点锁定的版本已发布：保存时没有警告。
 		await publishPackage(cp, "demo", "1.0.0", { echo: ["v"] });
-		dir = await mkdtemp(join(tmpdir(), "sfly-scenario-edit-"));
+		dir = await makeTempDir("sfly-scenario-edit-");
 	}, 120_000);
 
 	afterAll(async () => {

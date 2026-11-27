@@ -3,8 +3,7 @@
 // 同样的代码写在 docs/guide/sdk-reference.md「运行汇总」）放在链末尾、总是执行，用 ${{ run.state }} 拿到整个运行的状态，
 // 给假飞书发一张卡片。三种运行各一个：有节点失败（写出失败的节点和失败原因一行）、被取消（写「已取消」和取消的人，
 // 不把被取消的节点写成失败）、节点超时（写成失败，原因是超时）；子流程里失败的节点主链末尾的汇总节点也写得出来。
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";
@@ -14,6 +13,7 @@ import { eventually } from "./support/eventually.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const TOKEN = "tok-summary-5d1f0e83";
@@ -63,7 +63,7 @@ describeWithAgent("全栈：运行汇总节点用 ${{ run.state }} 读整个运�
 			startTestControlPlane(),
 			createStubVenv(),
 			startFakeFeishu(),
-			mkdtemp(join(tmpdir(), "sfly-run-summary-")),
+			makeTempDir("sfly-run-summary-"),
 		]);
 		api = new ApiClient(cp);
 		await publishStubPackage(cp);

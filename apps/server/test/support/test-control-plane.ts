@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import pg from "pg";
 import { Agent } from "undici";
 import packageJson from "../../package.json" with { type: "json" };
@@ -17,6 +16,7 @@ import { TestUsers } from "./credentials.js";
 import { registerCredentialIssuer } from "./fake-agent.js";
 import { ManualClock } from "./manual-clock.js";
 import { registerCliCredentials } from "./sfly-cli.js";
+import { makeTempDir } from "./temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./test-database.js";
 
 // 控制面的测试和端到端测试都经这里启动控制面。Node 低于 .node-version 时，undici 与 Node 自带的 fetch 不兼容，
@@ -147,7 +147,7 @@ export async function startTestControlPlane(
 	let migrationsDir = options.migrationsDir;
 	const clock = options.clock ?? new ManualClock();
 	const database = await createTestDatabase("sfly_test", { template: options.template });
-	const dataDir = await mkdtemp(join(tmpdir(), "sfly-test-"));
+	const dataDir = await makeTempDir("sfly-test-");
 	const start = (ports = { http: 0, grpc: 0 }) =>
 		startControlPlane({
 			databaseUrl: database.url,

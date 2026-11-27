@@ -1,11 +1,11 @@
 // 真实的 sfly CLI（Python，uv 运行）构建并发布节点包到测试控制面。
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestAccounts } from "./support/credentials.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describe("sfly publish → 控制面", () => {
@@ -14,7 +14,7 @@ describe("sfly publish → 控制面", () => {
 
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
-		project = await mkdtemp(join(tmpdir(), "sfly-project-"));
+		project = await makeTempDir("sfly-project-");
 		await mkdir(join(project, "src", "demo_e2e"), { recursive: true });
 		await writeFile(
 			join(project, "pyproject.toml"),
@@ -98,7 +98,7 @@ describe("sfly publish → 控制面", () => {
 	}, 120_000);
 
 	it("发布到公共项目：平台管理员的个人令牌（SFLY_API_TOKEN）通过，不带令牌 401，项目管理员的令牌 403，信息写明原因", async () => {
-		const publicProject = await mkdtemp(join(tmpdir(), "sfly-public-project-"));
+		const publicProject = await makeTempDir("sfly-public-project-");
 		const accounts = new TestAccounts(cp.database.url);
 		try {
 			await mkdir(join(publicProject, "src", "demo_public"), { recursive: true });

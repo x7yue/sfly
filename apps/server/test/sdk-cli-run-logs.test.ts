@@ -1,8 +1,7 @@
 // sfly run logs / artifacts：真实的 sfly 进程读测试控制面里一次运行的日志和产物。
 // 假 Agent 经 gRPC 上报日志（两台 Agent 的 Agent 时间偏差不同），产物经 HTTP 上传。
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { encodeRunLogScope, logsApi, type RunLogLine, runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -19,6 +18,7 @@ import {
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { sfly, sflyInTerminal } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 主链 entry → spawn → z（失败时重试 1 次）→ a；spawn 派发子流程「回放」sub → s（在 agent-b 上执行）。 */
@@ -82,9 +82,8 @@ describe("sfly run logs / artifacts → 控制面", () => {
 	};
 
 	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl]);
-	/** 真实路径：命令行输出的是 resolve 过的绝对路径，TMPDIR 经过符号链接（macOS 的 /tmp、/var）时和 tmpdir() 不同。 */
 	const tempDir = async () => {
-		const dir = await realpath(await mkdtemp(join(tmpdir(), "sfly-run-logs-")));
+		const dir = await makeTempDir("sfly-run-logs-");
 		tempDirs.push(dir);
 		return dir;
 	};

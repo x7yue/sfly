@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { arch, tmpdir } from "node:os";
+import { arch } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { type BasicAuth, hasBasicAuth } from "./pypi-stub.js";
+import { makeTempDir } from "./temp-dir.js";
 
 /**
  * 本地 GitHub Release 镜像桩（ADR 0012），随机端口，不访问外网；与 Agent 测试的桩
@@ -59,7 +60,7 @@ async function uvRelease(): Promise<[string, Buffer]> {
 		(await run("uv", ["run", "--no-project", "--", "sh", "-c", 'printf %s "$UV"'])).stdout.trim() ||
 		(await run("sh", ["-c", "command -v uv"])).stdout.trim();
 	const target = `uv-${arch() === "arm64" ? "aarch64" : "x86_64"}-unknown-linux-gnu`;
-	const dir = await mkdtemp(join(tmpdir(), "sfly-uv-release-"));
+	const dir = await makeTempDir("sfly-uv-release-");
 	try {
 		await mkdir(join(dir, target));
 		await copyFile(uv, join(dir, target, "uv"));

@@ -4,10 +4,9 @@
 //
 // 真实的控制面、真实的 Rust Agent、真实的 SDK 执行器。「上传正在进行」靠一个挡在 Agent 和控制面之间的 HTTP 代理：
 // 产物的 PUT 它收下之后不回应（连接留着），别的请求（下载节点包、包索引……）原样转给控制面。
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { chainOf, nodeOf, orchestration, stub } from "./support/acceptance.js";
@@ -17,6 +16,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describeWithAgent("全栈：上传产物时被停止子流程打断", () => {
@@ -29,7 +29,7 @@ describeWithAgent("全栈：上传产物时被停止子流程打断", () => {
 	const held: string[] = [];
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-upload-stop-"));
+		dir = await makeTempDir("sfly-upload-stop-");
 		const bin = agentBinary();
 		let upstreamPort = 0;
 		proxy = createServer((req, res) => {

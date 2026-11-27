@@ -2,14 +2,14 @@
 // 模拟旧库：只含这条迁移之前的迁移，往里插各种历史形状的会话（和 `run-notification-migration.test.ts` 同一个做法），
 // 再用全部迁移重新启动：看回填的数，以及回填之后停止、助手事件、下一轮的轮次对不对。
 import { randomUUID } from "node:crypto";
-import { cp as copy, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp as copy, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionEventBody } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
 import { TestAccounts } from "./support/credentials.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const MIGRATION = "0036_session_current_turn";
@@ -97,7 +97,7 @@ describe("升级：会话表加 current_turn，按 turn_started 的条数回填"
 
 	/** 只含这条迁移之前的迁移的目录，模拟旧版控制面的数据库。 */
 	const migrationsBeforeThis = async () => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
+		const dir = await makeTempDir("sfly-migrations-");
 		await copy(defaultMigrationsDir, dir, { recursive: true });
 		const journalPath = join(dir, "meta", "_journal.json");
 		const journal = JSON.parse(await readFile(journalPath, "utf8")) as {

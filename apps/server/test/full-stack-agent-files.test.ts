@@ -4,17 +4,7 @@
 // 从哪台到哪台和地址端口、超时、运行被取消时调用立即结束，以及联调（sfly dev 装到 fs-runner 的开发版本）。
 // 节点包是 testdata/agent-files-package。
 import { execFile } from "node:child_process";
-import {
-	cp as copy,
-	mkdir,
-	mkdtemp,
-	readFile,
-	rename,
-	rm,
-	stat,
-	writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp as copy, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { logsApi } from "@sfly/schema";
@@ -31,6 +21,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "sfly-agent-files";
@@ -67,7 +58,7 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 		});
 		broken = await registerBrokenPeers(cp.grpcUrl, { gone: "fs-gone", silent: "fs-silent" });
 		// fs-source 上的日志目录（两台 Agent 在同一台机器上，绝对路径相同）。
-		logs = await mkdtemp(join(tmpdir(), "sfly-agent-files-"));
+		logs = await makeTempDir("sfly-agent-files-");
 		await mkdir(join(logs, "old"));
 		await writeFile(join(logs, "app.log"), "current\n");
 		await writeFile(join(logs, "app.log.1"), "rotated once\n");
@@ -210,7 +201,7 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 	/** 把 testdata/agent-files-package 换个包名（`-dev`），用 `sfly dev` 装到 fs-runner 上，等控制面看到它，再跑 `body`。 */
 	const withDevPackage = async (body: () => Promise<void>) => {
 		// 开发版本用另一个包名，不和已发布的 sfly-agent-files 在共享 venv 里互相替换。
-		const project = await mkdtemp(join(tmpdir(), "sfly-agent-files-dev-"));
+		const project = await makeTempDir("sfly-agent-files-dev-");
 		try {
 			await copy(join(repoRoot, "testdata/agent-files-package"), project, { recursive: true });
 			await rename(
@@ -323,7 +314,7 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 	}, 180_000);
 
 	it("节点包声明的最低 Agent 版本：预检对节点所在的 Agent 和引用的 Agent 都检查，写明是哪台、需要哪个版本", async () => {
-		const project = await mkdtemp(join(tmpdir(), "sfly-agent-files-req-"));
+		const project = await makeTempDir("sfly-agent-files-req-");
 		try {
 			await copy(join(repoRoot, "testdata/agent-files-package"), project, { recursive: true });
 			const pyproject = join(project, "pyproject.toml");

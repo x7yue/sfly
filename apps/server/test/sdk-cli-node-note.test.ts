@@ -1,6 +1,5 @@
 // 节点的备注（#308）：真实的 sfly 进程对着测试控制面，`scenario show` 列出备注，`scenario push` 能带着备注保存。
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -8,6 +7,7 @@ import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const SAVED_AT = "2026-03-04T05:06:07.000Z";
@@ -102,7 +102,7 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 		cp = await startTestControlPlane({ clock, version: cliVersion });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
-		dir = await mkdtemp(join(tmpdir(), "sfly-node-note-"));
+		dir = await makeTempDir("sfly-node-note-");
 	}, 120_000);
 
 	afterAll(async () => {
