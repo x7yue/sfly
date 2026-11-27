@@ -583,6 +583,9 @@ test.describe("窄窗口", () => {
 		const scenario = await createScenario(controlPlane, "接口巡检", scenarioUsing("agent"));
 		const runId = await triggerRun(controlPlane, scenario);
 		await agent.nextAssign();
+		// 一个失败的运行：卡片读到之后多出一行失败原因，成果栏变高。
+		const failed = await triggerRun(controlPlane, scenario);
+		await agent.fail(await agent.nextAssign(), "AssertionFailed: 成功率 97.2% 低于阈值 99%");
 		const id = await seedSession(controlPlane.database.url, {
 			title: TITLE,
 			status: "idle",
@@ -590,7 +593,8 @@ test.describe("窄窗口", () => {
 				...scenarioEvents(
 					versionEvent(3, scenario, "接口巡检", 1),
 					runEvent(4, runId, "接口巡检"),
-					commitEvent(5, 1, "3f1c2ab9d0e4a5b6c7d8e9f0a1b2c3d4e5f60718"),
+					runEvent(5, failed, "接口巡检"),
+					commitEvent(6, 1, "3f1c2ab9d0e4a5b6c7d8e9f0a1b2c3d4e5f60718"),
 				),
 				{
 					type: "turn_end",
@@ -604,7 +608,8 @@ test.describe("窄窗口", () => {
 			],
 		});
 		await page.goto(`/sessions/${id}`);
-		await expect(results(page).getByTestId("result-run")).toHaveCount(1);
+		await expect(results(page).getByTestId("result-run")).toHaveCount(2);
+		await expect(sideCard(page, failed).getByTestId("run-card-failure")).toBeVisible();
 		const list = await box(timeline(page));
 		const composer = await box(page.getByRole("textbox", { name: "接着说" }));
 		const side = await box(results(page));
@@ -614,6 +619,17 @@ test.describe("窄窗口", () => {
 		expect(side.width).toBeGreaterThan(400);
 		// 时间线还有地方看（不被挤成一条缝），整页不横向滚动，成果栏在窗口里。
 		expect(list.height).toBeGreaterThan(150);
+		// 成果栏在时间线下面，它的内容变高（运行卡片读到状态、失败时多出一行原因）时时间线的可视高度跟着变矮：在底部的时间线要跟着滚，
+		// 最后一行不能被切掉半截。
+		await expect(sideCard(page, runId)).toBeVisible();
+		await expect(cardStatus(sideCard(page, runId))).toHaveText("运行中");
+		await expect
+			.poll(() =>
+				page
+					.getByTestId("session-scroll")
+					.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
+			)
+			.toBeLessThan(2);
 		expect(side.x + side.width).toBeLessThanOrEqual(800);
 		expect(
 			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
