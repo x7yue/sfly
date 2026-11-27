@@ -10,6 +10,7 @@ import type { SessionListResponse } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { TestUsers } from "./support/credentials.js";
 import { FakeAssistant } from "./support/fake-assistant.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 import { asUsers } from "./support/user-api.js";
@@ -92,10 +93,12 @@ describe("启动时 HTTP 已经监听、助手服务的事件连接还没建好�
 			} finally {
 				await pgClient.end();
 			}
+			const users = new TestUsers(database.url);
 			const api = new ApiClient(
 				asUsers({
-					database,
-					fetch: (path, init) => fetch(`http://127.0.0.1:${port}${path}`, init),
+					users,
+					fetch: async (path, init = {}) =>
+						fetch(`http://127.0.0.1:${port}${path}`, { ...init, headers: await users.sign(init) }),
 				}),
 			);
 

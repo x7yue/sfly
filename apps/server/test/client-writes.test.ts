@@ -54,6 +54,7 @@ describe("API 客户端的写操作", () => {
 	async function through(options: Omit<ClientOptions, "baseUrl"> = {}) {
 		const proxy = await startRecordingProxy(cp.httpUrl);
 		proxies.push(proxy);
+		// 这里测的是客户端的昵称本身（不带令牌时才发，#494 一并删除）：照旧不带默认的令牌。
 		return { proxy, ...observedClient({ baseUrl: proxy.url, ...options }) };
 	}
 

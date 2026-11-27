@@ -71,7 +71,13 @@ describe("sfly api → 控制面", () => {
 
 		it("带公共的昵称和 x-sfly-client 请求头", async () => {
 			proxy.requests.length = 0;
-			const result = await viaProxy("GET", "/health", "--nickname", "小明");
+			// 测的是命令行发的昵称请求头（不带令牌时才发，#494 一并删除）：不带默认的令牌。
+			const result = await sfly(
+				["api", "GET", "/health", "--nickname", "小明", "--server", proxy.url],
+				{
+					env: { SFLY_API_TOKEN: undefined },
+				},
+			);
 			expect(result.code, result.stderr).toBe(0);
 			const [request] = proxy.requests;
 			expect(request?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("小明"));

@@ -1,5 +1,6 @@
 import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
+import { aliasCliServer } from "./sfly-cli.js";
 
 export interface OldControlPlane {
 	url: string;
@@ -40,6 +41,7 @@ export async function startOldControlPlane(target: string): Promise<OldControlPl
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address() as AddressInfo;
+	aliasCliServer(`http://127.0.0.1:${address.port}`, target);
 	return {
 		url: `http://127.0.0.1:${address.port}`,
 		summaryRequests,

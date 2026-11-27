@@ -41,6 +41,8 @@ describe("sfly run show / run start --wait：排队中的节点在等什么", { 
 
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ clock, leaseMs: 60 * 60_000 });
+		// spawnSfly 同步起进程：先建好 tester 的用户和令牌。
+		await cp.users.user();
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: [] });
 	}, 120_000);
