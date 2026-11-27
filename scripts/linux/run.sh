@@ -51,9 +51,12 @@ node_major=$(tr -d '[:space:]' <.node-version)
 python_version=$(tr -d '[:space:]' <.python-version)
 pnpm_version=$(sed -nE 's/.*"packageManager": *"pnpm@([^"]+)".*/\1/p' package.json)
 actionlint_image=$(sed -n 's/^image=//p' scripts/lint-actions.sh)
+uv_version=$(sed -n 's/^uv //p' .tool-versions)
+rust_toolchain=$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml)
 args=(
 	--build-arg "NODE_MAJOR=$node_major" --build-arg "PYTHON_VERSION=$python_version"
 	--build-arg "PNPM_VERSION=$pnpm_version" --build-arg "ACTIONLINT_IMAGE=$actionlint_image"
+	--build-arg "UV_VERSION=$uv_version" --build-arg "RUST_TOOLCHAIN=$rust_toolchain"
 )
 mirrors=${XDG_CONFIG_HOME:-$HOME/.config}/sfly/linux.env
 if [[ -f $mirrors ]]; then
