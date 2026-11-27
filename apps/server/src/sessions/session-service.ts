@@ -349,12 +349,15 @@ export class SessionService {
 		return asking;
 	}
 
-	/** 工作台：能用时是这一轮的目标（Agent 名、能力端口的地址、工作区路径），不能用时是原因。 */
+	/**
+	 * 工作台：能用时是这一轮的目标（Agent 名、能力端口的地址、工作区路径），不能用时是原因。`name` 是项目登记的工作台
+	 * （每次从库里读，`ProjectWorkbench.get`；没有登记是 undefined）。
+	 */
 	async #workbench(
 		project: ProjectId,
+		name: string | undefined,
 	): Promise<{ target: WorkbenchTarget } | { problem: ReadinessProblem }> {
 		const { hub, db } = this.deps;
-		const name = await this.deps.workbench.get(project);
 		if (!name) {
 			return {
 				problem: {
@@ -413,12 +416,13 @@ export class SessionService {
 				if (model) problems.push(model);
 			}
 		}
-		const workbench = await this.#workbench(project);
+		const registered = await this.deps.workbench.get(project);
+		const workbench = await this.#workbench(project, registered);
 		if ("problem" in workbench) problems.push(workbench.problem);
 		return {
 			ready: problems.length === 0,
 			problems,
-			workbench: (await this.deps.workbench.get(project)) ?? null,
+			workbench: registered ?? null,
 		};
 	}
 
@@ -450,7 +454,7 @@ export class SessionService {
 				"error" in health ? health.error : EVENTS_NOT_CONNECTED_MESSAGE,
 			);
 		}
-		const workbench = await this.#workbench(project);
+		const workbench = await this.#workbench(project, await this.deps.workbench.get(project));
 		if ("problem" in workbench) {
 			return rejected(503, "assistant_unavailable", workbench.problem.message);
 		}
