@@ -122,6 +122,35 @@ def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
     assert stack.admin_password != password
 
 
+def test_the_platform_arms_identity_is_the_arm_as_nickname(recorder: Recorder) -> None:
+    """平台臂经控制面登录，会话和助手的命令记在登录用户的**显示名**下（服务端 `commandEnv` 的
+    `SFLY_NICKNAME` 取它；`session-assistant.test.ts` 钉着「命令环境的昵称就是用户的显示名」）。
+    不设显示名时它是登录名 `aeval_admin`，臂 A 是 `eval`：真实模型下联调副本的名字、
+    `run show latest` 找自己触发的运行都对不上。所以初始管理员的显示名设成臂 A 的昵称，
+    两处用同一个常量。"""
+    from aeval.env import ASSISTANT_NICKNAME
+    from aeval.platform import NICKNAME
+    from aeval.session import ASSISTANT_ENV
+
+    Stack(slot=9)._start_control_plane()
+    [(args, _)] = recorder.runs("cp")
+    assert f"SFLY_ADMIN_DISPLAY_NAME={ASSISTANT_ENV['SFLY_NICKNAME']}" in args
+    assert ASSISTANT_ENV["SFLY_NICKNAME"] == ASSISTANT_NICKNAME == NICKNAME == "eval"
+    assert ADMIN_LOGIN != ASSISTANT_NICKNAME
+
+
+def test_the_assistants_nickname_is_written_once() -> None:
+    """臂 A 的命令、参考答案、联调的上一次运行、平台臂的显示名都引用 `ASSISTANT_NICKNAME`，
+    评测集的代码里不再有 `"SFLY_NICKNAME": "eval"` 这样的第二份。"""
+    root = Path(__file__).resolve().parents[1] / "aeval"
+    offenders = [
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if re.search(r'"SFLY_NICKNAME":\s*"eval"', path.read_text())
+    ]
+    assert offenders == []
+
+
 def test_initial_admin_login_and_password_are_written_to_a_file_only_the_owner_can_read(
     recorder: Recorder, data_home: Path
 ) -> None:

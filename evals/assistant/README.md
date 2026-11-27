@@ -153,13 +153,21 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
   **登录**（#547：建会话只认用户的凭据，不带是 401）：驱动在第 1 步之前用初始管理员登录
   （`POST /auth/login`，带 `sec-fetch-site: same-origin`，登录名 `aeval_admin`），拿 `sfly_login` Cookie，
   之后的每个请求（检查、建会话、事件流、`stop`、`end`）都带它。会话记在这个用户名下，助手命令里的
-  `SFLY_NICKNAME` 是它的显示名（评测自己的操作用 `grader`，分得开）。**密码经过的地方**：密码是 `reset` 建库时
+  `SFLY_NICKNAME` 是它的**显示名**（带凭据的请求取显示名，没配时是登录名 `aeval_admin`）：控制面起来时
+  初始管理员的显示名设成臂 A 的昵称（`SFLY_ADMIN_DISPLAY_NAME=eval`，`aeval/env.py` 的
+  `ASSISTANT_NICKNAME`，臂 A 的命令、参考答案、联调的上一次运行、平台臂都引用这一个常量），所以两臂的助手是
+  同一个身份：联调副本的名字（「demo 巡检-联调-eval」）、`run show latest` 找自己触发的运行才对得上，真实模型下
+  两臂可比（评测自己的操作用 `grader`，分得开）。**密码经过的地方**：密码是 `reset` 建库时
   随机生成的（`stack.admin_password`，也写进只有属主可读的 `~/.local/share/sfly/evals/admin-slot<槽位>.txt`，
   给人登录控制台用）；宿主机起驱动时 `docker exec -e SFLY_ADMIN_PASSWORD`，**参数里只有变量名**，值放在这条
   `docker exec` 进程的环境里（和 `aeval/docker.py` 的 `secret_env` 同一个约定），容器里的驱动从环境变量读；
   它**不进命令行参数、不进 `platform.json`、`driver-stdout.log`、`platform-events.jsonl`**，Cookie 同样：驱动把
-  写进记录和标准输出的文字里的密码、Cookie 先换成 `******`（`Client.scrub`），测试里让假控制面在错误回应里回显
-  它们、逐个文件和标准输出搜（`test_neither_the_password_nor_the_cookie_reaches_a_file_or_stdout`）。
+  写进记录和标准输出的文字里的密码、Cookie 先换成 `******`（`Client.scrub`；认原文、去掉 `sfly_login=` 的值、
+  JSON 转义的写法，**只认完整的出现**，不看开头像不像）。**要截断的文字先打码、后截断**（`Client.clip`，
+  #583 的规矩）：回应体、异常文字、断开的原因都是；先截断的话凭据跨过截断点时前半截认不出来（审查查到：登录 401
+  留下 32 位密码的前 31 位）。测试：假控制面在各种错误回应里回显它们（包括跨过截断点的 7 处），逐个文件和标准输出
+  搜密码、Cookie 的任何 8 个字符的片段（`test_a_credential_across_the_cut_is_masked_first_and_cut_after`、
+  `test_neither_the_password_nor_the_cookie_reaches_a_file_or_stdout`）。
   镜像站容器是评测自己的，助手的命令够不着它；密码在它的进程环境里，只有评测自己能读。
   登录失败（没给密码、连不上、401、没拿到 Cookie）是环境故障（`login`），不建会话。
 - 记录和臂 A 的同样布局，判分、失败分类、`report` 不分臂：

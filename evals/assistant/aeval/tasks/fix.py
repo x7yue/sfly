@@ -13,7 +13,7 @@ import json
 from typing import Any
 
 from aeval import docker as d
-from aeval.env import DEV_AGENT, Stack
+from aeval.env import ASSISTANT_NICKNAME, DEV_AGENT, Stack
 from aeval.tasks import (
     GUARD,
     Check,
@@ -122,7 +122,7 @@ class Fix(Task):
         d.sh(
             stack.dev,
             f"sfly run start '{COPY}' --wait --timeout 2m",
-            env={"SFLY_NICKNAME": "eval"},
+            env={"SFLY_NICKNAME": ASSISTANT_NICKNAME},
             check=False,
             timeout=300,
         )

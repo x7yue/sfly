@@ -49,6 +49,12 @@ SUT_AGENT = "sut-01"
 # 不能含连字符；不合规矩控制面起不来。
 ADMIN_LOGIN = "aeval_admin"
 ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
+# 助手在评测里的身份（命令环境里的 `SFLY_NICKNAME`）：臂 A 的命令直接带它；平台臂经控制面登录，
+# 会话和助手的命令记在登录的用户的**显示名**下（带凭据的请求取显示名，没配时是登录名
+# `aeval_admin`），所以初始管理员的显示名设成它（`SFLY_ADMIN_DISPLAY_NAME`）：两臂的助手是同一个
+# 身份，联调副本的名字（「demo 巡检-联调-eval」）、`run show latest` 找「自己触发的运行」才对得上。
+# **只写这一份**，各处引用它，不另写 `"eval"`。
+ASSISTANT_NICKNAME = "eval"
 # 两台 Agent 的配置文件（install.sh 写的）：凭据换了要改这里的 SFLY_TOKEN。
 AGENT_ENV_FILE = "/root/.sfly/agent.env"
 # 开发环境容器里 Agent 的名称：沿用以前 `install.sh --dev` 默认的 dev-<用户名>-<主机名>
@@ -473,6 +479,7 @@ class Stack:
         self.admin_password = secrets.token_hex(16)
         self._write_admin_file()
         env["SFLY_ADMIN_LOGIN"] = ADMIN_LOGIN
+        env["SFLY_ADMIN_DISPLAY_NAME"] = ASSISTANT_NICKNAME
         secret_env: dict[str, str] = {ADMIN_PASSWORD_ENV: self.admin_password}
         if self.assistant:
             # 控制面把会话交给助手服务，工作台是 dev 上的 Agent（竖切的桩，#549 换成项目上的设置）。

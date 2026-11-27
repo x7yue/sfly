@@ -42,7 +42,7 @@ from typing import Any
 
 from aeval import docker as d
 from aeval.classify import read_events
-from aeval.env import ADMIN_LOGIN, ADMIN_PASSWORD_ENV, Stack
+from aeval.env import ADMIN_LOGIN, ADMIN_PASSWORD_ENV, ASSISTANT_NICKNAME, Stack
 from aeval.models import Model, load_models
 from aeval.tasks import REFERENCE_DIR, Task, stage_reference
 
@@ -54,10 +54,12 @@ DEADLINE_SLACK_SECONDS = 60.0
 # 会话驱动停下之后等结局的时间（platform_driver.STOP_WAIT_SECONDS），宿主机在它之外再留的余量。
 DRIVER_STOP_WAIT_SECONDS = 40.0
 HOST_SLACK_SECONDS = 120.0
-# 请求里带的昵称头。建会话只认用户的凭据（#547），驱动用初始管理员登录，会话和助手的命令
-# （`SFLY_NICKNAME`、`AI_AGENT=pi`）记在这个用户的显示名下，昵称头对带了凭据的请求不起作用；
+# 请求里带的昵称头。建会话只认用户的凭据（#547），驱动用初始管理员登录；带凭据的请求取登录用户的
+# **显示名**，昵称头不起作用，所以控制面起来时把初始管理员的显示名设成臂 A 的昵称
+# （`aeval.env.ASSISTANT_NICKNAME`，`Stack._start_control_plane` 设 `SFLY_ADMIN_DISPLAY_NAME`）：
+# 会话和助手的命令（`SFLY_NICKNAME`、`AI_AGENT=pi`）记在 `eval` 下，和臂 A 一致；
 # 判分里评测自己的操作用 `grader` 这个昵称，和助手的分得开。
-NICKNAME = "eval"
+NICKNAME = ASSISTANT_NICKNAME
 DRIVER = "/aeval/container/platform_driver.py"
 DRIVER_OUT = "/tmp/aeval-platform"
 ASSISTANT_DATA = "/data/sessions"
@@ -491,6 +493,20 @@ def _popen_driver(argv: list[str], env: dict[str, str] | None = None) -> subproc
     )
 
 
+def run_session_driver(
+    stack: Stack, mirror: str, prompt: str, run_dir: str, end_driver: Callable[[], None]
+) -> tuple[dict[str, Any], list[str]]:
+    """在镜像站容器里跑这一次的会话驱动：命令（`driver_argv`，参数里没有密码）、管理员密码（`driver_env`，
+    放在 `docker exec` 进程的环境里）、总时限都在这里定下来。"""
+    budget = driver_budget()
+    return run_driver(
+        driver_argv(mirror, prompt, run_dir, budget),
+        budget + DRIVER_STOP_WAIT_SECONDS + HOST_SLACK_SECONDS,
+        end_driver,
+        env=driver_env(stack),
+    )
+
+
 def driver_budget() -> float:
     """会话驱动等结局的时限：平台自己的上限再加 `DEADLINE_SLACK_SECONDS`
     （平台到了上限还要停一轮、发结局）。"""
@@ -555,22 +571,16 @@ def run_platform_session(
     )
     seeded_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
-    budget = driver_budget()
 
     def end_driver() -> None:
         # docker exec 断开不会结束容器里的驱动：直接给它发 SIGTERM，它照常收尾（写记录、发 end）。
         d.sh(mirror, f"pkill -TERM -f {shlex.quote(driver_pattern(run_dir))}", check=False)
 
-    # 管理员的密码在 `reset` 之后才有（每次建库换一个）；取不到就在起驱动之前报错，不让取样先开始。
-    env = driver_env(stack)
+    # 管理员的密码在 `reset` 之后才有（每次建库换一个）；取不到就在取样开始之前报错。
+    driver_env(stack)
     sampler = PeakSampler(stack.assistant_container)
     try:
-        platform, log = run_driver(
-            driver_argv(mirror, prompt, run_dir, budget),
-            budget + DRIVER_STOP_WAIT_SECONDS + HOST_SLACK_SECONDS,
-            end_driver,
-            env=env,
-        )
+        platform, log = run_session_driver(stack, mirror, prompt, run_dir, end_driver)
     finally:
         memory = sampler.stop()
     host_seconds = time.monotonic() - started

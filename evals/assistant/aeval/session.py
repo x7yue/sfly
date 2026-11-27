@@ -20,7 +20,7 @@ from typing import Any
 
 from aeval import docker as d
 from aeval.classify import INFRA, PLATFORM_FAULT, UNCLASSIFIED, classify, is_assistant_run
-from aeval.env import OPT, Stack
+from aeval.env import ASSISTANT_NICKNAME, OPT, Stack
 from aeval.models import PROVIDER, Model
 from aeval.platform import ENVIRONMENT, PLATFORM
 from aeval.tasks import GUARD, Check, Task, stage_reference, summarize
@@ -34,7 +34,7 @@ SESSION_DIR = "/root/aeval-session"
 ARMS = ("a", "b", "p")
 REMOTE_EXTENSION = "/opt/aeval-remote/extension.mjs"
 # 助手的命令带上的环境变量：控制面把它的操作记成「eval 经 pi」，和判分（grader）的操作分开。
-ASSISTANT_ENV = {"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"}
+ASSISTANT_ENV = {"SFLY_NICKNAME": ASSISTANT_NICKNAME, "AI_AGENT": "pi"}
 
 
 def pi_container(stack: Stack, arm: str) -> str:

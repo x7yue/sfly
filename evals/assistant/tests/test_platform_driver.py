@@ -31,6 +31,20 @@ STOPPED = {"type": "turn_end", "seq": 9, "turn": 1, "outcome": "stopped", "reaso
 CONTRACT = Path(__file__).resolve().parents[3] / "packages/schema/src/http/contract.ts"
 
 
+def straddle(prefix: str, secret: str, keep: int, limit: int, suffix: str = '"}}') -> str:
+    """一段文字：`secret` 从第 `limit - keep` 个字符开始，截到 `limit` 个字符时只剩它的前
+    `keep` 个字符（驱动先截断后打码时，前半截原样留下来；先打码后截断时整个被换掉）。"""
+    assert len(prefix) < limit - keep
+    return prefix + "A" * (limit - keep - len(prefix)) + secret + suffix
+
+
+def fragments(secret: str, text: str, size: int = 8) -> list[str]:
+    """`secret` 里长度为 `size` 的片段，在 `text` 里出现了的。"""
+    return [
+        secret[i : i + size] for i in range(len(secret) - size + 1) if secret[i : i + size] in text
+    ]
+
+
 def ev(body: dict[str, Any], name: str | None = None) -> str:
     head = f"event: {name or body.get('type')}\n"
     if "seq" in body:
@@ -57,6 +71,13 @@ class FakeControlPlane:
     - `empty`：事件流只发一个心跳就结束（每次重连都这样），stop 之后发 `stopped` 的 turn_end。
     - `login-401`、`login-no-cookie`：登录被拒绝（回应体里回显了密码）、登录成功但没有 Cookie；
     - `precheck-echo`：开始前的检查回 500、回应体里回显了密码和 Cookie；
+    - `*-straddle`：回显的凭据**跨过驱动截断的那一个字符**（登录 401 的回应体 500、建会话 503 的
+      500、建会话回应不是 JSON 的 200、建会话回应没有 ID 的 200、就绪状态没过的 200、开始前的检查
+      500）：先截断后打码时前半截会留下；
+    - `assistant-not-configured`：建会话回 503 `assistant_not_configured`；
+    - `snapshot-commit`：每次连上先发一条不带序号的 `snapshot`，第一次连接发到 seq 3 就断，
+      重连之后补
+      `platform`（`commit`，seq 4）和 `turn_end`（seq 5）；
     - `create-500-model-unavailable`：建会话回 500（不是 503）、错误码是 `model_unavailable`；
     - `model-unavailable`、`events-not-connected`、`assistant-start-failed`：建会话回 503，
       错误码和说明照真实控制面（回应体里回显了密码和 Cookie，看记录里有没有）。
@@ -119,6 +140,9 @@ class FakeControlPlane:
                         return self._json(401, {"error": {"code": "unauthorized", "message": text}})
                     if mode == "login-401":
                         return self._json(401, {"error": {"message": f"拒绝了 {PASSWORD}"}})
+                    if mode == "login-straddle":
+                        body = straddle('{"error": {"code": "x", "message": "', PASSWORD, 31, 500)
+                        return self._json(401, None, raw=body.encode())
                     data = b"{}"
                     self.send_response(200)
                     self.send_header("content-type", "application/json")
@@ -140,6 +164,28 @@ class FakeControlPlane:
                         # 不是 503：就算错误码对，也不是「环境没准备好」的拒绝。
                         refusal = {"error": {"code": "model_unavailable", "message": "x"}}
                         return self._json(500, refusal)
+                    if mode == "create-503-straddle":
+                        value = COOKIE.removeprefix("sfly_login=")
+                        body = straddle('{"error": {"code": "x", "message": "', value, 12, 500)
+                        return self._json(503, None, raw=body.encode())
+                    if mode == "create-503-not-ready-straddle":
+                        # 回应体是合法的 JSON，错误码是环境没准备好；凭据跨过 500 个字符的截断点：
+                        # 判「环境没准备好」看整个（打过码的）回应体，不看被截断的。
+                        value = COOKIE.removeprefix("sfly_login=")
+                        head = '{"error": {"code": "model_unavailable", "message": "'
+                        body = straddle(head, value, 12, 500)
+                        return self._json(503, None, raw=body.encode())
+                    if mode == "create-not-json-straddle":
+                        body = straddle("<html>", PASSWORD, 20, 200, "</html>")
+                        return self._json(201, None, raw=body.encode())
+                    if mode == "create-no-id-straddle":
+                        body = straddle('{"echo": "', PASSWORD, 20, 200, '"}')
+                        return self._json(201, None, raw=body.encode())
+                    if mode == "assistant-not-configured":
+                        refusal = {
+                            "error": {"code": "assistant_not_configured", "message": "助手没有开启"}
+                        }
+                        return self._json(503, refusal)
                     echo = f"（回显：{PASSWORD} {COOKIE}）"
                     for name, code, message in (
                         ("model-unavailable", "model_unavailable", "没有配置模型：缺 MODEL_KEY"),
@@ -178,6 +224,13 @@ class FakeControlPlane:
                     return
                 if self.path == "/projects/default/sessions":
                     time.sleep(owner.slow)
+                    if owner.mode == "readiness-straddle":
+                        head = '{"ready": false, "problems": [], "echo": "'
+                        echo = straddle(head, PASSWORD, 20, 200, '"}')
+                        return self._json(200, None, raw=('{"readiness": ' + echo + "}").encode())
+                    if owner.mode == "precheck-straddle":
+                        body = straddle('{"error": {"message": "', PASSWORD, 31, 500)
+                        return self._json(500, None, raw=body.encode())
                     if owner.mode == "precheck-echo":
                         # 开始前的检查出错、回应体里回显了凭据。
                         return self._json(500, {"error": {"message": f"炸了 {PASSWORD} {COOKIE}"}})
@@ -229,6 +282,29 @@ class FakeControlPlane:
             yield ev({"type": "turn_end", "turn": 1, "outcome": "completed"})
             yield ev({"type": "user_message", "seq": 1})
             yield ev(TURN_END)
+            return
+        if mode == "snapshot-commit":
+            after = int(path.split("after=")[1])
+            snap = {
+                "type": "snapshot",
+                "status": "running",
+                "partial_text": "",
+                "running_tool": None,
+            }
+            yield ev(snap, "snapshot")
+            events: list[dict[str, Any]] = [
+                {"type": "user_message", "seq": 1},
+                {"type": "turn_started", "seq": 2},
+                {"type": "assistant_message", "seq": 3},
+                {"type": "platform", "kind": "commit", "seq": 4},
+                TURN_END | {"seq": 5},
+            ]
+            for event in events:
+                if event["seq"] <= after:
+                    continue
+                yield ev(event)
+                if self.streams == 1 and event["seq"] == 3:
+                    return  # 第一次连接在这里断
             return
         if mode == "break-once":
             if self.streams == 1:
@@ -703,7 +779,9 @@ def test_no_admin_password_is_an_environment_fault_and_says_which_variable(tmp_p
     assert record["calls"] == []
 
 
-@pytest.mark.parametrize("mode", ["model-unavailable", "events-not-connected"])
+@pytest.mark.parametrize(
+    "mode", ["model-unavailable", "events-not-connected", "assistant-not-configured"]
+)
 def test_a_create_rejected_because_the_environment_is_not_ready_is_an_environment_fault(
     mode: str, tmp_path: Path
 ) -> None:
@@ -792,3 +870,144 @@ def test_the_driver_process_takes_the_password_from_the_environment_only(tmp_pat
     lost = json.loads((tmp_path / "run2" / "platform.json").read_text())
     assert lost["problem_kinds"] == ["login"] and ADMIN_PASSWORD_ENV in lost["precheck"]
     assert json.loads(missing.stdout.strip().splitlines()[-1])["event"] == "done"
+
+
+STRADDLES = [
+    # （模式, 凭据, 驱动里这一处截到几个字符）
+    ("login-straddle", PASSWORD, 500),
+    ("precheck-straddle", PASSWORD, 500),
+    ("readiness-straddle", PASSWORD, 200),
+    ("create-503-straddle", COOKIE.removeprefix("sfly_login="), 500),
+    ("create-503-not-ready-straddle", COOKIE.removeprefix("sfly_login="), 500),
+    ("create-not-json-straddle", PASSWORD, 200),
+    ("create-no-id-straddle", PASSWORD, 200),
+]
+
+
+@pytest.mark.parametrize(("mode", "secret", "limit"), STRADDLES)
+def test_a_credential_across_the_cut_is_masked_first_and_cut_after(
+    mode: str, secret: str, limit: int, tmp_path: Path
+) -> None:
+    # 回显的凭据跨过驱动截断的那一个字符：先截断后打码时，凭据的前半截认不出来、
+    # 原样进 platform.json 和标准输出
+    # （审查 #715 第三轮：登录 401 留下 32 位密码的前 31 位）。先打码后截断时，整段凭据换成 ******，
+    # 记录里没有它的任何一段（8 个字符的片段也没有）。
+    record = drive(mode, tmp_path)
+    written = "".join(p.read_text() for p in tmp_path.rglob("*") if p.is_file())
+    stdout = json.dumps(record["said"], ensure_ascii=False)
+    for text in (written, stdout):
+        assert fragments(secret, text) == [], (mode, fragments(secret, text)[:3])
+        assert fragments(PASSWORD, text) == [] and fragments(COOKIE, text) == []
+    assert "******" in written
+    # 问题照样记下来了（不是被吞掉）。
+    assert record["problems"] or record["precheck"] != "ok", mode
+
+
+def test_the_not_ready_verdict_reads_the_whole_body_not_the_cut_one(tmp_path: Path) -> None:
+    record = drive("create-503-not-ready-straddle", tmp_path)
+    assert record["problem_kinds"] == ["not_ready"]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == ENVIRONMENT
+
+
+def test_scrub_masks_every_way_the_credentials_are_written() -> None:
+    client = Client("http://127.0.0.1:1", "eval", LOGIN_NAME, PASSWORD)
+    client._cookie = COOKIE
+    value = COOKIE.removeprefix("sfly_login=")
+    tricky = PASSWORD.replace("-", "\\u002d")
+    for text in (
+        f"密码 {PASSWORD} 结束",
+        f"Cookie {COOKIE} 结束",
+        # 只有值、没有前缀（`Set-Cookie` 之外的地方回显的写法）：
+        # 去掉 `sfly_login=` 前缀的那一次替换。
+        f"值 {value} 结束",
+        json.dumps({"echo": PASSWORD}),
+        json.dumps({"echo": value}),
+    ):
+        scrubbed = client.scrub(text)
+        assert fragments(PASSWORD, scrubbed) == [] and fragments(value, scrubbed) == [], text
+        assert "******" in scrubbed
+    del tricky
+    # 不认的写法不动：没有凭据的文字原样返回；`sfly_login=` 这几个字本身不是秘密。
+    assert client.scrub("没有凭据 sfly_login= 的文字") == "没有凭据 sfly_login= 的文字"
+    # 只认完整的出现：前半截不换（按它们能一位一位试出值），所以要截断的文字先打码后截断。
+    assert client.scrub(PASSWORD[:20]) == PASSWORD[:20]
+    assert client.clip(f"{'A' * 490}{PASSWORD}", 500) == "A" * 490 + "******"
+
+
+def test_stream_break_reasons_are_scrubbed_before_they_are_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 事件流断开的原因里有异常的文字（可能带着凭据）：记进 stream_breaks 和标准输出之前先打码。
+    real = Client.stream_once
+    calls: list[int] = []
+
+    def breaking(self: Client, *args: Any) -> str | None:
+        calls.append(1)
+        if len(calls) <= 2:
+            return f"事件流断了：回显 {PASSWORD} 和 {COOKIE}"
+        return real(self, *args)
+
+    monkeypatch.setattr(Client, "stream_once", breaking)
+    record = drive("ok", tmp_path)
+    assert record["stream_breaks"] and all("******" in b for b in record["stream_breaks"])
+    written = "".join(p.read_text() for p in tmp_path.rglob("*") if p.is_file())
+    stdout = json.dumps(record["said"], ensure_ascii=False)
+    for text in (written, stdout, json.dumps(record["stream_breaks"], ensure_ascii=False)):
+        assert fragments(PASSWORD, text) == [] and fragments(COOKIE, text) == []
+
+
+def test_stream_break_reasons_after_a_stop_are_scrubbed_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = Client.follow
+
+    def following(self: Client, session_id: str, deadline: float, sink: Any, received: Any) -> Any:
+        got, breaks = real(self, session_id, deadline, sink, received)
+        return got, [*breaks, f"停止之后断了 {PASSWORD}"]
+
+    monkeypatch.setattr(Client, "follow", following)
+    record = drive("heartbeats", tmp_path, max_seconds=0.6)
+    assert any(b.startswith("停止之后：") and "******" in b for b in record["stream_breaks"])
+    written = "".join(p.read_text() for p in tmp_path.rglob("*") if p.is_file())
+    assert fragments(PASSWORD, written) == []
+
+
+def test_snapshot_on_every_connect_and_the_commit_event_before_turn_end(tmp_path: Path) -> None:
+    # 真实控制面（#761、#546）：每次连上先发一条不带序号的 snapshot；一轮结束时平台提交工作区，
+    # platform（commit）在 turn_end 之前。驱动原样记下，不把它们当结局，断开之后按最后一个序号
+    # （seq 3）之后重连、补回 platform 和 turn_end。
+    record = drive("snapshot-commit", tmp_path)
+    lines = [json.loads(x) for x in (tmp_path / "platform-events.jsonl").read_text().splitlines()]
+    assert [x["type"] for x in lines] == [
+        "snapshot",
+        "user_message",
+        "turn_started",
+        "assistant_message",
+        "snapshot",
+        "platform",
+        "turn_end",
+    ]
+    assert "seq" not in lines[0] and "seq" not in lines[4]
+    assert lines[5]["kind"] == "commit" and lines[6]["seq"] == 5
+    assert [p for m, p in record["calls"] if m == "GET"][-2:] == [
+        "/sessions/s1/events?after=0",
+        "/sessions/s1/events?after=3",
+    ]
+    assert record["turn_end"]["seq"] == 5 and record["problems"] == []
+    assert record["stream_breaks"] == ["事件流结束了"]
+    assert classify_platform(record) is None
+
+
+def test_the_text_that_marks_events_not_connected_is_in_the_control_planes_message() -> None:
+    # 驱动认「事件流还没连上」的子串（`EVENTS_NOT_CONNECTED_TEXT`）：从控制面的原文里读，
+    # 不在这里抄一份——
+    # 控制面改了措辞，这条就红，不会悄悄把这种 503 变回平台故障。
+    from platform_driver import EVENTS_NOT_CONNECTED_TEXT
+
+    source = (
+        Path(__file__).resolve().parents[3] / "apps/server/src/sessions/session-service.ts"
+    ).read_text()
+    found = re.search(r'EVENTS_NOT_CONNECTED_MESSAGE =\s*"([^"]+)"', source)
+    assert found is not None, "session-service.ts 里找不到 EVENTS_NOT_CONNECTED_MESSAGE"
+    assert EVENTS_NOT_CONNECTED_TEXT in found.group(1)

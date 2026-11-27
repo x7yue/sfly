@@ -178,12 +178,21 @@ class Client:
 
     def scrub(self, text: str) -> str:
         """写进记录、标准输出之前，把密码和 Cookie 的值换成 `******`（控制面的错误回应、
-        异常消息里不该有，但不靠它们不回显）。"""
+        异常消息里不该有，但不靠它们不回显）。认的写法：原文、Cookie 去掉 `sfly_login=` 之后的值、
+        它们在 JSON 里转义之后的写法。**只认完整的出现**：不看开头像不像、结尾像不像
+        （按它们能一位一位试出值）；所以要截断的文字**先 `clip`（先打码、后截断）**，
+        不能先截断：凭据跨过截断点时前半截就认不出来了。"""
         for secret in (self._password, self._cookie):
-            if secret:
-                text = text.replace(secret, "******")
-                text = text.replace(secret.removeprefix("sfly_login="), "******")
+            if not secret:
+                continue
+            value = secret.removeprefix("sfly_login=")
+            for written in (secret, value, json.dumps(secret)[1:-1], json.dumps(value)[1:-1]):
+                text = text.replace(written, "******")
         return text
+
+    def clip(self, text: str, limit: int) -> str:
+        """先打码、后截断（#583 的规矩）：对完整的文字打码，再取前 `limit` 个字符。"""
+        return self.scrub(text)[:limit]
 
     def _headers(self) -> dict[str, str]:
         headers = {"x-sfly-nickname": self.nickname}
@@ -215,11 +224,11 @@ class Client:
             raw = response.read()
             cookies = response.msg.get_all("set-cookie") or []
         except (OSError, http.client.HTTPException) as error:
-            raise LoginError(f"管理员登录连不上控制面：{self.scrub(str(error))}") from error
+            raise LoginError(f"管理员登录连不上控制面：{self.clip(str(error), 500)}") from error
         finally:
             conn.close()
         if response.status >= 300:
-            detail = self.scrub(raw.decode(errors="replace")[:500])
+            detail = self.clip(raw.decode(errors="replace"), 500)
             raise LoginError(f"管理员登录返回 {response.status}：{detail}")
         for cookie in cookies:
             match = re.match(r"(sfly_login=[^;\s]+)", cookie)
@@ -241,19 +250,23 @@ class Client:
             response = conn.getresponse()
             raw = response.read()
         except (OSError, http.client.HTTPException) as error:
-            raise ControlPlaneError(f"{method} {path} 连不上控制面：{error}") from error
+            raise ControlPlaneError(
+                f"{method} {path} 连不上控制面：{self.clip(str(error), 500)}"
+            ) from error
         finally:
             conn.close()
         if response.status >= 300:
-            detail = raw.decode(errors="replace")[:500]
+            # 先打码、后截断：整个回应体先打码，再取前 500 个字符；`not_ready` 看打过码的整个回应体
+            # （不看截断之后的：截断可能把 JSON 切坏）。
+            body = self.scrub(raw.decode(errors="replace"))
             raise ControlPlaneError(
-                f"{method} {path} 返回 {response.status}：{detail}",
-                not_ready=response.status == 503 and not_ready_rejection(detail),
+                f"{method} {path} 返回 {response.status}：{body[:500]}",
+                not_ready=response.status == 503 and not_ready_rejection(body),
             )
         try:
             return json.loads(raw or b"null")
         except ValueError as error:
-            text = raw.decode(errors="replace")[:200]
+            text = self.clip(raw.decode(errors="replace"), 200)
             raise ControlPlaneError(f"{method} {path} 的回应不是 JSON：{text}") from error
 
     def stream_once(
@@ -331,9 +344,9 @@ class Client:
             why = self.stream_once(session_id, last_seq(received), deadline, sink, received)
             if why is None:
                 return True, breaks
-            # 到了时限是计时器关的连接，不算一次断开。
+            # 到了时限是计时器关的连接，不算一次断开。断开的原因里有异常的文字，记下之前也打码。
             if time.monotonic() < deadline:
-                breaks.append(why)
+                breaks.append(self.clip(why, 500))
             pause = min(RECONNECT_PAUSE_SECONDS, deadline - time.monotonic())
             if pause > 0:
                 time.sleep(pause)
@@ -354,11 +367,14 @@ def precheck(client: Client, project: str) -> str | None:
         return str(error)
     readiness = listing.get("readiness") if isinstance(listing, dict) else None
     if not isinstance(readiness, dict):
-        return f"控制面的回应里没有 readiness：{json.dumps(listing, ensure_ascii=False)[:200]}"
+        text = json.dumps(listing, ensure_ascii=False)
+        return f"控制面的回应里没有 readiness：{client.clip(text, 200)}"
     if readiness.get("ready") is True:
         return None
     problems = "；".join(str(p.get("message")) for p in readiness.get("problems") or [])
-    return f"助手此刻不能用：{problems or json.dumps(readiness, ensure_ascii=False)[:200]}"
+    return (
+        f"助手此刻不能用：{problems or client.clip(json.dumps(readiness, ensure_ascii=False), 200)}"
+    )
 
 
 def run(
@@ -404,13 +420,13 @@ def run(
                 session = client.request("POST", f"/projects/{project}/sessions", {"text": prompt})
                 created = session.get("id") if isinstance(session, dict) else None
                 if not isinstance(created, str) or not created:
-                    text = json.dumps(session, ensure_ascii=False)[:200]
+                    text = client.clip(json.dumps(session, ensure_ascii=False), 200)
                     raise ControlPlaneError(f"建会话的回应里没有会话 ID：{text}")
                 record["session"] = session_id = created
                 record["queued"] = session.get("status") == "queued"
                 got, breaks = client.follow(session_id, asked + max_seconds, sink, events)
                 waited = time.monotonic()
-                record["stream_breaks"] += breaks
+                record["stream_breaks"] += [client.scrub(b) for b in breaks]
                 if not got:
                     record["deadline_passed"] = True
                     why = "（这一轮在排队）" if record["queued"] else ""
@@ -421,7 +437,7 @@ def run(
                         session_id, time.monotonic() + STOP_WAIT_SECONDS, sink, events
                     )
                     waited = time.monotonic()
-                    record["stream_breaks"] += [f"停止之后：{b}" for b in breaks]
+                    record["stream_breaks"] += [f"停止之后：{client.scrub(b)}" for b in breaks]
                     if not got:
                         problem(NO_OUTCOME_AFTER_STOP, "停止之后没有等到结局")
         except ControlPlaneError as error:

@@ -370,6 +370,28 @@ def test_the_admin_password_goes_to_the_driver_through_the_environment_not_the_a
     assert password not in " ".join(seen["argv"])
 
 
+def test_run_session_driver_hands_the_password_environment_to_the_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aeval import platform as platform_module
+    from aeval.env import ADMIN_PASSWORD_ENV
+    from aeval.platform import run_session_driver
+
+    password = "pw-for-the-run-session-driver-test"
+    seen: dict[str, Any] = {}
+
+    def fake_run_driver(argv: list[str], timeout: float, end: Any, **kwargs: Any) -> Any:
+        seen["argv"], seen["timeout"], seen["env"] = argv, timeout, kwargs.get("env")
+        return {}, []
+
+    monkeypatch.setattr(platform_module, "run_driver", fake_run_driver)
+    run_session_driver(cast("Stack", _AdminOnly(password)), "mirror", "/p.md", "/r", lambda: None)
+    # 宿主机起驱动的那一步把密码经环境交给 `docker exec`（不在参数里）：去掉 `env=` 这条就红。
+    assert seen["env"] == {ADMIN_PASSWORD_ENV: password}
+    assert password not in " ".join(seen["argv"])
+    assert seen["timeout"] > driver_budget()
+
+
 def test_without_the_admin_password_the_host_stops_before_starting_the_driver() -> None:
     from aeval import docker as d
 
