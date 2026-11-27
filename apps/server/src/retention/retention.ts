@@ -140,6 +140,7 @@ export class Retention {
 					.where(eq(runs.id, id))
 					.for("update");
 				if (!locked || locked.purgedAt !== null) return; // 选出来之后别处已经清理了
+				// biome-ignore lint/plugin/tx-callback-pool: 并发的是删文件，不是查询
 				await Promise.all(
 					["logs", "artifacts"].map((dir) =>
 						rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),

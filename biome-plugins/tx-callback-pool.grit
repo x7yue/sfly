@@ -1,19 +1,34 @@
 language js
 
-// CODING_STANDARDS.md「数据库」：事务回调里只用事务对象，不另从连接池取连接（#354、#380）。
+// CODING_STANDARDS.md「数据库」：事务回调里只用事务对象，不另从连接池取连接（#354、#380），也不用 Promise.all 并发。
 // 事务持有行锁时，连接池里其余的连接可能正在等这把锁，再去连接池取连接就会互相等死。
 // 拦的是回调里直接写出来的 `deps.db`、`this.deps.db`；事务里调用的函数用了连接池拦不住，
 // 要靠函数的数据库参数写成 `Db | Tx`，由调用方传（见 apps/server/src/runs/preflight.ts）。
 or {
-	`$_.transaction($cb)`,
-	`$_.#event($cb)`,
-	`$_.#step($cb)`,
-	`$_.event($cb)`
-} where {
-	$filename <: r".*apps/server/src/.*",
-	$cb <: contains or {
-		`this.deps.db`,
-		`deps.db`
-	} as $pool,
-	register_diagnostic(span=$pool, message="事务回调里只用事务对象（tx），不另从连接池取连接（CODING_STANDARDS.md「数据库」，#354、#380）：事务持有行锁时，连接池里其余的连接可能正在等这把锁，再取连接会互相等死。读写都走 tx；事务里调用的函数把数据库参数写成 Db | Tx，由调用方传 tx。")
+	or {
+		`$_.transaction($cb)`,
+		`$_.#event($cb)`,
+		`$_.#step($cb)`,
+		`$_.event($cb)`
+	} where {
+		$filename <: r".*apps/server/src/.*",
+		$cb <: contains or {
+			`this.deps.db`,
+			`deps.db`
+		} as $pool,
+		register_diagnostic(span=$pool, message="事务回调里只用事务对象（tx），不另从连接池取连接（CODING_STANDARDS.md「数据库」，#354、#380）：事务持有行锁时，连接池里其余的连接可能正在等这把锁，再取连接会互相等死。读写都走 tx；事务里调用的函数把数据库参数写成 Db | Tx，由调用方传 tx。")
+	},
+	or {
+		`Promise.all($_)`,
+		`Promise.allSettled($_)`
+	} as $all where {
+		$filename <: r".*apps/server/src/.*",
+		$all <: within or {
+			`$_.transaction($_)`,
+			`$_.#event($_)`,
+			`$_.#step($_)`,
+			`$_.event($_)`
+		} ,
+		register_diagnostic(span=$all, message="事务回调里不用 Promise.all 并发（CODING_STANDARDS.md「数据库」）：同一个事务只有一个连接，并发的查询会在这个连接上排队（pg 打弃用警告）。依次 await。并发的不是查询时（例如删文件），在这一行上方写 // biome-ignore lint/plugin/tx-callback-pool: <原因>。")
+	}
 }
