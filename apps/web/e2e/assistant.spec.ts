@@ -399,7 +399,8 @@ test("会话列表：在做、排队中（带位置）、被打断、已结束�
 			.getByRole("row")
 			.filter({ has: page.getByRole("link", { name: title, exact: true }) });
 	const rows = page.getByRole("table", { name: "会话列表" }).getByRole("row");
-	// 在做和排队中的在前（最近活动的在前），其余最近活动在前。
+	// 在做和排队中的在前（最近活动的在前），其余最近活动在前。先等表渲染出来（表头一行加 11 个会话）再读。
+	await expect(rows).toHaveCount(12);
 	const titles = await rows
 		.getByRole("link")
 		.evaluateAll((links) => links.map((link) => link.textContent));
