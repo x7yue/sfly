@@ -22,7 +22,7 @@ const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "�
 const NEW_PASSWORD = "brand-new-password-1";
 
 /** 没有预先写昵称：登录之后昵称弹窗不该出现，没登录时才弹。 */
-test.use({ nickname: null });
+test.use({ loginAs: null });
 
 async function login(page: import("@playwright/test").Page, password = ADMIN.password) {
 	await page.getByLabel("登录名").fill(ADMIN.loginName);

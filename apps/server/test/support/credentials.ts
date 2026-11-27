@@ -368,6 +368,12 @@ export class TestUsers {
 		});
 	}
 
+	/** 这个昵称的用户新登录一次，返回登录 Cookie 的值（e2e 的浏览器带它就是登录着的）。 */
+	async loginCookie(nickname = DEFAULT_TESTER): Promise<string> {
+		const { id } = await this.user(nickname);
+		return this.#withAccounts((accounts) => accounts.login(id));
+	}
+
 	/** 以这个昵称的用户发请求要带的请求头（`authorization`）。 */
 	async as(nickname: string): Promise<Record<string, string>> {
 		return bearer(await this.token(nickname));

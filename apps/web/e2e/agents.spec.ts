@@ -347,9 +347,11 @@ test.describe("凭据种类和停用（#492）", () => {
 		await expect(header(page, "agent-none").getByText("没有凭据", { exact: true })).toHaveClass(
 			/text-warn-fg/,
 		);
+		// 登录着的管理员在标题栏里还有「凭据」「停用」按钮：只看连接凭据的那几句。
 		for (const name of ["agent-own", "agent-unknown"]) {
-			await expect(header(page, name)).not.toContainText("凭据");
-			await expect(header(page, name)).not.toContainText("共享令牌");
+			for (const said of ["共享令牌", "没有凭据", "自己的凭据"]) {
+				await expect(header(page, name)).not.toContainText(said);
+			}
 		}
 	});
 

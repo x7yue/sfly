@@ -2127,7 +2127,7 @@ test.describe("开发文档", () => {
 test.describe("账号与登录", () => {
 	const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
 	// 没有预先写昵称：登录页和初始化页上没有昵称弹窗，登录之后也没有。
-	test.use({ nickname: null });
+	test.use({ loginAs: null });
 
 	const signIn = async (page: Page) => {
 		await page.goto("/login");

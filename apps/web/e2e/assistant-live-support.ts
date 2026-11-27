@@ -1,5 +1,4 @@
 import type { Page } from "@playwright/test";
-import { TestAccounts } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { FakeAssistant } from "../../server/test/support/fake-assistant.js";
 import { eventAt } from "./assistant-support";
@@ -16,22 +15,11 @@ export const test = base.extend<{
 	workbench: FakeAgent;
 	signedIn: undefined;
 }>({
-	// 建会话只认用户的凭据（#547）：页面带一个登录 Cookie，登录的用户是默认项目里的编辑者，显示名就是页面上的昵称
+	// 建会话只认用户的凭据（#547）：页面登录着的用户（fixtures.ts 的 `loginAs`）在默认项目里是编辑者，显示名就是昵称
 	// （时间线上显示「tester：…」）。
 	signedIn: [
-		async ({ controlPlane, context, nickname }, use) => {
-			const accounts = new TestAccounts(controlPlane.database.url);
-			try {
-				const name = nickname ?? "tester";
-				// 控制面的默认凭据（#493）可能同时也在建这个昵称的用户：用同一个，不另建。
-				const user = await accounts.userNamed(name, { displayName: name });
-				await accounts.member("default", user, "editor");
-				await context.addCookies([
-					{ name: "sfly_login", value: await accounts.login(user), url: controlPlane.httpUrl },
-				]);
-			} finally {
-				await accounts.close();
-			}
+		async ({ controlPlane, loginAs }, use) => {
+			if (loginAs !== null) await controlPlane.users.joinProject(loginAs, "default", "editor");
 			await use(undefined);
 		},
 		{ auto: true },
