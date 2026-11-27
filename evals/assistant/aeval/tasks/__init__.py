@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from aeval import docker as d
-from aeval.env import EVALS_DIR, Stack
+from aeval.env import ASSISTANT_NICKNAME, EVALS_DIR, Stack
 
 GOAL, GUARD, INFO = "goal", "guard", "info"
 
@@ -93,7 +93,7 @@ class Task:
             stack.dev,
             f"bash {REFERENCE_DIR}/solve.sh",
             workdir=self.workspace,
-            env={"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"},
+            env={"SFLY_NICKNAME": ASSISTANT_NICKNAME, "AI_AGENT": "pi"},
             timeout=900,
         )
 
@@ -333,5 +333,5 @@ def edit_scenario(stack: Stack, scenario: str, change: Callable[[dict[str, Any]]
     d.sh(
         stack.dev,
         "sfly scenario push /tmp/aeval-edit.json",
-        env={"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"},
+        env={"SFLY_NICKNAME": ASSISTANT_NICKNAME, "AI_AGENT": "pi"},
     )

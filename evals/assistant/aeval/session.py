@@ -19,19 +19,22 @@ from pathlib import Path
 from typing import Any
 
 from aeval import docker as d
-from aeval.classify import classify, is_assistant_run
-from aeval.env import OPT, Stack
+from aeval.classify import INFRA, PLATFORM_FAULT, UNCLASSIFIED, classify, is_assistant_run
+from aeval.env import ASSISTANT_NICKNAME, OPT, Stack
 from aeval.models import PROVIDER, Model
-from aeval.tasks import Check, Task, stage_reference, summarize
+from aeval.platform import ENVIRONMENT, PLATFORM
+from aeval.tasks import GUARD, Check, Task, stage_reference, summarize
 
 DRIVER = f"{OPT}/session_driver.py"
 SESSION_DIR = "/root/aeval-session"
 
 
-ARMS = ("a", "b")
+# 臂：a 工具在本地执行（原版 pi 在开发环境里）；b 工具经能力端口落到开发环境（#443 的原型）；
+# p 平台：经控制面的会话接口交给平台内的助手（aeval.platform，#552）。
+ARMS = ("a", "b", "p")
 REMOTE_EXTENSION = "/opt/aeval-remote/extension.mjs"
 # 助手的命令带上的环境变量：控制面把它的操作记成「eval 经 pi」，和判分（grader）的操作分开。
-ASSISTANT_ENV = {"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"}
+ASSISTANT_ENV = {"SFLY_NICKNAME": ASSISTANT_NICKNAME, "AI_AGENT": "pi"}
 
 
 def pi_container(stack: Stack, arm: str) -> str:
@@ -93,6 +96,18 @@ def run_session(
 ) -> dict[str, Any]:
     if arm not in ARMS:
         raise ValueError(f"没有臂 {arm}")
+    if arm == "p":
+        from aeval.platform import run_platform_session
+
+        return run_platform_session(
+            stack,
+            task,
+            model,
+            results,
+            max_turns=max_turns,
+            max_seconds=max_seconds,
+            session_id=session_id,
+        )
     if arm == "b":
         stack.ensure_pi_container()
     runner = pi_container(stack, arm)
@@ -168,6 +183,43 @@ def run_session(
     host_seconds = time.monotonic() - started
     d.copy_out(runner, f"{SESSION_DIR}/.", str(out), check=False)
     (out / "driver-stdout.log").write_text(driver_log)
+    driver_summary: dict[str, Any] = {}
+    if (out / "driver.json").exists():
+        driver_summary = json.loads((out / "driver.json").read_text())
+    if timed_out:
+        driver_summary["exit_reason"] = "time_limit"
+    return finish_record(
+        stack,
+        task,
+        model,
+        out,
+        session_id=session_id,
+        arm=arm,
+        seeded_at=seeded_at,
+        host_seconds=host_seconds,
+        driver_summary=driver_summary,
+    )
+
+
+def finish_record(
+    stack: Stack,
+    task: Task,
+    model: Model,
+    out: Path,
+    *,
+    session_id: str,
+    arm: str,
+    seeded_at: str,
+    host_seconds: float,
+    driver_summary: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+    platform_fault: tuple[str, str] | None = None,
+) -> dict[str, Any]:
+    """一次会话结束之后（各臂一样）：存工作区的改动和控制面上的运行，判分、分类失败，
+    写 `session.json`。`out` 里已经有这次的 `events.jsonl`（pi 的原始事件）。
+
+    `platform_fault`（只有平台臂有，`aeval.platform.classify_platform`）：（类，原因）。环境故障作废；
+    平台故障是有效的失败，见 `judge`。"""
     diff = d.sh(
         stack.dev,
         "git add -A -N . && git diff --stat HEAD && git diff HEAD",
@@ -178,17 +230,11 @@ def run_session(
     runs = _runs(stack)
     (out / "runs.json").write_text(json.dumps(runs, ensure_ascii=False, indent=2))
     tools = tool_versions(stack, task.workspace)
-    graded = summarize(grade_safely(task, stack))
-    driver_summary: dict[str, Any] = {}
-    if (out / "driver.json").exists():
-        driver_summary = json.loads((out / "driver.json").read_text())
-    if timed_out:
-        driver_summary["exit_reason"] = "time_limit"
+    checks = grade_safely(task, stack)
     events = out / "events.jsonl"
     classified = classify(events, driver_summary, runs)
-    # 因为端点故障没能做完的会话作废（不论判分结果）：重跑，不计入结果。重试成功的照常算。
-    invalid = bool(classified["invalid"])
-    failure = classified if invalid or not graded["passed"] else None
+    invalid, failure, checks = judge(classified, checks, platform_fault)
+    graded = summarize(checks)
     record = {
         "session": session_id,
         "task": task.id,
@@ -205,12 +251,42 @@ def run_session(
         "failure": failure,
         "invalid": invalid,
         "endpoint_error": classified["endpoint_error"],
+        "platform_fault": None
+        if platform_fault is None
+        else {"kind": platform_fault[0], "reason": platform_fault[1]},
         "endpoint_retries": classified["endpoint_retries"],
         "assistant_runs": len([r for r in runs if is_assistant_run(r)]),
         "tool_versions": tools,
+        **(extra or {}),
     }
     (out / "session.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
     return record
+
+
+def judge(
+    classified: dict[str, Any], checks: list[Check], platform_fault: tuple[str, str] | None
+) -> tuple[bool, dict[str, Any] | None, list[Check]]:
+    """这次会话作不作废、失败记成什么。返回（作废没有，失败分类，判分的检查项）。
+
+    - 环境故障作废，不论判分，主类「环境故障」：模型端点的故障（`classify` 认的，优先）、
+      平台臂开始前的检查没过、评测自己的问题。重跑，不计入结果。重试成功的端点故障照常算。
+    - 平台故障（只有平台臂）是**有效的失败**：判分加一条没过的守护项「平台这一侧没有出问题」
+      （写明原因），所以不算通过，主类「平台故障」。
+    - 未归类（只有平台臂）：作废，主类「未归类」；`report` 单独列出，判定写明只作参考。
+    - 其余没通过的照 `classify`。
+    """
+    endpoint = bool(classified["invalid"])
+    if not endpoint and platform_fault is not None:
+        kind, reason = platform_fault
+        if kind == PLATFORM:
+            classified = {**classified, "primary": PLATFORM_FAULT, "platform": reason}
+            checks = [*checks, Check("平台这一侧没有出问题", False, reason, kind=GUARD)]
+        else:
+            primary = INFRA if kind == ENVIRONMENT else UNCLASSIFIED
+            classified = {**classified, "primary": primary, "invalid": True, "environment": reason}
+    invalid = bool(classified["invalid"])
+    passed = summarize(checks)["passed"]
+    return invalid, classified if invalid or not passed else None, checks
 
 
 def tool_versions(stack: Stack, workspace: str) -> dict[str, str]:

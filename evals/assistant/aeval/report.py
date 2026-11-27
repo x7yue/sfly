@@ -12,6 +12,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from aeval.decide import ARM_NAMES as DECIDE_ARM_NAMES
 from aeval.decide import decide, render_decision
 from aeval.models import load_models
 
@@ -23,7 +24,8 @@ def load_records(results: Path) -> list[dict[str, Any]]:
     return records
 
 
-ARM_NAMES = {"a": "A 本地", "b": "B 远程"}
+ARM_NAMES = {"a": "A 本地", "b": "B 远程", "p": "平台"}
+REMOTE_ARMS = [arm for arm in DECIDE_ARM_NAMES if arm != "a"]
 
 
 def arm_of(record: dict[str, Any]) -> str:
@@ -64,7 +66,8 @@ def table(records: list[dict[str, Any]]) -> str:
             if "tokens" in d
         ]
         tokens_out = [float(d["tokens"]["output"]) for d in drivers if "tokens" in d]
-        memory = [float(d["pi_peak_rss_mib"]) for d in drivers if "pi_peak_rss_mib" in d]
+        # 平台臂一个 pi 进程都没认出来时是 None：不当成 0。
+        memory = [float(d["pi_peak_rss_mib"]) for d in drivers if d.get("pi_peak_rss_mib")]
         failures = Counter(
             (r.get("failure") or {}).get("primary", "其他")
             for r in group
@@ -104,19 +107,79 @@ def render(results: Path) -> str:
     head = [
         f"- sfly：{info.get('sfly', '?')}（控制面镜像 {info.get('server_image', '?')}）",
         f"- pi：{info.get('pi', '?')}",
-        f"- 有效会话数：{len(counted)}；每次会话上限 {info.get('max_turns', '?')} 轮、"
-        f"{info.get('max_seconds', '?')} 秒",
+        f"- 有效会话数：{len(counted)}；每次会话的上限：{limits_text(records)}",
     ]
+    assistant_pi = sorted({str(r["assistant_pi"]) for r in records if r.get("assistant_pi")})
+    if assistant_pi:
+        head.append(f"- 助手镜像里的 pi：{'、'.join(assistant_pi)}")
     if invalid:
-        head.append(f"- 作废（模型端点故障，不计入）：{len(invalid)} 次")
+        head.append(f"- 作废（模型端点、评测环境的故障，不计入）：{len(invalid)} 次")
     body = "\n".join(head) + "\n\n" + models_table(counted) + "\n\n" + table(records) + "\n"
     body += "\n" + endpoint_table(records) + "\n"
+    for table_text in (
+        platform_fault_table(counted, "platform"),
+        platform_fault_table(records, "unclassified"),
+    ):
+        if table_text:
+            body += "\n" + table_text + "\n"
     for model in sorted({r["model"] for r in counted if arm_of(r) == "a"}):
         body += "\n" + render_gate(counted, model) + "\n"
-    for model in sorted({r["model"] for r in counted if arm_of(r) == "b"}):
-        all_for_decision = [r for r in records if r.get("task") != "toolcheck"]
-        body += "\n" + render_decision(decide(all_for_decision, model)) + "\n"
+    all_for_decision = [r for r in records if r.get("task") != "toolcheck"]
+    for remote in REMOTE_ARMS:
+        for model in sorted({r["model"] for r in counted if arm_of(r) == remote}):
+            body += "\n" + render_decision(decide(all_for_decision, model, remote)) + "\n"
+            body += "".join(f"- {note}\n" for note in comparison_notes(remote))
     return body
+
+
+def limits_text(records: list[dict[str, Any]]) -> str:
+    """每个臂实际用的上限（各自 `driver.json` 里记的），不取最后一次 run 的参数。"""
+    by_arm: dict[str, set[str]] = {}
+    for record in records:
+        given = (record.get("driver") or {}).get("limits") or {}
+        if given:
+            text = f"{given.get('max_turns', '?')} 轮、{given.get('max_seconds', '?')} 秒"
+            by_arm.setdefault(arm_of(record), set()).add(text)
+    parts = [
+        f"{ARM_NAMES[arm]} {'、'.join(sorted(texts))}" for arm, texts in sorted(by_arm.items())
+    ]
+    return "；".join(parts) or "?"
+
+
+def comparison_notes(remote: str) -> list[str]:
+    """臂 A 和远程那一臂比时要说明的口径。"""
+    if remote != "p":
+        return []
+    return [
+        "内存峰值：两臂都是 pi 进程的 VmHWM、每秒取一次；臂 A 是开发环境里的 JSON 模式、本地工具，"
+        "平台臂是助手容器里的 RPC 模式、加载远程工具扩展，进程按会话常驻：量的是同一种东西，"
+        "但不是同一个配置下的 pi",
+        "用时：两臂都是评测这一侧量的（臂 A 从 pi 启动到退出，平台臂从发出题目到看到结局）；"
+        "平台自己记的用时在平台臂的 driver.json 里另记（platform_duration_seconds）",
+        "轮数：两臂都是模型调用次数，到上限时都记上限的值",
+    ]
+
+
+FAULT_TABLES = {
+    "platform": "平台故障（算作做题失败，计入平台臂的通过率和判定）",
+    "unclassified": "未归类（认不出是平台还是评测环境的问题：作废，不计入，判定只作参考）",
+}
+
+
+def platform_fault_table(records: list[dict[str, Any]], kind: str = "platform") -> str:
+    """平台故障（有效的失败）或未归类（作废的）逐次列出：哪道题、哪次会话、原始的问题文字。"""
+    rows = []
+    for record in sorted(records, key=lambda r: str(r.get("session"))):
+        fault = record.get("platform_fault") or {}
+        if fault.get("kind") == kind:
+            reason = str(fault.get("reason") or "")[:200].replace("|", "\\|")
+            rows.append(
+                f"| {record['model']} | {record['task']} | {record['session']} | {reason} |"
+            )
+    if not rows:
+        return ""
+    head = ["| 模型 | 题目 | 会话 | 问题 |", "|---|---|---|---|"]
+    return f"{FAULT_TABLES[kind]}：\n\n" + "\n".join(head + rows)
 
 
 def endpoint_table(records: list[dict[str, Any]]) -> str:
@@ -145,7 +208,10 @@ def endpoint_table(records: list[dict[str, Any]]) -> str:
 
 def _reason(record: dict[str, Any]) -> str:
     error = str(
-        record.get("endpoint_error") or (record.get("failure") or {}).get("endpoint_error") or ""
+        (record.get("platform_fault") or {}).get("reason")
+        or record.get("endpoint_error")
+        or (record.get("failure") or {}).get("endpoint_error")
+        or ""
     )
     return error[:60].replace("|", "\\|") or "未记录"
 
