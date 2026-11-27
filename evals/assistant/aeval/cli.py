@@ -8,7 +8,7 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
-from aeval import bgcheck, e2e, probe, rpcprobe, toolcheck, transcript
+from aeval import bgcheck, ci, e2e, probe, rpcprobe, toolcheck, transcript
 from aeval import docker as d
 from aeval.env import (
     DATA_HOME,
@@ -215,6 +215,12 @@ def main(argv: list[str] | None = None) -> int:
         default=900,
         help="等这一轮结束的时限；没有事件时按控制面的心跳（15 秒一次）检查，最多晚这么久",
     )
+    ci_cmd = sub.add_parser(
+        "ci",
+        help="CI 里的评测：平台臂、假的模型端点、四道题各一次，最后扫一遍结果目录里的凭据"
+        "（要 up --assistant；退出码 0 通过，4 没通过，5 扫到凭据）",
+    )
+    ci_cmd.add_argument("--results", type=Path, required=True, help="结果目录")
     report = sub.add_parser("report", help="把结果目录汇总成 Markdown 表格")
     report.add_argument("results", type=Path)
     args = parser.parse_args(argv)
@@ -285,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "selfcheck":
         return selfcheck(stack, args.tasks or list(TASKS))
+    elif args.command == "ci":
+        return ci.run(stack, args.results)
     elif args.command == "e2e":
         results = args.results or DATA_HOME / f"{date.today().isoformat()}-e2e"
         return e2e.run(stack, TASKS[args.task], results, args.max_seconds)

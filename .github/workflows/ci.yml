@@ -206,6 +206,46 @@ jobs:
       # deploy/docker-compose.yml 本身：--profile assistant 起三个服务，工作台在线，假的模型端点做完一个会话，删掉工作台容器再建。
       - name: Compose smoke test
         run: pnpm test:compose
+      # 助手评测集的平台臂（#552）：上面构建的控制面和助手镜像，假的模型端点，四道题各一次，经会话接口交给平台内的助手；
+      # 评测用的工作台镜像由 up 按 evals/assistant/workbench/Dockerfile 构建。正式的一遍在不通外网的网络里只用镜像站的缓存
+      # （up --offline --isolated）。缓存（uv、Python 和 PyPI 包，几十 MB）存在 Actions 缓存里，按决定下载什么的文件算键；
+      # 没有完全命中时先联网跑一遍、把缺的录下来，只有 dev、main 上的提交写回缓存。
+      - name: Assistant eval mirror cache
+        id: aeval-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.local/share/sfly/evals/mirror-cache
+          key: aeval-mirror-v1-${{ hashFiles('evals/assistant/tasks/**', 'evals/assistant/container/mirror.py', 'sdk/python/pyproject.toml', 'sdk/python/src/sfly/cli/**', 'apps/server/src/agent-binaries/install.sh', 'apps/server/src/config/env-settings.ts') }}
+          restore-keys: aeval-mirror-v1-
+      - name: Assistant eval (record the mirror cache)
+        if: ${{ steps.aeval-cache.outputs.cache-hit != 'true' }}
+        working-directory: evals/assistant
+        run: |
+          ./aeval.sh up --server-image sfly-server:smoke --assistant --assistant-image sfly-assistant:smoke
+          ./aeval.sh ci --results "$RUNNER_TEMP/aeval-record"
+          ./aeval.sh down
+      - uses: actions/cache/save@v6
+        if: ${{ steps.aeval-cache.outputs.cache-hit != 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') }}
+        with:
+          path: ~/.local/share/sfly/evals/mirror-cache
+          key: ${{ steps.aeval-cache.outputs.cache-primary-key }}
+      # `ci` 最后按值和格式扫一遍结果目录里的凭据：退出码 0 通过、4 有题没通过（结果目录照样上传，供排查）、
+      # 5 扫到凭据（不上传）；别的退出码是评测自己没跑完，也不上传。
+      - name: Assistant eval
+        id: aeval
+        working-directory: evals/assistant
+        run: |
+          ./aeval.sh up --offline --isolated --server-image sfly-server:smoke --assistant --assistant-image sfly-assistant:smoke
+          code=0
+          ./aeval.sh ci --results "$RUNNER_TEMP/aeval" || code=$?
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+          exit "$code"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() && (steps.aeval.outputs.code == '0' || steps.aeval.outputs.code == '4') }}
+        with:
+          name: assistant-eval
+          path: ${{ runner.temp }}/aeval
+          retention-days: 7
 
   # main 与 dev 的规则集要求名为 check 与 e2e 的检查通过（docs/agents/branching-and-release.md）：
   # 上面四个 job 全部成功才算 check 通过，拆分或合并 job 时不用改规则集。
