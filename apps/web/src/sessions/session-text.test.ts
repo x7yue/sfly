@@ -6,7 +6,8 @@ import {
 	commitTotals,
 	composerMode,
 	hasModelProblem,
-	readinessProblems,
+	lastTurnFlag,
+	readinessItems,
 	resultDisplayText,
 	SESSION_STATUS,
 	sessionStatusText,
@@ -223,18 +224,26 @@ describe("会话页的文字", () => {
 		]);
 	});
 
-	it("就绪状态：逐条写缺什么；工作台不在线时写出是哪一台；就绪时没有原因", () => {
+	it("就绪状态：逐条写缺什么和该找谁；工作台不在线时写出是哪一台；就绪时没有原因", () => {
 		const offline: Readiness = {
 			ready: false,
 			workbench: "bench-1",
 			problems: [{ kind: "workbench_offline", message: "工作台的 Agent 不在线" }],
 		};
-		expect(readinessProblems(offline)).toEqual(["工作台 bench-1 不在线"]);
+		expect(readinessItems(offline)).toEqual([
+			{
+				kind: "workbench_offline",
+				what: "工作台 bench-1 不在线",
+				hint: "请部署者检查工作台有没有在运行、能不能连上控制面、能力端口有没有上报",
+			},
+		]);
 		const named: Readiness = {
 			...offline,
 			problems: [{ kind: "workbench_offline", message: "工作台 bench-1 不在线，等它连上" }],
 		};
-		expect(readinessProblems(named)).toEqual(["工作台 bench-1 不在线，等它连上"]);
+		expect(readinessItems(named).map((item) => item.what)).toEqual([
+			"工作台 bench-1 不在线，等它连上",
+		]);
 		const none: Readiness = {
 			ready: false,
 			workbench: null,
@@ -243,7 +252,52 @@ describe("会话页的文字", () => {
 				{ kind: "workbench_not_set", message: "没有设置工作台" },
 			],
 		};
-		expect(readinessProblems(none)).toEqual(["没有配置助手", "没有设置工作台"]);
+		expect(readinessItems(none).map((item) => [item.what, item.hint])).toEqual([
+			["没有配置助手", "请部署者在控制面上开启助手"],
+			["没有设置工作台", "请部署者设置这个项目的工作台"],
+		]);
+		expect(readinessItems({ ready: true, workbench: "bench-1", problems: [] })).toEqual([]);
+	});
+
+	it("就绪状态里的每一种问题都写了该找谁（读不到就是漏了）", () => {
+		const kinds = [
+			"assistant_not_configured",
+			"assistant_unreachable",
+			"workbench_not_set",
+			"workbench_offline",
+			"model_not_configured",
+			"model_unreachable",
+		] as const;
+		for (const kind of kinds) {
+			const [item] = readinessItems({
+				ready: false,
+				workbench: null,
+				problems: [{ kind, message: "x" }],
+			});
+			expect(item?.hint).toMatch(/^请/);
+		}
+		// 模型没有配置：要找部署者、在助手容器上配置（#551 的例子）。
+		expect(
+			readinessItems({
+				ready: false,
+				workbench: null,
+				problems: [{ kind: "model_not_configured", message: "没有配置模型：缺少端点" }],
+			})[0]?.hint,
+		).toBe("请部署者在助手容器上配置模型");
+	});
+
+	it("会话列表上一轮的结局：完成和没有结束过的一轮不标；其余标出来，出了问题的醒目", () => {
+		expect(lastTurnFlag(null)).toBeNull();
+		expect(lastTurnFlag("completed")).toBeNull();
+		expect(lastTurnFlag("interrupted")).toEqual({ label: "上一轮被打断", kind: "failed" });
+		expect(lastTurnFlag("failed")).toEqual({ label: "上一轮出错", kind: "failed" });
+		expect(lastTurnFlag("model_unavailable")).toEqual({
+			label: "上一轮模型不可用",
+			kind: "failed",
+		});
+		expect(lastTurnFlag("limit")).toEqual({ label: "上一轮到了上限", kind: "warn" });
+		// 用户自己停的不是出了问题：中性的。
+		expect(lastTurnFlag("stopped")).toEqual({ label: "上一轮已停止", kind: "stopped" });
 	});
 });
 
