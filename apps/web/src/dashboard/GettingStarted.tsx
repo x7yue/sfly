@@ -2,6 +2,7 @@ import type { DashboardSetup } from "@sfly/schema";
 import { cn } from "cn";
 import { BookOpenIcon, CheckIcon, CopyIcon, PlayIcon } from "lucide-react";
 import { useConnectCommand } from "#/agents/connect-command";
+import { useCanAdminAgents } from "#/agents/use-agent-admin";
 import { useOverlays } from "#/components/app-shell/overlays";
 import { DocPageLink } from "#/components/doc-page-link";
 import { writeClipboard } from "#/components/feedback/clipboard";
@@ -11,6 +12,7 @@ import { DashboardPanel } from "#/dashboard/DashboardPanel";
 import { PanelLink } from "#/dashboard/panel-link";
 import {
 	ACTION,
+	AGENT_ADMIN,
 	AGENT_STATUS_LABEL,
 	DOC_PAGE,
 	MESSAGE,
@@ -57,6 +59,7 @@ const Mono = ({ children }: { children: React.ReactNode }) => (
 export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 	const overlays = useOverlays();
 	const command = useConnectCommand();
+	const canAdmin = useCanAdminAgents();
 	const next = nextStep(setup);
 	const finished = STEP_ORDER.filter((id) => setup[id].done).length;
 	const buttonVariant = (id: StepId) => (next === id ? ("primary" as const) : ("default" as const));
@@ -73,9 +76,19 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					: `${setup.agent.name} ${AGENT_STATUS_LABEL.online}`,
 			body: (
 				<>
-					任务在 Agent 所在的测试机上执行。在测试机上运行这条命令，Agent 会主动连接控制面；开发机加{" "}
-					<Mono>--dev</Mono> 同时装好 <Mono>sfly</Mono> 命令行。
-					<code className="mt-2.5 block max-w-160 overflow-x-auto rounded-md border border-border bg-sunk px-3 py-2 font-mono text-xs whitespace-pre text-fg-1">
+					{/* 中文标点后面不能靠 JSX 换行拼接：JSX 会把换行变成一个空格，所以整句写成字符串。 */}
+					{`任务在 Agent 所在的测试机上执行。每台 Agent 用自己的凭据连接：${
+						canAdmin
+							? `先在 ${PAGE.agents}页为它的名字签发凭据，`
+							: `${AGENT_ADMIN.askAdmin}，拿到凭据之后`
+					}在测试机上运行下面这一行命令，它用 `}
+					<Mono>read -rs</Mono>
+					{" 停下来等你粘贴凭据（输入不显示）；Agent 会主动连接控制面。开发机加 "}
+					<Mono>--dev</Mono>
+					{" 同时装好 "}
+					<Mono>sfly</Mono>
+					{" 命令行。"}
+					<code className="mt-2.5 block max-w-160 rounded-md border border-border bg-sunk px-3 py-2 font-mono text-xs whitespace-pre-wrap text-fg-1 [overflow-wrap:anywhere]">
 						{command}
 					</code>
 				</>

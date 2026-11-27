@@ -1,7 +1,7 @@
 // 账号与登录的接口（ADR 0029「用户、项目与角色」「认证的几处细节」）：契约在 packages/schema/src/http/accounts.ts。
 // 各接口认哪种凭据由访问检查里的 ACCOUNT_ROUTES 规定（src/auth/access-rules.ts）：走到这里的请求已经过了它，
 // `request.access` 就是登录的用户。
-import { authApi, type CurrentUser, type UserView, usersApi } from "@sfly/schema";
+import { type AccountUser, authApi, type CurrentUser, type UserView, usersApi } from "@sfly/schema";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { type AccountService, LoginNameTaken, type UserRecord } from "../auth/accounts.js";
 import { clearLoginCookieHeader, loginCookieHeader } from "../auth/login-cookie.js";
@@ -18,7 +18,7 @@ export interface AccountRoutesDeps {
 	publicUrl?: string | undefined;
 }
 
-const currentUser = (user: UserRecord): CurrentUser => ({
+const accountUser = (user: UserRecord): AccountUser => ({
 	id: user.id,
 	login_name: user.loginName,
 	display_name: user.displayName,
@@ -26,7 +26,7 @@ const currentUser = (user: UserRecord): CurrentUser => ({
 });
 
 const userView = (user: UserRecord): UserView => ({
-	...currentUser(user),
+	...accountUser(user),
 	disabled_at: user.disabledAt?.toISOString() ?? null,
 	created_at: user.createdAt.toISOString(),
 });
@@ -49,6 +49,11 @@ export function registerAccountRoutes(
 		cookie: string,
 		maxAge: number,
 	) => reply.header("set-cookie", loginCookieHeader(cookie, maxAge, { secure: secure(request) }));
+	/** 当前登录的用户加他此刻在默认项目里有的范围（登录、初始化、`GET /auth/me` 共用，每次现算）。 */
+	const currentUser = async (user: UserRecord): Promise<CurrentUser> => ({
+		...accountUser(user),
+		scopes: await accounts.scopesIn(user),
+	});
 	/** 通过访问检查的登录：账号类接口的 `access` 一定有用户和登录。 */
 	const loggedIn = (request: FastifyRequest) => {
 		const access = request.access;
@@ -87,7 +92,7 @@ export function registerAccountRoutes(
 			);
 		}
 		startCookie(reply, raw, result.login.cookie, result.login.maxAgeSeconds);
-		return reply.code(201).send(currentUser(result.login.user));
+		return reply.code(201).send(await currentUser(result.login.user));
 	});
 
 	contractRoute(app, authApi.login, async ({ body }, reply, raw) => {
@@ -97,7 +102,7 @@ export function registerAccountRoutes(
 			return sendError(reply, 401, "invalid_credentials", "登录名或密码不对");
 		}
 		startCookie(reply, raw, result.login.cookie, result.login.maxAgeSeconds);
-		return currentUser(result.login.user);
+		return await currentUser(result.login.user);
 	});
 
 	// 登出总是成功、总是清掉浏览器上的 Cookie：公开地址和浏览器实际打开的地址对不上时，同源检查过不了，请求不被当作已登录，
@@ -120,7 +125,7 @@ export function registerAccountRoutes(
 	contractRoute(app, authApi.me, async (_request, reply, raw) => {
 		const user = await accounts.findUser(loggedIn(raw).userId);
 		return user
-			? currentUser(user)
+			? await currentUser(user)
 			: sendError(reply, 401, "unauthorized", "凭据无效、已过期或已吊销");
 	});
 

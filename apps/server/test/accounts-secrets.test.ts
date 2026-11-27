@@ -395,6 +395,8 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 			"id",
 			"is_platform_admin",
 			"login_name",
+			// 范围的名字（读、运行……），页面据此显示操作；不是凭据（#492）。
+			"scopes",
 		]);
 	});
 
