@@ -17,33 +17,54 @@ B = "3f9a77d0-1c2e-4b93-8a6f-5e4d3c2b1a09"
 C = "b61739b6-0939-40d3-9692-f8ae81ebaf2a"
 
 
+S1 = "0b7e6a52-2d0c-4f7e-9d43-6a1f0c2e9b11"
+S2 = "5c1d9e40-8a3b-4c6d-b2f1-7e9a0d4c3b22"
+
+
 def item(
-    run_id: str, by: str = "alice", started: str = "2026-01-01T00:00:00.000Z"
+    run_id: str,
+    by: str = "alice",
+    started: str = "2026-01-01T00:00:00.000Z",
+    session: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    run: dict[str, Any] = {
         "id": run_id,
         "orchestration_name": "巡检",
         "status": "success",
         "triggered_by": by,
         "started_at": started,
     }
+    if session is not None:
+        run["session"] = {"id": session, "title": "会话"}
+    return run
 
 
 class FakeClient:
     """只回答 `GET /runs`，和控制面一样：`id_prefix` 只看编号前缀，`triggered_by` 要昵称整个相等，
     `q` 按编号前缀或触发人包含匹配；`limit` 取最近的几个（`runs` 已经是从新到旧）。
-    `old=True` 模仿比命令行旧的控制面：不认 `id_prefix`、`triggered_by`，把它们当没给。"""
+    `session_id` 只要那个会话触发的。
+    `old=True` 模仿比命令行旧的控制面：不认 `id_prefix`、`triggered_by`、`session_id`，当没给。
+    `session_token=True` 模仿带着会话令牌，`session_id` 是 `SFLY_SESSION_ID`。"""
 
     def __init__(
-        self, runs: list[dict[str, Any]], nickname: str = "alice", *, old: bool = False
+        self,
+        runs: list[dict[str, Any]],
+        nickname: str = "alice",
+        *,
+        old: bool = False,
+        session_token: bool = False,
+        session_id: str | None = None,
     ) -> None:
         self.runs = runs
         self.nickname = nickname
         self.old = old
+        self.session_token = session_token
+        self.session_id = session_id
         self.requests: list[tuple[str, dict[str, Any]]] = []
 
     def owner_name(self) -> str:
         """「自己」在运行记录里的名字：没有令牌时就是昵称（和 `Client.owner_name` 一样）。"""
+        assert not self.session_token, "会话令牌不问所属用户"
         return self.nickname
 
     def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
@@ -55,6 +76,8 @@ class FakeClient:
             found = [r for r in found if r["id"].startswith(str(query["id_prefix"]).lower())]
         if not self.old and "triggered_by" in query:
             found = [r for r in found if r["triggered_by"] == query["triggered_by"]]
+        if not self.old and "session_id" in query:
+            found = [r for r in found if (r.get("session") or {}).get("id") == query["session_id"]]
         if "q" in query:
             q = str(query["q"]).lower()
             found = [r for r in found if r["id"].startswith(q) or q in r["triggered_by"].lower()]
@@ -183,3 +206,32 @@ def test_latest_is_refused_where_it_could_cancel_the_wrong_run() -> None:
     assert fake.requests == []
     # 前缀照常可以用。
     assert resolve_run(fake, "3f9a", allow_latest=False) == A
+
+
+def test_latest_with_a_session_token_is_the_sessions_latest_run() -> None:
+    # 会话令牌：不问所属用户，按 SFLY_SESSION_ID 找这个会话触发的最近一次；
+    # 发起人自己（不经会话）和别的会话后来触发的不算。
+    runs = [
+        item(C, started="2026-01-01T00:03:00.000Z"),
+        item(B, started="2026-01-01T00:02:00.000Z", session=S2),
+        item(A, started="2026-01-01T00:01:00.000Z", session=S1),
+    ]
+    fake = FakeClient(runs, session_token=True, session_id=S1)
+    assert resolve_run(fake, "latest") == A  # type: ignore[arg-type]
+    assert fake.requests == [("/runs", {"session_id": S1, "limit": 1})]
+    # 比命令行旧的控制面不认 session_id：返回的最近一次不是这个会话的，不能当成它的。
+    old = FakeClient(runs, old=True, session_token=True, session_id=S1)
+    with pytest.raises(CliError) as caught:
+        resolve_run(old, "latest")  # type: ignore[arg-type]
+    assert caught.value.code == "no_recent_run"
+    assert S1 in caught.value.message
+
+
+def test_latest_with_a_session_token_but_no_session_id_says_what_is_missing() -> None:
+    fake = FakeClient([item(A, session=S1)], session_token=True)
+    with pytest.raises(CliError) as caught:
+        resolve_run(fake, "latest")  # type: ignore[arg-type]
+    assert caught.value.code == "session_id_missing"
+    assert "会话令牌" in caught.value.message and "SFLY_SESSION_ID" in caught.value.message
+    assert "项目令牌" not in caught.value.message
+    assert fake.requests == []

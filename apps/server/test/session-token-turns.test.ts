@@ -154,7 +154,11 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			const token = issued(0);
 			expect(token).toMatch(TOKEN_FORMAT);
 			// 令牌只在 secret_env 里，不在普通的环境变量里，也不在这一轮的话里。
-			expect(prompt?.body.env).toEqual({ SFLY_NICKNAME: "alice", AI_AGENT: "pi" });
+			expect(prompt?.body.env).toEqual({
+				SFLY_NICKNAME: "alice",
+				SFLY_SESSION_ID: view.id,
+				AI_AGENT: "pi",
+			});
 			expect(Object.keys(prompt?.body.secret_env ?? {})).toEqual(["SFLY_API_TOKEN"]);
 			expect(prompt?.body.text).not.toContain(token);
 

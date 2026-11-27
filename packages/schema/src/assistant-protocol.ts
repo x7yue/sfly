@@ -400,7 +400,7 @@ export type WorkbenchTarget = z.infer<typeof WorkbenchTarget>;
  * - `session`：会话的标题和发起人（昵称）：助手服务不存业务状态，每一轮的提交说明（会话标题、会话 ID、第几轮）和提交的
  *   作者（发起人）要用，#546；
  * - `env`：这一轮在工作台上执行命令时要加的**普通**环境变量，由控制面的一个函数生成，每一轮可以不同：竖切里是
- *   `SFLY_NICKNAME`（发起这句话的人的昵称）和 `AI_AGENT=pi`；
+ *   `SFLY_NICKNAME`（发起这句话的人的昵称）、`SFLY_SESSION_ID`（会话 ID）和 `AI_AGENT=pi`；
  * - **收到 `prompt` 先登记这一轮（`turn`、有一轮在做），再做慢的事**（起 pi 进程、准备 skill、连模型）：控制面等回应最多
  *   10 秒，超时的结果是未知的，控制面会补发一次带这一轮轮次的 `abort`（{@link AbortCommandBody}）；登记得早，`abort`
  *   到达时就能直接结束它。`abort` 先于这一轮的 `prompt` 到达也不要紧：中止记号已经提到了这一轮的轮次，这一轮的 `prompt`
