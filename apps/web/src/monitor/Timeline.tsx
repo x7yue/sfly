@@ -27,6 +27,7 @@ import type { PreparedTracks, TrackView } from "./action-tracks";
 import { TIMELINE_BODY_MAX, TIMELINE_BODY_MAX_PX } from "./detail-layout";
 import { useMonitor, useMonitorActions, useScope, useTimeAxis } from "./monitor-state";
 import { type NodeRef, nodeKey, sameNode } from "./node-ref";
+import { timingTitle } from "./node-timing";
 import {
 	chainLabelParts,
 	chainRunStatus,
@@ -50,6 +51,7 @@ import {
 	type TimeRange,
 	ticks,
 	timelineContentHeight,
+	timingOf,
 	zoomFromFractions,
 	zoomStep,
 	zoomToSegments,
@@ -92,12 +94,6 @@ const LEGEND_LABEL: Record<SegmentKind, string> = {
 	fail: "失败尝试",
 	queue: QUEUED_LABEL,
 };
-
-/** 节点的总耗时：第一段开始到最后一段结束（含排队与等待）。 */
-const spanOf = (segments: Segment[]) =>
-	segments.length === 0
-		? null
-		: Math.max(...segments.map((s) => s.end)) - Math.min(...segments.map((s) => s.start));
 
 /**
  * 链路时间线（原型 timelineHTML）：每条链实例一行汇总，可以展开到每个节点一行；子流程实例缩进排在派发它的链后面，
@@ -833,7 +829,8 @@ function NodeRow({
 	const actions = useMonitorActions();
 	const decl = decls.get(node.node_id);
 	const status = nodeStatusView(node.status);
-	const span = spanOf(segments);
+	const timing = timingOf(segments);
+	const timingText = timingTitle(timing);
 	const progress = progressLabel(node);
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
 	const name = runNodeName(node);
@@ -859,11 +856,14 @@ function NodeRow({
 							aria-label={`${name} ${title} ${status.label}${progress ? ` ${PROGRESS_LABEL} ${progress}` : ""}`}
 							// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
 							aria-description={
-								segments
-									.map(
+								[
+									timingText,
+									...segments.map(
 										(seg) =>
 											`${attemptLabel(seg.attempt)}：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
-									)
+									),
+								]
+									.filter(Boolean)
 									.join("；") || undefined
 							}
 							onClick={() => actions.report({ type: "select", node: selected ? null : ref })}
@@ -902,12 +902,17 @@ function NodeRow({
 						</span>
 					)}
 					<span
+						data-testid="node-total"
+						// 这一格是总耗时（和轨道上的条一样长），不是执行时长：悬停写明，构成在选中节点的摘要里。
+						title={timingText}
 						className={cn(
 							"min-w-13 flex-none text-right font-mono text-2xs text-fg-3",
 							!progress && "ml-auto",
 						)}
 					>
-						{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
+						{timing.total === null
+							? NODE_STATUS[node.status].notRunDuration
+							: formatDuration(timing.total)}
 					</span>
 				</Truncate>
 				<div aria-hidden data-viz className="relative mr-3.5 h-full">

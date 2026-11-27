@@ -43,6 +43,8 @@ import { useTimeAxis } from "./monitor-state";
 import { QueueWaitNote } from "./QueueWaitNote";
 import type { PanelTab } from "./run-link";
 import { chainLabelParts, orderedChains } from "./run-model";
+import { StatusLegend } from "./StatusLegend";
+import { statusLegend } from "./status-legend";
 
 /**
  * 概览里点一项要去详情里看的地方：节点（所在的子流程还没触发时没有链实例），可以再指定底部面板的页签，
@@ -205,7 +207,12 @@ function ChainSection({ run }: { run: RunView }) {
 				<h2 id="overview-chains" className="m-0 text-base font-semibold">
 					链路
 				</h2>
-				<span className="text-xs text-fg-3">{chainCountLabel(chains.length, nodeCount)}</span>
+				<span className="flex-none text-xs text-fg-3">
+					{chainCountLabel(chains.length, nodeCount)}
+				</span>
+				<StatusLegend
+					entries={statusLegend(chains.flatMap((chain) => chain.nodes.map((node) => node.status)))}
+				/>
 			</div>
 			<RunLines
 				chains={chains.map((chain) => {

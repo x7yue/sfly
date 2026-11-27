@@ -278,7 +278,8 @@ test("时间线的键盘与读屏：链与节点是嵌套列表；有重试的�
 	// runningScenario 里 verify 失败过一次、正在重试：轨道上有两段。
 	await expect(tl.locator('[data-node-row="verify"] [data-segment]')).not.toHaveCount(0);
 	await expect(nodeButton(page, "verify")).toHaveAccessibleDescription(
-		/^第 1 次尝试：失败的尝试 \S+；第 2 次尝试：执行中 \S+$/,
+		// 先写总耗时和它的构成（#655），再写每次尝试。
+		/^总耗时 \S+（[^）]+）：[^；]+；第 1 次尝试：失败的尝试 \S+；第 2 次尝试：执行中 \S+$/,
 	);
 	await nodeButton(page, "spawn").focus();
 	await page.keyboard.press("Tab");
