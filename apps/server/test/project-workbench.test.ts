@@ -2,7 +2,11 @@
 // 存储层的入口直接用（真实的 PostgreSQL，不经 HTTP）：登记在引擎的锁里做，和连接的登记（`AgentHub.attach`）互斥，
 // 所以先后两种顺序都能确定地造出来：谁先排进锁，谁先做完。HTTP 一侧（范围、响应、重启、Hello 的拒绝）在 project-workbench-http.test.ts。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type AgentAuth, AgentAuthenticator } from "../src/agents/agent-auth.js";
+import {
+	type AgentAuth,
+	AgentAuthenticator,
+	agentsNotOnCredentials,
+} from "../src/agents/agent-auth.js";
 import { AgentCredentialService } from "../src/agents/agent-credentials.js";
 import { AgentConnectionRefused, AgentHub } from "../src/agents/agent-hub.js";
 import { registerSharedAgentToken } from "../src/agents/shared-agent-token.js";
@@ -109,7 +113,7 @@ describe("项目的工作台", () => {
 			expect(await workbench.register(DEFAULT_PROJECT, "wb")).toMatchObject({ ok: true });
 		});
 
-		it("停用的 Agent 不挡登记；恢复之后又挡", async () => {
+		it("停用的 Agent 不挡登记；恢复之后又挡（第一次登记之前）", async () => {
 			await connectOnCredential("wb");
 			await seed("old-box", { kind: "none" });
 			expect(await workbench.register(DEFAULT_PROJECT, "wb")).toMatchObject({
@@ -118,13 +122,14 @@ describe("项目的工作台", () => {
 				agents: ["old-box"],
 			});
 			await hub.setDisabled(DEFAULT_PROJECT, "old-box", true);
-			expect(await workbench.register(DEFAULT_PROJECT, "wb")).toMatchObject({ ok: true });
 			await hub.setDisabled(DEFAULT_PROJECT, "old-box", false);
 			expect(await workbench.register(DEFAULT_PROJECT, "wb")).toMatchObject({
 				ok: false,
 				reason: "agents_not_on_credentials",
 				agents: ["old-box"],
 			});
+			await hub.setDisabled(DEFAULT_PROJECT, "old-box", true);
+			expect(await workbench.register(DEFAULT_PROJECT, "wb")).toMatchObject({ ok: true });
 		});
 
 		it("工作台本身：没有这台 Agent、属于别的项目（和没有一样）、被停用、最近一次连接不是 Agent 凭据，各是各的拒绝", async () => {
@@ -151,6 +156,89 @@ describe("项目的工作台", () => {
 			expect(await reason("off")).toBe("agent_disabled");
 			expect(await reason("shared-one")).toBe("agent_not_on_credential");
 			expect(await column("default")).toBeNull();
+		});
+	});
+
+	describe("开关已经开着时换工作台：不再要求整个部署都换成 Agent 凭据，工作台本身的条件照旧", () => {
+		it("登记之后，一台旧方式的 Agent 被停用再恢复（留着 shared 记录，反正连不上）不挡换工作台；第一次登记时它挡", async () => {
+			await connectOnCredential("wb-1");
+			await connectOnCredential("wb-2");
+			await seed("legacy", { kind: "shared" });
+			// 第一次登记（开关还没开）：它挡。
+			expect(await workbench.register(DEFAULT_PROJECT, "wb-1")).toMatchObject({
+				ok: false,
+				reason: "agents_not_on_credentials",
+				agents: ["legacy"],
+			});
+			await hub.setDisabled(DEFAULT_PROJECT, "legacy", true);
+			expect(await workbench.register(DEFAULT_PROJECT, "wb-1")).toMatchObject({ ok: true });
+			// 恢复它：库里留着它登记之前的最后一次记录（shared），`agentsNotOnCredentials` 又列出它；
+			// 登记之后它的旧方式 Hello 被拒绝，所以这条记录不该挡住换工作台。
+			await hub.setDisabled(DEFAULT_PROJECT, "legacy", false);
+			expect(await agentsNotOnCredentials(database.db)).toEqual(["legacy"]);
+			expect(await workbench.register(DEFAULT_PROJECT, "wb-2")).toEqual({
+				ok: true,
+				project: DEFAULT_PROJECT,
+				agent: "wb-2",
+				previous: "wb-1",
+			});
+			expect(await column("default")).toBe("wb-2");
+		});
+
+		it("工作台本身的三条照旧：没有这台 Agent、被停用、最近一次连接不是 Agent 凭据，开关开着时也一样拒绝，库里还是原来的工作台", async () => {
+			await connectOnCredential("wb-1");
+			await workbench.register(DEFAULT_PROJECT, "wb-1");
+			await connectOnCredential("off");
+			await hub.setDisabled(DEFAULT_PROJECT, "off", true);
+			// 登记之后旧方式进不来，造一条登记之前留下的 shared 记录（直接写库）。
+			await database.pool.query(
+				"insert into agents (name, project_id, info, status, registered_at, last_seen_at, last_auth_kind) values ('shared-one', 'default', '{}', 'offline', now(), now(), 'shared')",
+			);
+			const reason = async (name: string) => {
+				const outcome = await workbench.register(DEFAULT_PROJECT, name);
+				return outcome.ok ? "ok" : outcome.reason;
+			};
+			expect(await reason("nobody")).toBe("agent_unknown");
+			expect(await reason("off")).toBe("agent_disabled");
+			expect(await reason("shared-one")).toBe("agent_not_on_credential");
+			expect(await column("default")).toBe("wb-1");
+		});
+	});
+
+	describe("读不到开关：拒绝，不放行", () => {
+		/** 让 `projects.workbench_agent` 这一列读不了（开关读库的那条查询失败），返回恢复它的函数。 */
+		const breakTheSwitch = async () => {
+			await database.pool.query(
+				"alter table projects rename column workbench_agent to workbench_gone",
+			);
+			return () =>
+				database.pool.query("alter table projects rename column workbench_gone to workbench_agent");
+		};
+
+		it("开关读库失败时，旧方式的 Hello（共享令牌、没有凭据）抛出去、连接不登记；不会当成「没有登记」放行；恢复之后照常", async () => {
+			await registerSharedAgentToken(database.db, clock, "s3cret");
+			await seed("legacy", { kind: "none" });
+			const restore = await breakTheSwitch();
+			await expect(workbench.credentialRequired()).rejects.toThrow();
+			// 认身份：读开关的那一条查询抛出来，不是 ok、也不是一个「没有登记」的结果。
+			await expect(authenticator.authenticate("s3cret", "legacy")).rejects.toThrow();
+			await expect(authenticator.authenticate(undefined, "legacy")).rejects.toThrow();
+			// 登记连接之前的再确认也一样：抛出来，`attach` 没有把这条连接放进连接表。
+			await expect(attach("legacy-2", { kind: "shared" })).rejects.toThrow();
+			expect(hub.connection("legacy-2")).toBeUndefined();
+			expect(await agentRow("legacy-2")).toBeUndefined();
+			await restore();
+			expect((await authenticator.authenticate("s3cret", "legacy")).ok).toBe(true);
+		});
+
+		it("带 Agent 凭据的 Hello 不读开关：开关读不了时照常（认凭据本来就有它自己的读库）", async () => {
+			const issued = await credentials.issue(DEFAULT_PROJECT, "worker-1");
+			const restore = await breakTheSwitch();
+			expect(await authenticator.authenticate(issued.token, "worker-1")).toMatchObject({
+				ok: true,
+				auth: { kind: "agent" },
+			});
+			await restore();
 		});
 	});
 

@@ -367,7 +367,7 @@ export class SessionService {
 			};
 		}
 		const [row] = await db
-			.select({ projectId: agents.projectId })
+			.select({ projectId: agents.projectId, disabledAt: agents.disabledAt })
 			.from(agents)
 			.where(eq(agents.name, name));
 		if (row && row.projectId !== project) {
@@ -375,6 +375,15 @@ export class SessionService {
 				problem: {
 					kind: "workbench_not_set",
 					message: `登记的工作台 ${name} 不属于这个项目：工作台要是这个项目里的 Agent`,
+				},
+			};
+		}
+		// 登记的工作台被停用了：停用的 Agent 连不上也不派发，写「已被停用」，不是「不在线」（项目管理员恢复它，或者换一台登记）。
+		if (row?.disabledAt) {
+			return {
+				problem: {
+					kind: "workbench_offline",
+					message: `工作台 ${name} 已被停用：让项目管理员恢复它，或者登记另一台 Agent 作为工作台`,
 				},
 			};
 		}

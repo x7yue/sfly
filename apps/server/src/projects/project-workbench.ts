@@ -4,7 +4,9 @@
 //   1. 这台 Agent 在这个项目里、没有被停用、最近一次连接用的是 Agent 凭据（它要先用自己的凭据连上来过一次；别的项目里的名字和
 //      不存在一样，不透露那边有没有它）；
 //   2. 部署里没有停用的 Agent 都已经换成 Agent 凭据（{@link agentsNotOnCredentials}，按每台最近一次连接用的是不是 Agent 凭据算；
-//      只签发过、没用它连上过的不算换了），没换的列在拒绝里。
+//      只签发过、没用它连上过的不算换了），没换的列在拒绝里。**开关已经开着时（已经有项目登记过工作台）不再检查这一条**：
+//      旧方式的连接反正连不上（登记之后 Hello 拒绝它们），它们留着的 `last_auth_kind` 只是登记之前的最后一次记录，
+//      不能让它们挡住换工作台；工作台本身的那三条照旧。
 // **之后**部署里任何一个项目有工作台，{@link AgentAuthenticator} 就拒绝共享令牌和不带凭据的连接（整个部署，不只这个项目），
 // 开关每次从库里得出（{@link ProjectWorkbench.credentialRequired}），控制面重启之后照旧，不是只在内存里。
 //
@@ -17,7 +19,8 @@
 // Hello 的处理和连接的去留（没有改 `verify-task-dispatch` 建模的东西）。
 //
 // **没有注销登记**：登记之后共享令牌不再接受是有意的单向开关（注销等于重新打开共享令牌的口子）；要换工作台就用另一台 Agent
-// 再登记一次（同样的条件），换下来的那台只是不再是工作台。确实要回退到登记之前（例如退回旧版本控制面之前），停掉控制面，
+// 再登记一次（工作台本身的条件照旧，部署里的 Agent 都换成凭据这一条在开关已经开着时不再查），换下来的那台只是不再是工作台；
+// 在做的一轮在原来的工作台上做完（这一轮开始时交给助手服务的是当时的工作台），下一轮才交给新的。确实要回退到登记之前（例如退回旧版本控制面之前），停掉控制面，
 // 在库里把 `projects.workbench_agent` 置空。
 import { eq, isNotNull } from "drizzle-orm";
 import { agentsNotOnCredentials } from "../agents/agent-auth.js";
@@ -58,6 +61,9 @@ export class ProjectWorkbench {
 	/**
 	 * 部署里有没有项目登记了工作台：有就只接受 Agent 凭据（{@link AgentAuthenticator} 的 `requireAgentCredential`）。
 	 * 每次都读库：开关从库里得出，不缓存，重启之后和登记当时一样。
+	 * **读不到就抛，不放行**：库出错时这里的异常原样传给调用方（`AgentAuthenticator` 不接它，Hello 的处理抛出去，
+	 * 这条连接以错误结束、没有登记进连接表），**不能**接住错误当成「没有登记」：那样库一出问题，旧方式的连接就全放行了，
+	 * 恰好是这个开关要挡住的。带 Agent 凭据的 Hello 不读开关，所以库出错时它们照样是各自的结果（认凭据本来就要读库，也会失败）。
 	 */
 	async credentialRequired(): Promise<boolean> {
 		const [row] = await this.deps.db
@@ -85,9 +91,12 @@ export class ProjectWorkbench {
 				return { ok: false, reason: "agent_unknown" };
 			if (row.disabledAt !== null) return { ok: false, reason: "agent_disabled" };
 			if (row.lastAuthKind !== "agent") return { ok: false, reason: "agent_not_on_credential" };
-			const pending = await agentsNotOnCredentials(db);
-			if (pending.length > 0) {
-				return { ok: false, reason: "agents_not_on_credentials", agents: pending };
+			// 开关已经开着（有项目登记过）时不再要求「整个部署都换成 Agent 凭据」：旧方式的连接反正连不上，换工作台只看工作台本身。
+			if (!(await this.credentialRequired())) {
+				const pending = await agentsNotOnCredentials(db);
+				if (pending.length > 0) {
+					return { ok: false, reason: "agents_not_on_credentials", agents: pending };
+				}
 			}
 			const [current] = await db
 				.select({ agent: projects.workbenchAgent })

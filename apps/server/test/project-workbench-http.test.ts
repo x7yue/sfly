@@ -233,6 +233,27 @@ describe("登记项目的工作台", () => {
 		}, 120_000);
 	});
 
+	describe("读不到开关：旧方式的 Hello 被拒绝，不放行", () => {
+		it("控制面启动之后库里读开关的那一列坏了：共享令牌和没有凭据的连接都进不来（Hello 以错误结束），带 Agent 凭据的照常；恢复之后共享令牌又连得上", async () => {
+			await db.query("alter table projects rename column workbench_agent to workbench_gone");
+			try {
+				for (const token of [SHARED, ""]) {
+					const error = await connect("legacy", token).then(
+						() => undefined,
+						(caught: unknown) => caught,
+					);
+					expect(error, `token=${JSON.stringify(token)} 应该被拒绝`).toBeInstanceOf(ConnectError);
+				}
+				expect((await db.query("select 1 from agents where name = 'legacy'")).rowCount).toBe(0);
+				const { token } = await onCredential("on-credential");
+				expect(token).toMatch(/^sfly_agt_/);
+			} finally {
+				await db.query("alter table projects rename column workbench_gone to workbench_agent");
+			}
+			await (await connect("legacy", SHARED)).disconnect();
+		}, 60_000);
+	});
+
 	describe("登记之后", () => {
 		it("共享令牌和不带凭据的连接都被拒绝（Unauthenticated，写明只接受 Agent 凭据），带 Agent 凭据的照常；控制面重启之后照旧", async () => {
 			await onCredential("wb");
@@ -332,6 +353,55 @@ describe("助手页：没有登记工作台", () => {
 				await cp.fetch("/projects/default/sessions", { headers: boss })
 			).json()) as SessionListResponse
 		).readiness;
+
+	it("登记的工作台被停用：就绪状态写「已被停用」（不是「不在线」）；恢复之后还没连上就是「不在线」，连上了就绪", async () => {
+		workbench = await FakeAgent.connect(
+			cp.grpcUrl,
+			{ name: "wb", peer: { port: 7001, publicAddress: "10.0.0.5" } },
+			{ clock: cp.clock },
+		);
+		const registered = await cp.fetch("/projects/default/workbench", {
+			method: "PUT",
+			headers: { ...JSON_HEADERS, ...boss },
+			body: JSON.stringify({ agent: "wb" }),
+		});
+		expect(registered.status, await registered.clone().text()).toBe(200);
+		expect(await readiness()).toMatchObject({ ready: true, workbench: "wb" });
+
+		const toggle = async (action: "disable" | "enable") =>
+			(await cp.fetch(`/agents/wb/${action}`, { method: "POST", headers: boss })).status;
+		expect(await toggle("disable")).toBe(204);
+		const disabled = await readiness();
+		expect(disabled).toMatchObject({ ready: false, workbench: "wb" });
+		expect(disabled.problems).toEqual([
+			expect.objectContaining({
+				kind: "workbench_offline",
+				message: expect.stringContaining("已被停用"),
+			}),
+		]);
+		expect(disabled.problems[0]?.message).not.toContain("不在线");
+		// 建会话也写同一句（503 assistant_unavailable）。
+		const created = await cp.fetch("/projects/default/sessions", {
+			method: "POST",
+			headers: { ...JSON_HEADERS, ...boss },
+			body: JSON.stringify({ text: "你好" }),
+		});
+		expect(created.status).toBe(503);
+		expect(((await created.json()) as ApiError).error.message).toContain("已被停用");
+
+		// 恢复：Agent 的连接在停用时断开了，还没重新连上就是「不在线」（不再是「已被停用」）。
+		expect(await toggle("enable")).toBe(204);
+		const offline = await readiness();
+		expect(offline.problems[0]?.message).toContain("不在线");
+		expect(offline.problems[0]?.message).not.toContain("已被停用");
+		await workbench.disconnect();
+		workbench = await FakeAgent.connect(
+			cp.grpcUrl,
+			{ name: "wb", peer: { port: 7001, publicAddress: "10.0.0.5" } },
+			{ clock: cp.clock },
+		);
+		expect(await readiness()).toMatchObject({ ready: true, workbench: "wb", problems: [] });
+	}, 60_000);
 
 	it("没有登记：就绪状态是 workbench_not_set、写「没有登记工作台」，建会话 503 assistant_unavailable；登记之后工作台在线、就绪", async () => {
 		const before = await readiness();
