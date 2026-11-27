@@ -87,6 +87,111 @@ def test_a_single_line_error_is_unchanged() -> None:
     )
 
 
+def test_the_log_tail_does_not_repeat_the_traceback_shown_under_the_error() -> None:
+    message = (
+        "RuntimeError: 磁盘满了\n\nTraceback (most recent call last):\n"
+        '  File "node.py", line 3, in fail\n'
+        '    raise RuntimeError("磁盘满了")\n'
+        "RuntimeError: 磁盘满了"
+    )
+    data = summary(message)
+
+    def log(text: str, source: str = "stderr", level: str = "error") -> dict[str, Any]:
+        return {"time": "2026-01-01T00:00:01.000Z", "level": level, "source": source, "text": text}
+
+    data["failed"][0]["logs"] = [
+        log("开始写入", "sdk", "info"),
+        log("Traceback (most recent call last):"),
+        log('  File "node.py", line 3, in fail'),
+        log('    raise RuntimeError("磁盘满了")'),
+        log("RuntimeError: 磁盘满了"),
+        log("出错位置：node.fail 第 3 行", "sdk"),
+    ]
+    text = render_summary(data)
+
+    # 堆栈只在「错误：」下面出现一次；日志里那 4 行收成一行说明，别的日志照旧。
+    assert text.count("Traceback (most recent call last):") == 1
+    assert "      （4 行标准错误和上面「错误：」下面的堆栈相同，略去）" in text
+    assert "开始写入" in text
+    assert "出错位置：node.fail 第 3 行" in text
+    # 内容不同的标准错误照常显示。
+    data["failed"][0]["logs"] = [log("别的报错")]
+    assert "别的报错" in render_summary(data)
+
+
+STACK_MESSAGE = (
+    "RuntimeError: 磁盘满了\n\nTraceback (most recent call last):\n"
+    '  File "node.py", line 3, in fail\n'
+    '    raise RuntimeError("磁盘满了")\n'
+    "RuntimeError: 磁盘满了"
+)
+STACK_LINES = [
+    "Traceback (most recent call last):",
+    '  File "node.py", line 3, in fail',
+    '    raise RuntimeError("磁盘满了")',
+    "RuntimeError: 磁盘满了",
+]
+
+
+def stderr(text: str) -> dict[str, Any]:
+    return {"time": "2026-01-01T00:00:01.000Z", "level": "error", "source": "stderr", "text": text}
+
+
+def sdk_log(text: str) -> dict[str, Any]:
+    return {"time": "2026-01-01T00:00:01.000Z", "level": "info", "source": "sdk", "text": text}
+
+
+def tail(logs: list[dict[str, Any]]) -> str:
+    data = summary(STACK_MESSAGE)
+    data["failed"][0]["logs"] = logs
+    return render_summary(data)
+
+
+def skipped(count: int) -> str:
+    return f"      （{count} 行标准错误和上面「错误：」下面的堆栈相同，略去）"
+
+
+def test_a_stderr_line_that_only_happens_to_equal_a_stack_line_is_kept() -> None:
+    text = tail([stderr("RuntimeError: 磁盘满了"), sdk_log("重试一次")])
+
+    assert "略去" not in text
+    assert text.count("RuntimeError: 磁盘满了") == 3
+
+
+def test_stack_lines_with_other_logs_in_between_are_kept() -> None:
+    logs = [stderr(STACK_LINES[0]), stderr(STACK_LINES[1]), sdk_log("清理中")]
+    logs += [stderr(line) for line in STACK_LINES[2:]]
+    text = tail(logs)
+
+    assert "略去" not in text
+    assert text.count("Traceback (most recent call last):") == 2
+    assert "清理中" in text
+
+
+def test_only_part_of_the_stack_is_kept() -> None:
+    text = tail([stderr(line) for line in STACK_LINES[:2]] + [stderr("别的报错")])
+
+    assert "略去" not in text
+    assert text.count('  File "node.py", line 3, in fail') == 2
+    assert "别的报错" in text
+
+
+def test_the_stack_written_twice_is_collapsed_twice() -> None:
+    once = [stderr(line) for line in STACK_LINES]
+    text = tail([*once, sdk_log("重试一次"), *once])
+
+    assert text.count(skipped(4)) == 2
+    assert text.count("Traceback (most recent call last):") == 1
+    assert "重试一次" in text
+
+
+def test_a_partial_stack_before_the_full_one_is_kept_and_the_full_one_collapsed() -> None:
+    text = tail([stderr(STACK_LINES[0]), *[stderr(line) for line in STACK_LINES]])
+
+    assert text.count(skipped(4)) == 1
+    assert text.count("Traceback (most recent call last):") == 2
+
+
 def test_no_error_message_is_still_said_so() -> None:
     assert "    错误：没有错误信息" in render_summary(summary(None))
 
@@ -584,3 +689,11 @@ def test_run_show_says_why_everything_is_masked_only_for_a_run_with_too_many_sec
     lines = run_show(report(secrets_oversize=True), json_mode=False).split("\n")
     at = lines.index(SECRETS_OVERSIZE_NOTE)
     assert "\n".join(lines[: at - 1] + lines[at + 1 :]) == run_show(report(), json_mode=False)
+
+
+def test_blank_stderr_lines_inside_the_stack_are_part_of_it() -> None:
+    logs = [stderr(STACK_LINES[0]), stderr(STACK_LINES[1]), stderr(""), stderr(STACK_LINES[2])]
+    text = tail([*logs, stderr(STACK_LINES[3])])
+
+    assert skipped(5) in text
+    assert text.count("Traceback (most recent call last):") == 1
