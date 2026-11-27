@@ -40,19 +40,15 @@ describe("心跳时重新估算时间换算（#389）", () => {
 		expect(at(clock, 41_000)).toBe(T0 + 40_000);
 	});
 
-	it("折算出的时间比控制面时间晚：一次就改，之后的点不早于按原来的换算折算出的这次心跳的时刻，控制面时间追上来以后照新的走", () => {
+	it("折算出的时间比控制面时间晚：一次就改，新常量立即生效（不等控制面时间追上来），之前的读数照旧", () => {
 		const clock = connection();
 		const back = 20 * 60_000;
 		// 控制面的墙上时钟被往回拨了 20 分钟。
 		expect(clock.recalibrate(61_000, new Date(T0 + 60_000 - back))).toEqual({ driftMs: back });
-		const heartbeatAt = T0 + 60_000;
-		expect(at(clock, 61_000)).toBe(heartbeatAt);
-		expect(at(clock, 121_000)).toBe(heartbeatAt);
-		expect(at(clock, 61_000 + back)).toBe(heartbeatAt);
-		expect(at(clock, 61_000 + back + 5_000)).toBe(heartbeatAt + 5_000);
-		// 不倒退：读数越大，折算出的时间不早于前一个。
-		const times = [61_000, 90_000, 61_000 + back, 61_000 + back + 1].map((m) => at(clock, m) ?? 0);
-		expect([...times].sort((a, b) => a - b)).toEqual(times);
+		expect(at(clock, 61_000)).toBe(T0 + 60_000 - back);
+		expect(at(clock, 66_000)).toBe(T0 + 65_000 - back);
+		// 这次心跳之前的读数（晚到的批次）仍按原来的换算。
+		expect(at(clock, 60_000)).toBe(T0 + 59_000);
 	});
 
 	it("单调时钟走得慢：每次偏差超过 2 秒就重新估算，折算出的时间和控制面时间差不超过三次心跳累积的偏差", () => {

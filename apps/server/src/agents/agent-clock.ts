@@ -83,11 +83,10 @@ export function recordableAgentTimeMs(unixMs: bigint | number): number {
 	return Math.min(MAX_AGENT_TIME_MS, Math.max(MIN_AGENT_TIME_MS, Number(unixMs)));
 }
 
-/** 一次连接里折算的一段：从单调时钟读数 `fromMs` 起用的常量，和这一段折算结果的下限（不倒退）。 */
+/** 一次连接里折算的一段：从单调时钟读数 `fromMs` 起用的常量。 */
 interface ClockSegment {
 	fromMs: number;
 	constantMs: number;
-	floorMs: number;
 }
 
 /** 一次连接最多记住几段折算；更早的读数（极少见：连接里很久以前排队的数据）按最早记住的那一段折算。 */
@@ -103,8 +102,8 @@ export type RecalibrationNote = { driftMs: number };
  * - 心跳只会晚到：按它算出的常量比真实的大（一次网络延迟）。算出的常量比现在的小（折算出的时间比控制面时间晚）不可能是延迟，
  *   超过阈值就重新估算；比现在的大，可能只是这一次晚到，连续两次心跳都超过阈值才重新估算，取两次里小的那个。
  * - 新常量只用于这次心跳读数之后的点；之前的读数仍按原来的常量折算，已经写下的点不变。
- * - 同一连接的折算结果不倒退：新常量让折算结果变早时，之后的点不早于按原来的常量折算出的这次心跳的时刻，等控制面时间追上来以后
- *   照新常量走。
+ * - 新常量立即生效：折算结果因此变早时（控制面墙上时钟往回拨了），之后的点就落在纠正后的时间，不等控制面时间追上来；
+ *   同一序列里的顺序由指标写入兜底（`task-metrics.ts`：不晚于最后一个点的往后排一秒），#389 评论里负责人的决定。
  * 旧版本 Agent 的 Hello 不带单调时钟读数时没有对应关系。
  */
 export class ConnectionClock {
@@ -120,7 +119,7 @@ export class ConnectionClock {
 	) {
 		if (hello) {
 			const constantMs = helloReceivedAt.getTime() - hello.monotonicMs;
-			this.#segments.push({ fromMs: -Infinity, constantMs, floorMs: -Infinity });
+			this.#segments.push({ fromMs: -Infinity, constantMs });
 		}
 	}
 
@@ -147,8 +146,7 @@ export class ConnectionClock {
 			constantMs = Math.min(this.#pendingMs, sampleMs);
 		}
 		this.#pendingMs = undefined;
-		const floorMs = monotonicMs + current.constantMs;
-		this.#segments.push({ fromMs: monotonicMs, constantMs, floorMs });
+		this.#segments.push({ fromMs: monotonicMs, constantMs });
 		if (this.#segments.length > MAX_SEGMENTS) this.#segments.shift();
 		return { driftMs: current.constantMs - constantMs };
 	}
@@ -162,7 +160,7 @@ export class ConnectionClock {
 		if (this.#segments.length === 0 || reading === 0) return undefined;
 		const segment =
 			this.#segments.findLast((sg) => sg.fromMs <= reading) ?? (this.#segments[0] as ClockSegment);
-		return new Date(Math.max(reading + segment.constantMs, segment.floorMs));
+		return new Date(reading + segment.constantMs);
 	}
 
 	/**

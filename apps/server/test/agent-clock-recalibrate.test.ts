@@ -38,7 +38,13 @@ describe("连接期间重新校准时间换算（#389）", () => {
 		cp = await startTestControlPlane({ clock, leaseMs: 24 * 60 * MINUTE });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "mon", "1.0.0", {
-			watch: { outputs: [], metrics: [{ name: "cpu", unit: "%", kind: "gauge" }] },
+			watch: {
+				outputs: [],
+				metrics: [
+					{ name: "cpu", unit: "%", kind: "gauge" },
+					{ name: "mem", unit: "MB", kind: "gauge" },
+				],
+			},
 		});
 		agent = await FakeAgent.connect(cp.grpcUrl, {
 			name: "agent-a",
@@ -56,10 +62,10 @@ describe("连接期间重新校准时间换算（#389）", () => {
 		mono += monoMs;
 		await agent.heartbeat(agent.held, agentClock(clock.now(), mono));
 	};
-	const point = (task: AssignedTask, value: number) =>
+	const point = (task: AssignedTask, value: number, name = "cpu") =>
 		agent.metrics(task, [
 			{
-				name: "cpu",
+				name,
 				timeUnixS: BigInt(Math.floor(clock.now().getTime() / 1000)),
 				monotonicMs: BigInt(mono),
 				value,
@@ -95,6 +101,21 @@ describe("连接期间重新校准时间换算（#389）", () => {
 		};
 	};
 
+	/** 这次尝试一个指标的序列里点的控制面时间（毫秒），按序列查询返回的顺序；每个点一个桶。 */
+	const seriesTimes = async (runId: string, metric: string) => {
+		const run = await api.run(runId);
+		const params = new URLSearchParams({
+			chain_instance_id: run.chains[0]?.id ?? "",
+			node_id: "watch",
+			metrics: metric,
+			points: "300",
+		});
+		const series = metricsApi.series.response.parse(
+			await api.getJson(`/runs/${runId}/metrics/series?${params}`),
+		);
+		return (series.series[0]?.buckets ?? []).map(bucketStartMs);
+	};
+
 	const startRun = async () => {
 		const id = await api.orchestrationWith(ORCHESTRATION);
 		const runId = await api.triggerOk(id);
@@ -114,6 +135,28 @@ describe("连接期间重新校准时间换算（#389）", () => {
 
 		// 跳变之后的第一次心跳只记下（可能是这一次晚到），第二次心跳（第一个点之前）重新估算：21 个点都落在窗口里。
 		expect(await inChartWindow(runId)).toEqual({ buckets: 21, inWindow: 21 });
+	});
+
+	it("控制面墙上时钟往回拨 30 分钟：一次心跳就重新估算，新的序列的点立即落在纠正后的时间；已有序列里的顺序不乱（往后排一秒兜底）", async () => {
+		const { runId, task } = await startRun();
+		for (let i = 0; i < 5; i++) {
+			await tick(MINUTE, MINUTE);
+			point(task, i);
+		}
+		// 墙上时钟往回拨 30 分钟，单调时钟照走；拨回之后的第一次心跳就重新估算。
+		await tick(MINUTE - 30 * MINUTE, MINUTE);
+		const corrected = Math.floor(clock.now().getTime() / 1000) * 1000;
+		point(task, 100);
+		point(task, 7, "mem");
+		await agent.sync();
+
+		// 还没出现过的序列：点就在纠正后的时间（控制面时间现在）。
+		expect(await seriesTimes(runId, "mem")).toEqual([corrected]);
+		// 已有的序列：纠正后的时间比前面的点早，排到最后一个点的后一秒，顺序不乱、不丢点。
+		const cpu = await seriesTimes(runId, "cpu");
+		expect(cpu).toHaveLength(6);
+		expect(cpu).toEqual([...cpu].sort((x, y) => x - y));
+		expect(cpu[5]).toBe((cpu[4] ?? 0) + 1000);
 	});
 
 	it("Agent 的单调时钟走速是控制面的 0.9 倍、连接 4 小时：心跳时不断重新估算，21 个点都落在图表窗口里", async () => {
