@@ -3,7 +3,11 @@
 // （`closeByCredentials`、`setDisabled`），所以不论谁先，不会有一条已经没有资格的连接留在连接表里。
 // 存储层的入口直接用，不经 gRPC：空档只有几毫秒，用 gRPC 造不出确定的先后。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type AgentAuth, AgentAuthenticator } from "../src/agents/agent-auth.js";
+import {
+	type AgentAuth,
+	AgentAuthenticator,
+	nameRegisteredElsewhere,
+} from "../src/agents/agent-auth.js";
 import { AgentCredentialService } from "../src/agents/agent-credentials.js";
 import { AgentConnectionRefused, AgentHub } from "../src/agents/agent-hub.js";
 import { type Database, openDatabase } from "../src/db/database.js";
@@ -155,13 +159,15 @@ describe("认身份之后、登记之前凭据或 Agent 变了：登记时再确
 		const first = await authenticated(mine.token, "worker-1");
 		const second = await authenticator.authenticate(theirs.token, "worker-1");
 		if (!second.ok) throw new Error("认身份应该通过：名字还没有登记");
-		// 默认项目的先登记；alpha 的在登记之前再确认时被拒绝（同一句「不能连接」，不透露在别的项目里）。
+		// 默认项目的先登记；alpha 的在登记之前再确认时被拒绝。alpha 的带着有效的 Agent 凭据，看到具体原因（名字已被另一个项目登记，
+		// #492 的 E）；这是它唯一可能的拒绝原因，不透露是哪个项目、占着名字的 Agent 怎么连接的。
 		const conn = await attach("worker-1", first);
 		expect(conn.project).toBe("default");
 		await expect(attach("worker-1", second.auth, "alpha" as ProjectId)).rejects.toMatchObject({
-			code: "unauthenticated",
-			message: expect.stringContaining("不能连接"),
+			code: "permission_denied",
+			message: nameRegisteredElsewhere("worker-1"),
 		});
+		expect(nameRegisteredElsewhere("worker-1")).not.toMatch(/alpha|default|共享令牌/);
 		expect(conn.closed).toBe(false);
 		expect(
 			(await database.pool.query("select project_id from agents where name = 'worker-1'")).rows,

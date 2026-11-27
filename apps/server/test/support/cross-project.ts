@@ -140,6 +140,8 @@ const JSON_BODIES: Record<string, unknown> = {
 	"POST /orchestrations/:id/presence/leave": { session_id: "s1" },
 	"POST /projects/:project/sessions": { text: "你好" },
 	"POST /projects/:project/dev-agents": { host: "laptop" },
+	// 登记项目的工作台（#549）：项目甲的凭据对项目乙的这个接口，和别的项目的管理面一样是 404（不透露有没有这个项目）。
+	"PUT /projects/:project/workbench": { agent: "workbench" },
 	"POST /sessions/:id/messages": { text: "你好" },
 };
 

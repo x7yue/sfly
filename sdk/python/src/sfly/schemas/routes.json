@@ -16781,6 +16781,86 @@
       "notes": []
     },
     {
+      "method": "PUT",
+      "path": "/projects/:project/workbench",
+      "key": [
+        "projects",
+        "register-workbench"
+      ],
+      "kind": "endpoint",
+      "summary": "登记这个项目的工作台（一台 Agent）；登记之后控制面只接受 Agent 凭据",
+      "effect": "write",
+      "resource": {
+        "kind": "project",
+        "target": {
+          "params": "project"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string",
+            "minLength": 1,
+            "description": "工作台那台 Agent 的名字。"
+          }
+        },
+        "required": [
+          "agent"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "项目标识。"
+          },
+          "agent": {
+            "type": "string",
+            "description": "现在登记的工作台：Agent 的名字。"
+          },
+          "previous_agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "换下来的上一台工作台；第一次登记为 null，登记的就是同一台时也是 null（没有换）。"
+          }
+        },
+        "required": [
+          "project",
+          "agent",
+          "previous_agent"
+        ]
+      },
+      "notes": [
+        {
+          "part": "body",
+          "path": "agent",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
+        },
+        {
+          "part": "body",
+          "path": "agent",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称不能超过 64 个字符"
+        }
+      ]
+    },
+    {
       "method": "GET",
       "path": "/runs",
       "key": [

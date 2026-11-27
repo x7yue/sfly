@@ -882,7 +882,7 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
 			setup: { configured: true, config },
 			client,
-			workbenchAgent: undefined,
+			workbench: { get: async () => undefined },
 			log: (message, error) => logs.push({ message, error }),
 		});
 		const readiness = await service.readiness("default" as ProjectId);
@@ -909,7 +909,7 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 					throw new Error("内部细节 10.1.2.3:7000 password=hunter2");
 				},
 			} as unknown as AssistantClient,
-			workbenchAgent: undefined,
+			workbench: { get: async () => undefined },
 			log: (_message, error) => logs.push(error),
 		});
 		const readiness = await service.readiness("default" as ProjectId);

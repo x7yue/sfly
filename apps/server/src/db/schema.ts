@@ -836,6 +836,13 @@ export const projects = pgTable(
 		id: text("id").$type<ProjectId>().primaryKey(),
 		displayName: text("display_name").notNull(),
 		createdAt: timestamptz("created_at").notNull(),
+		/**
+		 * 这个项目的工作台：一台 Agent 的名字（ADR 0027、#549），没有登记为空。助手的会话在这台 Agent 上做事；
+		 * 部署里**任何一个项目**登记了工作台，控制面就只接受 Agent 凭据（共享令牌和没有凭据的连接都拒绝，
+		 * ADR 0029「迁移与过渡」）。登记在 `PUT /projects/:project/workbench`（`ProjectWorkbench.register`），
+		 * 不加外键：Agent 的行在它第一次连上时才有，登记之后 Agent 可以离线、被停用，这些由会话的就绪状态说明。
+		 */
+		workbenchAgent: text("workbench_agent"),
 	},
 	(t) => [check("projects_id_format", sql`${t.id} ~ '^[a-z0-9][a-z0-9-]{0,62}$'`)],
 );

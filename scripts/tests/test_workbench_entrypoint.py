@@ -98,7 +98,7 @@ class Harness:
             "FAKE_LOG": str(self.log),
             "FAKE_INSTALL_SH": str(self.root / "install.sh"),
             "SFLY_WORKBENCH_URL": "http://sfly:8080",
-            "SFLY_WORKBENCH_AGENT": NAME,
+            "SFLY_WORKBENCH_NAME": NAME,
             "SFLY_WORKBENCH_PUBLIC_ADDRESS": "sfly-workbench",
             "SFLY_WORKBENCH_TOKEN": TOKEN,
             "SFLY_WORKBENCH_WORK": str(self.work),
@@ -180,6 +180,25 @@ def test_the_credential_goes_to_the_installer_and_the_agent_by_environment_only(
     # 入口自己的变量从环境里去掉了：Agent 起的命令继承的环境里不会有它（Agent 只去掉 SFLY_TOKEN）。
     assert "SFLY_WORKBENCH_TOKEN" not in agent_env
     assert "SFLY_WORKBENCH_TOKEN" not in install_env
+
+
+def test_a_shared_token_in_the_container_environment_is_never_used(harness: Harness) -> None:
+    # 工作台的安装命令里没有共享令牌（#549）：容器环境里就算有共享令牌（SFLY_AGENT_TOKEN）或别的
+    # SFLY_TOKEN，安装脚本和 Agent 的 `SFLY_TOKEN` 也只是 SFLY_WORKBENCH_TOKEN 交进来的那枚
+    # Agent 凭据，共享令牌不出现在参数和输出里（compose 不把共享令牌传给工作台，见
+    # test_deploy_compose.py；这里是入口脚本自己不去用它）。
+    shared = "shared-agent-token-value-0123456789"
+    result = harness.run(SFLY_AGENT_TOKEN=shared, SFLY_TOKEN=shared)
+
+    assert result.returncode == 0, result.stderr
+    for name in ("curl.args", "install.args"):
+        assert shared not in "\n".join(harness.lines(name))
+    assert shared not in result.stdout + result.stderr
+    install_env = dict(line.split("=", 1) for line in harness.lines("install.env") if "=" in line)
+    assert install_env["SFLY_TOKEN"] == TOKEN
+    assert harness.agent_environment()["SFLY_TOKEN"] == TOKEN
+    # 入口脚本不看 SFLY_AGENT_TOKEN，也不拿它当 --token。
+    assert "--token" not in " ".join(harness.lines("install.args"))
 
 
 def test_an_installed_volume_with_an_unchanged_install_script_starts_without_reinstalling(
@@ -357,7 +376,7 @@ def test_leftovers_of_an_interrupted_install_are_cleaned_before_installing_again
 def test_a_different_name_is_installed_again(harness: Harness) -> None:
     assert harness.run().returncode == 0
 
-    result = harness.run(SFLY_WORKBENCH_AGENT="workbench-2")
+    result = harness.run(SFLY_WORKBENCH_NAME="workbench-2")
 
     assert result.returncode == 0, result.stderr
     assert harness.lines("install.runs") == ["run", "run"]
@@ -417,7 +436,7 @@ def test_commands_in_the_home_volume_are_not_run_by_the_entrypoint(
     ("variable", "mentioned"),
     [
         ("SFLY_WORKBENCH_URL", "SFLY_WORKBENCH_URL"),
-        ("SFLY_WORKBENCH_AGENT", "SFLY_WORKBENCH_AGENT"),
+        ("SFLY_WORKBENCH_NAME", "SFLY_WORKBENCH_NAME"),
         ("SFLY_WORKBENCH_PUBLIC_ADDRESS", "SFLY_WORKBENCH_PUBLIC_ADDRESS"),
         ("SFLY_WORKBENCH_TOKEN", "SFLY_WORKBENCH_TOKEN"),
     ],
