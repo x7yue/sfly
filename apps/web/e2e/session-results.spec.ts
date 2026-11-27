@@ -83,6 +83,27 @@ function watchRunRequests(page: Page) {
 	return { streams, reads };
 }
 
+/** 会话里的一串运行记录（每个运行一条）和这一轮的结局。 */
+const sixRunEvents = (runs: readonly string[]): SessionEventBody[] =>
+	scenarioEvents(
+		...runs.map((runId) => ({
+			type: "platform" as const,
+			kind: "run" as const,
+			turn: 1,
+			run_id: runId,
+			scenario_name: "巡检",
+		})),
+		{
+			type: "turn_end",
+			turn: 1,
+			outcome: "completed",
+			reason: "助手已完成",
+			steps: 1,
+			model_calls: 1,
+			duration_ms: 1000,
+		},
+	);
+
 const scenarioEvents = (...events: SessionEventBody[]): SessionEventBody[] => [
 	{
 		type: "user_message",
@@ -328,12 +349,12 @@ test("运行卡片：时间线停在底部时，卡片在事件之外变高（�
 	expect(await scroller.evaluate((el) => el.scrollTop)).toBeLessThan(5);
 });
 
-test("运行卡片：在跑的运行多于事件流名额（3 个）：最近的三个开事件流，其余的靠定时重新读；名额让出来之后更早的接上", async ({
+test("运行卡片：在跑的运行多于事件流名额（2 个）：最近的两个开事件流，其余的靠定时重新读；名额让出来之后更早的接上，不闪", async ({
 	page,
 	controlPlane,
 	connectAgent,
 }) => {
-	// 浏览器对同源只给 6 条连接，会话页自己的事件流占一条：在跑的运行每个开一条的话，五个就把发送、停止、结束会话的请求饿死。
+	// 浏览器对同源只给 6 条连接（整个浏览器共用），会话页自己的事件流占一条：在跑的运行每个开一条的话，五个就把发送、停止、结束会话的请求饿死。
 	const agent = await connectAgent({ name: "agent", slots: 8 });
 	await publishPackage(controlPlane);
 	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
@@ -347,24 +368,7 @@ test("运行卡片：在跑的运行多于事件流名额（3 个）：最近的
 	const id = await seedSession(controlPlane.database.url, {
 		title: TITLE,
 		status: "idle",
-		events: scenarioEvents(
-			...runs.map((runId) => ({
-				type: "platform" as const,
-				kind: "run" as const,
-				turn: 1,
-				run_id: runId,
-				scenario_name: "巡检",
-			})),
-			{
-				type: "turn_end",
-				turn: 1,
-				outcome: "completed",
-				reason: "助手已完成",
-				steps: 1,
-				model_calls: 1,
-				duration_ms: 1000,
-			},
-		),
+		events: sixRunEvents(runs),
 	});
 	const watched = watchRunRequests(page);
 	await page.goto(`/sessions/${id}`);
@@ -372,24 +376,95 @@ test("运行卡片：在跑的运行多于事件流名额（3 个）：最近的
 		await expect(cardStatus(sideCard(page, runId))).toHaveText("运行中");
 		await expect(cardStatus(timelineCard(page, runId))).toHaveText("运行中");
 	}
-	// 事件流：最近的三个（事件序号大的），每个运行一条，时间线上的和成果栏里的共用。其余三个读到了，没有开流。
-	expect([...watched.streams].sort()).toEqual(runs.slice(3).sort());
+	// 事件流：最近的两个（事件序号大的），每个运行一条，时间线上的和成果栏里的共用。其余四个读到了，没有开流，状态照样有。
+	expect([...watched.streams].sort()).toEqual(runs.slice(4).sort());
 	expect(new Set(watched.reads).size).toBe(6);
 
-	// 有事件流的最近的一个结束：马上变（推来的），名额让给更早的、还在跑的（第 3 个），它开一条事件流。
+	// 名额让出来、下一个接上的时候，那张卡片的状态从轮询换到订阅：同一份缓存，不能闪成「加载中」。
+	await page.evaluate(() => {
+		const seen = { loading: 0 };
+		Object.assign(window, { __loadingSeen: seen });
+		new MutationObserver(() => {
+			for (const status of document.querySelectorAll('[data-testid="run-card-status"]')) {
+				if (status.textContent?.includes("加载中")) seen.loading++;
+			}
+		}).observe(document.body, { childList: true, subtree: true, characterData: true });
+	});
+	// 有事件流的最近的一个结束：马上变（推来的），名额让给更早的、还在跑的（第 4 个），它开一条事件流。
 	const newest = runs[5] as string;
 	await agent.succeed(assigns.get(newest) as never);
 	await expect(cardStatus(sideCard(page, newest))).toHaveText("成功", { timeout: 3_000 });
-	await expect.poll(() => watched.streams.includes(runs[2] as string)).toBe(true);
-	expect(watched.streams.filter((runId) => runId === runs[2])).toHaveLength(1);
-	expect(watched.streams).toHaveLength(4);
+	await expect.poll(() => watched.streams.includes(runs[3] as string)).toBe(true);
+	expect(watched.streams.filter((runId) => runId === runs[3])).toHaveLength(1);
+	expect(watched.streams).toHaveLength(3);
+	// 接上之后它的状态由事件流推：结束时马上变。
+	await agent.succeed(assigns.get(runs[3] as string) as never);
+	await expect(cardStatus(sideCard(page, runs[3] as string))).toHaveText("成功", {
+		timeout: 3_000,
+	});
+	expect(
+		await page.evaluate(
+			() => (window as unknown as { __loadingSeen: { loading: number } }).__loadingSeen.loading,
+		),
+		"换成订阅时卡片没有闪成「加载中」",
+	).toBe(0);
 
-	// 没有名额的运行结束：下一次定时重新读（5 秒一次）时变，结束了的运行之后不再被读。
+	// 没有名额的运行结束：下一次定时重新读（5 秒一次）时变（状态比运行监控晚最多 5 秒），结束了的运行之后不再被读。
 	const oldest = runs[0] as string;
 	await agent.succeed(assigns.get(oldest) as never);
 	await expect(cardStatus(sideCard(page, oldest))).toHaveText("成功", { timeout: 15_000 });
 	await expect(cardStatus(timelineCard(page, oldest))).toHaveText("成功");
-	expect(watched.streams).toHaveLength(4);
+	expect(watched.streams.filter((runId) => runId === oldest)).toHaveLength(0);
+});
+
+test("事件流名额只管会话页上的运行卡片：运行监控页自己的事件流不受它限制，会话页占满了名额它也实时变", async ({
+	page,
+	context,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 8 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
+	const runs: string[] = [];
+	const assigns = new Map<string, Awaited<ReturnType<typeof agent.nextAssign>>>();
+	for (let n = 0; n < 6; n++) {
+		runs.push(await triggerRun(controlPlane, scenario));
+		const assign = await agent.nextAssign();
+		assigns.set(assign.runId, assign);
+	}
+	const id = await seedSession(controlPlane.database.url, {
+		title: TITLE,
+		status: "idle",
+		events: sixRunEvents(runs),
+	});
+	const session = watchRunRequests(page);
+	await page.goto(`/sessions/${id}`);
+	for (const runId of runs) await expect(cardStatus(sideCard(page, runId))).toHaveText("运行中");
+	expect([...session.streams].sort()).toEqual(runs.slice(4).sort());
+
+	// 另一个标签页里打开一个会话页没有给名额的运行（最早的）的运行监控：它自己开一条事件流，不看会话页的名额。
+	const noQuota = runs[0] as string;
+	const monitor = await context.newPage();
+	await monitor.addInitScript(() => window.localStorage.setItem("sfly.nickname", "tester"));
+	await monitor.clock.setFixedTime(clock.now());
+	const own = watchRunRequests(monitor);
+	await monitor.goto(`/runs/${noQuota}`);
+	const banner = monitor.getByRole("banner");
+	await expect(banner).toContainText("运行中");
+	await expect.poll(() => own.streams).toEqual([noQuota]);
+
+	// 这个运行失败：运行监控马上变（推来的，不降级成轮询），会话页的名额没有变。
+	const readsBefore = own.reads.length;
+	await agent.fail(assigns.get(noQuota) as never, "AssertionFailed: 磁盘写满");
+	await expect(banner).toContainText("失败", { timeout: 3_000 });
+	expect(own.reads.length).toBe(readsBefore);
+	expect(own.streams).toEqual([noQuota]);
+	expect([...session.streams].sort()).toEqual(runs.slice(4).sort());
+	// 会话页上这个运行的卡片没有名额，靠重新读，最晚 5 秒（加一点余量）之后也变。
+	await expect(cardStatus(sideCard(page, noQuota))).toHaveText("失败", { timeout: 15_000 });
+	expect([...session.streams].sort()).toEqual(runs.slice(4).sort());
 });
 
 test("成果：场景块（场景名链到场景页；这个会话保存过的版本，多个时列出并给对比，点进版本历史选中这几个版本）；最近保存的场景在前", async ({

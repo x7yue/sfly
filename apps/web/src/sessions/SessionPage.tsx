@@ -122,7 +122,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	const readiness = useReadiness(detail.readiness);
 	// 空闲的会话此刻说不了话（模型没有配置或连不上）：输入框旁写缺什么、该找谁，「发送」不可用，输入框照常可以写（和助手页一样）。
 	const blocked = state.status === "idle" && hasModelProblem(readiness);
-	// 哪几个运行开着事件流（最近的 3 个在跑的）：时间线上的运行卡片和成果栏里的卡片读同一个结果，同一个运行最多一条连接。
+	// 哪几个运行开着事件流（最近的 2 个在跑的）：时间线上的运行卡片和成果栏里的卡片读同一个结果，同一个运行最多一条连接。
 	const liveRuns = useLiveRunSet(results.runs);
 	return (
 		// 占满主区域：页头、输入框固定，时间线自己滚（`SessionTimeline`）。页头不会因为时间线长而滚到顶栏下面（#550）。

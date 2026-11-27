@@ -72,7 +72,7 @@ export function useLiveRun(
 
 /**
  * 只要运行状态的地方读运行视图：会话页的运行卡片（一个会话可以触发很多运行）。在跑的运行定时重新读（`STATUS_POLL_MS`），不开事件流；
- * 要实时的用 {@link useRunView} 的 `stream`，会话页最多给三个在跑的运行（`sessions/live-runs.ts`）。
+ * 要实时的用 {@link useRunView} 的 `stream`，会话页最多给两个在跑的运行（`sessions/live-runs.ts`；这个名额只管会话页的卡片，{@link useLiveRun} 不受它限制）。
  * 浏览器对同源的连接数有限（HTTP/1.1 是 6 条），只有运行监控页、运行抽屉、画布和会话页上有限的几个运行开运行事件流（`lib/polling.ts`）：
  * 页面上列几个运行就开几条的话，五个在跑的运行就把连接占满，页面自己的请求（发送、停止、结束会话）排不上队。
  *
