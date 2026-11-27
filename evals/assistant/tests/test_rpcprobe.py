@@ -51,13 +51,88 @@ def test_q1_ignores_the_random_name_of_the_full_output_file() -> None:
     assert judge("q1", raw).verdict == HOLDS
 
 
+STEP_IDS = [
+    step["id"]
+    for step in json.loads(
+        (Path(rpcprobe.__file__).parent.parent / "container" / "toolcheck.json").read_text()
+    )["steps"]
+]
+KNOWN_STEPS = ["bash_background_alive", "bash_setsid_alive"]
+
+
+def set_remote_result(raw: dict[str, Any], step: str, text: str, error: bool = False) -> None:
+    event = raw["rpc"][STEP_IDS.index(step)]
+    event["result"]["content"][0]["text"] = text
+    event["isError"] = error
+
+
 def test_q1_lists_the_known_differences_without_failing() -> None:
-    # 后台进程那两步：臂 A 本地是 200，远程的命令退出后后台进程被结束。
-    # 工具自检对它们没有预期，只记录。
+    # 后台进程那两步：臂 A 本地是 200，远程的命令退出后后台进程被结束，不报错、输出里有 dead。
     verdict = judge("q1", fixture("q1"))
     assert verdict.verdict == HOLDS
-    fact = next(f for f in verdict.facts if "已知差别" in f)
+    fact = next(f for f in verdict.facts if "是已知差别的步骤" in f)
     assert "bash_background_alive" in fact and "bash_setsid_alive" in fact
+    assert "第 12、13 条" in fact
+    assert verdict.numbers["known_differences"] == KNOWN_STEPS
+
+
+@pytest.mark.parametrize("step", [s for s in STEP_IDS if s not in KNOWN_STEPS])
+def test_q1_compares_every_other_step_word_for_word(step: str) -> None:
+    # 不在已知差别名单上的步骤（含工具自检里没有预期的另外 5 个后台进程的步骤）：
+    # 和臂 A 不同就是不成立，不论有没有预期。
+    raw = fixture("q1")
+    arm_a = raw["arm_a"][STEP_IDS.index(step)]["result"]["content"][0]["text"]
+    set_remote_result(raw, step, arm_a + "（多了一句）")
+    verdict = judge("q1", raw)
+    assert verdict.verdict == FAILS
+    assert any("和臂 A（本地执行）结果不同的步骤" in f and step in f for f in verdict.facts)
+
+
+@pytest.mark.parametrize("step", ["bash_setsid_wait_alive", "bash_cleanup"])
+def test_q1_fails_when_a_background_step_outside_the_known_two_differs(step: str) -> None:
+    # 审查的探测：setsid 加等待的那一步在远程也死了；清理那一步报错。
+    raw = fixture("q1")
+    set_remote_result(
+        raw,
+        step,
+        "000dead\n" if step.endswith("alive") else "pkill: 不允许",
+        error=step == "bash_cleanup",
+    )
+    assert judge("q1", raw).verdict == FAILS
+
+
+def test_q1_fails_when_the_background_process_was_never_started() -> None:
+    # 起后台进程那一步根本没执行（工具报「工作台连不上」）：看起来「进程已经没了」，其实没起过。
+    raw = fixture("q1")
+    set_remote_result(raw, "bash_background", "工作台连不上：dev", error=True)
+    assert judge("q1", raw).verdict == FAILS
+
+
+@pytest.mark.parametrize("step", KNOWN_STEPS)
+def test_q1_fails_when_a_known_step_is_a_tool_error(step: str) -> None:
+    # 已知差别的那两步变成工具报错（不是「进程被结束了」）。
+    raw = fixture("q1")
+    set_remote_result(raw, step, "工作台连不上：dev（dead）", error=True)
+    verdict = judge("q1", raw)
+    assert verdict.verdict == FAILS
+    assert any("已知差别的步骤不是预期的样子" in f and step in f for f in verdict.facts)
+
+
+def test_q1_fails_when_a_known_step_does_not_say_the_process_is_gone() -> None:
+    raw = fixture("q1")
+    set_remote_result(raw, "bash_setsid_alive", "502")
+    assert judge("q1", raw).verdict == FAILS
+
+
+def test_q1_notes_a_known_difference_that_is_gone() -> None:
+    # 远程里后台进程留下来了（和臂 A 一样）：不算坏事，但说一句，差别表该改了。
+    raw = fixture("q1")
+    arm_a = raw["arm_a"][STEP_IDS.index("bash_background_alive")]["result"]["content"][0]["text"]
+    set_remote_result(raw, "bash_background_alive", arm_a)
+    verdict = judge("q1", raw)
+    assert verdict.verdict == HOLDS
+    assert any("这次和臂 A 一样了" in f and "bash_background_alive" in f for f in verdict.facts)
+    assert verdict.numbers["known_differences"] == ["bash_setsid_alive"]
 
 
 def test_q1_fails_when_arm_a_is_missing_results() -> None:

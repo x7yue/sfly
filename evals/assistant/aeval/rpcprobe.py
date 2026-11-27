@@ -110,6 +110,17 @@ def prompt_tools(system_prompt: str) -> list[str]:
     return re.findall(r"^- (\w+):", block.group(1), re.M) if block else []
 
 
+# 第 1 题里允许和臂 A 不一样的步骤，逐条写死（远程工具适配不了的：命令退出之后，
+# 它起的后台进程被结束）。值是预期的样子：（报不报错，输出里要有的字）。
+# 臂 A 里进程还在（200），远程里已经没了（curl 连不上，输出 000dead）。
+# 别的步骤一律和臂 A 逐字比。
+KNOWN_DIFFERENCES: dict[str, tuple[bool, str]] = {
+    "bash_background_alive": (False, "dead"),
+    "bash_setsid_alive": (False, "dead"),
+}
+DIFFERENCES_DOC = "evals/assistant/remote-tools/README.md「本地和远程的语义差别」第 12、13 条"
+
+
 def judge_q1(raw: dict[str, Any]) -> Verdict:
     v = Verdict("q1", "RPC 模式下四个工具都落到 Agent 的能力端口", HOLDS)
     steps = json.loads((Path(__file__).parent.parent / "container" / "toolcheck.json").read_text())[
@@ -123,37 +134,63 @@ def judge_q1(raw: dict[str, Any]) -> Verdict:
     if len(a) != len(steps):
         v.worsen(FAILS)
         v.facts.append(f"臂 A 只有 {len(a)} 个工具结果，剧本有 {len(steps)} 步")
-    # 只比工具自检里有预期的步骤；没有预期的（后台进程那几步）是远程工具适配不了的已知差别，只记录。
-    known = [s["id"] for s in steps if s["id"] not in EXPECT_B]
+    # 只有 KNOWN_DIFFERENCES 里写死的两步允许和臂 A 不一样，而且要是写明的那个样子；
+    # 别的步骤（含工具自检里没有预期的后台进程那几步）一律和臂 A 逐字比。
+    pairs = [
+        (steps[i]["id"], x, y) for i, (x, y) in enumerate(zip(a, b, strict=False)) if i < len(steps)
+    ]
     differ = [
-        steps[i]["id"]
-        for i, (x, y) in enumerate(zip(a, b, strict=False))
-        if steps[i]["id"] not in known and (x["error"], x["text"]) != (y["error"], y["text"])
+        step_id
+        for step_id, x, y in pairs
+        if step_id not in KNOWN_DIFFERENCES and (x["error"], x["text"]) != (y["error"], y["text"])
     ]
-    known_differ = [
-        steps[i]["id"]
-        for i, (x, y) in enumerate(zip(a, b, strict=False))
-        if steps[i]["id"] in known and (x["error"], x["text"]) != (y["error"], y["text"])
-    ]
+    known_differ, known_gone, known_unexpected = [], [], []
+    for step_id, x, y in pairs:
+        if step_id not in KNOWN_DIFFERENCES:
+            continue
+        if (x["error"], x["text"]) == (y["error"], y["text"]):
+            known_gone.append(step_id)
+            continue
+        failed, word = KNOWN_DIFFERENCES[step_id]
+        if y["error"] == failed and word in y["text"]:
+            known_differ.append(step_id)
+        else:
+            known_unexpected.append(
+                f"{step_id}（远程：{'报错' if y['error'] else '没报错'}，{y['text'][:60]!r}）"
+            )
     unexpected = []
     for i, step in enumerate(steps):
         expect = EXPECT_B.get(step["id"])
         got = b[i] if i < len(b) else None
         if expect and not (got and got["error"] == expect[0] and expect[1] in got["text"]):
             unexpected.append(step["id"])
+    known = [s["id"] for s in steps if s["id"] in KNOWN_DIFFERENCES]
     compared = len(steps) - len(known)
+    v.numbers["known_differences"] = known_differ
     if differ:
         v.worsen(FAILS)
         v.facts.append("和臂 A（本地执行）结果不同的步骤：" + "、".join(differ))
     else:
         v.facts.append(
-            f"有预期的 {compared} 步的工具结果和臂 A（本地执行）"
+            f"除已知差别外的 {compared} 步的工具结果和臂 A（本地执行）"
             f"逐字相同（截断输出的临时文件名除外）"
         )
     if known_differ:
         v.facts.append(
-            "和臂 A 不同、是已知差别的步骤（命令退出后它起的后台进程被结束，"
-            "docs/ARCHITECTURE.md 的语义差别表）：" + "、".join(known_differ)
+            "和臂 A 不同、是已知差别的步骤（命令退出后它起的后台进程被结束，不报错、输出里有 dead；"
+            f"{DIFFERENCES_DOC}）：" + "、".join(known_differ)
+        )
+    if known_gone:
+        v.facts.append(
+            "已知差别的步骤这次和臂 A 一样了（后台进程留下来了）："
+            + "、".join(known_gone)
+            + f"；{DIFFERENCES_DOC}该改了"
+        )
+    if known_unexpected:
+        v.worsen(FAILS)
+        v.facts.append(
+            "已知差别的步骤不是预期的样子（预期：不报错、输出里有 dead）："
+            + "、".join(known_unexpected)
         )
     if unexpected:
         v.worsen(FAILS)
