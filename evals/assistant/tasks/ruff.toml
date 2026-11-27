@@ -3,5 +3,5 @@
 extend = "../../../pyproject.toml"
 
 [lint.isort]
-known-first-party = ["svc_logs", "svc_probe"]
+known-first-party = ["svc_logs", "svc_probe", "svc_stock"]
 known-third-party = ["sfly"]
