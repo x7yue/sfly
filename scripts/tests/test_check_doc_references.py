@@ -94,14 +94,20 @@ def check(repo: Path, *, stage: bool = True) -> subprocess.CompletedProcess[str]
     )
 
 
-@pytest.fixture
-def repo(tmp_path: Path) -> Path:
+def make_repo(tmp_path: Path) -> Path:
+    """临时目录里的仓库：检查脚本和它用到的模块、几份基础文档（别的测试文件也用它）。"""
     root = tmp_path / "repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts" / "check_doc_references.py")
+    shutil.copy(SCRIPT.with_name("doc_routes.py"), root / "scripts" / "doc_routes.py")
     put(root, BASE_FILES)
     git(root, "init", "-b", "main")
     return root
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    return make_repo(tmp_path)
 
 
 def test_clean_repo_passes(repo: Path) -> None:
@@ -639,6 +645,7 @@ def run_outside_a_repository(
     root = tmp_path / "not-a-repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts" / "check_doc_references.py")
+    shutil.copy(SCRIPT.with_name("doc_routes.py"), root / "scripts" / "doc_routes.py")
     return subprocess.run(
         [sys.executable, str(root / "scripts" / "check_doc_references.py")],
         env=env,
