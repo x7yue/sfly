@@ -4,6 +4,8 @@ issue 和规格在 `x7yue/sfly` 的 GitHub Issues 里，操作都用 `gh`（在�
 
 ## Conventions（操作）
 
+这些操作在 GitHub 上做，不经过仓库，没有检查。
+
 - **创建 issue**：`gh issue create --title "…" --body "…"`，多行正文用 heredoc。
 - **读 issue**：`gh issue view <编号> --json number,title,body,labels,comments`。
 - **列 issue**：`gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`，按需加 `--label`、`--state`。
@@ -18,6 +20,8 @@ issue 和规格在 `x7yue/sfly` 的 GitHub Issues 里，操作都用 `gh`（在�
 
 ## 用 PR 关闭 issue
 
+靠判断：PR 是做完了 issue 还是只做了一部分要看范围；关闭和加标签在合入之后手动做，CI 管不到。
+
 - PR 合入 `main`：正文写 `Closes #<编号>`，合入后自动关闭。
 - PR 合入 `dev`（带 `roadmap` 标签的 issue）：正文第一行写 `Part of #<编号>`。`Closes` 只在合入默认分支时生效，所以合入后手动关闭 issue，评论的写法见 [branching-and-release.md](./branching-and-release.md)「`dev`（强制）」。关闭时同时加标签 `merged-to-dev`：
 
@@ -29,7 +33,7 @@ issue 和规格在 `x7yue/sfly` 的 GitHub Issues 里，操作都用 `gh`（在�
 
 ## Pull requests as a triage surface（PR 不进 triage）
 
-**PRs as a request surface: no.** 外部 PR 不当作需求，不走 triage 的标签和状态。
+**PRs as a request surface: no.** 外部 PR 不当作需求，不走 triage 的标签和状态。靠判断：要看提交者是谁、改动是什么。
 
 ## skill 里的说法
 

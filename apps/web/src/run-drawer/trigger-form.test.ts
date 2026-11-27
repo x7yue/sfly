@@ -1,11 +1,13 @@
 import type { ParamDeclView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	containsMask,
 	defaultFieldValue,
 	fieldSchema,
 	hasHiddenDefault,
 	initialValues,
 	lockedValue,
+	maskedRerunParams,
 	paramsSchema,
 	toParams,
 } from "./trigger-form";
@@ -169,5 +171,45 @@ describe("入口参数表单", () => {
 			api_token: "tok",
 		});
 		expect(toParams([{ name: "n", type: "number" }], { n: " 1.5 " })).toEqual({ n: 1.5 });
+	});
+});
+
+describe("再次运行：值里含有掩码的普通参数不预填（#485）", () => {
+	const rerun: ParamDeclView[] = [
+		{ name: "url", type: "string", default: "https://example.test/" },
+		{ name: "region", type: "string" },
+		{ name: "options", type: "json", default: { retries: 1 } },
+		{ name: "token", type: "string", secret: true, default: "******" },
+	];
+	const previous = {
+		url: "https://example.test/?token=******",
+		region: "eu-west",
+		options: { headers: { auth: "Bearer ******" } },
+		token: "******",
+	};
+
+	it("字符串里、JSON 的值和键里的掩码都认得出；数字、布尔、null 不算", () => {
+		expect(containsMask("a******b")).toBe(true);
+		expect(containsMask({ a: ["x", { b: "******" }] })).toBe(true);
+		expect(containsMask({ "******": 1 })).toBe(true);
+		expect(containsMask("*****")).toBe(false);
+		expect(containsMask(6)).toBe(false);
+		expect(containsMask(true)).toBe(false);
+		expect(containsMask(null)).toBe(false);
+	});
+
+	it("含有掩码的普通参数用默认值，其余照常沿用；secret 参数本来就不预填，不算在里面", () => {
+		expect(maskedRerunParams(rerun, previous)).toEqual(new Set(["url", "options"]));
+		expect(initialValues(rerun, previous)).toEqual({
+			url: "https://example.test/",
+			region: "eu-west",
+			options: '{"retries":1}',
+			token: "",
+		});
+	});
+
+	it("没有上一次的参数、上一次没有这个参数时，没有要提示的", () => {
+		expect(maskedRerunParams(rerun)).toEqual(new Set());
+		expect(maskedRerunParams(rerun, { region: "x" })).toEqual(new Set());
 	});
 });
