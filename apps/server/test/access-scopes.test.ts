@@ -67,6 +67,8 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"POST /feishu-bots/:name/test": "manage",
 	// 项目令牌的签发、吊销（项目，写）→ 管理
 	"POST /projects/:project/tokens": "manage",
+	// 登记项目的工作台（#549）：项目自己的设置（project × 写）→ 管理，只有人能做（项目令牌、会话令牌、Agent 凭据都不行）
+	"PUT /projects/:project/workbench": "manage",
 	"DELETE /projects/:project/tokens/:id": "manage",
 	// 上传产物（任务，写）→ 不给人和程序：只有 Agent 凭据，限派给这台 Agent 的任务
 	"PUT /tasks/:id/artifacts/*": null,
@@ -181,7 +183,7 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		}
 		// 只读不受影响。
 		expect(writeNeedsPerson({ effect: "read", resource: { kind: "session" } })).toBe(false);
-		// 契约里恰好是会话的三个写接口、项目令牌的签发和吊销、开发 Agent 的注册和吊销。
+		// 契约里恰好是会话的三个写接口（建会话在 /projects/:project/sessions）、项目令牌的签发和吊销、登记工作台、开发 Agent 的注册和吊销。
 		expect(
 			httpContract
 				.filter((def) => def.effect === "write" && writeNeedsPerson(def))
@@ -196,6 +198,7 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 			"POST /sessions/:id/end",
 			"POST /sessions/:id/messages",
 			"POST /sessions/:id/stop",
+			"PUT /projects/:project/workbench",
 		]);
 	});
 

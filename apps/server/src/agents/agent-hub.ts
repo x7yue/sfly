@@ -31,7 +31,7 @@ import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../projects/project-id.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
-import { type AgentAuth, notRegisteredHere } from "./agent-auth.js";
+import { type AgentAuth, registeredElsewhere } from "./agent-auth.js";
 import {
 	type AgentClockReading,
 	ConnectionClock,
@@ -285,7 +285,8 @@ export class AgentHub {
 				.from(agents)
 				.where(eq(agents.name, name));
 			if (registered !== undefined && registered.projectId !== project) {
-				throw new AgentConnectionRefused(notRegisteredHere(name), "unauthenticated");
+				const refusal = registeredElsewhere(name, auth);
+				throw new AgentConnectionRefused(refusal.message, refusal.code);
 			}
 			const clock = new ConnectionClock(this.deps.clock, helloClock, receivedAt);
 			const conn = new AgentConnection(name, info, outbox, clock, auth, project);

@@ -36,6 +36,7 @@ import type { OrchestrationStore } from "../orchestrations/orchestration-store.j
 import type { PackageRepository } from "../packages/package-repository.js";
 import type { StdIndex } from "../packages/std-index.js";
 import type { PresetStore } from "../presets/preset-store.js";
+import type { ProjectWorkbench } from "../projects/project-workbench.js";
 import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
@@ -63,6 +64,7 @@ import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
+import { registerProjectWorkbenchRoutes } from "./project-workbench-routes.js";
 import { serializeRequest } from "./request-log.js";
 import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
@@ -122,6 +124,8 @@ export interface HttpApiDeps {
 	tokens: TokenService;
 	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts，#492）。 */
 	agentCredentials: AgentCredentialService;
+	/** 项目的工作台：登记（`PUT /projects/:project/workbench`，src/projects/project-workbench.ts，#549）。 */
+	workbench: ProjectWorkbench;
 	/** 登录的空闲期限（毫秒）；默认 12 小时，要和 `accounts` 里的一致（下发和续期 Cookie 用它）。 */
 	loginIdleMs?: number;
 	/** 哪些来源算同源（登录 Cookie 的跨站检查，src/auth/cross-site.ts）。 */
@@ -199,6 +203,7 @@ export function buildHttpApi({
 	accounts,
 	tokens,
 	agentCredentials,
+	workbench,
 	loginIdleMs,
 	origins,
 	publicHttps,
@@ -349,6 +354,7 @@ export function buildHttpApi({
 		credentials: agentCredentials,
 		accounts,
 	});
+	registerProjectWorkbenchRoutes(app, { workbench });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations });

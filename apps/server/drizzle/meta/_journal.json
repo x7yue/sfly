@@ -295,6 +295,13 @@
       "when": 1795726459892,
       "tag": "0042_session_event_assistant_source",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1795735574453,
+      "tag": "0043_project_workbench",
+      "breakpoints": true
     }
   ]
 }

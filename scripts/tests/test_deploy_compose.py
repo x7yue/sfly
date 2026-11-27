@@ -27,7 +27,7 @@ REQUIRED = {
 }
 ASSISTANT = {
     "SFLY_ASSISTANT_SECRET": "0123456789abcdef0123456789abcdef0123456789abcdef",
-    "SFLY_WORKBENCH_AGENT": "workbench",
+    "SFLY_WORKBENCH_NAME": "workbench",
     "SFLY_WORKBENCH_TOKEN": "sfly_agt_" + "x" * 48,
     "MODEL_API_KEY": "model-key-value",
     "SFLY_ASSISTANT_MODEL": "gateway/some-model",
@@ -111,6 +111,24 @@ def test_the_workbench_credential_goes_to_the_workbench_only(tmp_path: Path) -> 
         assert "model-key-value" not in json.dumps(services[other]), other
 
 
+def test_the_shared_agent_token_never_reaches_the_workbench(tmp_path: Path) -> None:
+    # 登记工作台之后控制面不再接受共享令牌（#549），工作台本来也不用它：
+    # 共享令牌（SFLY_AGENT_TOKEN）能冒充任何一台 Agent，工作台上的模型读得到工作台的环境，
+    # 所以它只给控制面，不给工作台和助手服务。
+    shared = "shared-agent-token-value-0123456789"
+    services = render(tmp_path, {**REQUIRED, **ASSISTANT, "SFLY_AGENT_TOKEN": shared}, "assistant")[
+        "services"
+    ]
+
+    assert environment(services["sfly"])["SFLY_AGENT_TOKEN"] == shared
+    for other in ("sfly-workbench", "sfly-assistant"):
+        assert shared not in json.dumps(services[other]), other
+    # 工作台用的是它自己的 Agent 凭据。
+    workbench = environment(services["sfly-workbench"])
+    assert workbench["SFLY_WORKBENCH_TOKEN"] == ASSISTANT["SFLY_WORKBENCH_TOKEN"]
+    assert workbench["SFLY_WORKBENCH_TOKEN"].startswith("sfly_agt_")
+
+
 def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> None:
     # 工作台上的模型读得到工作台的环境：助手的共享密钥只给控制面和助手服务，模型的密钥只给助手服务，
     # 工作台只拿它自己要的四个变量（加一个别的变量，这里就红）。
@@ -119,7 +137,7 @@ def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> Non
 
     assert set(environment(workbench)) == {
         "SFLY_WORKBENCH_URL",
-        "SFLY_WORKBENCH_AGENT",
+        "SFLY_WORKBENCH_NAME",
         "SFLY_WORKBENCH_PUBLIC_ADDRESS",
         "SFLY_WORKBENCH_TOKEN",
     }
@@ -130,12 +148,20 @@ def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> Non
         assert ASSISTANT["SFLY_ASSISTANT_SECRET"] in json.dumps(services[holder]), holder
 
 
-def test_the_workbench_is_named_by_the_variable_the_control_plane_reads(tmp_path: Path) -> None:
+def test_the_workbench_is_named_by_its_own_variable_and_the_control_plane_reads_none(
+    tmp_path: Path,
+) -> None:
     services = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"]
 
-    assert environment(services["sfly"])["SFLY_WORKBENCH_AGENT"] == "workbench"
+    # 哪台 Agent 是工作台由项目管理员登记（PUT /projects/:project/workbench，#549），
+    # 不是控制面的环境变量：控制面的环境里没有 SFLY_WORKBENCH_AGENT，
+    # 也没有任何 SFLY_WORKBENCH_ 开头的变量。
+    control_plane = environment(services["sfly"])
+    assert "SFLY_WORKBENCH_AGENT" not in control_plane
+    assert not [name for name in control_plane if name.startswith("SFLY_WORKBENCH")]
     workbench = environment(services["sfly-workbench"])
-    assert workbench["SFLY_WORKBENCH_AGENT"] == "workbench"
+    assert "SFLY_WORKBENCH_AGENT" not in workbench
+    assert workbench["SFLY_WORKBENCH_NAME"] == "workbench"
     # 控制面和助手服务共用同一个密钥（同一个变量）。
     secret = ASSISTANT["SFLY_ASSISTANT_SECRET"]
     assert environment(services["sfly"])["SFLY_ASSISTANT_SECRET"] == secret
@@ -143,6 +169,16 @@ def test_the_workbench_is_named_by_the_variable_the_control_plane_reads(tmp_path
     # 工作台连控制面用服务名，对外的地址是自己的服务名（助手服务按它连能力端口）。
     assert workbench["SFLY_WORKBENCH_URL"] == "http://sfly:8080"
     assert workbench["SFLY_WORKBENCH_PUBLIC_ADDRESS"] == "sfly-workbench"
+
+
+def test_the_workbench_name_defaults_to_workbench_and_can_be_changed(tmp_path: Path) -> None:
+    without = {key: value for key, value in ASSISTANT.items() if key != "SFLY_WORKBENCH_NAME"}
+    services = render(tmp_path, {**REQUIRED, **without}, "assistant")["services"]
+    assert environment(services["sfly-workbench"])["SFLY_WORKBENCH_NAME"] == "workbench"
+    renamed = render(
+        tmp_path, {**REQUIRED, **ASSISTANT, "SFLY_WORKBENCH_NAME": "bench-2"}, "assistant"
+    )["services"]
+    assert environment(renamed["sfly-workbench"])["SFLY_WORKBENCH_NAME"] == "bench-2"
 
 
 def test_the_assistant_container_is_capped_at_2_gib_and_reads_the_model_file_read_only(

@@ -11,8 +11,14 @@
 // - **三种情况同一句话**：连接的一方对这个名字所在的项目没有有效凭据时，「还没有登记」「登记在别的项目」「这个名字有 Agent 凭据」
 //   的回应是同一个、同一句话（{@link notRegisteredHere}），不能用 Hello 的回应探别的项目里有没有这个名字、有没有凭据；
 //   **先比项目、后看停用**（别的项目里被停用的，和不存在一样）。
-// 登记工作台之后（#549 接上 `requireAgentCredential`）只接受 Agent 凭据：共享令牌和没有凭据的连接都拒绝；登记之前先要没有还没换成
-// Agent 凭据的 Agent（{@link agentsNotOnCredentials}）。
+// - **例外：带着有效 Agent 凭据的调用方看得到具体原因**（#492 的 E）：Hello 带的是这个名字的、没有吊销的 Agent 凭据（它已经证明
+//   自己是管理员为这个项目、这个名字签发的那一台），名字却登记在别的项目里时，说「这个名字已经被另一个项目登记」
+//   （{@link nameRegisteredElsewhere}）。对它这是**唯一可能的**一种拒绝：有效的凭据能登记一个新名字，所以「还没有登记」不会是原因，
+//   没有凭据而来的情况又不在这里；它本来就看得到「连上了」还是「被拒绝了」，说出原因没有多告诉它任何东西。不说另一个项目的名字、
+//   项目标识、占着名字的 Agent 怎么连接的，别的项目里被停用的也是同一句话。凭据无效、吊销、不带凭据、共享令牌的，说法照旧笼统。
+// 登记工作台之后（#549，`requireAgentCredential` 由 `ProjectWorkbench.credentialRequired` 给，从库里得出）只接受 Agent 凭据：
+// 共享令牌和没有凭据的连接都拒绝；登记之前先要没有还没换成 Agent 凭据的 Agent（{@link agentsNotOnCredentials}，登记在
+// `src/projects/project-workbench.ts`，和连接的登记在同一把锁里）。
 // 停用的 Agent 不论带不带凭据都不能连接。「以旧方式连接」（共享令牌和没有凭据）的连接不能顶掉带 Agent 凭据的同名连接，
 // 这一条在 `AgentHub.attach`。
 import { TOKEN_PREFIXES } from "@sfly/schema";
@@ -57,6 +63,23 @@ export const notRegisteredHere = (name: string): string =>
 	`Agent「${name}」不能连接：它还没有登记，或者这次带的凭据不能登记它——让项目管理员在这个项目里为这台 Agent 签发 Agent 凭据，并用它连接`;
 
 /**
+ * 带着有效 Agent 凭据的调用方，名字登记在别的项目里时的拒绝说明（文件头「例外」）：写明原因和怎么办。名字在整个部署里唯一
+ * （ADR 0029 第一步：名字仍然全局唯一，第二步改成项目内唯一之后这条拒绝不再存在，随之删掉），过渡期里以共享令牌或没有凭据连上来的
+ * Agent 都登记在默认项目里，所以最常见的情形是：这个名字被一台旧方式连接的 Agent 先占了（见用户文档「安装 Agent」的
+ * 「Agent 凭据」一节）。说明里不带占着名字的 Agent 在哪个项目、怎么连接的。
+ */
+export const nameRegisteredElsewhere = (name: string): string =>
+	`Agent「${name}」不能连接：这个名字已经被这个部署里另一个项目的 Agent 登记了，一个名字只能属于一个项目。换一个名字：` +
+	"为这台 Agent 用新名字签发 Agent 凭据，把 agent.env 里的 SFLY_AGENT_NAME 和 SFLY_TOKEN 换成新的，再重启 Agent" +
+	"（用户文档「安装 Agent」的「Agent 凭据」一节：名字被占用）";
+
+/** 名字登记在别的项目里时，这次连接（`auth`）该看到哪一句：带 Agent 凭据的看具体原因，别的是笼统的那一句。 */
+export const registeredElsewhere = (name: string, auth: AgentAuth): Refusal =>
+	auth.kind === "agent"
+		? { code: "permission_denied", message: nameRegisteredElsewhere(name) }
+		: { code: "unauthenticated", message: notRegisteredHere(name) };
+
+/**
  * 还没换成 Agent 凭据的 Agent（没有停用的，最近一次连接用的不是 Agent 凭据，或者记下之前连接的）：登记工作台之前必须是空的
  * （ADR 0029「迁移与过渡」，登记那一步在 #549，有没换的就拒绝并列出它们）。只签发过、没用它连上过的不算换了；停用的不算。
  */
@@ -75,7 +98,8 @@ export async function agentsNotOnCredentials(db: Db): Promise<string[]> {
 }
 
 const CREDENTIAL_REQUIRED =
-	"控制面已经登记了工作台，只接受 Agent 凭据：共享令牌和没有凭据的连接都不再接受，让项目管理员为这台 Agent 签发 Agent 凭据";
+	"控制面已经登记了工作台，只接受 Agent 凭据：共享令牌和没有凭据的连接都不再接受，让项目管理员为这台 Agent 签发 Agent 凭据" +
+	"（用户文档「安装 Agent」的「Agent 凭据」一节：登记工作台之后）";
 
 export class AgentAuthenticator {
 	constructor(
@@ -83,7 +107,8 @@ export class AgentAuthenticator {
 			db: Db;
 			clock: Clock;
 			/**
-			 * 登记工作台之后为真（#549 接上，现在没有登记，不传就是假）：只接受 Agent 凭据，共享令牌和没有凭据的连接都拒绝
+			 * 登记工作台之后为真（#549，控制面接的是 `ProjectWorkbench.credentialRequired`：库里有项目登记了工作台；不传就是假）：
+			 * 只接受 Agent 凭据，共享令牌和没有凭据的连接都拒绝
 			 * （共享令牌不发给工作台，但工作台在网络上够得着控制面，别处泄露的共享令牌就能冒充一台还没换凭据的 Agent）。
 			 */
 			requireAgentCredential?: () => boolean | Promise<boolean>;
@@ -133,6 +158,10 @@ export class AgentAuthenticator {
 			}
 			// 控制面没有配置共享令牌、带的也不是 Agent 凭据：旧版本照旧接受（当作没有凭据）。
 		} else if (sharedConfigured) {
+			// 登记工作台之后共享令牌也不再接受：这时「需要带令牌或 Agent 凭据」会误导，写只接受 Agent 凭据。
+			if (await this.deps.requireAgentCredential?.()) {
+				return refuse("unauthenticated", CREDENTIAL_REQUIRED);
+			}
 			return refuse(
 				"unauthenticated",
 				"invalid agent token: 控制面配置了共享令牌，需要带令牌或 Agent 凭据",
@@ -181,7 +210,8 @@ export class AgentAuthenticator {
 
 	/**
 	 * 这个名字对这次连接的资格（认身份和登记前再确认共用）。**先比项目，后看停用**：
-	 * 1. 名字已经登记在别的项目里：和没有登记过一样（{@link notRegisteredHere}）；
+	 * 1. 名字已经登记在别的项目里：和没有登记过一样（{@link notRegisteredHere}），**带着有效 Agent 凭据的除外**，它看到具体原因
+	 *    （{@link nameRegisteredElsewhere}）；
 	 * 2. 以旧方式连接（共享令牌、没有凭据），而这个项目里这个名字有没被吊销的 Agent 凭据：只认凭据，同一句话
 	 *    （只看连接的项目里的凭据：别的项目为同一个名字签发的凭据，不能让这个项目里用旧方式连着的那台连不上）；
 	 * 3. 登记在这个项目里、被停用：已被停用；
@@ -195,8 +225,9 @@ export class AgentAuthenticator {
 			.from(agents)
 			.where(eq(agents.name, name));
 		if (existing && existing.projectId !== project) {
-			// 名字全局唯一：别的项目已经登记了这个名字，连接的一方对它没有有效凭据。
-			return { code: "unauthenticated", message: notRegisteredHere(name) };
+			// 名字全局唯一：别的项目已经登记了这个名字。带着有效 Agent 凭据的（它已经证明属于这个项目）看到具体原因，
+			// 别的连接对这个名字所在的项目没有有效凭据，同一句话。
+			return registeredElsewhere(name, auth);
 		}
 		if (auth.kind !== "agent") {
 			const [credential] = await db

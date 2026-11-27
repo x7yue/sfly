@@ -73,7 +73,7 @@ test("没有配置助手：就绪状态写明原因，「开始」不可用，�
 	await expect(readiness.getByTestId("readiness-problem")).toHaveCount(2);
 	await expect(readiness.getByTestId("readiness-hint")).toHaveText([
 		"请部署者在控制面上开启助手",
-		"请部署者设置这个项目的工作台",
+		"请项目管理员登记工作台（见部署文档「登记工作台」）",
 	]);
 
 	const input = assistantInput(page);

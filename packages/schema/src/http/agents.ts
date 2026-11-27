@@ -201,16 +201,17 @@ const AgentCredentialParams = AgentNameParams.extend({ id: z.uuid() });
  * 才连得上来，所以在签发这一步就拦住；不合格的说明带第几个字符、哪个码位，不回显名称。名称在路径里：路径参数的长度上限
  * 是 128 个 UTF-16 码元（解码之后，控制面的路由设置），放得下 64 个 emoji 的名称。
  */
+export const AgentNameText = z
+	.string()
+	.min(1)
+	.refine((name) => nameProblem(name) === undefined, nameRefinement("Agent 的名称"))
+	.refine(
+		(name) => [...name].length <= AGENT_NAME_MAX_LENGTH,
+		`Agent 的名称不能超过 ${AGENT_NAME_MAX_LENGTH} 个字符`,
+	);
 const NewAgentNameParams = z.object({
 	/** Agent 名称。 */
-	name: z
-		.string()
-		.min(1)
-		.refine((name) => nameProblem(name) === undefined, nameRefinement("Agent 的名称"))
-		.refine(
-			(name) => [...name].length <= AGENT_NAME_MAX_LENGTH,
-			`Agent 的名称不能超过 ${AGENT_NAME_MAX_LENGTH} 个字符`,
-		),
+	name: AgentNameText,
 });
 
 export const agentsApi = {
