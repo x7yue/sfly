@@ -8,11 +8,12 @@
 // - 要「恰好推进到下一次重试的时刻」时，先等控制面记下上一次的结果（管理页上的「最近一次投递」，和排下一次重试在同一个事务里），
 //   再推进时钟，这样间隔是确定的；
 // - 「不会发出」这类否定的结论，靠同一个机器人按顺序串行投递来证明：后面的消息到了，前面该重试的早就重试过了。
-import { type FeishuBotView, feishuBotsApi, NICKNAME_HEADER } from "@sfly/schema";
+import { type FeishuBotView, feishuBotsApi } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Clock } from "../src/clock.js";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type FakeFeishu, type FeishuReply, startFakeFeishu } from "./support/fake-feishu.js";
 import {
@@ -111,12 +112,12 @@ describe("投递的可靠性", () => {
 	const removeBot = (name: string) =>
 		cp.fetch(botUrl(name), {
 			method: "DELETE",
-			headers: { [NICKNAME_HEADER]: "tester" },
+			headers: actAs("tester"),
 		});
 	const replaceWebhook = (name: string, webhookUrl: string) =>
 		cp.fetch(botUrl(name), {
 			method: "PATCH",
-			headers: { "content-type": "application/json", [NICKNAME_HEADER]: "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ webhook_url: webhookUrl }),
 		});
 	/** 开一次新的运行，按顺序把这些文本消息放进发送队列；消息的投递结果写进这次运行的任务日志。 */

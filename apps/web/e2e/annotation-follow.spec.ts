@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	annotated,
 	annotationBand,
@@ -466,7 +467,7 @@ test("版本查看画布（只读）：悬停照样高亮，只高亮悬停的�
 	const id = await createScenario(controlPlane, "日终数据处理", annotated([ENDS], editorDocument));
 	const res = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({
 			base_version: 1,
 			document: annotated([{ ...ENDS, nodes: ["fetch", "dispatch", "ping"] }], editorDocument),

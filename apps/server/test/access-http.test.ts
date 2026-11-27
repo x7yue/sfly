@@ -9,7 +9,7 @@ import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
 import { locatorOf, routeKey } from "../src/auth/access-rules.js";
 import { publicPackageLockKey } from "../src/packages/package-repository.js";
 import { ApiClient } from "./support/api-client.js";
-import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
+import { actAs, bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { benchDocument, publishBench } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -87,7 +87,7 @@ describe("带凭据的请求", () => {
 			const token = await accounts.personalToken(editor, { name: "ci-token" });
 			const headers = {
 				...bearer(token),
-				"x-sfly-nickname": encodeURIComponent("冒充的人"),
+				...actAs("冒充的人"),
 				"x-sfly-client": "sfly-cli/0.5.0 agent/codex",
 			};
 			const scenario = (

@@ -256,6 +256,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			);
 			expect(save).toHaveLength(1);
 			expect(save[0]?.headers["x-sfly-client"]).toBe(`sfly-cli/${cliVersion} agent/claude-code`);
+			// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 			expect(save[0]?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("阿杰"));
 			expect((await versions(id))[0]).toMatchObject({
 				number: 2,

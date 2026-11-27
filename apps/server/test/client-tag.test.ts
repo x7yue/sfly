@@ -8,6 +8,7 @@ import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { appendStartupStubs, dropStartupStubs } from "./support/migrations.js";
 import { publishPackage } from "./support/package-archive.js";
@@ -48,7 +49,7 @@ describe("经哪个 AI 编程助手", () => {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				"x-sfly-nickname": encodeURIComponent(nickname),
+				...actAs(nickname),
 				...(client === undefined ? {} : { "x-sfly-client": client }),
 			},
 			body: JSON.stringify(body),

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { Locator } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { IDS, seedRemovedKindScenario } from "../../server/test/support/removed-kind-scenario.js";
 import { createEditorScenario, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
@@ -75,7 +76,7 @@ test("运行通知对话框：说明里的文档链接和红字里的「飞书�
 	});
 	await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 		method: "DELETE",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	await page.goto("/orchestrations");
 	await page.getByRole("article", { name: "订单压测" }).getByLabel("更多操作").click();
@@ -132,7 +133,7 @@ test("删除飞书机器人的对话框：引用它的场景名是行内链接�
 });
 
 test.describe("登录页", () => {
-	test.use({ nickname: null });
+	test.use({ loginAs: null });
 
 	test("没有任何用户时，卡片下面指向初始化页的链接是行内链接的样式", async ({ page }) => {
 		await page.goto("/login");
@@ -160,7 +161,7 @@ test.describe("开发文档", () => {
 });
 
 test.describe("昵称弹窗", () => {
-	test.use({ nickname: null });
+	test.use({ loginAs: null });
 
 	test("「已有账号，去登录」是行内链接的样式", async ({ page }) => {
 		await page.goto("/");
@@ -223,7 +224,7 @@ test("运行监控底部面板：输入输出里的产物引用是行内链接�
 
 test.describe("令牌页", () => {
 	const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
-	test.use({ nickname: null, controlPlaneOptions: { initialAdmin: ADMIN } });
+	test.use({ loginAs: null, controlPlaneOptions: { initialAdmin: ADMIN } });
 
 	test("个人令牌页说明里指向项目令牌页的链接是行内链接的样式", async ({ page }) => {
 		await page.goto("/login");

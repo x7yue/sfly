@@ -67,7 +67,9 @@ test("另一个来源的页面：读到场景列表，带昵称触发运行（�
 	const [preflight, post] = triggers;
 	expect(preflight?.headers.origin).toBe(pageHost.origin);
 	expect(preflight?.headers["access-control-request-method"]).toBe("POST");
+	// biome-ignore lint/plugin/test-nickname-header: 测的是浏览器跨域请求带的昵称请求头
 	expect(preflight?.headers["access-control-request-headers"]).toContain("x-sfly-nickname");
+	// biome-ignore lint/plugin/test-nickname-header: 测的是浏览器跨域请求带的昵称请求头
 	expect(post?.headers["x-sfly-nickname"]).toBe(encodeURIComponent(NICKNAME));
 
 	const subscription = await subscribeToRun(page, controlPlaneProxy.url, runId);
@@ -91,14 +93,18 @@ test.describe("控制面版本和 API 客户端不一致", () => {
 			if (message.type() === "warning") warnings.push(message.text());
 		});
 		await openPage(page, pageHost);
-		const session = await page.evaluateHandle((baseUrl) => {
-			const times: string[] = [];
-			const client = window.sfly.createClient({
-				baseUrl,
-				onControlPlaneTime: (time) => times.push(time),
-			});
-			return { client, times, clientVersion: window.sfly.CLIENT_VERSION };
-		}, controlPlane.httpUrl);
+		const session = await page.evaluateHandle(
+			({ baseUrl, token }) => {
+				const times: string[] = [];
+				const client = window.sfly.createClient({
+					baseUrl,
+					token,
+					onControlPlaneTime: (time) => times.push(time),
+				});
+				return { client, times, clientVersion: window.sfly.CLIENT_VERSION };
+			},
+			{ baseUrl: controlPlane.httpUrl, token: await controlPlane.users.token() },
+		);
 
 		await session.evaluate(({ client }) => client.dashboard.get());
 		clock.advance(60_000);

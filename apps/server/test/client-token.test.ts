@@ -37,6 +37,7 @@ describe("API 客户端带令牌", () => {
 		const client = createClient({ baseUrl: proxy.url, token });
 		await client.system.health();
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 		const created = await client.request(
 			{ method: "POST", path: "/orchestrations", kind: "endpoint" },
@@ -44,6 +45,7 @@ describe("API 客户端带令牌", () => {
 		);
 		expect(created).toMatchObject({ name: "令牌建的场景" });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 	});
 
@@ -72,6 +74,7 @@ describe("API 客户端带令牌", () => {
 			const stream = streaming.requests.find((r) => r.path === `/runs/${run}/events`);
 			expect(stream?.headers.accept).toContain("text/event-stream");
 			expect(stream?.headers.authorization).toBe(`Bearer ${token}`);
+			// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 			expect(stream?.headers["x-sfly-nickname"]).toBeUndefined();
 		} finally {
 			await streaming.close();
@@ -121,10 +124,12 @@ describe("API 客户端带令牌", () => {
 		const both = createClient({ baseUrl: proxy.url, token, nickname: "冒充的人" });
 		await both.orchestrations.list();
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 		const onlyNickname = createClient({ baseUrl: proxy.url, nickname: "小红" });
 		await onlyNickname.orchestrations.list();
 		expect(sent()?.headers.authorization).toBeUndefined();
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("小红"));
 	});
 });

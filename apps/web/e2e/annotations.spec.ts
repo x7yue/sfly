@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { dropDocumentFields } from "../../server/test/support/legacy-document.js";
 import {
 	annotated,
@@ -514,7 +515,7 @@ test("运行状态模式和版本查看画布显示注释框（只读，标题�
 	);
 	const res = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({ base_version: 1, document: v2 }),
 	});
 	expect(res.status, await res.text()).toBe(201);
@@ -573,7 +574,7 @@ test("运行绑定的是升级前保存的版本（库里的文档没有 annotat
 	await triggerRun(controlPlane, id);
 	const res = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({
 			base_version: 1,
 			document: annotated(

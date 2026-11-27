@@ -1,3 +1,4 @@
+import { actAs } from "../../server/test/support/credentials.js";
 import { expect, test } from "./fixtures";
 import { metricPackage, openMonitor } from "./monitor-scenario";
 import { createScenario, publishPackage } from "./support";
@@ -42,7 +43,7 @@ test("再次运行：值里含有 secret 值的参数不预填、写明原因，
 	const scenarioId = await createScenario(controlPlane, "带令牌的地址", SCENARIO);
 	const res = await controlPlane.fetch(`/orchestrations/${scenarioId}/runs`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify({
 			params: { region: "eu-west", url: "https://example.test/?token=s3cr3t-token" },
 		}),

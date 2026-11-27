@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { httpContract, NICKNAME_HEADER, NON_GET_READS, type RouteDef } from "@sfly/schema";
+import { httpContract, NON_GET_READS, type RouteDef } from "@sfly/schema";
 import Ajv2020 from "ajv/dist/2020.js";
 import { strToU8 } from "fflate";
 import pg from "pg";
@@ -27,7 +27,7 @@ import { requiresCredential } from "../src/auth/access-rules.js";
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { ArrayCoverage } from "./support/array-coverage.js";
-import { TestAccounts } from "./support/credentials.js";
+import { actAs, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { putFocusItemsOk } from "./support/focus-items.js";
@@ -438,7 +438,7 @@ describe("声明为只读的接口真的不写库", () => {
 			...(body !== undefined && {
 				headers: {
 					"content-type": "application/json",
-					[NICKNAME_HEADER]: encodeURIComponent("tester"),
+					...actAs("tester"),
 				},
 				body: JSON.stringify(body),
 			}),
