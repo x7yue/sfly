@@ -38,6 +38,7 @@ import { loadClientTarballs } from "./downloads/client-tarballs.js";
 import { createAssignContent } from "./engine/assign-content.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
+import { Releases } from "./engine/released.js";
 import { WriteMasking } from "./engine/write-masking.js";
 import { EngineNotifications } from "./feishu/engine-notifications.js";
 import { FeishuBots } from "./feishu/feishu-bots.js";
@@ -414,6 +415,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const metricQueries = new MetricQueries({ db: database.db, clock, metrics });
 	const engine = new Engine({
 		masking: new WriteMasking(runSecrets),
+		releases: new Releases(runSecrets),
 		db: database.db,
 		clock,
 		mutex,
@@ -482,6 +484,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 		purgeWaitMs: options.purgeWaitMs,
+		onVaultDeleted: (runId) => runSecrets.forget([runId]),
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);

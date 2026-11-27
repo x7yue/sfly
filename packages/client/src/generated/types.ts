@@ -2671,6 +2671,8 @@ export interface RunReport {
 	 * 旧版本的控制面没有这个字段，读不到时当作 false。
 	 */
 	secrets_oversize?: boolean;
+	/** 运行清理之后到达、被丢弃的上报条数（#505）。和运行视图（`RunView`）的同名字段一样；读不到时当作 0。 */
+	late_reports_dropped?: number;
 }
 
 /** 有异常的关注项：关注项读数（`GET /runs/:id/focus`）里的一项，只留下认出它是哪一项、最新值和异常的字段。 */
@@ -2898,6 +2900,11 @@ export interface RunView {
 	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
 	 */
 	secrets_oversize?: boolean;
+	/**
+	 * 运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，
+	 * 每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。
+	 */
+	late_reports_dropped?: number;
 	/** 按深度、开始时间排序。 */
 	chains: ChainRunView[];
 }

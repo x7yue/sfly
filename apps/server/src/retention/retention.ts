@@ -13,6 +13,7 @@ import {
 	taskActions,
 	tasks,
 } from "../db/schema.js";
+import { runVaults } from "../db/vault-schema.js";
 import { isLockTimeout } from "../sessions/session-store.js";
 
 /** 日志和产物的默认保留期：30 天。 */
@@ -48,6 +49,8 @@ export class Retention {
 			retentionDays?: number;
 			/** {@link Retention.isPurgedAfterWait} 最多等多久（毫秒），默认 {@link DEFAULT_PURGE_WAIT_MS}。 */
 			purgeWaitMs?: number;
+			/** 清理时删掉了这个运行的加密副本（#505：Agent 一直没回来，保留期就是上限），提交之后告诉 `RunSecrets`。 */
+			onVaultDeleted: (runId: string) => void;
 		},
 	) {}
 
@@ -126,7 +129,7 @@ export class Retention {
 			.where(and(isNull(runs.purgedAt), lt(runs.endedAt, cutoff)))
 			.limit(BATCH);
 		for (const { id } of due) {
-			await this.deps.db.transaction(async (tx) => {
+			const vaultDeleted = await this.deps.db.transaction(async (tx) => {
 				// 先锁住这个运行的行（`FOR UPDATE`），再删文件、删产物行、标记已清理，一起提交（#649 的审查）：产物上传
 				// （`ArtifactStore`）在 `FOR KEY SHARE` 的锁下核对运行没有被清理、改名、记账，两边不会交错：上传在改名中时这里等它
 				// 提交，之后删文件和行时连它存下的一起删；这里拿到锁之后上传的核对要等这个事务提交、读到「已清理」，不改名也不记账。
@@ -139,7 +142,7 @@ export class Retention {
 					.from(runs)
 					.where(eq(runs.id, id))
 					.for("update");
-				if (!locked || locked.purgedAt !== null) return; // 选出来之后别处已经清理了
+				if (!locked || locked.purgedAt !== null) return false; // 选出来之后别处已经清理了
 				await Promise.all(
 					["logs", "artifacts"].map((dir) =>
 						rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),
@@ -154,8 +157,17 @@ export class Retention {
 					.where(and(eq(apiTokens.kind, "task"), inArray(apiTokens.taskId, runTasks)));
 				await tx.delete(artifacts).where(eq(artifacts.runId, id));
 				await tx.delete(feishuMessages).where(eq(feishuMessages.runId, id));
-				await tx.update(runs).set({ purgedAt: now }).where(eq(runs.id, id));
+				const vaults = await tx.delete(runVaults).where(eq(runVaults.runId, id)).returning();
+				await tx
+					.update(runs)
+					.set({
+						purgedAt: now,
+						...(vaults.length > 0 && { vaultDeletedAt: now }),
+					})
+					.where(eq(runs.id, id));
+				return vaults.length > 0;
 			});
+			if (vaultDeleted) this.deps.onVaultDeleted(id);
 		}
 		return due.length;
 	}

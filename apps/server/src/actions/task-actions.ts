@@ -156,11 +156,9 @@ export class TaskActions {
 		// 这里先看一眼省掉打码，写入前在事务里再确认一次。
 		if (!task || task.agentName !== agentName || task.purgedAt !== null || !isDoing(task.status))
 			return;
-		const { summary, current } = actionSummaryView(
-			event,
-			controlPlaneTime,
-			await this.deps.logs.runSecrets(task.runId),
-		);
+		const secrets = await this.deps.logs.runSecrets(task.runId);
+		if (!secrets) return;
+		const { summary, current } = actionSummaryView(event, controlPlaneTime, secrets);
 		// 和明细一样在事务里锁住任务行再确认还在执行：和结束任务的写入互斥，任务结束之后不会再写进一份。
 		const stored = await this.deps.db.transaction(async (tx) => {
 			const [locked] = await tx
@@ -210,11 +208,9 @@ export class TaskActions {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(eq(tasks.id, taskId));
 		if (!task || task.agentName !== agentName || task.purgedAt !== null) return;
-		const prepared = prepareEvents(
-			events,
-			controlPlaneTime,
-			await this.deps.logs.runSecrets(task.runId),
-		);
+		const secrets = await this.deps.logs.runSecrets(task.runId);
+		if (!secrets) return;
+		const prepared = prepareEvents(events, controlPlaneTime, secrets);
 		const names = startedNames(prepared);
 		const stored =
 			names.length === 0

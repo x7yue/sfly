@@ -215,7 +215,7 @@ export class TaskMetrics {
 			/** 保留期与分区（#32）：写入前确保分区存在。 */
 			retention: MetricRetention;
 			/** 标签的值写进库之前按这次运行的 secret 值打码（#505，`TaskLogs.runSecrets`）。 */
-			secrets: (runId: string) => Promise<SecretSet>;
+			secrets: (runId: string) => Promise<SecretSet | undefined>;
 			/** 单个任务指标数据的上限（字节，按每点 28 字节折算成点数），默认 {@link DEFAULT_METRIC_LIMIT_BYTES}。 */
 			limitBytes?: number;
 		},
@@ -250,6 +250,8 @@ export class TaskMetrics {
 			const full = new Set<Series>();
 			const accepted: MetricPointView[] = [];
 			const secrets = await this.deps.secrets(state.runId);
+			// 加密副本已经删除（#505）：迟到的点丢弃，已经计过数。
+			if (!secrets) return;
 			for (let i = 0; i < batch.points.length; i++) {
 				const reported = batch.points[i] as MetricBatch["points"][number];
 				const keys = state.declared.get(reported.name);

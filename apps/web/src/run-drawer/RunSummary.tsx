@@ -114,6 +114,11 @@ export function RunSummary({ runId }: { runId: string }) {
 					{MESSAGE.secretsOversize}
 				</p>
 			)}
+			{(run.late_reports_dropped ?? 0) > 0 && (
+				<p role="note" className="m-0 mb-3 text-xs text-fg-2" data-testid="late-reports-dropped">
+					{MESSAGE.lateReportsDropped(run.late_reports_dropped ?? 0)}
+				</p>
+			)}
 			<ul aria-label={LIST_LABEL.chainProgress} className="m-0 flex list-none flex-col gap-1.5 p-0">
 				{chains.map((chain) => (
 					<ChainRow key={chain.id} chain={chain} />

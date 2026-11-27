@@ -97,6 +97,8 @@ export class TaskNotifications {
 		}
 		// 发到群里的就是存下的这份：先按这次运行的 secret 值打码（#505），再按长度上限组装。
 		const secrets = await this.deps.logs.runSecrets(runId);
+		// 加密副本已经删除（#505）：迟到的通知丢弃，已经计过数，不发。
+		if (!secrets) return undefined;
 		const message =
 			event.text === undefined
 				? rawMessage(maskValue(event.message, secrets))

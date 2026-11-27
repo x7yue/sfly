@@ -256,7 +256,7 @@ export class TaskLogs {
 			clock: Clock;
 			dataDir: string;
 			/** 写入时打码的运行的加密副本（#505）。 */
-			runSecrets: Pick<RunSecrets, "committedSet">;
+			runSecrets: Pick<RunSecrets, "admit" | "committedSet">;
 			/** 单个任务日志的上限（字节），默认 {@link DEFAULT_LOG_LIMIT_BYTES}。 */
 			limitBytes?: number;
 		},
@@ -373,9 +373,14 @@ export class TaskLogs {
 	 * 调用方在 {@link TaskLogs.#serial} 里调用。
 	 */
 	async #write(taskId: string, state: TaskState, written: readonly NewLine[]): Promise<void> {
+		const fromControlPlane = written.every((e) => e.agentSeq === null);
 		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。只在这一次写入里用，不留在任务状态上：
 		// 值集合（和它的自动机）归值集合的缓存管（按字节数限大小，{@link secretSetOf}），任务状态留着它就管不住了。
-		const secrets = await this.runSecrets(state.runId);
+		// 写入时打码的运行，加密副本已经删除（#505）：Agent 迟到的行丢弃、计数；控制面自己写的行（投递结果等）照常写，它们不含原值。
+		const secrets = fromControlPlane
+			? await this.controlPlaneSecrets(state.runId)
+			: await this.runSecrets(state.runId);
+		if (!secrets) return;
 		// 这次运行的值集合大到认不出每一处出现，所有文字都整段盖住（SecretSet.oversize）：在这个任务的日志里留一行平台写的说明
 		// （不含值），用户才知道为什么全是掩码。写在「值集合变大之后这个任务第一次写日志」的那一批的最前面，每个任务一次，
 		// 时间取这一批里第一行**真正写入**的行的时间（Agent 序号不大于已写入的最大序号的是重发的旧行，会被丢掉，不算；
@@ -490,6 +495,7 @@ export class TaskLogs {
 			const state = await this.#stateFor(progress.taskId, agentName);
 			if (!state) return;
 			const secrets = await this.runSecrets(state.runId);
+			if (!secrets) return;
 			const value: TaskProgressView = {
 				current: progress.current,
 				total: progress.total ?? null,
@@ -596,10 +602,19 @@ export class TaskLogs {
 	 * （{@link runSecretValues}）。写日志、进度、动作、通知、指标都用它。运行绑定的版本、版本的内容都不会变，所以「这个版本有没有声明
 	 * secret 参数」按版本缓存：没有声明的旧运行之后每次都不用再查库。
 	 */
-	async runSecrets(runId: string): Promise<SecretSet> {
+	async runSecrets(runId: string): Promise<SecretSet | undefined> {
 		const run = await this.#run(runId);
 		if (!run) return NO_SECRETS;
-		if (run.maskedOnWrite) return this.deps.runSecrets.committedSet(this.deps.db, runId);
+		if (run.maskedOnWrite) return this.deps.runSecrets.admit(this.deps.db, runId);
+		return this.#readTimeSecrets(runId, run.versionId);
+	}
+
+	/** 控制面自己写的行用的值集合：副本已经删除时什么都不打（这些行不含原值），不算迟到的上报。 */
+	async controlPlaneSecrets(runId: string): Promise<SecretSet> {
+		const run = await this.#run(runId);
+		if (!run) return NO_SECRETS;
+		if (run.maskedOnWrite)
+			return (await this.deps.runSecrets.committedSet(this.deps.db, runId)) ?? NO_SECRETS;
 		return this.#readTimeSecrets(runId, run.versionId);
 	}
 

@@ -444,6 +444,10 @@ export const runs = pgTable(
 		maskedOnWrite: boolean("masked_on_write").notNull().default(false),
 		/** 写入时打码的运行，secret 值合计太长、写进库的文字整段盖住了（`SecretSet.oversize`）：读取时不再有值集合，记在这里。 */
 		secretsOversize: boolean("secrets_oversize").notNull().default(false),
+		/** 加密副本删除的时刻（#505）：之后到达的上报一律丢弃，计在 `late_reports_dropped`。 */
+		vaultDeletedAt: timestamptz("vault_deleted_at"),
+		/** 加密副本删除之后到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，每条消息算一条）。 */
+		lateReportsDropped: integer("late_reports_dropped").notNull().default(0),
 	},
 	(t) => [
 		// 运行的项目恒等于它的场景的项目，由这条组合外键保证；更新和删除都不级联（NO ACTION）：有运行的场景改项目
@@ -577,8 +581,16 @@ export const tasks = pgTable(
 		actionRev: bigint("action_rev", { mode: "number" }).notNull().default(0),
 		/** 控制面兜底丢弃过明细：任务日志里的警告已经写过（每个任务只写一次）。 */
 		actionCapped: boolean("action_capped").notNull().default(false),
+		/** 控制面在 Welcome 里告诉这台 Agent 放弃这次尝试的时刻（#505，`engine/released.ts`）。 */
+		abandonedAt: timestamptz("abandoned_at"),
+		/** 这次尝试离开 Agent 之手的时刻（#505，`engine/released.ts`）；从没派发出去的（`lease_expires_at` 为空）不用记。 */
+		releasedAt: timestamptz("released_at"),
 	},
 	(t) => [
+		// 还在（或可能还在）Agent 手上的尝试：重连、心跳时按 Agent 找它们。
+		index("tasks_unreleased")
+			.on(t.agentName)
+			.where(sql`${t.leaseExpiresAt} is not null and ${t.releasedAt} is null`),
 		index("tasks_lease").on(t.leaseExpiresAt).where(sql`${t.status} = 'running'`),
 		index("tasks_queue_timeout").on(t.queueExpiresAt).where(sql`${t.status} = 'queued'`),
 		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),
