@@ -3,10 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { useId } from "react";
-import { acceptsTasks, agentStatusView } from "#/agents/agent-status";
+import { acceptsTasks, agentStatusView, queuedCount, usedSlots } from "#/agents/agent-status";
 import { PreparingBadge } from "#/agents/PreparingBadge";
 import { ErrorState } from "#/components/feedback/states";
-import { IdleSlots, idleSlotCount, SlotCell } from "#/components/slot-cell";
+import { IdleSlots, idleSlotCount, OtherProjectSlots, SlotCell } from "#/components/slot-cell";
 import { STATUS, StatusDot } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery } from "#/lib/api";
@@ -72,9 +72,9 @@ function AgentSlots({ agent }: { agent: AgentView }) {
 	const headingId = useId();
 	const status = agentStatusView(agent);
 	const accepts = acceptsTasks(agent);
-	const used = agent.running_tasks.length;
+	const used = usedSlots(agent);
 	const idle = idleSlotCount(agent.info.slots, used);
-	const queued = agent.queued_tasks.length;
+	const queued = queuedCount(agent);
 	return (
 		<section aria-labelledby={headingId} className="px-3.5 pt-2.5 pb-3">
 			<div className="flex items-center gap-2">
@@ -105,6 +105,9 @@ function AgentSlots({ agent }: { agent: AgentView }) {
 					{agent.running_tasks.map((task) => (
 						<SlotCell key={task.task_id} task={task} compact />
 					))}
+					{agent.other_project_running > 0 && (
+						<OtherProjectSlots count={agent.other_project_running} compact />
+					)}
 					{accepts && idle > 0 && <IdleSlots count={idle} compact />}
 				</ul>
 			)}

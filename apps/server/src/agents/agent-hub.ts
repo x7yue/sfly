@@ -191,10 +191,14 @@ export interface AgentView {
 	install: InstallProgress | null;
 	/** 以开发模式（sfly dev）加载在这个 Agent 上的节点包；画布据此提供 dev 版本。 */
 	dev_packages: DevPackageInfo[];
-	/** 派发给这个 Agent、还没结束的任务（派发阶段和执行阶段），按派发顺序排列。 */
+	/** 派发给这个 Agent、还没结束的任务（派发阶段和执行阶段），按派发顺序排列；只有读者项目里的。 */
 	running_tasks: RunningTaskView[];
-	/** 在等这个 Agent 的任务（不在线、还在准备环境或没有空闲槽位），按排队顺序。 */
+	/** 在等这个 Agent 的任务（不在线、还在准备环境或没有空闲槽位），按排队顺序；只有读者项目里的。 */
 	queued_tasks: QueuedTaskView[];
+	/** 别的项目的运行占着这台 Agent 的槽位数（#500）：不给场景、运行、节点、任务。 */
+	other_project_running: number;
+	/** 别的项目的运行在等这台 Agent 的任务数。 */
+	other_project_queued: number;
 	/** Agent 版本与控制面不一致（ADR 0014）：不给它派新任务。 */
 	version_mismatch: boolean;
 	/** 最近一次 Heartbeat 上报的更新状态。 */
@@ -423,7 +427,7 @@ export class AgentHub {
 			.from(agents)
 			.where(eq(agents.projectId, project))
 			.orderBy(asc(agents.name));
-		return this.#views(rows);
+		return this.#views(project, rows);
 	}
 
 	/** 这个项目里按名字找一台 Agent；不存在或属于别的项目时返回 undefined（和不存在一样，不透露别的项目里有它）。 */
@@ -432,12 +436,15 @@ export class AgentHub {
 			.select()
 			.from(agents)
 			.where(and(eq(agents.projectId, project), eq(agents.name, name)));
-		const [view] = await this.#views(rows);
+		const [view] = await this.#views(project, rows);
 		return view;
 	}
 
-	/** Agent 行加上它的任务，转成接口返回的视图；只读这些 Agent 的任务。 */
-	async #views(rows: (typeof agents.$inferSelect)[]): Promise<AgentView[]> {
+	/**
+	 * Agent 行加上它的任务，转成接口返回的视图；只读这些 Agent 的任务。任务只列 `project`（读者的项目）里的，
+	 * 别的项目的只给个数（#500）：派发只用场景所在项目的 Agent，正常情况下不会有，这是兜底。
+	 */
+	async #views(project: ProjectId, rows: (typeof agents.$inferSelect)[]): Promise<AgentView[]> {
 		if (rows.length === 0) return [];
 		const { running, queued } = await loadAgentTasks(
 			this.deps.db,
@@ -467,8 +474,16 @@ export class AgentHub {
 					...p,
 					metadata: devMetadataWithDefaultCharts(p.metadata),
 				})),
-				running_tasks: running.filter((t) => t.agent === row.name).map((t) => t.view),
-				queued_tasks: queued.filter((t) => t.agent === row.name).map((t) => t.view),
+				running_tasks: running
+					.filter((t) => t.agent === row.name && t.project === project)
+					.map((t) => t.view),
+				queued_tasks: queued
+					.filter((t) => t.agent === row.name && t.project === project)
+					.map((t) => t.view),
+				other_project_running: running.filter((t) => t.agent === row.name && t.project !== project)
+					.length,
+				other_project_queued: queued.filter((t) => t.agent === row.name && t.project !== project)
+					.length,
 				version_mismatch: this.versionMismatch(info),
 				update: update ?? NO_UPDATE,
 				capabilities: capabilities ?? [],

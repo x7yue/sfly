@@ -141,10 +141,17 @@ export const AgentView = z.object({
 	/** 本次连接还没有安装过节点包时为 null。 */
 	install: InstallProgressView.nullable(),
 	dev_packages: z.array(DevPackageView),
-	/** 按派发顺序排列；长度即占用的槽位数。 */
+	/** 按派发顺序排列；只列读者项目里的，占用的槽位数是它的长度加上 `other_project_running`。 */
 	running_tasks: z.array(RunningTaskView),
 	/** 在等这台 Agent 的任务，按排队顺序（也是派发顺序）。 */
 	queued_tasks: z.array(QueuedTaskView),
+	/**
+	 * 别的项目的运行占着这台 Agent 的槽位数（#500）：`running_tasks` 只列读者项目里的，占用的槽位数是两者之和。
+	 * 不给别的项目的场景、运行、节点、任务。派发只用场景所在项目的 Agent，正常情况下是 0。
+	 */
+	other_project_running: z.number().int().nonnegative(),
+	/** 别的项目的运行在等这台 Agent 的任务数（`queued_tasks` 只列读者项目里的）。 */
+	other_project_queued: z.number().int().nonnegative(),
 	/**
 	 * Agent 版本与控制面版本（列表响应的 control_plane_version）不一致：控制面不给它派新任务（ADR 0014），
 	 * 它手上的任务照常跑完。按最近一次连接上报的版本判断。

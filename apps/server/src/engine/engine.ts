@@ -422,7 +422,7 @@ export class Engine implements AgentSessionHandler {
 				.orderBy(asc(tasks.seq))
 				.for("update");
 			// 返回给调用方的是锁住的这些任务，在失败之前取（失败后状态就变了）；
-			// 它们随即以 agent_lost 结束，不再有正在做的动作。
+			// 它们随即以 agent_lost 结束，不再有正在做的动作。只列调用方项目里的，别的项目的不给（#500）。
 			const terminated = (
 				await loadAgentTasks(
 					step.tx,
@@ -431,7 +431,9 @@ export class Engine implements AgentSessionHandler {
 						held.map((task) => task.id),
 					),
 				)
-			).running.map((t) => ({ ...t.view, current_action: null }));
+			).running
+				.filter((t) => t.project === project)
+				.map((t) => ({ ...t.view, current_action: null }));
 			for (const task of held) {
 				await this.#failTask(step, task, "agent_lost", "Agent 立即更新，终止了这个任务");
 			}
