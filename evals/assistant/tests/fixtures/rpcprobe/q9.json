@@ -2,29 +2,29 @@
 	"ok": true,
 	"runs": [
 		{
-			"ready_seconds": 0.301,
-			"idle_rss_mib": 140.7,
-			"peak_hwm_mib": 161.9,
+			"ready_seconds": 0.165,
+			"idle_rss_mib": 141.7,
+			"peak_hwm_mib": 161.6,
 			"after_turn_rss_mib": 156.6
 		},
 		{
-			"ready_seconds": 0.188,
-			"idle_rss_mib": 140.8,
-			"peak_hwm_mib": 162.5,
-			"after_turn_rss_mib": 156.9
+			"ready_seconds": 0.167,
+			"idle_rss_mib": 141.5,
+			"peak_hwm_mib": 162.6,
+			"after_turn_rss_mib": 157.5
 		},
 		{
-			"ready_seconds": 0.23,
-			"idle_rss_mib": 140.9,
-			"peak_hwm_mib": 162.0,
-			"after_turn_rss_mib": 156.1
+			"ready_seconds": 0.162,
+			"idle_rss_mib": 141.4,
+			"peak_hwm_mib": 163.4,
+			"after_turn_rss_mib": 157.5
 		}
 	],
 	"slim": {
 		"ok": true,
-		"image": "sfly-assistant:p552",
+		"image": "sfly-assistant:p727",
 		"pi": "1.6.0",
 		"node": "v26.13.1",
-		"image_mib": 568
+		"image_mib": 569
 	}
 }

@@ -291,7 +291,10 @@ def place(mark: str) -> str:
 
 
 GIVEN = {"MARK-GIVEN-CONTEXT", "MARK-SKILL-GIVEN"}
-# 远程工具扩展自己从工作台取来加进系统提示的（评测集那份扩展的做法；#540 去掉）。
+# 工作台上放的 AGENTS.md、skill 的记号（工具自检的 seed）。产品的远程工具扩展不改系统提示
+# （apps/assistant/src/launch.ts 的说明：工作区的 AGENTS.md 由模型自己读，skill 用平台自带的），
+# 所以这两样不该出现在探针的系统提示里；评测集臂 B 的原型扩展会把它们从工作台取来加进去
+# （#540 去掉）。
 FROM_EXTENSION = {"AGENTS-MARKER": "工作台上的 AGENTS.md", "<name>demo</name>": "工作台上的 skill"}
 
 
@@ -330,11 +333,18 @@ def judge_q3(raw: dict[str, Any]) -> Verdict:
             "设置目录里放了 SYSTEM.md 时（系统提示整个被换掉）："
             "各个默认位置放的 AGENTS.md、CLAUDE.md、skill、提示模板都没有进来"
         )
+    # 两条路径都看：设置目录里放了 SYSTEM.md 的，和不放的（助手服务走的路径）。
+    prompts = [probe["system_prompt"], (default or {}).get("system_prompt", "")]
     from_extension = [
-        label for mark, label in FROM_EXTENSION.items() if mark in probe["system_prompt"]
+        label for mark, label in FROM_EXTENSION.items() if any(mark in text for text in prompts)
     ]
     if from_extension:
-        v.facts.append("扩展自己加进来的：" + "、".join(from_extension))
+        v.worsen(FAILS)
+        v.facts.append(
+            "扩展往系统提示里加了东西（产品的扩展不改系统提示）：" + "、".join(from_extension)
+        )
+    else:
+        v.facts.append("扩展没有往系统提示里加东西：工作台上的 AGENTS.md、skill 都不在里面")
     detected = set(_MARK.findall(control["system_prompt"])) - GIVEN
     control_templates = [c["name"] for c in control["commands"] if c["source"] == "prompt"]
     v.facts.append(

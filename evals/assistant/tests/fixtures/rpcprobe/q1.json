@@ -113,7 +113,7 @@
 				"content": [
 					{
 						"type": "text",
-						"text": "3001\n3002\n3003\n…\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-314e7f4601888057.log]"
+						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n\n…（长输出截短了）…\n77\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-2c1bbb9dc677ce56.log]"
 					}
 				]
 			}
@@ -362,7 +362,7 @@
 				"content": [
 					{
 						"type": "text",
-						"text": "3001\n3002\n3003\n…\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-be2ac56950917a2b.log]"
+						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n\n…（长输出截短了）…\n77\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-e783f1b9869a8bb0.log]"
 					}
 				]
 			}
@@ -498,7 +498,7 @@
 			}
 		}
 	],
-	"rpc_exit_seconds": 0.037,
+	"rpc_exit_seconds": 0.036,
 	"declared_tools": ["read", "bash", "edit", "write"],
 	"system_prompt": "<tools>\n- read: Read file contents\n- bash: Execute bash commands (ls, grep, find, etc.)\n- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call\n- write: Create or overwrite files\n\nAdditional tools may be available.\n</tools>",
 	"written_locally": false

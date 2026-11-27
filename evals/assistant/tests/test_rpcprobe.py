@@ -195,6 +195,26 @@ def test_q3_names_where_an_extra_file_came_from() -> None:
     assert any("工作目录的 AGENTS.md" in fact for fact in verdict.facts)
 
 
+def test_q3_says_the_extension_adds_nothing_to_the_system_prompt_in_the_recorded_run() -> None:
+    # 产品的远程工具扩展不改系统提示：工作台上的 AGENTS.md、skill 不由它加进去。
+    verdict = judge("q3", fixture("q3"))
+    assert verdict.verdict == PARTLY
+    assert "扩展没有往系统提示里加东西：工作台上的 AGENTS.md、skill 都不在里面" in verdict.facts
+
+
+@pytest.mark.parametrize("path", ["probe", "default"])
+@pytest.mark.parametrize("mark", ["AGENTS-MARKER", "<name>demo</name>"], ids=["agents-md", "skill"])
+def test_q3_fails_when_the_extension_adds_the_workbench_files_to_the_system_prompt(
+    path: str, mark: str
+) -> None:
+    # 原型扩展的做法：把工作台上的 AGENTS.md、skill 取来加进系统提示。产品的扩展不该这样。
+    raw = fixture("q3")
+    raw[path]["system_prompt"] += f"\n{mark}"
+    verdict = judge("q3", raw)
+    assert verdict.verdict == FAILS
+    assert any("扩展往系统提示里加了东西" in fact for fact in verdict.facts)
+
+
 def test_q3_default_prompt_path_holds_in_the_recorded_run() -> None:
     verdict = judge("q3", fixture("q3"))
     assert verdict.numbers["default_extra_markers"] == []
