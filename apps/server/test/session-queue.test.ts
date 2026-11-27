@@ -1628,6 +1628,10 @@ describe("停止、插话、结束会话、排队", () => {
 					cp,
 					"insert into projects (id, display_name, created_at) values ('proj-b', 'proj-b', now()) on conflict do nothing",
 				);
+				// 项目乙也登记同一台工作台（直接写库：登记接口要求这台 Agent 已经在乙里，而这里是把它在两个项目之间挪来挪去）。
+				await database_query(cp, "update projects set workbench_agent = $1 where id = 'proj-b'", [
+					WORKBENCH,
+				]);
 				const move = (project: string) =>
 					database_query(cp, "update agents set project_id = $1 where name = $2", [
 						project,

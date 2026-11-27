@@ -49,6 +49,12 @@ SUT_AGENT = "sut-01"
 # 不能含连字符；不合规矩控制面起不来。
 ADMIN_LOGIN = "aeval_admin"
 ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
+# 助手在评测里的身份（命令环境里的 `SFLY_NICKNAME`）：臂 A 的命令直接带它；平台臂经控制面登录，
+# 会话和助手的命令记在登录的用户的**显示名**下（带凭据的请求取显示名，没配时是登录名
+# `aeval_admin`），所以初始管理员的显示名设成它（`SFLY_ADMIN_DISPLAY_NAME`）：两臂的助手是同一个
+# 身份，联调副本的名字（「demo 巡检-联调-eval」）、`run show latest` 找「自己触发的运行」才对得上。
+# **只写这一份**，各处引用它，不另写 `"eval"`。
+ASSISTANT_NICKNAME = "eval"
 # 两台 Agent 的配置文件（install.sh 写的）：凭据换了要改这里的 SFLY_TOKEN。
 AGENT_ENV_FILE = "/root/.sfly/agent.env"
 # 开发环境容器里 Agent 的名称：沿用以前 `install.sh --dev` 默认的 dev-<用户名>-<主机名>
@@ -384,8 +390,9 @@ class Stack:
             # up 完就能用。
             self.start_agents()
             self.wait_agents(timeout=180)
+            self.register_workbench()
             self.wait_assistant_ready()
-            log("助手就绪：工作台是 dev 上的 Agent")
+            log("助手就绪：工作台是 dev 上的 Agent（已登记）")
         log(f"初始管理员（登录控制台、建会话要先登录）：登录名和密码在 {self.admin_file}")
         log(f"环境就绪：控制面 {self.cp_url}")
 
@@ -473,11 +480,12 @@ class Stack:
         self.admin_password = secrets.token_hex(16)
         self._write_admin_file()
         env["SFLY_ADMIN_LOGIN"] = ADMIN_LOGIN
+        env["SFLY_ADMIN_DISPLAY_NAME"] = ASSISTANT_NICKNAME
         secret_env: dict[str, str] = {ADMIN_PASSWORD_ENV: self.admin_password}
         if self.assistant:
-            # 控制面把会话交给助手服务，工作台是 dev 上的 Agent（竖切的桩，#549 换成项目上的设置）。
+            # 控制面把会话交给助手服务；工作台是 dev 上的 Agent，由 register_workbench 登记
+            # （#549，存在库里，不是环境变量）。
             env["SFLY_ASSISTANT_URL"] = self.assistant_url
-            env["SFLY_WORKBENCH_AGENT"] = DEV_AGENT
             secret_env[ASSISTANT_SECRET_ENV] = self._secret()
         self._run(
             "cp",
@@ -674,6 +682,21 @@ class Stack:
         )
         return str(json.loads(out.stdout)["token"])
 
+    def register_workbench(self) -> None:
+        """登记 dev 上的 Agent 为默认项目的工作台（`PUT /projects/default/workbench`，#549）：
+        和部署文档里的 `sfly api PUT …` 是同一个接口，这里用初始管理员的登录。登记要这台 Agent
+        已经用自己的 Agent 凭据连上来过（两台 Agent 的凭据都是上面签发的），所以放在 `wait_agents`
+        之后；登记之后控制面只接受 Agent 凭据，共享令牌和不带凭据的连接都被拒绝
+        （评测环境里本来就没有）。Cookie 经标准输入给 curl，不在命令行参数里。"""
+        cookie = self._admin_cookie(self.dev)
+        d.sh(
+            self.dev,
+            "curl -fsS -X PUT -H 'content-type: application/json' -H @- "
+            f"-d '{json.dumps({'agent': DEV_AGENT})}' "
+            "http://sfly.internal:8080/projects/default/workbench",
+            input_text=f"cookie: {cookie}\nsec-fetch-site: same-origin\n",
+        )
+
     def _renew_agent_credentials(self) -> None:
         """控制面的库重建之后（reset），登记和凭据都没了，两台 Agent 的 agent.env 里还是旧凭据：
         重新签发、换掉 agent.env 里的 SFLY_TOKEN（经标准输入，不在命令行参数里）。"""
@@ -826,6 +849,8 @@ class Stack:
         self.wait_agents(timeout=180)
         self.start_service()
         if self.assistant:
+            # 库重建了，工作台的登记也没了：Agent 重新连上来之后再登记。
+            self.register_workbench()
             self.wait_assistant_ready()
 
     # ---- 在开发环境容器里执行 ----

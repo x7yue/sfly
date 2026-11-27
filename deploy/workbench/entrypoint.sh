@@ -5,7 +5,7 @@
 # 环境变量（compose 的 assistant profile 里给，deploy/docker-compose.yml）：
 #   SFLY_WORKBENCH_URL             控制面的地址，容器里连得到的（compose 里是服务名 http://sfly:8080）；install.sh 从它下载。
 #                                  install.sh 里写给 Agent 的控制面地址是控制面自己的 SFLY_PUBLIC_URL，不是这个（README「助手和工作台」）
-#   SFLY_WORKBENCH_AGENT           这台 Agent 的名字（和控制面里指名工作台的 SFLY_WORKBENCH_AGENT 是同一个值）
+#   SFLY_WORKBENCH_NAME            这台 Agent 的名字（管理员按这个名字签发凭据，也登记它作项目的工作台：README「登记工作台」）
 #   SFLY_WORKBENCH_PUBLIC_ADDRESS  控制面和助手服务连这台 Agent 的能力端口用的地址（compose 里是服务名 sfly-workbench）
 #   SFLY_WORKBENCH_TOKEN           这台 Agent 的 Agent 凭据（sfly_agt_ 开头，只对上面的名字有效，管理员按名字签发）
 #   SFLY_WORKBENCH_WORK            工作区目录，默认 /work（只检查它写得了，不在这里建 git 仓库：那是助手服务的事）
@@ -75,13 +75,13 @@ SFLY_HOME=${SFLY_HOME:-$home/.sfly}
 export SFLY_HOME
 work=${SFLY_WORKBENCH_WORK:-/work}
 control_plane=${SFLY_WORKBENCH_URL:-}
-name=${SFLY_WORKBENCH_AGENT:-}
+name=${SFLY_WORKBENCH_NAME:-}
 public_address=${SFLY_WORKBENCH_PUBLIC_ADDRESS:-}
 token=${SFLY_WORKBENCH_TOKEN:-}
 unset SFLY_WORKBENCH_TOKEN
 
 [ -n "$control_plane" ] || fail "没有设置 SFLY_WORKBENCH_URL（控制面的地址，容器里连得到的，例如 http://sfly:8080）"
-[ -n "$name" ] || fail "没有设置 SFLY_WORKBENCH_AGENT（这台 Agent 的名字，compose 里在 .env 设置）"
+[ -n "$name" ] || fail "没有设置 SFLY_WORKBENCH_NAME（这台 Agent 的名字，compose 里在 .env 设置）"
 [ -n "$public_address" ] || fail "没有设置 SFLY_WORKBENCH_PUBLIC_ADDRESS（控制面和助手服务连这台 Agent 用的地址，例如 compose 的服务名）"
 [ -n "$token" ] || fail "没有设置 SFLY_WORKBENCH_TOKEN（这台 Agent 的 Agent 凭据）：管理员给「$name」签发：sfly api POST /agents/$name/credentials，填进 .env 的 SFLY_WORKBENCH_TOKEN"
 

@@ -123,7 +123,7 @@ token=$(curl -fsS -b "$jar" "${json_post[@]}" -d '{}' "$base/agents/$agent/crede
 start_workbench() {
 	SFLY_WORKBENCH_TOKEN=$token docker run -d --init --name "$wb" --network "$network" --network-alias sfly-workbench \
 		-v "$home_volume:/home/workbench" -v "$work_volume:/work" \
-		-e SFLY_WORKBENCH_URL=http://sfly:8080 -e SFLY_WORKBENCH_AGENT="$agent" \
+		-e SFLY_WORKBENCH_URL=http://sfly:8080 -e SFLY_WORKBENCH_NAME="$agent" \
 		-e SFLY_WORKBENCH_PUBLIC_ADDRESS=sfly-workbench -e SFLY_WORKBENCH_TOKEN "$workbench_image" >/dev/null
 }
 

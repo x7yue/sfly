@@ -2157,9 +2157,9 @@ export interface ReadinessProblem {
 
 /**
  * 助手此刻不能用的原因的种类（`Readiness`）：`assistant_not_configured` 控制面没有配置助手服务，
- * `assistant_unreachable` 助手服务连不上，`workbench_not_set` 项目没有设置工作台，`workbench_offline` 工作台的
+ * `assistant_unreachable` 助手服务连不上，`workbench_not_set` 项目没有登记工作台（`PUT /projects/:project/workbench`），`workbench_offline` 工作台的
  * Agent 不在线，`model_not_configured` 助手容器里没有配置模型，`model_unreachable` 模型连不上。
- * 产生：`assistant_*` 和 `workbench_*` 四种 #541（`workbench_*` 从 #549 起按项目的工作台登记判断），模型的两种 #548。
+ * 产生：`assistant_*` 和 `workbench_*` 四种 #541（`workbench_*` 从 #549 起按项目登记的工作台判断），模型的两种 #548。
  */
 export type ReadinessProblemKind = "assistant_not_configured" | "assistant_unreachable" | "workbench_not_set" | "workbench_offline" | "model_not_configured" | "model_unreachable";
 

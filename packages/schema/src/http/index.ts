@@ -11,6 +11,7 @@ import { metricsApi } from "./metrics.js";
 import { orchestrationsApi } from "./orchestrations.js";
 import { packagesApi } from "./packages.js";
 import { presetsApi } from "./presets.js";
+import { projectWorkbenchApi } from "./projects.js";
 import { runFocusApi } from "./run-focus.js";
 import { runListApi } from "./run-list.js";
 import { runSummaryApi } from "./run-summary.js";
@@ -34,6 +35,7 @@ export * from "./metrics.js";
 export * from "./orchestrations.js";
 export * from "./packages.js";
 export * from "./presets.js";
+export * from "./projects.js";
 export * from "./run-focus.js";
 export * from "./run-list.js";
 export * from "./run-summary.js";
@@ -58,6 +60,7 @@ export const httpApis = {
 	orchestrations: orchestrationsApi,
 	packages: packagesApi,
 	presets: presetsApi,
+	projects: projectWorkbenchApi,
 	runs: { ...runListApi, ...runFocusApi, ...runSummaryApi, ...runsApi },
 	sdk: sdkApi,
 	sessions: sessionsApi,

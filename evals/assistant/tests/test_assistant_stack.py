@@ -74,7 +74,8 @@ def test_control_plane_is_pointed_at_the_assistant_and_the_workbench(recorder: R
     Stack(slot=9, assistant=True, assistant_secret=SECRET)._start_control_plane()
     [(args, env)] = recorder.runs("cp")
     assert "SFLY_ASSISTANT_URL=http://assistant.internal:8090" in args
-    assert f"SFLY_WORKBENCH_AGENT={DEV_AGENT}" in args
+    # 工作台由项目管理员登记（PUT /projects/default/workbench），不是控制面的环境变量（#549）。
+    assert not any("SFLY_WORKBENCH" in arg for arg in args)
     # 密钥只写名字，值经 docker 命令行进程的环境带进去：参数里（ps 看得到）没有它。
     assert "SFLY_ASSISTANT_SECRET" in args
     assert not any(SECRET in arg for arg in args)
@@ -120,6 +121,35 @@ def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
     # 每次建库换一个新的密码。
     stack._start_control_plane()
     assert stack.admin_password != password
+
+
+def test_the_platform_arms_identity_is_the_arm_as_nickname(recorder: Recorder) -> None:
+    """平台臂经控制面登录，会话和助手的命令记在登录用户的**显示名**下（服务端 `commandEnv` 的
+    `SFLY_NICKNAME` 取它；`session-assistant.test.ts` 钉着「命令环境的昵称就是用户的显示名」）。
+    不设显示名时它是登录名 `aeval_admin`，臂 A 是 `eval`：真实模型下联调副本的名字、
+    `run show latest` 找自己触发的运行都对不上。所以初始管理员的显示名设成臂 A 的昵称，
+    两处用同一个常量。"""
+    from aeval.env import ASSISTANT_NICKNAME
+    from aeval.platform import NICKNAME
+    from aeval.session import ASSISTANT_ENV
+
+    Stack(slot=9)._start_control_plane()
+    [(args, _)] = recorder.runs("cp")
+    assert f"SFLY_ADMIN_DISPLAY_NAME={ASSISTANT_ENV['SFLY_NICKNAME']}" in args
+    assert ASSISTANT_ENV["SFLY_NICKNAME"] == ASSISTANT_NICKNAME == NICKNAME == "eval"
+    assert ADMIN_LOGIN != ASSISTANT_NICKNAME
+
+
+def test_the_assistants_nickname_is_written_once() -> None:
+    """臂 A 的命令、参考答案、联调的上一次运行、平台臂的显示名都引用 `ASSISTANT_NICKNAME`，
+    评测集的代码里不再有 `"SFLY_NICKNAME": "eval"` 这样的第二份。"""
+    root = Path(__file__).resolve().parents[1] / "aeval"
+    offenders = [
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if re.search(r'"SFLY_NICKNAME":\s*"eval"', path.read_text())
+    ]
+    assert offenders == []
 
 
 def test_initial_admin_login_and_password_are_written_to_a_file_only_the_owner_can_read(
@@ -195,6 +225,29 @@ def test_agent_credentials_are_issued_by_the_admin_and_secrets_go_by_stdin(
     assert "-H @-" in issue["script"]
     assert issue["input_text"] == "cookie: sfly_login=COOKIE123\nsec-fetch-site: same-origin\n"
     assert "/agents/dev-root-dev/credentials" in issue["script"]
+
+
+def test_the_workbench_is_registered_with_the_admin_login_and_the_cookie_goes_by_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """工作台是 dev 上的 Agent，由初始管理员登记（`PUT /projects/default/workbench`，#549）：
+    和部署文档里的登记是同一个接口；Cookie 经标准输入给 curl，不在命令行参数里；
+    请求体只有 Agent 的名字。"""
+    shell = Shell()
+    monkeypatch.setattr(d, "sh", shell)
+    stack = Stack(slot=9)
+    stack.admin_password = "p" * 32
+    stack.register_workbench()
+    login, register = shell.calls
+    assert "p" * 32 not in login["script"]
+    assert "COOKIE123" not in register["script"]
+    assert "-H @-" in register["script"]
+    assert register["input_text"] == "cookie: sfly_login=COOKIE123\nsec-fetch-site: same-origin\n"
+    assert "-X PUT" in register["script"]
+    assert "/projects/default/workbench" in register["script"]
+    assert json.dumps({"agent": DEV_AGENT}) in register["script"]
+    # 在 dev 上执行（它连得到控制面），不在宿主机上。
+    assert register["container"].endswith("-dev")
 
 
 def test_install_passes_the_agent_tokens_by_name_not_in_the_arguments(
@@ -522,6 +575,7 @@ def _quiet_up(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> list[int]:
         "start_agents",
         "stop_agents",
         "wait_agents",
+        "register_workbench",
         "start_service",
         "wait_assistant_ready",
         "check_assistant_model",
@@ -571,6 +625,28 @@ def test_reset_rebuilds_the_assistant_container(
     assert started == [9]
     Stack(slot=9).reset()
     assert started == [9]
+
+
+def test_the_workbench_is_registered_after_agents_are_online_before_the_assistant_is_ready(
+    monkeypatch: pytest.MonkeyPatch, recorder: Recorder
+) -> None:
+    """登记要工作台先用自己的 Agent 凭据连上来（#549），所以在 Agent 在线之后；
+    助手就绪要登记之后才会成立。`up` 和 `reset`（库重建、登记没了）都是；没有助手时不登记。"""
+    _quiet_up(monkeypatch, recorder)
+    steps: list[str] = []
+    monkeypatch.setattr(Stack, "wait_agents", lambda self, *a, **k: steps.append("agents-online"))
+    monkeypatch.setattr(Stack, "register_workbench", lambda self: steps.append("register"))
+    monkeypatch.setattr(
+        Stack, "wait_assistant_ready", lambda self, *a, **k: steps.append("assistant-ready")
+    )
+    Stack(slot=9, assistant=True, assistant_secret=SECRET).up(log=lambda _: None)
+    assert steps[-3:] == ["agents-online", "register", "assistant-ready"]
+    steps.clear()
+    Stack(slot=9, assistant=True, assistant_secret=SECRET).reset()
+    assert steps[-3:] == ["agents-online", "register", "assistant-ready"]
+    steps.clear()
+    Stack(slot=9).reset()
+    assert "register" not in steps
 
 
 def test_old_control_plane_without_sessions_fails_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
