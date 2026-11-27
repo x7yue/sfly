@@ -68,7 +68,7 @@ describe("第一个管理员", () => {
 		vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
 			printed.push(args.join(" "));
 		});
-		cp = await startTestControlPlane({ logger: true });
+		cp = await startTestControlPlane({ defaultCredentials: false, logger: true });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		expect(code).toMatch(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){4}$/);
 		expect(printed.join("\n")).toContain(code);
@@ -79,7 +79,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("用初始化码建出管理员并登录；码用过即失效，文件删掉，再用同一个码是 409", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		const created = await setup(cp, code);
 		expect(created.status).toBe(201);
@@ -114,7 +114,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("初始化页的显示名和建用户、改显示名同一个检查：带零宽空格、标签字符、位置不对的零宽连接符的 400，不建用户、不用掉初始化码；合格的照常", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		const withName = (display_name: string) =>
 			cp?.fetch("/auth/setup", {
@@ -141,7 +141,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("码不对是 403 invalid_setup_code，不建用户；连着猜错会被限速（429）", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const wrong = await setup(cp, "AAAA-BBBB-CCCC-DDDD-EEEE");
 		expect(wrong.status).toBe(403);
 		expect(await wrong.json()).toMatchObject({ error: { code: "invalid_setup_code" } });
@@ -154,7 +154,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("重启后换一个新码（旧码作废），直到有了用户；有了用户之后重启不再生成", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const first = (await readFile(codeFile(cp), "utf8")).trim();
 		await cp.restart();
 		const second = (await readFile(codeFile(cp), "utf8")).trim();
@@ -167,7 +167,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("并发的两次初始化只有一次成功，只建出一个用户", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		const results = await Promise.all([setup(cp, code, "a_one"), setup(cp, code, "b_two")]);
 		expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
@@ -181,7 +181,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("环境变量给出初始管理员：没有用户时建出来（不生成初始化码），用它的账号密码能登录", async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		expect(existsSync(codeFile(cp))).toBe(false);
 		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: false });
 		const { res, cookie } = await login(cp, ADMIN.loginName, ADMIN.password);
@@ -198,7 +198,7 @@ describe("第一个管理员", () => {
 describe("登录、登出、改密码", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 	});
 	afterAll(async () => {
 		await cp.close();
@@ -329,7 +329,7 @@ describe("改密码、平台管理员管理账号", () => {
 	let cp: TestControlPlane;
 	let adminCookie: string;
 	beforeEach(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		adminCookie = (await login(cp, "root", ADMIN.password)).cookie;
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 	});
@@ -552,7 +552,7 @@ describe("改密码、平台管理员管理账号", () => {
 describe("登录限速", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 	});
 	afterAll(async () => {
 		await cp.close();
@@ -584,7 +584,7 @@ describe("登出和停用关掉打开的事件流", () => {
 	let cp: TestControlPlane;
 	let adminCookie: string;
 	beforeEach(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		adminCookie = (await login(cp, "root", ADMIN.password)).cookie;
 	});
 	afterEach(async () => {
@@ -649,7 +649,7 @@ describe("登出和停用关掉打开的事件流", () => {
 describe("不登录也能照旧使用（在 #494 之前）", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 	});
 	afterAll(async () => {
 		await cp.close();

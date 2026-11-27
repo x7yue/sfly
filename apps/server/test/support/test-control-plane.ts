@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import pg from "pg";
 import { Agent } from "undici";
 import packageJson from "../../package.json" with { type: "json" };
@@ -11,9 +11,12 @@ import {
 	type ControlPlaneOptions,
 	startControlPlane,
 } from "../../src/control-plane.js";
+import { defaultMigrationsDir } from "../../src/db/database.js";
 import { DEFAULT_PROJECT } from "../../src/projects/project-id.js";
+import { TestUsers } from "./credentials.js";
 import { registerCredentialIssuer } from "./fake-agent.js";
 import { ManualClock } from "./manual-clock.js";
+import { registerCliCredentials } from "./sfly-cli.js";
 import { createTestDatabase, type TestDatabase } from "./test-database.js";
 
 // 控制面的测试和端到端测试都经这里启动控制面。Node 低于 .node-version 时，undici 与 Node 自带的 fetch 不兼容，
@@ -38,8 +41,13 @@ export interface TestControlPlane {
 	readonly database: TestDatabase;
 	/** 临时数据目录；restart() 后保留，close() 时删除。 */
 	readonly dataDir: string;
-	/** 对 HTTP API 发请求，path 以 / 开头。 */
+	/**
+	 * 对 HTTP API 发请求，path 以 / 开头。默认带上凭据（#493）：按昵称请求头（没有时是 `tester`）找这个用户的个人令牌，
+	 * 见 {@link TestUsers}。请求自己带了 `authorization` 或 `cookie` 时不动；`credentials: "omit"` 时什么凭据都不带。
+	 */
 	fetch(path: string, init?: RequestInit): Promise<Response>;
+	/** 默认带的凭据：每个昵称一个用户和他的个人令牌（{@link TestUsers}）。 */
+	readonly users: TestUsers;
 	/**
 	 * 停掉当前实例，在同一个数据库、同样的 HTTP / gRPC 端口上重新启动（模拟控制面重启；
 	 * 端口不变，真实 Agent 才能按原地址重连、继续下载和上传）；
@@ -81,6 +89,11 @@ export async function startTestControlPlane(
 		 * 不用这个选项，走接口。库里有了登记，控制面就只接受 Agent 凭据（假 Agent 默认用 Agent 凭据，下面的 `registerIssuer`）。
 		 */
 		workbenchAgent?: string;
+		/**
+		 * `fetch` 默认带上凭据（{@link TestUsers}，#493）；`false` 时不带，请求自己写凭据。给测试凭据本身的用例（登录、令牌、
+		 * 初始化、访问检查）用：它们要数库里的用户和令牌、要看不带凭据时的样子，默认凭据会建出多余的用户和令牌。
+		 */
+		defaultCredentials?: boolean;
 	} & Pick<
 		ControlPlaneOptions,
 		| "logLimitBytes"
@@ -200,6 +213,13 @@ export async function startTestControlPlane(
 			grpc: { host: "127.0.0.1", port: ports.grpc },
 		});
 
+	const users = new TestUsers(database.url);
+	// 用旧的迁移目录起的控制面（升级测试）：库里还没有用户和令牌的表，或者是旧的样子，默认凭据建不出来；换回源码里的迁移
+	// 目录重启之后才带。
+	const signs = () =>
+		options.defaultCredentials !== false &&
+		(migrationsDir === undefined || resolve(migrationsDir) === resolve(defaultMigrationsDir));
+
 	let current: ControlPlane;
 	try {
 		current = await start();
@@ -240,6 +260,12 @@ export async function startTestControlPlane(
 			return issued.token;
 		});
 	let unregister = registerIssuer();
+	// 命令行连这个控制面时默认带上个人令牌（sfly-cli.ts）；`tester` 先建出来，`spawnSfly` 要同步拿到它。
+	const unregisterCli = registerCliCredentials(current.httpUrl, {
+		token: async (nickname) => (signs() ? users.token(nickname) : undefined),
+		tokenNow: (nickname) => (signs() ? users.tokenNow(nickname) : ""),
+	});
+	if (signs()) await users.user();
 
 	// 每个控制面实例一套独立的 HTTP 连接池：重启时销毁旧池，重启后的请求不会复用
 	// 已被旧实例关闭的 keep-alive 连接（全局 fetch 的连接池会复用，偶发 ECONNRESET）。
@@ -259,8 +285,13 @@ export async function startTestControlPlane(
 		version: options.version ?? packageJson.version,
 		database,
 		dataDir,
-		fetch: (path, init) =>
-			fetch(`${current.httpUrl}${path}`, { ...init, dispatcher } as RequestInit),
+		users,
+		fetch: async (path, init = {}) =>
+			fetch(`${current.httpUrl}${path}`, {
+				...init,
+				headers: signs() ? await users.sign(init) : init.headers,
+				dispatcher,
+			} as RequestInit),
 		async restart(whileDown, next) {
 			if (next && "migrationsDir" in next) migrationsDir = next.migrationsDir;
 			const ports = { http: portOf(current.httpUrl), grpc: portOf(current.grpcUrl) };
@@ -276,6 +307,7 @@ export async function startTestControlPlane(
 		},
 		async close() {
 			unregister();
+			unregisterCli();
 			await current.close();
 			await dispatcher.destroy();
 			await database.drop();

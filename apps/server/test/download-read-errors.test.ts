@@ -72,7 +72,7 @@ describe("下载文件时文件读不了", () => {
 		});
 		const put = await fetch(`${task.artifactUploadUrl}report.json`, {
 			method: "PUT",
-			headers: { "content-type": "application/octet-stream" },
+			headers: { ...agent.auth, "content-type": "application/octet-stream" },
 			body: "产物的字节",
 		});
 		expect(put.status).toBe(201);

@@ -208,7 +208,7 @@ describe("sfly 运行输出里的显示名称 → 控制面", { timeout: 60_000 
 		const upload = async (task: { artifactUploadUrl: string }, name: string, body: string) => {
 			const res = await fetch(`${task.artifactUploadUrl}${name}`, {
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream" },
+				headers: { ...agent.auth, "content-type": "application/octet-stream" },
 				body,
 			});
 			expect(res.status).toBe(201);

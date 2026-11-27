@@ -36,7 +36,7 @@ describe("带凭据的请求", () => {
 	let editor: string;
 
 	beforeEach(async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		accounts = new TestAccounts(cp.database.url);
 		db = new pg.Client({ connectionString: cp.database.url });
 		await db.connect();
@@ -679,7 +679,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	let admin: string;
 
 	beforeEach(async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		accounts = new TestAccounts(cp.database.url);
 		db = new pg.Client({ connectionString: cp.database.url });
 		await db.connect();
@@ -794,7 +794,7 @@ describe("路径里的 ID 不是 UUID：每种凭据都得到 404 或 403，不�
 	let credentials: { name: string; headers: Record<string, string> }[];
 
 	beforeAll(async () => {
-		cp = await startTestControlPlane({ agentToken: "s3cret" });
+		cp = await startTestControlPlane({ defaultCredentials: false, agentToken: "s3cret" });
 		const accounts = new TestAccounts(cp.database.url);
 		try {
 			const editor = await accounts.user("editor1");
@@ -878,7 +878,7 @@ describe("开发 Agent 的凭据随用户停用失效（真库）", () => {
 	let cp: TestControlPlane;
 	let accounts: TestAccounts;
 	beforeAll(async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		accounts = new TestAccounts(cp.database.url);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 	});
@@ -912,7 +912,7 @@ describe("开发 Agent 的凭据随用户停用失效（真库）", () => {
 describe("共享令牌", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
-		cp = await startTestControlPlane({ agentToken: "s3cret" });
+		cp = await startTestControlPlane({ defaultCredentials: false, agentToken: "s3cret" });
 	});
 	afterAll(async () => {
 		await cp.close();

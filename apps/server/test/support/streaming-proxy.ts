@@ -7,6 +7,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { RecordedRequest } from "./recording-proxy.js";
+import { aliasCliServer } from "./sfly-cli.js";
 
 export interface StreamingProxy {
 	url: string;
@@ -103,6 +104,7 @@ export async function startStreamingProxy(
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address() as AddressInfo;
 
+	aliasCliServer(`http://127.0.0.1:${address.port}`, target);
 	return {
 		url: `http://127.0.0.1:${address.port}`,
 		requests,

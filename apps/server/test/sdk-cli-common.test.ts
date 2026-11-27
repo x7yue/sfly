@@ -67,7 +67,10 @@ describe("sfly 命令行的公共部分 → 控制面", () => {
 		const seen = await proxy();
 		const nicknames = async (args: string[], env: Record<string, string>) => {
 			seen.requests.length = 0;
-			const result = await sfly(["scenario", "list", "--server", seen.url, ...args], { env });
+			// 测的是命令行的昵称本身（不带令牌时才发，#494 一并删除）：不带默认的令牌。
+			const result = await sfly(["scenario", "list", "--server", seen.url, ...args], {
+				env: { ...env, SFLY_API_TOKEN: undefined },
+			});
 			expect(result.code, result.stderr).toBe(0);
 			return seen.requests.map((r) => r.headers[NICKNAME]);
 		};

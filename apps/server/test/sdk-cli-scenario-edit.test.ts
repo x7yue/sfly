@@ -246,8 +246,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			const seen = await startRecordingProxy(cp.httpUrl);
 			proxies.push(seen);
 
+			// 测的是命令行发的昵称请求头（不带令牌时才发，#494 一并删除）：不带默认的令牌。
 			const result = await sfly(["scenario", "push", file, "--server", seen.url], {
-				env: { SFLY_NICKNAME: "阿杰", CLAUDECODE: "1" },
+				env: { SFLY_NICKNAME: "阿杰", CLAUDECODE: "1", SFLY_API_TOKEN: undefined },
 			});
 			expect(result.code, result.stderr).toBe(0);
 			const save = seen.requests.filter(

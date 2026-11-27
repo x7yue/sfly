@@ -37,7 +37,8 @@ describe("控制面健康检查", () => {
 		cp = await startTestControlPlane();
 		await cp.database.drop();
 
-		const res = await cp.fetch("/health");
+		// 库已经删了，默认凭据的用户建不出来：健康检查本来就不看凭据。
+		const res = await cp.fetch("/health", { credentials: "omit" });
 		expect(res.status).toBe(503);
 		expect(await res.json()).toMatchObject({ status: "unavailable", database: "unavailable" });
 	});

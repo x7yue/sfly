@@ -95,6 +95,8 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 		cp = await startTestControlPlane({ clock, leaseMs: 60 * 60_000 });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		// `spawnSfly` 同步起进程，要先建好用到的昵称的用户和令牌（tester 启动时就建好了）。
+		await cp.users.user("alice");
 	}, 120_000);
 
 	beforeEach(async () => {
@@ -694,7 +696,8 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			const proxy: RecordingProxy = await startRecordingProxy(cp.httpUrl);
 			proxies.push(proxy);
 			const id = await scenario("记录场景", [echo("a")]);
-			const env = { CLAUDECODE: "1" };
+			// 测的是命令行发的昵称请求头（不带令牌时才发，#494 一并删除）：不带默认的令牌。
+			const env = { CLAUDECODE: "1", SFLY_API_TOKEN: undefined };
 			const triggered = await sfly(
 				["run", "start", "记录场景", "--server", proxy.url, "--nickname", "dana"],
 				{ env },

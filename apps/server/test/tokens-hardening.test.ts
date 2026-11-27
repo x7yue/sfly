@@ -34,6 +34,7 @@ describe("令牌的几处收紧", () => {
 		});
 		// 打开的事件流每 0.2 秒重新检查一次凭据（默认 30 秒）。
 		cp = await startTestControlPlane({
+			defaultCredentials: false,
 			initialAdmin: ADMIN,
 			logger: { stream },
 			streamRecheckMs: 200,

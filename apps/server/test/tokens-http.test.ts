@@ -50,7 +50,11 @@ describe("令牌", () => {
 				done();
 			},
 		});
-		cp = await startTestControlPlane({ initialAdmin: ADMIN, logger: { stream } });
+		cp = await startTestControlPlane({
+			defaultCredentials: false,
+			initialAdmin: ADMIN,
+			logger: { stream },
+		});
 		clock = cp.clock as ManualClock;
 		accounts = new TestAccounts(cp.database.url);
 		db = new pg.Client({ connectionString: cp.database.url });
