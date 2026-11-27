@@ -206,6 +206,9 @@ jobs:
       # deploy/docker-compose.yml 本身：--profile assistant 起三个服务，工作台在线，假的模型端点做完一个会话，删掉工作台容器再建。
       - name: Compose smoke test
         run: pnpm test:compose
+      # 骨架验收（#553）：同一套 :smoke 镜像按 compose 起正式部署形态，假的模型端点照剧本回复，浏览器逐行核对会话页。
+      - name: Skeleton acceptance
+        run: bash evals/assistant/acceptance/accept.sh --images smoke --out "$RUNNER_TEMP/accept"
       # 助手评测集的平台臂（#552）：上面构建的控制面和助手镜像，假的模型端点，四道题各一次，经会话接口交给平台内的助手；
       # 评测用的工作台镜像由 up 按 evals/assistant/workbench/Dockerfile 构建。正式的一遍在不通外网的网络里只用镜像站的缓存
       # （up --offline --isolated）。缓存（uv、Python 和 PyPI 包，几十 MB）存在 Actions 缓存里，按决定下载什么的文件算键；
