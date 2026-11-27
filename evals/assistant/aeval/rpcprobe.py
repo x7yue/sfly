@@ -1,15 +1,19 @@
 """探针（#539）：助手服务那套启动参数下 pi 的 RPC 模式实际怎么表现。用假的模型端点，不花模型的钱。
 
 `./aeval.sh rpcprobe`：重置环境、在开发环境里准备工具自检的工作区，
-起一个单独的探针容器（`sfly-aeval-<槽位>-rpcprobe`，臂 B 的镜像：工作台镜像加远程工具扩展，
-每次重建），在里面起假的模型端点，照 `container/rpcprobe_run.py` 逐题做实验；
-这里对着它记下的观察下结论，写 `rpcprobe.md` 和 `rpcprobe.json`。
+起一个单独的探针容器（`sfly-aeval-<槽位>-rpcprobe`，工作台镜像，每次重建），放进**产品的远程工具扩展**
+（从助手镜像里取 `dist/extension.mjs`，#552 起；以前用的是评测集臂 B 的原型扩展），
+在里面起假的模型端点，
+照 `container/rpcprobe_run.py` 逐题做实验；这里对着它记下的观察下结论，写 `rpcprobe.md` 和
+`rpcprobe.json`。
+第 1 题的对照是臂 A（原版 pi，工具在本地执行）在开发环境里跑的同一个工具自检剧本。
 
-以后升级 pi 时重跑它。
+以后升级 pi（或者改了产品的扩展）时重跑它：协议里「依赖 pi 的几条是 rpcprobe 测过的」靠它。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -18,9 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from aeval import docker as d
-from aeval.classify import tool_result_text
-from aeval.env import Stack
-from aeval.models import FAKE, Model
+from aeval.classify import read_events, tool_result_text
+from aeval.env import ASSISTANT_NICKNAME, Stack
+from aeval.models import FAKE, Model, load_models
+from aeval.session import run_session
 from aeval.toolcheck import EXPECT_B, ToolCheck
 
 PROBE_DIR = "/opt/aeval-probe"
@@ -106,33 +111,87 @@ def prompt_tools(system_prompt: str) -> list[str]:
     return re.findall(r"^- (\w+):", block.group(1), re.M) if block else []
 
 
+# 第 1 题里允许和臂 A 不一样的步骤，逐条写死（远程工具适配不了的：命令退出之后，
+# 它起的后台进程被结束）。值是预期的样子：（报不报错，输出里要有的字）。
+# 臂 A 里进程还在（200），远程里已经没了（curl 连不上，输出 000dead）。
+# 别的步骤一律和臂 A 逐字比。
+KNOWN_DIFFERENCES: dict[str, tuple[bool, str]] = {
+    "bash_background_alive": (False, "dead"),
+    "bash_setsid_alive": (False, "dead"),
+}
+DIFFERENCES_DOC = "evals/assistant/remote-tools/README.md「本地和远程的语义差别」第 12、13 条"
+
+
 def judge_q1(raw: dict[str, Any]) -> Verdict:
     v = Verdict("q1", "RPC 模式下四个工具都落到 Agent 的能力端口", HOLDS)
     steps = json.loads((Path(__file__).parent.parent / "container" / "toolcheck.json").read_text())[
         "steps"
     ]
-    a, b = tool_results(raw["json"]), tool_results(raw["rpc"])
-    v.numbers = {"steps": len(steps), "json_results": len(a), "rpc_results": len(b)}
+    a, b = tool_results(raw["arm_a"]), tool_results(raw["rpc"])
+    v.numbers = {"steps": len(steps), "arm_a_results": len(a), "rpc_results": len(b)}
     if len(b) != len(steps):
         v.worsen(FAILS)
         v.facts.append(f"RPC 模式只有 {len(b)} 个工具结果，剧本有 {len(steps)} 步")
-    differ = [
-        steps[i]["id"]
-        for i, (x, y) in enumerate(zip(a, b, strict=False))
-        if (x["error"], x["text"]) != (y["error"], y["text"])
+    if len(a) != len(steps):
+        v.worsen(FAILS)
+        v.facts.append(f"臂 A 只有 {len(a)} 个工具结果，剧本有 {len(steps)} 步")
+    # 只有 KNOWN_DIFFERENCES 里写死的两步允许和臂 A 不一样，而且要是写明的那个样子；
+    # 别的步骤（含工具自检里没有预期的后台进程那几步）一律和臂 A 逐字比。
+    pairs = [
+        (steps[i]["id"], x, y) for i, (x, y) in enumerate(zip(a, b, strict=False)) if i < len(steps)
     ]
+    differ = [
+        step_id
+        for step_id, x, y in pairs
+        if step_id not in KNOWN_DIFFERENCES and (x["error"], x["text"]) != (y["error"], y["text"])
+    ]
+    known_differ, known_gone, known_unexpected = [], [], []
+    for step_id, x, y in pairs:
+        if step_id not in KNOWN_DIFFERENCES:
+            continue
+        if (x["error"], x["text"]) == (y["error"], y["text"]):
+            known_gone.append(step_id)
+            continue
+        failed, word = KNOWN_DIFFERENCES[step_id]
+        if y["error"] == failed and word in y["text"]:
+            known_differ.append(step_id)
+        else:
+            known_unexpected.append(
+                f"{step_id}（远程：{'报错' if y['error'] else '没报错'}，{y['text'][:60]!r}）"
+            )
     unexpected = []
     for i, step in enumerate(steps):
         expect = EXPECT_B.get(step["id"])
         got = b[i] if i < len(b) else None
         if expect and not (got and got["error"] == expect[0] and expect[1] in got["text"]):
             unexpected.append(step["id"])
+    known = [s["id"] for s in steps if s["id"] in KNOWN_DIFFERENCES]
+    compared = len(steps) - len(known)
+    v.numbers["known_differences"] = known_differ
     if differ:
         v.worsen(FAILS)
-        v.facts.append("和臂 B 的 JSON 模式结果不同的步骤：" + "、".join(differ))
+        v.facts.append("和臂 A（本地执行）结果不同的步骤：" + "、".join(differ))
     else:
         v.facts.append(
-            f"{len(b)} 步的工具结果和臂 B 的 JSON 模式逐字相同（截断输出的临时文件名除外）"
+            f"除已知差别外的 {compared} 步的工具结果和臂 A（本地执行）"
+            f"逐字相同（截断输出的临时文件名除外）"
+        )
+    if known_differ:
+        v.facts.append(
+            "和臂 A 不同、是已知差别的步骤（命令退出后它起的后台进程被结束，不报错、输出里有 dead；"
+            f"{DIFFERENCES_DOC}）：" + "、".join(known_differ)
+        )
+    if known_gone:
+        v.facts.append(
+            "已知差别的步骤这次和臂 A 一样了（后台进程留下来了）："
+            + "、".join(known_gone)
+            + f"；{DIFFERENCES_DOC}该改了"
+        )
+    if known_unexpected:
+        v.worsen(FAILS)
+        v.facts.append(
+            "已知差别的步骤不是预期的样子（预期：不报错、输出里有 dead）："
+            + "、".join(known_unexpected)
         )
     if unexpected:
         v.worsen(FAILS)
@@ -232,7 +291,10 @@ def place(mark: str) -> str:
 
 
 GIVEN = {"MARK-GIVEN-CONTEXT", "MARK-SKILL-GIVEN"}
-# 远程工具扩展自己从工作台取来加进系统提示的（评测集那份扩展的做法；#540 去掉）。
+# 工作台上放的 AGENTS.md、skill 的记号（工具自检的 seed）。产品的远程工具扩展不改系统提示
+# （apps/assistant/src/launch.ts 的说明：工作区的 AGENTS.md 由模型自己读，skill 用平台自带的），
+# 所以这两样不该出现在探针的系统提示里；评测集臂 B 的原型扩展会把它们从工作台取来加进去
+# （#540 去掉）。
 FROM_EXTENSION = {"AGENTS-MARKER": "工作台上的 AGENTS.md", "<name>demo</name>": "工作台上的 skill"}
 
 
@@ -271,11 +333,18 @@ def judge_q3(raw: dict[str, Any]) -> Verdict:
             "设置目录里放了 SYSTEM.md 时（系统提示整个被换掉）："
             "各个默认位置放的 AGENTS.md、CLAUDE.md、skill、提示模板都没有进来"
         )
+    # 两条路径都看：设置目录里放了 SYSTEM.md 的，和不放的（助手服务走的路径）。
+    prompts = [probe["system_prompt"], (default or {}).get("system_prompt", "")]
     from_extension = [
-        label for mark, label in FROM_EXTENSION.items() if mark in probe["system_prompt"]
+        label for mark, label in FROM_EXTENSION.items() if any(mark in text for text in prompts)
     ]
     if from_extension:
-        v.facts.append("扩展自己加进来的：" + "、".join(from_extension))
+        v.worsen(FAILS)
+        v.facts.append(
+            "扩展往系统提示里加了东西（产品的扩展不改系统提示）：" + "、".join(from_extension)
+        )
+    else:
+        v.facts.append("扩展没有往系统提示里加东西：工作台上的 AGENTS.md、skill 都不在里面")
     detected = set(_MARK.findall(control["system_prompt"])) - GIVEN
     control_templates = [c["name"] for c in control["commands"] if c["source"] == "prompt"]
     v.facts.append(
@@ -696,16 +765,16 @@ def judge_q9(raw: dict[str, Any]) -> Verdict:
     )
     slim = raw.get("slim")
     if slim is None:
-        v.facts.append("Node 26 的 slim 镜像：没有测")
+        v.facts.append("助手镜像（Node 的 slim 镜像）：没有测")
     elif slim.get("ok"):
         v.facts.append(
-            f"Node 26 的 slim 镜像（{slim.get('base')}，只复制 pi 的包和扩展）：能跑，"
-            f"pi {slim.get('pi')}、Node {slim.get('node')}，远程工具扩展连上了工作台，"
+            f"助手镜像（Node 的 slim 镜像，{slim.get('image') or slim.get('base')}）：能跑，"
+            f"pi {slim.get('pi')}、Node {slim.get('node')}，产品的远程工具扩展把命令落到了工作台，"
             f"一轮提示正常结束；镜像 {slim.get('image_mib')} MiB"
         )
     else:
         v.worsen(PARTLY)
-        v.facts.append(f"Node 26 的 slim 镜像：没跑通（{slim.get('error', '')[:200]}）")
+        v.facts.append(f"助手镜像（Node 的 slim 镜像）：没跑通（{slim.get('error', '')[:200]}）")
     return v
 
 
@@ -1028,11 +1097,45 @@ def judge(question: str, raw: dict[str, Any]) -> Verdict:
     return JUDGES[question](raw)
 
 
+def short_id(image_id: str) -> str:
+    return image_id.removeprefix("sha256:")[:12]
+
+
+def version_warnings(versions: dict[str, str]) -> list[str]:
+    """量的是不是产品里的那一份：探针里跑的 pi 是工作台镜像里的，产品跑的是助手镜像里的，
+    两边分别固定。"""
+    if "assistant_image" not in versions:
+        return []
+    probe_pi, product_pi = versions.get("pi", "?"), versions.get("assistant_pi", "?")
+    if product_pi == "?":
+        return ["没有读到助手镜像里 pi 的版本：不知道探针量的 pi 和产品跑的是不是同一版"]
+    if probe_pi != product_pi:
+        return [
+            f"探针里跑的是工作台镜像里的 pi {probe_pi}，产品跑的是助手镜像里的 pi {product_pi}，"
+            "版本不一样：除第 9 题 slim 镜像那一半（用的就是助手镜像里的 pi）以外，"
+            f"结论量的是 pi {probe_pi} 的行为，不是产品的；把两边升到同一版之后重跑"
+        ]
+    return []
+
+
 def render(verdicts: list[Verdict], versions: dict[str, str]) -> str:
     lines = [
         "# rpcprobe",
         "",
         f"pi {versions.get('pi', '?')}，Node {versions.get('node', '?')}，假的模型端点。",
+    ]
+    if "assistant_image" in versions:
+        lines += [
+            "",
+            f"产品的远程工具扩展取自助手镜像 {versions['assistant_image']}"
+            f"（ID {short_id(versions.get('assistant_image_id', '?'))}，"
+            f"构建于 {versions.get('assistant_image_created', '?')}），"
+            f"`extension.mjs` 的 sha256 是 {versions.get('extension_sha256', '?')}；"
+            f"助手镜像里的 pi 是 {versions.get('assistant_pi', '?')}。",
+        ]
+    for warning in version_warnings(versions):
+        lines += ["", f"**提醒：** {warning}"]
+    lines += [
         "",
         "| # | 问题 | 结论 |",
         "|---|---|---|",
@@ -1057,25 +1160,103 @@ def models_json() -> str:
     return json.dumps(Model("fake", spec).pi_models_json(), ensure_ascii=False)
 
 
-def prepare(stack: Stack, evals_dir: Path) -> str:
-    """重置环境、准备工作区，重建探针容器，放好脚本和模型文件，起假的模型端点。"""
+# 交给产品的远程工具扩展的这一轮的配置（apps/assistant/src/turn-config.ts 的 TurnConfig；
+# container/rpcprobe_run.py 的 turn_config() 读的就是写进探针容器的这一份）：
+# 工作台是开发环境里的 Agent。
+TURN_CONFIG = {
+    "address": "dev:50052",
+    "workdir": ToolCheck.workspace,
+    "env": {"SFLY_NICKNAME": ASSISTANT_NICKNAME, "AI_AGENT": "pi"},
+    "defaultTimeoutSeconds": 1200,
+    "secrets": [],
+}
+
+# 产品的远程工具扩展在助手镜像里的位置，和放进探针容器的位置（container/rpcprobe_run.py 的
+# EXTENSION）。
+PRODUCT_EXTENSION = "/app/dist/extension.mjs"
+PROBE_EXTENSION = "/opt/aeval-product/extension.mjs"
+# 助手镜像里 pi 的包（产品起的 pi 是它，不是工作台镜像里的 `pi`）。
+ASSISTANT_PI_PACKAGE = "/app/node_modules/@earendil-works/pi-coding-agent/package.json"
+
+
+def assistant_image_choice(stack: Stack, explicit: str | None) -> str | None:
+    """探针从哪个助手镜像取产品的扩展：明确给的；没给时是这个槽位的助手容器用的（`make_stack` 已经
+    照它接着用）。两样都没有时是 None：**不退到默认标签**，默认标签可能是几天前构建的旧镜像，
+    量到的是旧扩展，结论照出。"""
+    if explicit:
+        return explicit
+    return stack.assistant_image if stack.assistant else None
+
+
+def copy_product_extension(stack: Stack, container: str, workdir: Path) -> dict[str, str]:
+    """从助手镜像里取产品的远程工具扩展，放进探针容器（不起助手容器：建一个不运行的容器、复制出来、删掉）。
+    返回这次量的是哪一份：镜像的名字、ID、构建时间、扩展文件的 sha256、助手镜像里 pi 的版本。"""
+    if not d.exists("image", stack.assistant_image):
+        raise d.DockerError(
+            f"没有助手镜像 {stack.assistant_image}：探针用产品的远程工具扩展，先从源码构建助手镜像"
+            "（README.md「平台的助手」），或用 --assistant-image 指定"
+        )
+    holder = stack.name("rpcprobe-extension")
+    d.docker("rm", "-f", holder, check=False)
+    d.docker("create", "--name", holder, stack.assistant_image)
+    try:
+        d.docker("cp", f"{holder}:{PRODUCT_EXTENSION}", str(workdir / "extension.mjs"))
+        d.docker(
+            "cp", f"{holder}:{ASSISTANT_PI_PACKAGE}", str(workdir / "assistant-pi-package.json")
+        )
+    finally:
+        d.docker("rm", "-f", holder, check=False)
+    d.sh(container, f"mkdir -p {Path(PROBE_EXTENSION).parent}")
+    d.copy_in(str(workdir / "extension.mjs"), container, PROBE_EXTENSION)
+    info = d.docker(
+        "image", "inspect", "--format", "{{.Id}}\t{{.Created}}", stack.assistant_image
+    ).stdout.strip()
+    image_id, _, created = info.partition("\t")
+    return {
+        "assistant_image": stack.assistant_image,
+        "assistant_image_id": image_id,
+        "assistant_image_created": created,
+        "extension_sha256": hashlib.sha256((workdir / "extension.mjs").read_bytes()).hexdigest(),
+        "assistant_pi": str(
+            json.loads((workdir / "assistant-pi-package.json").read_text()).get("version", "?")
+        ),
+    }
+
+
+def arm_a_toolcheck(stack: Stack, results: Path) -> list[dict[str, Any]]:
+    """第 1 题的对照：臂 A（原版 pi，工具在本地执行）在开发环境里跑工具自检的剧本，
+    返回它的工具结果事件。"""
+    record = run_session(
+        stack, ToolCheck(), load_models()["fake"], results, session_id="rpcprobe-arm-a", arm="a"
+    )
+    events = read_events(results / record["session"] / "events.jsonl")
+    return [e for e in events if e.get("type") == "tool_execution_end"]
+
+
+def prepare(stack: Stack, evals_dir: Path, results: Path) -> tuple[str, dict[str, str]]:
+    """重置环境、准备工作区，重建探针容器，放好脚本、模型文件和产品的远程工具扩展，起假的模型端点。
+    返回探针容器的名字和这次用的产品扩展的出处（`copy_product_extension`）。"""
     stack.reset()
     ToolCheck().seed(stack)
-    stack.ensure_remote_image()
     container = probe_container(stack)
     stack._run(
         "rpcprobe",
-        stack.remote_image,
+        stack.workbench_image,
         ["sleep", "infinity"],
         hostname="rpcprobe",
         extra=["--memory", "2g"],
     )
     d.sh(container, f"mkdir -p {PROBE_DIR} {ROOT} {ToolCheck.workspace}")
+    product = copy_product_extension(stack, container, results)
     for name in SCRIPTS:
         d.copy_in(str(evals_dir / "container" / name), container, f"{PROBE_DIR}/{name}")
     d.docker(
         "exec", "-i", container, "sh", "-c", f"cat > {ROOT}/models.json", input_text=models_json()
     )
+    d.docker(
+        "exec", "-i", container, "sh", "-c", f"cat > {ROOT}/turn.json",
+        input_text=json.dumps(TURN_CONFIG),
+    )  # fmt: skip
     d.detach(
         container,
         [
@@ -1090,7 +1271,7 @@ def prepare(stack: Stack, evals_dir: Path) -> str:
         f"for i in $(seq 50); do curl -fsS -o /dev/null http://127.0.0.1:{FAKE_PORT}/v1/models "
         "&& exit 0; sleep 0.2; done; exit 1",
     )
-    return container
+    return container, product
 
 
 # 工作台上的采样：每 0.2 秒一行「时间 正在跑的剧本命令|…」。
@@ -1128,37 +1309,34 @@ def attach_watch(question: str, raw: dict[str, Any], samples: list[tuple[float, 
                 x["workbench"] = gone_after(samples, "sleep 6; echo", x["closed_at"])
 
 
-SLIM_BASE = "node:26-trixie-slim"
-SLIM_DOCKERFILE = """FROM {remote} AS pi
-FROM {base}
-COPY --from=pi /usr/local/lib/node_modules/@earendil-works \\
-  /usr/local/lib/node_modules/@earendil-works
-COPY --from=pi /opt/aeval-remote /opt/aeval-remote
-RUN ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js /usr/local/bin/pi
-"""
+# 助手镜像里的 pi：容器里没有 `pi` 命令，助手服务用 node 直接跑它（apps/assistant/src/main.ts）。
+ASSISTANT_PI = "node /app/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 
 
 def slim_check(stack: Stack) -> dict[str, Any] | None:
-    """第 9 题的后一半：pi 和远程工具扩展在 Node 26 的 slim 镜像上能不能跑（只复制 pi 的包和扩展）。
-    slim 镜像里没有 python3，用 shell 喂 RPC 命令；模型是探针容器里的假的模型端点。"""
-    if not d.exists("image", SLIM_BASE):
-        print(f"q9：没有镜像 {SLIM_BASE}，slim 镜像那一半没有测（docker pull 之后再跑）")
+    """第 9 题的后一半：pi 和产品的远程工具扩展在助手镜像（Node 的 slim 镜像，只有助手服务、
+    pi 和扩展）上
+    能不能跑。镜像里没有 python3，用 shell 喂 RPC 命令；模型是探针容器里的假的模型端点；
+    扩展的配置照产品。"""
+    if not d.exists("image", stack.assistant_image):
+        print(f"q9：没有助手镜像 {stack.assistant_image}，slim 镜像那一半没有测")
         return None
-    image = "sfly-aeval-rpcprobe-slim:latest"
-    dockerfile = SLIM_DOCKERFILE.format(remote=stack.remote_image, base=SLIM_BASE)
-    built = d.docker("build", "-t", image, "-", input_text=dockerfile, check=False, timeout=900)
-    if built.returncode != 0:
-        return {"ok": False, "error": built.stderr[-400:]}
     name = stack.name("rpcprobe-slim")
-    stack._run("rpcprobe-slim", image, ["sleep", "infinity"], extra=["--memory", "1g"])
+    stack._run(
+        "rpcprobe-slim",
+        stack.assistant_image,
+        ["sleep", "infinity"],
+        extra=["--memory", "1g", "--user", "root", "--entrypoint", ""],
+    )
     try:
         models = json.loads(models_json())
         models["providers"]["aeval"]["baseUrl"] = f"http://{probe_container(stack)}:{FAKE_PORT}/v1"
+        config = TURN_CONFIG
         d.sh(name, f"mkdir -p /root/agent {ToolCheck.workspace}")
-        d.docker(
-            "exec", "-i", name, "sh", "-c", "cat > /root/agent/models.json",
-            input_text=json.dumps(models),
-        )  # fmt: skip
+        for path, content in (("/root/agent/models.json", models), ("/root/turn.json", config)):
+            d.docker(
+                "exec", "-i", name, "sh", "-c", f"cat > {path}", input_text=json.dumps(content)
+            )
         commands = (
             '{"id":"1","type":"get_state"}\n'
             '{"id":"2","type":"prompt","message":"AEVAL-SCRIPT:rpcprobe-steer 照剧本做。"}\n'
@@ -1166,8 +1344,8 @@ def slim_check(stack: Stack) -> dict[str, Any] | None:
         script = (
             f"cd {ToolCheck.workspace} && (printf '%s' '{commands}'; sleep 15) | "
             "env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root PI_CODING_AGENT_DIR=/root/agent "
-            "PI_TELEMETRY=0 AEVAL_AGENT_ADDR=dev:50052 AEVAL_REMOTE_LOG=/root/remote.jsonl "
-            "pi --mode rpc --offline --no-extensions -e /opt/aeval-remote/extension.mjs "
+            "PI_TELEMETRY=0 SFLY_ASSISTANT_TURN_CONFIG=/root/turn.json "
+            f"{ASSISTANT_PI} --mode rpc --offline --no-extensions -e {PRODUCT_EXTENSION} "
             "--no-session --provider aeval --model fake 2>/root/stderr.log"
         )
         out = d.sh(name, script, check=False, timeout=120).stdout
@@ -1179,16 +1357,18 @@ def slim_check(stack: Stack) -> dict[str, Any] | None:
                 continue
         state: dict[str, Any] = next((r for r in records if r.get("id") == "1"), {})
         settled = any(r.get("type") == "agent_settled" for r in records)
+        # 工具结果没有报错：命令经扩展落到了开发环境的能力端口上。
         tool_ok = any(
             r.get("type") == "tool_execution_end" and not r.get("isError") for r in records
         )
-        connected = "connected" in d.sh(name, "cat /root/remote.jsonl", check=False).stdout
-        size = d.docker("image", "inspect", "--format", "{{.Size}}", image).stdout.strip()
-        ok = bool(state.get("success")) and settled and tool_ok and connected
+        size = d.docker(
+            "image", "inspect", "--format", "{{.Size}}", stack.assistant_image
+        ).stdout.strip()
+        ok = bool(state.get("success")) and settled and tool_ok
         return {
             "ok": ok,
-            "base": SLIM_BASE,
-            "pi": d.sh(name, "pi --version", check=False).stdout.strip(),
+            "image": stack.assistant_image,
+            "pi": d.sh(name, f"{ASSISTANT_PI} --version", check=False).stdout.strip(),
             "node": d.sh(name, "node --version", check=False).stdout.strip(),
             "image_mib": round(int(size) / 1024 / 1024) if size.isdigit() else None,
             **(
@@ -1205,10 +1385,13 @@ def run(
     stack: Stack, results: Path, evals_dir: Path, questions: tuple[str, ...] = QUESTIONS
 ) -> int:
     results.mkdir(parents=True, exist_ok=True)
-    container = prepare(stack, evals_dir)
+    # 第 1 题的对照先跑（它自己重置环境）：臂 A 在开发环境里跑同一个工具自检的剧本。
+    arm_a = arm_a_toolcheck(stack, results) if "q1" in questions else []
+    container, product = prepare(stack, evals_dir, results)
     versions = {
         "pi": d.sh(container, "pi --version", check=False).stdout.strip(),
         "node": d.sh(container, "node --version", check=False).stdout.strip(),
+        **product,
     }
     verdicts = []
     start_watch(stack)
@@ -1220,6 +1403,8 @@ def run(
             timeout=1800,
         )
         raw = json.loads(d.sh(container, f"cat {out}").stdout)
+        if question == "q1":
+            raw["arm_a"] = arm_a
         if raw.get("ok"):
             watch_log = d.sh(stack.dev, f"cat {WATCH_LOG}").stdout
             # 原始采样也进结果目录：「x 秒内消失」能复核。

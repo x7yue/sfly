@@ -1,17 +1,31 @@
 {
 	"ok": true,
-	"json": [
+	"arm_a": [
 		{
 			"type": "tool_execution_end",
 			"toolName": "write",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "Successfully wrote to new/dir/a.txt" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Successfully wrote to new/dir/a.txt"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "read",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "hello\nworld\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello\nworld\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
@@ -19,7 +33,10 @@
 			"isError": false,
 			"result": {
 				"content": [
-					{ "type": "text", "text": "Successfully replaced 1 block(s) in new/dir/a.txt." }
+					{
+						"type": "text",
+						"text": "Successfully replaced 1 block(s) in new/dir/a.txt."
+					}
 				]
 			}
 		},
@@ -54,7 +71,12 @@
 			"toolName": "bash",
 			"isError": true,
 			"result": {
-				"content": [{ "type": "text", "text": "to-stderr\n\n\nCommand exited with code 3" }]
+				"content": [
+					{
+						"type": "text",
+						"text": "to-stderr\n\n\nCommand exited with code 3"
+					}
+				]
 			}
 		},
 		{
@@ -62,14 +84,13 @@
 			"toolName": "bash",
 			"isError": true,
 			"result": {
-				"content": [{ "type": "text", "text": "started\n\n\nCommand timed out after 1 seconds" }]
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n\n\nCommand timed out after 1 seconds"
+					}
+				]
 			}
-		},
-		{
-			"type": "tool_execution_end",
-			"toolName": "bash",
-			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "no-timeout-given\n" }] }
 		},
 		{
 			"type": "tool_execution_end",
@@ -79,7 +100,20 @@
 				"content": [
 					{
 						"type": "text",
-						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n3031\n3032\n3033\n3034\n3035\n3036\n3037\n3038\n3039\n3040\n\n…（探针夹具截短）…\n57\n4958\n4959\n4960\n4961\n4962\n4963\n4964\n4965\n4966\n4967\n4968\n4969\n4970\n4971\n4972\n4973\n4974\n4975\n4976\n4977\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-f89b0c3ed1a800b9.log]"
+						"text": "no-timeout-given\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n\n…（长输出截短了）…\n77\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-2c1bbb9dc677ce56.log]"
 					}
 				]
 			}
@@ -114,43 +148,92 @@
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "started\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "000dead\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "200"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "started\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "000dead\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "200"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "started\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "200" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "200"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "done\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "done\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
@@ -171,13 +254,27 @@
 			"type": "tool_execution_end",
 			"toolName": "write",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "Successfully wrote to new/dir/a.txt" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Successfully wrote to new/dir/a.txt"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "read",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "hello\nworld\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello\nworld\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
@@ -185,7 +282,10 @@
 			"isError": false,
 			"result": {
 				"content": [
-					{ "type": "text", "text": "Successfully replaced 1 block(s) in new/dir/a.txt." }
+					{
+						"type": "text",
+						"text": "Successfully replaced 1 block(s) in new/dir/a.txt."
+					}
 				]
 			}
 		},
@@ -220,7 +320,12 @@
 			"toolName": "bash",
 			"isError": true,
 			"result": {
-				"content": [{ "type": "text", "text": "to-stderr\n\n\nCommand exited with code 3" }]
+				"content": [
+					{
+						"type": "text",
+						"text": "to-stderr\n\n\nCommand exited with code 3"
+					}
+				]
 			}
 		},
 		{
@@ -228,14 +333,13 @@
 			"toolName": "bash",
 			"isError": true,
 			"result": {
-				"content": [{ "type": "text", "text": "started\n\n\nCommand timed out after 1 seconds" }]
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n\n\nCommand timed out after 1 seconds"
+					}
+				]
 			}
-		},
-		{
-			"type": "tool_execution_end",
-			"toolName": "bash",
-			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "no-timeout-given\n" }] }
 		},
 		{
 			"type": "tool_execution_end",
@@ -245,7 +349,20 @@
 				"content": [
 					{
 						"type": "text",
-						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n3031\n3032\n3033\n3034\n3035\n3036\n3037\n3038\n3039\n3040\n\n…（探针夹具截短）…\n57\n4958\n4959\n4960\n4961\n4962\n4963\n4964\n4965\n4966\n4967\n4968\n4969\n4970\n4971\n4972\n4973\n4974\n4975\n4976\n4977\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-1dee0f43238a9cf0.log]"
+						"text": "no-timeout-given\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n\n…（长输出截短了）…\n77\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-e783f1b9869a8bb0.log]"
 					}
 				]
 			}
@@ -280,43 +397,92 @@
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "started\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "000dead\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "000dead\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "started\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "000dead\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "000dead\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "started\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "200" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "200"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
 			"toolName": "bash",
 			"isError": false,
-			"result": { "content": [{ "type": "text", "text": "done\n" }] }
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "done\n"
+					}
+				]
+			}
 		},
 		{
 			"type": "tool_execution_end",
@@ -332,8 +498,8 @@
 			}
 		}
 	],
-	"rpc_exit_seconds": 0.118,
+	"rpc_exit_seconds": 0.036,
 	"declared_tools": ["read", "bash", "edit", "write"],
-	"system_prompt": "<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>",
+	"system_prompt": "<tools>\n- read: Read file contents\n- bash: Execute bash commands (ls, grep, find, etc.)\n- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call\n- write: Create or overwrite files\n\nAdditional tools may be available.\n</tools>",
 	"written_locally": false
 }

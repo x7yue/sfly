@@ -1,7 +1,9 @@
 """探针（#539）：对着录下来的观察下结论，以及容器里那半边的 RPC 读写。
 
-夹具 `fixtures/rpcprobe/q*.json` 是 `./aeval.sh rpcprobe` 一次实跑的输出
-（q1 只留了工具结果，长输出截短了）。
+夹具 `fixtures/rpcprobe/q*.json` 是 `./aeval.sh rpcprobe` 实跑的输出。q1、q9 是 #552
+改用产品的远程工具扩展之后那次（2026-11-25）的，q1 对照是臂 A，
+只留了工具结果和系统提示里的工具清单，长输出截短了；其余是之前用原型扩展那几次的（判法没有变，
+换扩展之后各题的结论除第 8 题的探针时序外都没变，见 README「探针」一节）。
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ def test_recorded_run_verdicts() -> None:
     assert verdicts == {"q1": HOLDS, "q2": HOLDS, "q3": PARTLY, "q4": HOLDS}
 
 
-def test_q1_names_the_step_that_differs_from_json_mode() -> None:
+def test_q1_names_the_step_that_differs_from_arm_a() -> None:
     raw = fixture("q1")
     raw["rpc"][4]["result"]["content"][0]["text"] = "别的输出"
     verdict = judge("q1", raw)
@@ -44,15 +46,110 @@ def test_q1_names_the_step_that_differs_from_json_mode() -> None:
 
 def test_q1_ignores_the_random_name_of_the_full_output_file() -> None:
     raw = fixture("q1")
-    texts = [e["result"]["content"][0]["text"] for e in raw["json"]]
+    texts = [e["result"]["content"][0]["text"] for e in raw["arm_a"]]
     assert any("/tmp/pi-bash-" in t for t in texts)
     assert judge("q1", raw).verdict == HOLDS
 
 
-def test_q1_reports_the_tool_list_in_the_system_prompt() -> None:
+STEP_IDS = [
+    step["id"]
+    for step in json.loads(
+        (Path(rpcprobe.__file__).parent.parent / "container" / "toolcheck.json").read_text()
+    )["steps"]
+]
+KNOWN_STEPS = ["bash_background_alive", "bash_setsid_alive"]
+
+
+def set_remote_result(raw: dict[str, Any], step: str, text: str, error: bool = False) -> None:
+    event = raw["rpc"][STEP_IDS.index(step)]
+    event["result"]["content"][0]["text"] = text
+    event["isError"] = error
+
+
+def test_q1_lists_the_known_differences_without_failing() -> None:
+    # 后台进程那两步：臂 A 本地是 200，远程的命令退出后后台进程被结束，不报错、输出里有 dead。
     verdict = judge("q1", fixture("q1"))
-    assert verdict.numbers["prompt_tools"] == ["bash"]
-    assert any("系统提示的工具清单只列了 bash" in fact for fact in verdict.facts)
+    assert verdict.verdict == HOLDS
+    fact = next(f for f in verdict.facts if "是已知差别的步骤" in f)
+    assert "bash_background_alive" in fact and "bash_setsid_alive" in fact
+    assert "第 12、13 条" in fact
+    assert verdict.numbers["known_differences"] == KNOWN_STEPS
+
+
+@pytest.mark.parametrize("step", [s for s in STEP_IDS if s not in KNOWN_STEPS])
+def test_q1_compares_every_other_step_word_for_word(step: str) -> None:
+    # 不在已知差别名单上的步骤（含工具自检里没有预期的另外 5 个后台进程的步骤）：
+    # 和臂 A 不同就是不成立，不论有没有预期。
+    raw = fixture("q1")
+    arm_a = raw["arm_a"][STEP_IDS.index(step)]["result"]["content"][0]["text"]
+    set_remote_result(raw, step, arm_a + "（多了一句）")
+    verdict = judge("q1", raw)
+    assert verdict.verdict == FAILS
+    assert any("和臂 A（本地执行）结果不同的步骤" in f and step in f for f in verdict.facts)
+
+
+@pytest.mark.parametrize("step", ["bash_setsid_wait_alive", "bash_cleanup"])
+def test_q1_fails_when_a_background_step_outside_the_known_two_differs(step: str) -> None:
+    # 审查的探测：setsid 加等待的那一步在远程也死了；清理那一步报错。
+    raw = fixture("q1")
+    set_remote_result(
+        raw,
+        step,
+        "000dead\n" if step.endswith("alive") else "pkill: 不允许",
+        error=step == "bash_cleanup",
+    )
+    assert judge("q1", raw).verdict == FAILS
+
+
+def test_q1_fails_when_the_background_process_was_never_started() -> None:
+    # 起后台进程那一步根本没执行（工具报「工作台连不上」）：看起来「进程已经没了」，其实没起过。
+    raw = fixture("q1")
+    set_remote_result(raw, "bash_background", "工作台连不上：dev", error=True)
+    assert judge("q1", raw).verdict == FAILS
+
+
+@pytest.mark.parametrize("step", KNOWN_STEPS)
+def test_q1_fails_when_a_known_step_is_a_tool_error(step: str) -> None:
+    # 已知差别的那两步变成工具报错（不是「进程被结束了」）。
+    raw = fixture("q1")
+    set_remote_result(raw, step, "工作台连不上：dev（dead）", error=True)
+    verdict = judge("q1", raw)
+    assert verdict.verdict == FAILS
+    assert any("已知差别的步骤不是预期的样子" in f and step in f for f in verdict.facts)
+
+
+def test_q1_fails_when_a_known_step_does_not_say_the_process_is_gone() -> None:
+    raw = fixture("q1")
+    set_remote_result(raw, "bash_setsid_alive", "502")
+    assert judge("q1", raw).verdict == FAILS
+
+
+def test_q1_notes_a_known_difference_that_is_gone() -> None:
+    # 远程里后台进程留下来了（和臂 A 一样）：不算坏事，但说一句，差别表该改了。
+    raw = fixture("q1")
+    arm_a = raw["arm_a"][STEP_IDS.index("bash_background_alive")]["result"]["content"][0]["text"]
+    set_remote_result(raw, "bash_background_alive", arm_a)
+    verdict = judge("q1", raw)
+    assert verdict.verdict == HOLDS
+    assert any("这次和臂 A 一样了" in f and "bash_background_alive" in f for f in verdict.facts)
+    assert verdict.numbers["known_differences"] == ["bash_setsid_alive"]
+
+
+def test_q1_fails_when_arm_a_is_missing_results() -> None:
+    raw = fixture("q1")
+    raw["arm_a"] = raw["arm_a"][:5]
+    verdict = judge("q1", raw)
+    assert verdict.verdict == FAILS
+    assert any("臂 A 只有 5 个工具结果" in fact for fact in verdict.facts)
+
+
+def test_q1_reports_the_tool_list_in_the_system_prompt() -> None:
+    # 产品的扩展替换的工具带着说明：系统提示的工具清单是全的。只列了一部分时另外说一句。
+    verdict = judge("q1", fixture("q1"))
+    assert sorted(verdict.numbers["prompt_tools"]) == ["bash", "edit", "read", "write"]
+    raw = fixture("q1")
+    raw["system_prompt"] = "<tools>\n- bash: Execute bash commands\n</tools>"
+    assert any("系统提示的工具清单只列了 bash" in fact for fact in judge("q1", raw).facts)
 
 
 def test_q1_fails_when_a_file_is_written_locally() -> None:
@@ -96,6 +193,26 @@ def test_q3_names_where_an_extra_file_came_from() -> None:
     verdict = judge("q3", raw)
     assert verdict.verdict == PARTLY
     assert any("工作目录的 AGENTS.md" in fact for fact in verdict.facts)
+
+
+def test_q3_says_the_extension_adds_nothing_to_the_system_prompt_in_the_recorded_run() -> None:
+    # 产品的远程工具扩展不改系统提示：工作台上的 AGENTS.md、skill 不由它加进去。
+    verdict = judge("q3", fixture("q3"))
+    assert verdict.verdict == PARTLY
+    assert "扩展没有往系统提示里加东西：工作台上的 AGENTS.md、skill 都不在里面" in verdict.facts
+
+
+@pytest.mark.parametrize("path", ["probe", "default"])
+@pytest.mark.parametrize("mark", ["AGENTS-MARKER", "<name>demo</name>"], ids=["agents-md", "skill"])
+def test_q3_fails_when_the_extension_adds_the_workbench_files_to_the_system_prompt(
+    path: str, mark: str
+) -> None:
+    # 原型扩展的做法：把工作台上的 AGENTS.md、skill 取来加进系统提示。产品的扩展不该这样。
+    raw = fixture("q3")
+    raw[path]["system_prompt"] += f"\n{mark}"
+    verdict = judge("q3", raw)
+    assert verdict.verdict == FAILS
+    assert any("扩展往系统提示里加了东西" in fact for fact in verdict.facts)
 
 
 def test_q3_default_prompt_path_holds_in_the_recorded_run() -> None:
@@ -436,13 +553,13 @@ def test_q8_is_unfinished_without_the_sigterm_only_run() -> None:
 
 def test_q9_reports_the_slim_image() -> None:
     raw = fixture("q9")
-    assert any("slim" in fact and "能跑" in fact for fact in judge("q9", raw).facts)
+    assert any("助手镜像" in fact and "能跑" in fact for fact in judge("q9", raw).facts)
     raw["slim"] = {"ok": False, "error": "pi: not found"}
     assert judge("q9", raw).verdict == PARTLY
     raw["slim"] = None
     verdict = judge("q9", raw)
     assert verdict.verdict == HOLDS
-    assert "Node 26 的 slim 镜像：没有测" in verdict.facts
+    assert "助手镜像（Node 的 slim 镜像）：没有测" in verdict.facts
 
 
 def test_q10_fails_when_the_prompt_keeps_the_local_directory() -> None:
@@ -612,3 +729,169 @@ def test_q17_fails_on_an_extra_user_message_and_is_unfinished_without_compaction
         e for e in missing["threshold"]["timeline"] if e["type"] != "compaction_end"
     ]
     assert judge("q17", missing).verdict == UNFINISHED
+
+
+# ---- 量的是哪一份扩展（#727 审查必须改 2） ----
+
+
+def test_the_assistant_image_is_the_given_one_or_the_slots_never_the_default_tag() -> None:
+    from aeval.env import DEFAULT_ASSISTANT_IMAGE, Stack
+
+    assert rpcprobe.assistant_image_choice(Stack(slot=9), "mine:1") == "mine:1"
+    # 槽位里起着助手容器（make_stack 已经照它接着用）：用它的镜像。
+    adopted = Stack(slot=9, assistant=True, assistant_image="slot-image:7")
+    assert rpcprobe.assistant_image_choice(adopted, None) == "slot-image:7"
+    assert rpcprobe.assistant_image_choice(adopted, "mine:1") == "mine:1"
+    # 没给、槽位里也没有助手容器：没有答案，不退到默认标签（可能是几天前构建的旧镜像）。
+    plain = Stack(slot=9)
+    assert plain.assistant_image == DEFAULT_ASSISTANT_IMAGE
+    assert rpcprobe.assistant_image_choice(plain, None) is None
+
+
+def test_rpcprobe_without_an_assistant_image_stops_before_touching_the_environment(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aeval import cli
+    from aeval.env import Stack
+
+    monkeypatch.setattr(cli, "_stack", lambda _args: Stack(slot=9))
+
+    def touched(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("动了环境")
+
+    monkeypatch.setattr(rpcprobe, "run", touched)
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["rpcprobe", "q1"])
+    assert raised.value.code == 2
+    error = capsys.readouterr().err
+    assert "--assistant-image" in error and "默认标签" in error
+
+
+def test_rpcprobe_uses_the_given_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aeval import cli
+    from aeval.env import Stack
+
+    stack = Stack(slot=9)
+    monkeypatch.setattr(cli, "_stack", lambda _args: stack)
+    seen: list[str] = []
+
+    def fake_run(st: Stack, *_args: Any, **_kwargs: Any) -> int:
+        seen.append(st.assistant_image)
+        return 0
+
+    monkeypatch.setattr(rpcprobe, "run", fake_run)
+    assert cli.main(["rpcprobe", "q1", "--assistant-image", "mine:1"]) == 0
+    assert seen == ["mine:1"]
+
+
+class FakeDocker:
+    """`copy_product_extension` 要用的 docker：`cp` 把预置的内容写到目的地，别的只记下来。"""
+
+    def __init__(self, extension: bytes, pi_package: str, *, fail_cp: bool = False) -> None:
+        self.extension, self.pi_package, self.fail_cp = extension, pi_package, fail_cp
+        self.calls: list[tuple[str, ...]] = []
+
+    def exists(self, _kind: str, _name: str) -> bool:
+        return True
+
+    def docker(self, *args: str, **_kwargs: Any) -> Any:
+        import subprocess
+
+        self.calls.append(args)
+        out = ""
+        if args[0] == "cp":
+            if self.fail_cp:
+                raise RuntimeError("cp 失败")
+            source, dest = args[1], Path(args[2])
+            if source.endswith("extension.mjs"):
+                dest.write_bytes(self.extension)
+            elif source.endswith("package.json"):
+                dest.write_text(self.pi_package)
+        elif args[0] == "image" and args[1] == "inspect":
+            out = "sha256:" + "ab" * 32 + "\t2026-11-25T07:00:00.123Z\n"
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+
+def patch_docker(monkeypatch: pytest.MonkeyPatch, fake: FakeDocker) -> None:
+    from aeval import docker as docker_module
+
+    monkeypatch.setattr(docker_module, "exists", fake.exists)
+    monkeypatch.setattr(docker_module, "docker", fake.docker)
+    monkeypatch.setattr(docker_module, "sh", lambda *_a, **_k: None)
+    monkeypatch.setattr(docker_module, "copy_in", lambda *_a, **_k: None)
+
+
+def test_copy_product_extension_records_which_extension_was_measured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from aeval.env import Stack
+
+    fake = FakeDocker(b"export default 1;\n", json.dumps({"name": "pi", "version": "1.7.0"}))
+    patch_docker(monkeypatch, fake)
+    stack = Stack(slot=9, assistant_image="sfly-assistant:test")
+    info = rpcprobe.copy_product_extension(stack, "probe", tmp_path)
+    assert info == {
+        "assistant_image": "sfly-assistant:test",
+        "assistant_image_id": "sha256:" + "ab" * 32,
+        "assistant_image_created": "2026-11-25T07:00:00.123Z",
+        "extension_sha256": hashlib.sha256(b"export default 1;\n").hexdigest(),
+        "assistant_pi": "1.7.0",
+    }
+    # 先清掉可能留着的同名容器，建一个不运行的，复制两个文件，删掉它，再读镜像的信息。
+    assert [c[0] for c in fake.calls] == ["rm", "create", "cp", "cp", "rm", "image"]
+
+
+def test_copy_product_extension_removes_the_holder_when_the_copy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aeval.env import Stack
+
+    fake = FakeDocker(b"x", "{}", fail_cp=True)
+    patch_docker(monkeypatch, fake)
+    with pytest.raises(RuntimeError):
+        rpcprobe.copy_product_extension(Stack(slot=9), "probe", tmp_path)
+    assert fake.calls[-1][:2] == ("rm", "-f")
+
+
+def test_render_says_which_extension_was_measured() -> None:
+    versions = {
+        "pi": "1.6.0",
+        "node": "v26",
+        "assistant_image": "sfly-assistant:test",
+        "assistant_image_id": "sha256:" + "cd" * 32,
+        "assistant_image_created": "2026-11-25T07:00:00Z",
+        "extension_sha256": "ef" * 32,
+        "assistant_pi": "1.6.0",
+    }
+    report = rpcprobe.render([], versions)
+    assert "sfly-assistant:test" in report and "cdcdcdcdcdcd" in report
+    assert "ef" * 32 in report and "2026-11-25T07:00:00Z" in report
+    assert "助手镜像里的 pi 是 1.6.0" in report
+    assert "提醒" not in report
+
+
+def test_render_warns_when_the_two_pi_versions_differ() -> None:
+    versions = {
+        "pi": "1.6.0",
+        "node": "v26",
+        "assistant_image": "sfly-assistant:test",
+        "assistant_image_id": "sha256:" + "cd" * 32,
+        "assistant_pi": "1.7.0",
+    }
+    report = rpcprobe.render([], versions)
+    assert "**提醒：**" in report
+    assert "工作台镜像里的 pi 1.6.0" in report and "助手镜像里的 pi 1.7.0" in report
+    assert rpcprobe.version_warnings({**versions, "assistant_pi": "1.6.0"}) == []
+
+
+def test_render_warns_when_the_assistant_pi_version_is_unknown() -> None:
+    versions = {"pi": "1.6.0", "assistant_image": "sfly-assistant:test"}
+    warnings = rpcprobe.version_warnings(versions)
+    assert len(warnings) == 1 and "没有读到助手镜像里 pi 的版本" in warnings[0]
+
+
+def test_render_without_the_product_info_is_unchanged() -> None:
+    report = rpcprobe.render([], {"pi": "1.6.0", "node": "v26"})
+    assert "助手镜像" not in report and "提醒" not in report

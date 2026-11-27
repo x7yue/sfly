@@ -34,14 +34,16 @@ const start = async (options: HarnessOptions = {}) => {
 };
 
 type Raw = Record<string, unknown> & { type: string; t?: number; pid?: number };
-/** 这个会话的 pi 原始事件（`events.jsonl`，这个会话所有 pi 进程的都写在里面）。 */
+/**
+ * 这个会话的 pi 原始事件（`events.jsonl`，这个会话所有 pi 进程的都写在里面）。只读以换行结尾的行：
+ * 有的用例边跑边每几毫秒读一次，最后一行可能正写到一半，解析它会抛错（JSON 被截断）。
+ */
 const raw = (h: Harness, id: string): Raw[] => {
 	const path = join(h.dataDir, "sessions", id, "events.jsonl");
 	if (!existsSync(path)) return [];
-	return readFileSync(path, "utf8")
-		.split("\n")
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as Raw);
+	const lines = readFileSync(path, "utf8").split("\n");
+	lines.pop(); // 最后一个换行之后的部分：空，或者还没写完的一行
+	return lines.filter(Boolean).map((line) => JSON.parse(line) as Raw);
 };
 const count = (h: Harness, id: string, type: string) =>
 	raw(h, id).filter((r) => r.type === type).length;
