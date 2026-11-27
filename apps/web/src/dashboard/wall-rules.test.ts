@@ -1,6 +1,6 @@
 import type { AgentView, RunFocusItem, RunningTaskView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { agentColumn, readoutCells, readoutPlan, wallLayout } from "./wall-rules";
+import { agentColumn, agentCountLabel, readoutCells, readoutPlan, wallLayout } from "./wall-rules";
 
 describe("运行个数", () => {
 	it("1、2 个运行：运行块，进行中的节点全列", () => {
@@ -111,6 +111,37 @@ describe("Agent 合并", () => {
 		]);
 		expect(names(listed)).toEqual(["preparing"]);
 		expect(idle).toBe(5);
+	});
+});
+
+describe("已停用的 Agent（#492）", () => {
+	const DISABLED = "2026-01-01T00:00:00.000Z";
+
+	it("不接任务，不算空闲：Agent 多了合并空闲的在线 Agent 时，停用的照样单独列出", () => {
+		const { listed, idle } = agentColumn([
+			agent("disabled", { status: "offline", disabled_at: DISABLED }),
+			// 停用到连接真的关掉之间有一瞬还在线：也不算空闲。
+			agent("closing", { status: "online", disabled_at: DISABLED }),
+			...["a", "b", "c", "d", "e"].map((n) => agent(n)),
+		]);
+		expect(names(listed)).toEqual(["disabled", "closing"]);
+		expect(idle).toBe(5);
+	});
+
+	it("计数：分母不含已停用的，有停用的接「N 台已停用」，没有停用的不写", () => {
+		expect(agentCountLabel([agent("a"), agent("b", { status: "offline" })])).toBe("1 / 2 在线");
+		expect(
+			agentCountLabel([
+				agent("a"),
+				agent("b", { status: "offline" }),
+				agent("c", { status: "offline", disabled_at: DISABLED }),
+			]),
+		).toBe("1 / 2 在线 · 1 台已停用");
+		// 刚停用、连接还没关掉的那一瞬也不算在线。
+		expect(agentCountLabel([agent("a"), agent("b", { disabled_at: DISABLED })])).toBe(
+			"1 / 1 在线 · 1 台已停用",
+		);
+		expect(agentCountLabel([])).toBe("0 / 0 在线");
 	});
 });
 

@@ -44,6 +44,24 @@ describe("排队中的节点在等什么", () => {
 		expect(queueWaitText(wait({}), QUEUED_AT, NOW)).toBe("等 agent-a（不在线）· 排队 3m 05s");
 	});
 
+	it("Agent 被管理员停用：写「已停用」和停用了多久，不写「不在线」（#492）", () => {
+		const parts = queueWaitParts(
+			wait({
+				state: "disabled",
+				since: "2026-01-01T00:02:50.000Z",
+				expires_at: "2026-01-01T00:11:55.000Z",
+			}),
+			QUEUED_AT,
+			NOW,
+		);
+		expect(parts.situation).toBe("已停用 2m 10s");
+		expect(parts.timing).toBe("排队 3m 05s · 6m 55s 后超时");
+		expect(
+			queueWaitText(wait({ state: "disabled", since: "2026-01-01T00:02:50.000Z" }), QUEUED_AT, NOW),
+		).toBe("等 agent-a（已停用 2m 10s）· 排队 3m 05s");
+		expect(queueWaitText(wait({ state: "disabled" }), QUEUED_AT, NOW)).not.toContain("不在线");
+	});
+
 	it("过了排队超时、控制面还没扫到：即将超时", () => {
 		const parts = queueWaitParts(wait({ expires_at: "2026-01-01T00:04:59.000Z" }), QUEUED_AT, NOW);
 		expect(parts.timing).toBe("排队 3m 05s · 即将超时");

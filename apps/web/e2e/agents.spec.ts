@@ -4,6 +4,7 @@ import {
 	type AssignedTask,
 	agentClock,
 } from "../../server/test/support/fake-agent.js";
+import { setAgentDisabled, setAuthKind } from "./agent-admin-support";
 import { expect, test } from "./fixtures";
 import { createFocusScenario, saveVersion, setFocusItems } from "./focus-support";
 import {
@@ -315,6 +316,87 @@ test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长�
 	await expect(status("agent-prep")).toHaveText("在线");
 	await expect(rack(page, "agent-prep")).toContainText("0 / 2 占用");
 	await expect(rack(page, "agent-prep")).toContainText("2 个槽位空闲");
+});
+
+test.describe("凭据种类和停用（#492）", () => {
+	test("最近一次连接用的凭据：Agent 自己的凭据什么都不写；共享令牌写「用共享令牌连接」并提示换成 Agent 凭据；没有凭据告警本版本内仍可连接、下一个版本起拒绝；没记过的不写", async ({
+		page,
+		controlPlane,
+		connectAgent,
+	}) => {
+		// 假 Agent 默认用 Agent 凭据连接（auth_kind 为 agent）。
+		for (const name of ["agent-own", "agent-shared", "agent-none", "agent-unknown"]) {
+			await connectAgent({ name, agentVersion: "1.2.3" });
+		}
+		await setAuthKind(controlPlane, "agent-shared", "shared");
+		await setAuthKind(controlPlane, "agent-none", "none");
+		// 升级之前连接的 Agent 还没有记过它用的凭据。
+		await setAuthKind(controlPlane, "agent-unknown", null);
+
+		await page.goto("/agents");
+		await expect(header(page, "agent-shared")).toContainText(
+			"用共享令牌连接 · 请换成这台 Agent 自己的凭据",
+		);
+		await expect(header(page, "agent-none")).toContainText(
+			"没有凭据 · 本版本内仍可连接，下一个版本起拒绝",
+		);
+		// 共享令牌只是提示，没有凭据才是告警（颜色不同）。
+		await expect(header(page, "agent-shared").getByText("用共享令牌连接")).not.toHaveClass(
+			/text-warn-fg/,
+		);
+		await expect(header(page, "agent-none").getByText("没有凭据", { exact: true })).toHaveClass(
+			/text-warn-fg/,
+		);
+		for (const name of ["agent-own", "agent-unknown"]) {
+			await expect(header(page, name)).not.toContainText("凭据");
+			await expect(header(page, name)).not.toContainText("共享令牌");
+		}
+	});
+
+	test("已停用：状态写「已停用」和停用时间（不写离线），槽位不算空闲、不写占用；恢复、重新连上之后回到在线", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const agent = await connectAgent({ name: "agent-off", agentVersion: "1.2.3", slots: 2 });
+		await connectAgent({ name: "agent-on", agentVersion: "1.2.3", slots: 2 });
+		// 最近一次连接没有带凭据（过渡期里的旧方式）：在线的时候告警，停用之后不写（它带什么都连不上）。
+		await setAuthKind(controlPlane, "agent-off", "none");
+		clock.advance(60_000);
+
+		await page.goto("/agents");
+		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("在线");
+		await expect(header(page, "agent-off")).toContainText("没有凭据 · 本版本内仍可连接");
+		await expect(slotCells(page, "agent-off")).toHaveCount(1);
+
+		// 管理员停用：控制面立即断开它的连接；页面按轮询更新。
+		await setAgentDisabled(controlPlane, "agent-off", true);
+		await expect.poll(() => agent.ended).toBe(true);
+		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("已停用", {
+			timeout: 15_000,
+		});
+		await expect(header(page, "agent-off")).toContainText("停用于");
+		await expect(header(page, "agent-off")).not.toContainText("离线");
+		// 停用的 Agent 不写凭据提示：「本版本内仍可连接」是假的。
+		await expect(header(page, "agent-off")).not.toContainText("没有凭据");
+		await expect(header(page, "agent-off")).not.toContainText("本版本内仍可连接");
+		await expect(rack(page, "agent-off")).not.toContainText("占用");
+		await expect(slotCells(page, "agent-off")).toHaveCount(0);
+		// 别的 Agent 不受影响。
+		await expect(header(page, "agent-on").locator("[data-status]")).toHaveText("在线");
+		await expect(header(page, "agent-on")).not.toContainText("已停用");
+
+		// 恢复之后它重新连上：回到在线，停用的字样消失。
+		await setAgentDisabled(controlPlane, "agent-off", false);
+		await connectAgent({ name: "agent-off", agentVersion: "1.2.3", slots: 2 });
+		// 页面每 5 秒重新读一次 Agent 列表。
+		await expect(header(page, "agent-off").locator("[data-status]")).toHaveText("在线", {
+			timeout: 15_000,
+		});
+		await expect(header(page, "agent-off")).not.toContainText("停用于");
+		await expect(slotCells(page, "agent-off")).toHaveCount(1);
+	});
 });
 
 test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒时不显示，心跳测到新的偏差后更新", async ({

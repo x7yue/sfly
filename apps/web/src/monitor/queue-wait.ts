@@ -15,6 +15,7 @@ export const MAX_SLOT_HOLDERS = 3;
 export function queueWaitParts(wait: QueueWaitView, queuedAt: string, now: number) {
 	const since = wait.since === null ? null : formatElapsed(now - Date.parse(wait.since));
 	const situation = {
+		disabled: QUEUE_WAIT.disabled(since),
 		offline: QUEUE_WAIT.offline(since),
 		preparing: QUEUE_WAIT.preparing(since),
 		version_mismatch: QUEUE_WAIT.versionMismatch,

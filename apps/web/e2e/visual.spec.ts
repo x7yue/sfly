@@ -10,6 +10,7 @@ import {
 import { seedSession } from "../../server/test/support/sessions.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { actionsScenario, actionTable, loadSummary } from "./actions-support";
+import { setAgentDisabled, setAuthKind } from "./agent-admin-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
 	assistantMessage,
@@ -236,6 +237,35 @@ test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgen
 		"更新失败",
 	);
 	await expect(page).toHaveScreenshot("agents-update.png");
+});
+
+test("Agent 列表：凭据种类和停用（Agent 自己的凭据、共享令牌、没有凭据、已停用）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	for (const name of ["agent-own", "agent-shared", "agent-none", "agent-stopped"]) {
+		await connectAgent({ name, os: "linux", arch: "x86_64", slots: 2 });
+	}
+	await setAuthKind(controlPlane, "agent-shared", "shared");
+	await setAuthKind(controlPlane, "agent-none", "none");
+	clock.advance(90_000);
+	await setAgentDisabled(controlPlane, "agent-stopped", true);
+
+	// 四个机架一屏放下：只有深色主题，没有浅色。
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await page.goto("/agents");
+	await expect(page.getByRole("region", { name: "agent-stopped", exact: true })).toContainText(
+		"已停用",
+	);
+	await expect(page.getByRole("region", { name: "agent-none", exact: true })).toContainText(
+		"没有凭据",
+	);
+	// 四个机架都在视口里（第一次的视口放不下，第四个被截了）。
+	const last = await page.getByRole("region", { name: "agent-stopped", exact: true }).boundingBox();
+	expect((last?.y ?? 0) + (last?.height ?? 0)).toBeLessThanOrEqual(1000);
+	await expect(page).toHaveScreenshot("agents-credentials.png");
 });
 
 test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connectAgent }) => {
@@ -955,6 +985,23 @@ for (const viewport of [
 		});
 	});
 }
+
+test("运行监控：概览（节点在排队，等的 Agent 被管理员停用，写「已停用」）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await queuedOffline(controlPlane, connectAgent, clock);
+	await setAgentDisabled(controlPlane, "agent-a", true);
+	clock.advance(125_000);
+	await openFailedOverview(page, clock, runId);
+	await expect(page.getByTestId("queue-wait").first()).toHaveAttribute("data-state", "disabled");
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview-queued-disabled.png", {
+		mask: await runIds(page),
+	});
+});
 
 test("运行监控：概览（节点在排队，Agent 在线但槽位占满，写明占着槽位的任务）", async ({
 	page,

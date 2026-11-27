@@ -117,6 +117,22 @@ def test_a_queued_node_on_an_offline_agent_says_who_how_long_and_when_it_times_o
     )
 
 
+def test_a_disabled_agent_says_disabled_and_for_how_long_not_offline() -> None:
+    wait = _wait(
+        state="disabled", since="2026-01-01T00:02:50.000Z", expires_at="2026-01-01T00:11:55.000Z"
+    )
+    text = queue_wait_text(wait, QUEUED_AT)
+    assert text == "等 agent-a（已停用 2m10s）· 排队 3m05s · 6m55s 后超时"
+    assert "不在线" not in text
+
+
+def test_a_state_this_cli_has_not_seen_is_written_as_it_is_not_guessed_as_dispatching() -> None:
+    """比命令行新的控制面可能带没见过的状态：写出状态名，不说「正在派发」（说错了会让人以为马上开始）。"""
+    text = queue_wait_text(_wait(state="quarantined"), QUEUED_AT)
+    assert text == "等 agent-a（quarantined）· 排队 3m05s"
+    assert "正在派发" not in text
+
+
 def test_no_last_seen_time_and_no_queue_timeout_means_nothing_to_count_down() -> None:
     assert queue_wait_text(_wait(), QUEUED_AT) == "等 agent-a（不在线）· 排队 3m05s"
 
@@ -129,6 +145,11 @@ def test_past_the_deadline_the_control_plane_has_not_swept_yet_says_about_to_tim
 def test_an_agent_preparing_its_environment_says_for_how_long() -> None:
     wait = _wait(state="preparing", since="2026-01-01T00:03:50.000Z", slots=4)
     assert queue_wait_text(wait, QUEUED_AT) == "等 agent-a（准备环境中 1m10s）· 排队 3m05s"
+
+
+def test_an_agent_with_a_free_slot_says_it_is_dispatching() -> None:
+    wait = _wait(state="dispatching", slots=4)
+    assert queue_wait_text(wait, QUEUED_AT) == "等 agent-a（正在派发）· 排队 3m05s"
 
 
 def test_a_version_mismatch_says_no_new_tasks_are_dispatched() -> None:
@@ -188,6 +209,7 @@ def test_waiting_words_are_the_ones_the_console_shows() -> None:
     """界面（copy.ts 的 QUEUE_WAIT 和 agents/queue-timing.ts）和命令行用同样的话。"""
     copy = _web("lib/copy.ts") + _web("agents/queue-timing.ts")
     for phrase in (
+        "已停用",
         "不在线",
         "已离线",
         "准备环境中",
