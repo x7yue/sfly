@@ -85,7 +85,7 @@ describe("经哪个 AI 编程助手", () => {
 			await api.getJson(`/orchestrations/${scenario}/runs`),
 		);
 		expect(perScenario.runs[0]).toMatchObject({ id: triggered.id, triggered_via: "claude-code" });
-		const records = runListApi.list.response.parse(await api.getJson("/runs"));
+		const records = runListApi.list.response.parse(await api.getJson("/projects/default/runs"));
 		expect(records.runs[0]).toMatchObject({ id: triggered.id, triggered_via: "claude-code" });
 	});
 
@@ -317,7 +317,7 @@ describe("升级前已有的运行和版本", () => {
 		expect(versions.versions).toEqual([
 			{ number: 1, author: "旧人", author_via: null, created_at: "2026-01-01T00:00:00.000Z" },
 		]);
-		const records = runListApi.list.response.parse(await api.getJson("/runs"));
+		const records = runListApi.list.response.parse(await api.getJson("/projects/default/runs"));
 		expect(records.runs[0]).toMatchObject({ id: ids.run, triggered_via: null });
 	});
 });

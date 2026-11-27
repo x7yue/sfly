@@ -17,7 +17,7 @@ describe("控制面在响应上带自己的版本号", () => {
 		expect(agents.status).toBe(200);
 		expect(agents.headers.get(CONTROL_PLANE_VERSION_HEADER)).toBe("7.8.9");
 
-		const viaApi = await cp.fetch("/api/runs");
+		const viaApi = await cp.fetch("/api/projects/default/runs");
 		expect(viaApi.headers.get(CONTROL_PLANE_VERSION_HEADER)).toBe("7.8.9");
 
 		const missing = await cp.fetch("/runs/00000000-0000-0000-0000-000000000000");

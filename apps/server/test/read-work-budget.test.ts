@@ -267,7 +267,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 			await eventually(async () => expect((await api.run(exhausted.runId)).status).toBe("failed"));
 
 			{
-				const res = await cp.fetch("/dashboard");
+				const res = await cp.fetch("/projects/default/dashboard");
 				const dashboard = (await res.json()) as {
 					recent_ended: Array<{
 						id: string;

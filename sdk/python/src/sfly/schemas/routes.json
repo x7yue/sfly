@@ -3394,7 +3394,7 @@
     },
     {
       "method": "GET",
-      "path": "/dashboard",
+      "path": "/projects/:project/dashboard",
       "key": [
         "dashboard",
         "get"
@@ -3405,6 +3405,18 @@
       "resource": {
         "kind": "run",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -4787,17 +4799,29 @@
     },
     {
       "method": "GET",
-      "path": "/feishu-bots",
+      "path": "/projects/:project/feishu-bots",
       "key": [
         "feishu-bots",
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出全部飞书机器人（Webhook 地址已打码）",
+      "summary": "列出项目里的飞书机器人（Webhook 地址已打码）",
       "effect": "read",
       "resource": {
         "kind": "feishu_bot",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -4873,7 +4897,7 @@
     },
     {
       "method": "POST",
-      "path": "/feishu-bots",
+      "path": "/projects/:project/feishu-bots",
       "key": [
         "feishu-bots",
         "create"
@@ -4884,6 +4908,18 @@
       "resource": {
         "kind": "feishu_bot",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "body": {
         "type": "object",
@@ -4983,7 +5019,7 @@
     },
     {
       "method": "PATCH",
-      "path": "/feishu-bots/:name",
+      "path": "/projects/:project/feishu-bots/:name",
       "key": [
         "feishu-bots",
         "replace-webhook"
@@ -5000,6 +5036,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5007,6 +5047,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5102,7 +5143,7 @@
     },
     {
       "method": "GET",
-      "path": "/feishu-bots/:name/references",
+      "path": "/projects/:project/feishu-bots/:name/references",
       "key": [
         "feishu-bots",
         "references"
@@ -5119,6 +5160,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5126,6 +5171,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5201,7 +5247,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/feishu-bots/:name",
+      "path": "/projects/:project/feishu-bots/:name",
       "key": [
         "feishu-bots",
         "remove"
@@ -5219,6 +5265,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5226,6 +5276,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5233,7 +5284,7 @@
     },
     {
       "method": "POST",
-      "path": "/feishu-bots/:name/test",
+      "path": "/projects/:project/feishu-bots/:name/test",
       "key": [
         "feishu-bots",
         "test"
@@ -5250,6 +5301,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5257,6 +5312,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -7337,7 +7393,7 @@
     },
     {
       "method": "GET",
-      "path": "/orchestrations",
+      "path": "/projects/:project/orchestrations",
       "key": [
         "orchestrations",
         "list"
@@ -7348,6 +7404,18 @@
       "resource": {
         "kind": "scenario",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "query": {
         "type": "object",
@@ -13808,7 +13876,7 @@
     },
     {
       "method": "POST",
-      "path": "/orchestrations",
+      "path": "/projects/:project/orchestrations",
       "key": [
         "orchestrations",
         "create"
@@ -13819,6 +13887,18 @@
       "resource": {
         "kind": "scenario",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "body": {
         "type": "object",
@@ -16986,7 +17066,7 @@
     },
     {
       "method": "GET",
-      "path": "/runs",
+      "path": "/projects/:project/runs",
       "key": [
         "runs",
         "list"
@@ -16997,6 +17077,18 @@
       "resource": {
         "kind": "run",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "query": {
         "type": "object",

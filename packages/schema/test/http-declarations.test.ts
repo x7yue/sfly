@@ -92,20 +92,20 @@ describe("契约里全部接口的声明", () => {
 			creates: "scenario",
 		});
 		// 新建、没有定位到已有资源：不写 creates
-		expect(find("POST /orchestrations")).toMatchObject({
+		expect(find("POST /projects/:project/orchestrations")).toMatchObject({
 			resource: { kind: "scenario", target: "collection" },
 		});
-		expect(find("POST /orchestrations")?.creates).toBeUndefined();
+		expect(find("POST /projects/:project/orchestrations")?.creates).toBeUndefined();
 		// 让资源（或它的一部分）不再可用
 		const removing = httpContract
 			.filter((def) => def.removes)
 			.map((def) => `${def.method} ${def.path}`);
 		expect(removing.sort()).toEqual([
 			"DELETE /account/tokens/:id",
-			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
 			"DELETE /projects/:project/agents/:name/credentials/:id",
 			"DELETE /projects/:project/dev-agents/:name",
+			"DELETE /projects/:project/feishu-bots/:name",
 			"DELETE /projects/:project/tokens/:id",
 			"POST /orchestrations/:id/archive",
 		]);
@@ -234,18 +234,6 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(at({ kind: "system", target: "global" }, "/projects/:project/things").join()).toContain(
 			"system 不属于项目",
 		);
-		// 还没有搬过去的接口登记在 projectPathPending 里，先不报。
-		const pending = broken({
-			resource: { kind: "scenario", target: "collection" },
-			path: "/things",
-			params: undefined,
-		});
-		expect(
-			checkRouteDeclarations([pending], {
-				...rulesFor(pending),
-				projectPathPending: { "GET /things": "测试" },
-			}),
-		).toEqual([]);
 	});
 
 	it("没有 summary、是空的、不止一行、太长", () => {
@@ -730,10 +718,13 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 
 	it("把 /dashboard 写成 system + global：拦住，说明写 system 就是公开，也说明怎么改", () => {
 		const wrong = withResource(dashboardApi.get, { kind: "system", target: "global" });
-		const [problem, ...rest] = problems(wrong);
-		expect(rest).toEqual([]);
+		const found = problems(wrong);
+		// 路径带项目（#488）：system 不属于项目这一条也拦住它。
+		expect(found).toHaveLength(2);
+		expect(found.join("\n")).toContain("system 不属于项目，路径里不能有 /projects/:project");
+		const problem = found.find((p) => p.includes("PATH_KINDS")) ?? "";
 		expect(problem).toContain(
-			"GET /dashboard：resource.kind 写的是 system，PATH_KINDS 里 /dashboard 对应 run",
+			"GET /projects/:project/dashboard：resource.kind 写的是 system，PATH_KINDS 里 /projects/:project/dashboard 对应 run",
 		);
 		expect(problem).toContain("声明成 system 就等于这个接口不带项目、不需要凭据（公开）");
 		expect(problem).toContain("声明写错了就改成 run");
@@ -752,7 +743,7 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 	it("写接口的 kind 写错：拦住（飞书测试消息写成 agent）", () => {
 		const wrong = withResource(feishuBotsApi.test, { kind: "agent", target: { params: "name" } });
 		expect(problems(wrong).join("\n")).toContain(
-			"resource.kind 写的是 agent，PATH_KINDS 里 /feishu-bots 对应 feishu_bot",
+			"resource.kind 写的是 agent，PATH_KINDS 里 /projects/:project/feishu-bots 对应 feishu_bot",
 		);
 	});
 
@@ -850,20 +841,12 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		const own = Object.fromEntries(
 			Object.entries(PATH_KINDS).filter(([prefix]) => ["/health", "/runs"].includes(prefix)),
 		);
-		expect(tables({ pathKinds: own, nonGetReads: {}, projectPathPending: {} })).toEqual([]);
-		expect(
-			tables({
-				pathKinds: own,
-				nonGetReads: {},
-				projectPathPending: { "GET /gone": "测试" },
-			}).join(),
-		).toContain("PROJECT_PATH_PENDING 的 GET /gone 不在契约里");
+		expect(tables({ pathKinds: own, nonGetReads: {} })).toEqual([]);
 		const cover = checkPathKindsCover({ pathKinds: own, nonGetReads: {} }).join("\n");
 		expect(cover).toContain("资源类别 scenario 在 PATH_KINDS 里没有任何路径前缀");
 		expect(cover).not.toContain("资源类别 run ");
 
 		const stale = tables({
-			projectPathPending: {},
 			pathKinds: { ...own, "/old": { kind: "run", why: "旧的" } },
 			nonGetReads: { "POST /gone": "没有这个接口", "GET /runs/:id": "不是写" },
 		}).join("\n");
@@ -872,7 +855,6 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		expect(stale).not.toContain("没有声明为只读");
 
 		const notRead = tables({
-			projectPathPending: {},
 			pathKinds: own,
 			nonGetReads: { "GET /runs/:id": "" },
 		}).join("\n");

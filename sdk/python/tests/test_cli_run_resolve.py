@@ -67,10 +67,13 @@ class FakeClient:
         assert not self.session_token, "会话令牌不问所属用户"
         return self.nickname
 
+    def in_project(self, path: str) -> str:
+        return f"/projects/default{path}"
+
     def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
         query = query or {}
         self.requests.append((path, query))
-        assert path == "/runs"
+        assert path == "/projects/default/runs"
         found = self.runs
         if not self.old and "id_prefix" in query:
             found = [r for r in found if r["id"].startswith(str(query["id_prefix"]).lower())]
@@ -143,7 +146,7 @@ def test_a_prefix_shorter_than_four_characters_says_how_many_are_needed() -> Non
 def test_the_control_plane_looks_the_prefix_up_by_id_only() -> None:
     fake = client([item(A)])
     resolve_run(fake, "3f9a")
-    assert fake.requests == [("/runs", {"id_prefix": "3f9a", "limit": 500})]
+    assert fake.requests == [("/projects/default/runs", {"id_prefix": "3f9a", "limit": 500})]
 
 
 def test_a_username_that_contains_the_prefix_does_not_make_it_ambiguous() -> None:
@@ -170,7 +173,7 @@ def test_latest_is_the_most_recent_run_the_caller_started_not_someone_elses() ->
     assert resolve_run(fake, "latest") == A
     assert resolve_run(fake, "最近") == A
     # 控制面按触发人精确筛、只要最近的一个，不用取一批再在这里筛。
-    assert fake.requests[0] == ("/runs", {"triggered_by": "alice", "limit": 1})
+    assert fake.requests[0] == ("/projects/default/runs", {"triggered_by": "alice", "limit": 1})
     assert len(fake.requests) == 2
 
 
@@ -185,8 +188,8 @@ def test_latest_against_an_old_control_plane_falls_back_to_filtering_a_batch() -
     fake = FakeClient([item(B, by="bob"), item(A, by="alice-bot"), item(C, by="alice")], old=True)
     assert resolve_run(fake, "latest") == C  # type: ignore[arg-type]
     assert fake.requests == [
-        ("/runs", {"triggered_by": "alice", "limit": 1}),
-        ("/runs", {"q": "alice", "limit": 500}),
+        ("/projects/default/runs", {"triggered_by": "alice", "limit": 1}),
+        ("/projects/default/runs", {"q": "alice", "limit": 500}),
     ]
 
 
@@ -218,7 +221,7 @@ def test_latest_with_a_session_token_is_the_sessions_latest_run() -> None:
     ]
     fake = FakeClient(runs, session_token=True, session_id=S1)
     assert resolve_run(fake, "latest") == A  # type: ignore[arg-type]
-    assert fake.requests == [("/runs", {"session_id": S1, "limit": 1})]
+    assert fake.requests == [("/projects/default/runs", {"session_id": S1, "limit": 1})]
     # 比命令行旧的控制面不认 session_id：返回的最近一次不是这个会话的，不能当成它的。
     old = FakeClient(runs, old=True, session_token=True, session_id=S1)
     with pytest.raises(CliError) as caught:

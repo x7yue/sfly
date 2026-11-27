@@ -61,14 +61,14 @@ export class ApiClient {
 	}
 
 	async createOrchestration(name: string): Promise<string> {
-		const res = await this.post("/orchestrations", { name });
+		const res = await this.post("/projects/default/orchestrations", { name });
 		expect(res.status).toBe(201);
 		return ((await res.json()) as { id: string }).id;
 	}
 
 	/** 登记一个飞书机器人（响应按 HTTP 契约解析）。 */
 	async createFeishuBot(name: string, webhookUrl: string): Promise<FeishuBotView> {
-		const res = await this.post("/feishu-bots", { name, webhook_url: webhookUrl });
+		const res = await this.post("/projects/default/feishu-bots", { name, webhook_url: webhookUrl });
 		expect(res.status, await res.clone().text()).toBe(201);
 		return feishuBotsApi.create.response.parse(await res.json());
 	}

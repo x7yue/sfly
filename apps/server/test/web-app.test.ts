@@ -62,7 +62,7 @@ describe("控制面托管前端（SPA）", () => {
 	it("/api 下的路由不回退：浏览器经 /api 调用 API，未知路由返回 JSON 404", async () => {
 		cp = await startTestControlPlane({ webDir });
 
-		const created = await cp.fetch("/api/orchestrations", {
+		const created = await cp.fetch("/api/projects/default/orchestrations", {
 			method: "POST",
 			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ name: "冒烟" }),
