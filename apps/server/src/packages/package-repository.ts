@@ -50,6 +50,8 @@ export interface PackageVersionSummary {
 
 export interface PackageSummary {
 	name: string;
+	/** 在公共项目里（#501）。 */
+	public: boolean;
 	/** 按发布时间从新到旧。 */
 	versions: PackageVersionSummary[];
 }
@@ -197,6 +199,13 @@ async function existingMessage(
 	return `${base}，不能覆盖已发布的版本`;
 }
 
+/** 一个节点包的摘要：版本按查询的顺序（发布时间从新到旧）；有版本在公共项目里时 `public` 为 true。 */
+const summaryOf = (name: string, rows: (typeof nodePackages.$inferSelect)[]): PackageSummary => ({
+	name,
+	public: rows.some((r) => r.projectId === PUBLIC_PROJECT),
+	versions: rows.map(toSummary),
+});
+
 /**
  * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
  * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
@@ -265,16 +274,9 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				.from(nodePackages)
 				.where(inArray(nodePackages.projectId, readableProjects(project)))
 				.orderBy(asc(nodePackages.name), desc(nodePackages.publishedAt));
-			const byName = new Map<string, PackageSummary>();
-			for (const row of rows) {
-				let pkg = byName.get(row.name);
-				if (!pkg) {
-					pkg = { name: row.name, versions: [] };
-					byName.set(row.name, pkg);
-				}
-				pkg.versions.push(toSummary(row));
-			}
-			return [...byName.values()];
+			const byName = new Map<string, (typeof rows)[number][]>();
+			for (const row of rows) byName.set(row.name, [...(byName.get(row.name) ?? []), row]);
+			return [...byName].map(([name, versions]) => summaryOf(name, versions));
 		},
 
 		/** 这个项目里按名字取节点包的各个版本（本项目的或公共项目的）；不存在或属于别的项目时返回 undefined。 */
@@ -289,7 +291,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 					),
 				)
 				.orderBy(desc(nodePackages.publishedAt));
-			return rows.length ? { name, versions: rows.map(toSummary) } : undefined;
+			return rows.length ? summaryOf(name, rows) : undefined;
 		},
 
 		/** 这个项目读得到的一个节点包版本；不存在或属于别的项目时返回 undefined。 */

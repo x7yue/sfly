@@ -41,6 +41,11 @@ export const PackageVersionSummary = z.object({
 
 export const PackageSummary = z.object({
 	name: z.string(),
+	/**
+	 * 在公共项目里（平台维护的标准节点包，任何项目都能用，只有平台管理员能发布，#501）；false 是本项目发布的。
+	 * 公共项目和别的项目之间不能同名，所以一个包的版本都在同一边。
+	 */
+	public: z.boolean(),
 	/** 按发布时间从新到旧。 */
 	versions: z.array(PackageVersionSummary),
 });
