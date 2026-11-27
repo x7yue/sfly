@@ -1,6 +1,7 @@
 import { focusValueText, type RunFocus, type RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 import type { ComponentProps, ComponentType } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FOCUS } from "#/lib/copy";
 import { Truncate } from "@/components/ui/truncate";
 import { AnomalyMark } from "./AnomalyNote";
@@ -43,7 +44,9 @@ const CARD: Look = {
 	title: readingLabel,
 	// 卡片是装饰，里面不放可聚焦的东西：直接截断。
 	Text: ({ className, children }) => (
-		<span className={cn("min-w-0 truncate", className)}>{children}</span>
+		<span className={cn("min-w-0 truncate", className)}>
+			<UntrustedText text={children} />
+		</span>
 	),
 	Value: ({ item }) => (
 		<>
@@ -55,7 +58,11 @@ const CARD: Look = {
 			>
 				{focusValueText(item)}
 			</span>
-			{item.unit && <span className="flex-none text-fg-3">{item.unit}</span>}
+			{item.unit && (
+				<span className="flex-none text-fg-3">
+					<UntrustedText text={item.unit} />
+				</span>
+			)}
 		</>
 	),
 	Foot: null,
@@ -68,7 +75,11 @@ const SLOT: Look = {
 	name: focusItemTitle,
 	title: () => undefined,
 	// 被截断时可以聚焦看全文。
-	Text: ({ className, children }) => <Truncate className={className}>{children}</Truncate>,
+	Text: ({ className, children }) => (
+		<Truncate untrusted className={className}>
+			{children}
+		</Truncate>
+	),
 	Value: ({ item }) => <FocusValue item={item} className="text-xs font-normal" />,
 	Foot: ({ item, generatedAt, mode }) => {
 		const reason = anomalyText(item, generatedAt);

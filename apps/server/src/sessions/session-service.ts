@@ -43,6 +43,22 @@ const rejected = (status: 409 | 503, code: SessionErrorCode, message: string): O
 	message,
 });
 
+/**
+ * 会话建于登录之前（没有发起人的用户，签发不了会话令牌）：不能再开始新的一轮（#547）。这样的会话只在开发和评测环境里有
+ * （#494 之前建会话不要凭据）。
+ */
+export const PREDATES_LOGIN_MESSAGE = "这个会话建于登录之前，请新建一个会话";
+const predatesLogin = () => rejected(409, "session_predates_login", PREDATES_LOGIN_MESSAGE);
+
+/**
+ * 这一轮开始时签发的会话令牌的原值。存储层在这一轮开始的事务里签发，会话有发起人的用户就一定有；没有是调用方先该拦住的
+ * （建会话要带凭据、`say` 和 `#promote` 先看会话有没有发起人），到这里没有是代码错了，不是请求的错。
+ */
+function turnToken(token: string | undefined): string {
+	if (token === undefined) throw new Error("这一轮开始时没有签发会话令牌：会话没有发起人的用户");
+	return token;
+}
+
 /** 工作区在工作台上的路径。 */
 const WORKDIR = "/work";
 
@@ -103,8 +119,8 @@ export function titleOf(text: string): string {
 /**
  * 一个「在做」的会话多久没有持久事件，就当作这一轮中断了（毫秒）：一轮最长 20 分钟（#540），留出余量。
  * 控制面崩溃或重启、助手服务没有回话时，没有人会写这一轮的 `turn_end`，会话永远停在「在做」，
- * 这个项目就再也开不了新的一轮（同一个项目同一时刻只跑一轮）：这是兜底；断线之后的续传和助手服务重启之后的
- * 中断处理是 #545。
+ * 这个项目就再也开不了新的一轮（同一个项目同一时刻只跑一轮）：这是兜底。断线之后的续传和助手服务重启之后的中断由事件连接的
+ * `hello` 处理（#545，{@link SessionService.assistantRestarted}）；**事件连接连不上的时候兜底不动**：连不上不等于这一轮没在做。
  */
 export const STALE_TURN_MS = 30 * 60 * 1000;
 
@@ -117,6 +133,21 @@ export const STALE_TURN_MS = 30 * 60 * 1000;
  * 一句，助手服务那边上一轮还挂着。在做的会话点停止的响应最坏是这个时间，平时助手服务很快带回结局，马上返回。
  */
 export const STOP_GRACE_MS = ASSISTANT_STOP_WAIT_MS;
+
+/** 助手服务重启了，在做的会话补的 `interrupted` 的原因（协议和 #545 写定的这一句）。 */
+export const ASSISTANT_RESTARTED_REASON =
+	"助手服务重启了；工作区和已经触发的运行不受影响，说一句话可以接着做";
+
+/** 控制面和助手服务断开太久、错过的事件已经补不回来时，在做的会话里写的 `events_lost` 提示。 */
+export const EVENTS_LOST_MESSAGE = "控制面和助手服务断开太久，这一段过程没有记下";
+
+/**
+ * 控制面和助手服务的事件流还没连上（刚启动、或断了正在退避重连，间隔 1 到 30 秒）时，就绪状态和新的一轮写的说明（#545）：这时开始一轮的话，
+ * 助手服务发出的事件到不了控制面（持久的事件之后靠续传补回，但增量、工具输出这些不持久的就丢了），时间线上这一轮会缺东西
+ * （#760 审查在离线整套里碰到过：这一轮没有工具调用）。所以事件流连上之前不开始新的一轮，就绪状态写助手服务连不上。
+ */
+export const EVENTS_NOT_CONNECTED_MESSAGE =
+	"助手服务的事件流还没有连上（控制面刚启动或正在重新连接），过几秒再试";
 
 /** 关闭时最多等后台的事收尾多久（毫秒）：它们在放弃等待，只有正在发出去的命令要等它回来或超时。 */
 export const CLOSE_DRAIN_MS = 500;
@@ -140,8 +171,15 @@ export interface SessionServiceDeps {
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
 	/**
-	 * 会话结束（会话已经改成 `ended`、`session_ended` 已经写下）之后调用：会话令牌合入之后在这里吊销这个会话的令牌
-	 * （#544 留好的接口，谁后合入谁接上）。尽力而为，抛的错只进日志，不影响结束。
+	 * 控制面和助手服务的事件连接此刻连着没有（`AssistantConnection.connected`，没有配置助手服务时不传）。连不上期间助手服务那边
+	 * 这一轮可能还在做，安静不是出事了：兜底（{@link SessionService.expireStale}）这时不把在做的会话判成中断，等连上之后由 `hello` 说了算
+	 * （{@link SessionService.assistantRestarted}、{@link SessionService.assistantEventsLost}）。**没连上时也不开始新的一轮**：就绪状态写助手服务
+	 * 连不上、建会话和说话 503 `assistant_unavailable`（{@link EVENTS_NOT_CONNECTED_MESSAGE}）：这时助手服务发出的增量、工具输出到不了控制面。
+	 */
+	assistantConnected?: () => boolean;
+	/**
+	 * 会话结束（会话已经改成 `ended`、`session_ended` 已经写下）之后调用（#544 留好的接口）：尽力而为，抛的错只进日志，不影响结束。
+	 * 会话令牌的吊销不在这里：它在会话结束的事务里（{@link SessionStore.end}，#547），不靠一个事后的回调。
 	 */
 	onEnded?: (session: SessionRow) => Promise<void>;
 	/**
@@ -217,6 +255,12 @@ export class SessionService {
 	/** 等某个会话这一轮的结局的人（{@link SessionService.#settled}）：结局写下（`onTurnEnd`）和关闭时唤醒，不靠轮询。 */
 	readonly #waiters = new Map<string, Set<() => void>>();
 
+	/**
+	 * 事件连接最近一次连上（`hello` 处理完）的时刻（毫秒，控制面的时钟）：兜底的 30 分钟从它算起（{@link SessionService.expireStale}）。
+	 * 没连上过（或没有配置助手服务）时是 undefined。
+	 */
+	#connectedAt: number | undefined;
+
 	/** 控制面在关闭：后台的「补发中止、等结局」放弃等待，不为它们延长关闭的上限，也不在关闭时自己补结局。 */
 	#closing = false;
 
@@ -263,6 +307,11 @@ export class SessionService {
 	}
 
 	// ---- 就绪状态 ----
+
+	/** 事件流此刻连着没有；没有登记「事件连接状态」的（没有配置助手服务、或测试里没给）当作连着。 */
+	#eventsConnected(): boolean {
+		return this.deps.assistantConnected?.() ?? true;
+	}
 
 	/**
 	 * 助手服务的 `/health`（缓存 {@link HEALTH_TTL_MS}，最多等 {@link HEALTH_TIMEOUT_MS}，同时来的请求共用一次）；
@@ -338,8 +387,8 @@ export class SessionService {
 	}
 
 	/**
-	 * 助手此刻能不能用（每次列出会话时算一次）：没配地址或密钥、助手服务连不上（`/health` 不通）、没设置工作台、
-	 * 工作台不在线，原因都列出来；`workbench` 是设置的工作台的名字。模型的两项是 #548。
+	 * 助手此刻能不能用（每次列出会话时算一次）：没配地址或密钥、助手服务连不上（`/health` 不通）、模型没有配置或连不上
+	 * （助手服务的 `/health` 里的 `model`，#548）、没设置工作台、工作台不在线，原因都列出来；`workbench` 是设置的工作台的名字。
 	 */
 	async readiness(project: ProjectId): Promise<Readiness> {
 		const { setup } = this.deps;
@@ -350,6 +399,12 @@ export class SessionService {
 			const health = await this.#assistantHealth();
 			if ("error" in health) {
 				problems.push({ kind: "assistant_unreachable", message: health.error });
+			} else if (!this.#eventsConnected()) {
+				// `/health` 通、事件流没连上：控制面正在（重新）连接，这时开始的一轮会丢事件，见 {@link EVENTS_NOT_CONNECTED_MESSAGE}。
+				problems.push({ kind: "assistant_unreachable", message: EVENTS_NOT_CONNECTED_MESSAGE });
+			} else {
+				const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
+				if (model) problems.push(model);
 			}
 		}
 		const workbench = await this.#workbench(project);
@@ -363,7 +418,11 @@ export class SessionService {
 
 	// ---- 写 ----
 
-	/** 写接口的前提：助手配置好了（没配是 503 `assistant_not_configured`）、有可用的工作台（没有是 503 `assistant_unavailable`）。 */
+	/**
+	 * 写接口的前提：助手配置好了（没配是 503 `assistant_not_configured`）、有可用的工作台（没有是 503 `assistant_unavailable`）、
+	 * 模型没有问题（助手服务的 `/health` 说没有配置或连不上，是 503 `model_unavailable`，写明原因，#548）：这三种都在写任何东西之前挡掉，
+	 * 不建会话、不写 `user_message`。助手服务的 `/health` 问不通时不拦：交给后面的 `prompt` 去失败，照旧报 `assistant_unavailable`。
+	 */
 	async #ready(
 		project: ProjectId,
 	): Promise<Outcome<{ client: AssistantClient; target: WorkbenchTarget }>> {
@@ -375,9 +434,24 @@ export class SessionService {
 				`助手没有开启：${setup.configured ? "" : setup.reason}`,
 			);
 		}
+		// 事件流没连上：不开始新的一轮（建会话、对空闲的会话说话、排队的轮到它都先过这里），不建会话、不写 `user_message`。
+		// 说明和就绪状态一致：助手服务的 `/health` 不通时写它不通的原因（密钥不一致、连不上……），通的话才写事件流还没连上。
+		if (!this.#eventsConnected()) {
+			const health = await this.#assistantHealth();
+			return rejected(
+				503,
+				"assistant_unavailable",
+				"error" in health ? health.error : EVENTS_NOT_CONNECTED_MESSAGE,
+			);
+		}
 		const workbench = await this.#workbench(project);
 		if ("problem" in workbench) {
 			return rejected(503, "assistant_unavailable", workbench.problem.message);
+		}
+		const health = await this.#assistantHealth();
+		if (!("error" in health)) {
+			const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
+			if (model) return rejected(503, "model_unavailable", model.message);
 		}
 		return { ok: true, value: { client, target: workbench.target } };
 	}
@@ -389,6 +463,9 @@ export class SessionService {
 	 */
 	async create(project: ProjectId, actor: Actor, text: string): Promise<Outcome<SessionRow>> {
 		const { sessions } = this.deps;
+		// 建会话要有发起人的用户（会话令牌代他干活，`created_by_user_id` 从凭据取）：路由在这之前已经对不带凭据的请求回 401，
+		// 到这里没有用户是调用方的错，不是请求的错。
+		if (actor.userId === null) throw new Error("建会话要有发起人的用户：请求要带登录或个人令牌");
 		const ready = await this.#ready(project);
 		if (!ready.ok) return ready;
 		this.#unpause(project);
@@ -412,12 +489,18 @@ export class SessionService {
 		// 才删**（{@link SessionStore.deleteUntouched}，在锁着会话那一行的事务里核对）：等结局的那段时间别人对它说的话回了 200，
 		// 不能跟着会话一起没了，更不能在那句话已经开始成第 2 轮之后删会话；**助手服务其实收下了这一轮、做了事**（这一轮里有它的事件，
 		// 包括它带回的结局）也算碰过：工作区里的改动留着，会话记录不能没；有人正在结束这个会话也不删（让结束做完）。
-		const sent = await this.#handOver(session, 1, { messageId, text, actor }, ready.value, {
-			afterFailure: async ({ endedByAssistant }) => {
-				if (endedByAssistant || this.#endings.has(session.id)) return;
-				await sessions.deleteUntouched(session.id, 1);
+		const sent = await this.#handOver(
+			session,
+			1,
+			{ messageId, text, actor, token: turnToken(created.token) },
+			ready.value,
+			{
+				afterFailure: async ({ endedByAssistant }) => {
+					if (endedByAssistant || this.#endings.has(session.id)) return;
+					await sessions.deleteUntouched(session.id, 1);
+				},
 			},
-		});
+		);
 		if (!sent.ok) return sent;
 		return { ok: true, value: (await sessions.find(session.id)) ?? session };
 	}
@@ -448,6 +531,8 @@ export class SessionService {
 					current.queuedAt !== null ||
 					this.#stopping.get(current.id) === effectiveTurn(current)
 				) {
+					// 这句话是下一轮的开头，要签发令牌：建于登录之前的会话（没有发起人的用户）不能再开始新的一轮，
+					// 由存储层在事务里判断（`noAuthor`）。
 					const behind = await sessions.queueBehind(
 						current.id,
 						userMessage(randomUUID(), actor, text),
@@ -456,6 +541,7 @@ export class SessionService {
 						await this.#announceQueue(current.projectId);
 						return { ok: true, value: { seq: behind.event.seq } };
 					}
+					if (behind.noAuthor) return predatesLogin();
 					if (behind.already) {
 						return rejected(409, "session_queued", "这个会话在排队，等开始之后再说，或者先停止");
 					}
@@ -480,7 +566,7 @@ export class SessionService {
 					const sent = await this.#handOver(
 						session,
 						begun.turn,
-						{ messageId, text, actor },
+						{ messageId, text, actor, token: turnToken(begun.token) },
 						ready.value,
 					);
 					if (!sent.ok) return sent;
@@ -489,6 +575,10 @@ export class SessionService {
 				case "queued":
 					await this.#announceQueue(session.projectId);
 					return { ok: true, value: { seq: begun.events[0]?.seq ?? 0 } };
+				case "no_author":
+					// 建于登录之前的会话（没有发起人的用户，签发不了令牌）不能再开始新的一轮，要新建一个会话；在存储层的事务里判断，
+					// 排队中、已结束的会话照常走下面的 409。
+					return predatesLogin();
 				case "refused":
 					if (begun.status === "running") continue;
 					if (begun.status === "ended") {
@@ -590,6 +680,13 @@ export class SessionService {
 			);
 			return;
 		}
+		// 模型没有配置或连不上（#548）：队首不白失败一次，留在队里等模型好了（兜底的扫描每分钟再来）。`#ready` 看的是缓存的 `/health`，
+		// 缓存里的「能用」可能已经过期，这里用刚问的这一份再看一次。
+		const model = modelProblem(health.health.model, this.deps.clock.now().getTime());
+		if (model) {
+			this.deps.log?.(`项目 ${project} 里排队的会话先不开始：${model.message}`);
+			return;
+		}
 		// 不开始的：控制面在关闭（这一次是关闭之前开始的、还在路上）、这个项目暂停着（队首刚没开始成：结局触发的开始和兜底扫描触发的开始
 		// 可以同时在跑，后跑的那次走到这里时项目已经暂停）、这个会话正在结束（{@link SessionService.#endings}，排在它后面的照常）。
 		// 在会话的串行链上、开始之前再看一次。
@@ -603,7 +700,23 @@ export class SessionService {
 		await this.#announceQueue(project).catch((error) =>
 			this.deps.log?.("推送排队的位置失败", error),
 		);
-		const { session, turn, message } = promoted;
+		const { session, turn, message, token } = promoted;
+		// 排队中的会话建于登录之前（没有发起人的用户）：签发不了这一轮的令牌，这一轮按失败结束，让排在后面的有机会
+		// （结局写下触发下一个开始）。只发生在开发和评测环境里的旧会话。
+		if (token === undefined) {
+			// 这一轮的「插话等 202」的门不会有 202 了：摘掉；留着的插话由这条结局补 `steer_dropped`。
+			if (this.#handOvers.get(session.id)?.turn === turn) this.#handOvers.delete(session.id);
+			await sessions.appendTurnEnd(session.id, {
+				type: "turn_end",
+				turn,
+				outcome: "failed",
+				reason: PREDATES_LOGIN_MESSAGE,
+				steps: 0,
+				model_calls: 0,
+				duration_ms: 0,
+			});
+			return;
+		}
 		const actor: Actor = {
 			nickname: message.author,
 			via: null,
@@ -615,7 +728,7 @@ export class SessionService {
 		await this.#handOver(
 			session,
 			turn,
-			{ messageId: message.message_id, text: message.text, actor },
+			{ messageId: message.message_id, text: message.text, actor, token },
 			ready.value,
 			{ fromQueue: true },
 		);
@@ -641,19 +754,19 @@ export class SessionService {
 	/**
 	 * 给项目里每个排队的会话推一条 `turn_queued`（不持久）：排第几、在等哪个会话和它的发起人。「排队的」包括排队中的，和停止途中说了话、
 	 * 排在这一轮后面的在做的会话（{@link SessionStore.queueOrder}，按说话的时刻排）。队列变化时调用（有会话排上队、有会话被停止或
-	 * 结束、排队的开始了）。没有会话在做时不推：它们在等开始，开始那一刻再推。
+	 * 结束、排队的开始了）。**项目里没有会话在做时也推，`waiting_for` 是 null**（#545：排队的会话在等助手服务或工作台恢复、等下一次
+	 * 开始，没有「在等谁」可写；以前这时不推，别的标签页和别的人要等这一轮开始才看得到）。
+	 * **它不在会话的链上**（读库、发布都在链外）：事件流的快照取的排位可能比它新发布的 `turn_queued` 旧（见 `SessionStore.follow` 里的
+	 * 已知边界）：只影响排位，到下一次队列变化纠正。
 	 */
 	async #announceQueue(project: ProjectId): Promise<void> {
 		const { sessions } = this.deps;
 		const queued = await sessions.queueOrder(project);
 		if (queued.length === 0) return;
 		const running = await sessions.running(project);
-		if (!running) return;
-		const waitingFor = {
-			session_id: running.id,
-			title: running.title,
-			created_by: running.createdBy,
-		};
+		const waitingFor = running
+			? { session_id: running.id, title: running.title, created_by: running.createdBy }
+			: null;
 		for (const [index, row] of queued.entries()) {
 			sessions.publish(row.id, {
 				type: "turn_queued",
@@ -665,20 +778,12 @@ export class SessionService {
 
 	/**
 	 * 排队的会话排第几和在等谁（接口的会话视图用）；没有排队时都是 null。「排队的」见 {@link SessionService.#announceQueue}：停止途中
-	 * 说了话的在做的会话也有名次（在等的是它自己正在停止的这一轮）。
+	 * 说了话的在做的会话也有名次（在等的是它自己正在停止的这一轮）。和 `turn_queued`、快照同一个算法（{@link SessionStore.queueState}）。
 	 */
 	async queueInfo(
 		row: SessionRow,
 	): Promise<{ position: number | null; waitingFor: SessionView["waiting_for"] }> {
-		if (row.queuedAt === null) return { position: null, waitingFor: null };
-		const { sessions } = this.deps;
-		const running = await sessions.running(row.projectId);
-		return {
-			position: await sessions.queuePosition(row),
-			waitingFor: running
-				? { session_id: running.id, title: running.title, created_by: running.createdBy }
-				: null,
-		};
+		return this.deps.sessions.queueState(row);
 	}
 
 	/** 设上这一轮「插话等 202」的门（会话刚变成在做，存储层在提交之后、释放链之前调用）。 */
@@ -704,7 +809,7 @@ export class SessionService {
 	async #handOver(
 		session: SessionRow,
 		turn: number,
-		message: { messageId: string; text: string; actor: Actor },
+		message: { messageId: string; text: string; actor: Actor; token: string },
 		ready: { client: AssistantClient; target: WorkbenchTarget },
 		options: {
 			/** 这一轮是从队里开始的：确定没开始、原因是连不上助手服务或 503 时，这个项目不接着开始下一个（{@link SessionService.#paused}）。 */
@@ -743,7 +848,7 @@ export class SessionService {
 				text: message.text,
 				session: { title: session.title, created_by: session.createdBy },
 				workbench: ready.target,
-				...commandEnv(message.actor),
+				...commandEnv(message.actor, message.token),
 			});
 		} catch (error) {
 			// 下面三步是同步的，中间没有别的请求插进来：摘下留着插话的地方（之后新来的插话直接转发）、取走已经留着的、结果未知的标成正在停止。
@@ -797,7 +902,14 @@ export class SessionService {
 	 */
 	async expireStale(): Promise<number> {
 		const { sessions, clock } = this.deps;
-		const stale = await sessions.staleRunning(new Date(clock.now().getTime() - STALE_TURN_MS));
+		// 连不上助手服务：安静是正常的，不判中断（见 `SessionServiceDeps.assistantConnected`）。
+		if (this.deps.assistantConnected && !this.deps.assistantConnected()) return 0;
+		const before = clock.now().getTime() - STALE_TURN_MS;
+		// 30 分钟按 max(最近的动静, 事件连接最近一次连上的时刻) 算：控制面停机很久（或断开很久）之后连上，助手服务那边这一段时间里做完的事件
+		// 还在补发的路上，会话的 `last_activity_at` 因此是旧的，不能在连上的下一刻就把它们判成中断，补发的结局随后又因为这一轮已经结束被丢掉
+		// （#764 审查的探针 P2）。连上之后 30 分钟内没有会话会被判中断；一轮最长 20 分钟，助手服务自己会结束它。
+		if (this.#connectedAt !== undefined && this.#connectedAt >= before) return 0;
+		const stale = await sessions.staleRunning(new Date(before));
 		for (const session of stale) {
 			await this.#endTurn(
 				session,
@@ -807,6 +919,53 @@ export class SessionService {
 			);
 		}
 		return stale.length;
+	}
+
+	/**
+	 * 事件连接连上了（`hello` 处理完、`AssistantConnection.connected` 已经是真，每次连上都调，包括控制面刚启动的第一次）：记下时刻，
+	 * 再开始排队的会话。事件流没连上时不开始新的一轮（{@link EVENTS_NOT_CONNECTED_MESSAGE}），所以控制面启动时的 `startWaiting`、
+	 * 助手服务重启补结局触发的开始都发生在连上之前，被挡掉了；这里补一次，不让它们等一分钟后兜底的扫描。
+	 */
+	async onAssistantConnected(): Promise<void> {
+		this.#connectedAt = this.deps.clock.now().getTime();
+		await this.startWaiting();
+	}
+
+	/**
+	 * 助手服务重启了（事件连接的 `hello` 里的纪元和控制面记着的不同，#545）：pi 进程随助手服务结束，这些会话这一轮没有人会带回结局。
+	 * `candidates` 是连接断开那一刻在做的会话（会话 → 轮次）：只结束其中**还是同一轮**的——连接断开之后才开始的一轮是在新的助手服务上
+	 * 开始的（用户在助手服务回来、事件连接还没重连上的这段时间说了话），它没有被打断。没有 `candidates`（不知道）时一个也不结束，
+	 * 留给兜底。每个会话补一条 `interrupted` 的 `turn_end`、改回空闲（和一般的 `turn_end` 一样先为没有确认送到的插话补
+	 * `steer_dropped`），排队的接着开始（`onTurnEnd`，按 #544 的规则）；工作区和已经触发的运行不受影响，说一句话可以接着做。
+	 * 返回结束了几个。
+	 */
+	async assistantRestarted(candidates: ReadonlyMap<string, number> | undefined): Promise<number> {
+		if (candidates === undefined) return 0;
+		let ended = 0;
+		for (const session of await this.deps.sessions.allRunning()) {
+			const turn = effectiveTurn(session);
+			if (candidates.get(session.id) !== turn) continue;
+			await this.#endTurn(session, turn, "interrupted", ASSISTANT_RESTARTED_REASON);
+			ended++;
+		}
+		return ended;
+	}
+
+	/**
+	 * 控制面和助手服务断开太久，错过的事件已经被助手服务挤出了缓冲（纪元相同、`hello.gap` 为真，#545）：在做的会话各补一条
+	 * `events_lost` 的提示，照常接着收。返回写了几条。
+	 */
+	async assistantEventsLost(): Promise<number> {
+		let written = 0;
+		for (const session of await this.deps.sessions.allRunning()) {
+			await this.deps.sessions.append(session.id, {
+				type: "notice",
+				kind: "events_lost",
+				message: EVENTS_LOST_MESSAGE,
+			});
+			written++;
+		}
+		return written;
 	}
 
 	/**
@@ -879,7 +1038,7 @@ export class SessionService {
 	 * {@link SessionStore.end}），**写下之后**才把 `end` 发给助手服务（它结束这个会话的进程；尽力而为：连不上时会话照样已经结束，
 	 * 进程由助手服务自己回收，#545）。写下之后控制面不再为这个会话发 `prompt` 和 `steer`：助手服务不记得会话结束了，`end` 之后来的
 	 * `prompt` 它会照常做，所以先写下结束、再发 `end`，中间不会有新的一轮开始。已经结束的再调用无害（什么也不写）。
-	 * 助手没有配置时 503（和别的写一样）。结束之后调用 `onEnded`（会话令牌合入之后在那里吊销，先于 `end` 的命令：不等助手服务）。
+	 * 助手没有配置时 503（和别的写一样）。结束之后调用 `onEnded`（先于 `end` 的命令：不等助手服务；会话令牌在 `SessionStore.end` 的事务里已经吊销了）。
 	 * **一开始就把会话记成「正在结束」**（{@link SessionService.#endings}）：写下 `session_ended` 之前，不为它开始任何一轮（后台的
 	 * {@link SessionService.#promote} 跳过它，已经开始、还没发出 `prompt` 的也不发），对它说话回 409 `session_ended`，排着的话
 	 * （含刚排进来的）移出队列。**同一个会话同时只有一次结束在进行**：第二次调用等第一次的结果（两次的响应一样），不会因为自己
@@ -1097,6 +1256,39 @@ function assistantCannotStart(error: unknown): boolean {
 	if (error instanceof AssistantError) return error.status === 503;
 	if (error instanceof AssistantUnreachableError) return !error.outcomeUnknown;
 	return false;
+}
+
+/** 助手服务给的原因进就绪状态和错误说明之前截到这么长（它是助手服务自己写的一句话：文件路径、变量名、主机和端口）。 */
+const MODEL_REASON_MAX_CHARS = 300;
+
+/**
+ * 助手服务的 `/health` 里模型的状态 → 就绪状态里的一项问题（#548）：没有配置写「没有配置模型：<缺什么>」（原因是助手服务写的，
+ * 只有变量名和文件路径，没有值），连不上写「<原因>（上次检查：N 分钟前）」；没问题（含还没检查过、不知道端点）时没有。
+ */
+export function modelProblem(
+	model: AssistantHealth["model"],
+	now: number,
+): ReadinessProblem | undefined {
+	const reason = (model.reason ?? "").slice(0, MODEL_REASON_MAX_CHARS);
+	if (!model.configured) {
+		return {
+			kind: "model_not_configured",
+			message: `没有配置模型：${reason === "" ? "原因不明" : reason}`,
+		};
+	}
+	if (model.reachable !== false) return undefined;
+	const what = reason === "" ? "连不上模型端点" : reason;
+	const ago =
+		model.checked_at === null ? "" : `（上次检查：${agoText(now - Date.parse(model.checked_at))}）`;
+	return { kind: "model_unreachable", message: `${what}${ago}` };
+}
+
+/** 「N 分钟前」：不到 1 分钟写「刚才」，不到 1 小时按分钟，再久按小时。 */
+function agoText(elapsedMs: number): string {
+	const minutes = Math.floor(Math.max(0, elapsedMs) / 60_000);
+	if (minutes < 1) return "刚才";
+	if (minutes < 60) return `${minutes} 分钟前`;
+	return `${Math.floor(minutes / 60)} 小时前`;
 }
 
 /** 助手服务没接住这一轮：翻译成接口的错误码和这一轮的结局。 */

@@ -20,6 +20,7 @@ MANAGED = [
     "sdk/python/pyproject.toml",
     "sdk/python/src/sfly/__init__.py",
     "apps/server/package.json",
+    "apps/assistant/package.json",
     "packages/client/package.json",
     "packages/client/src/version.ts",
 ]
@@ -101,6 +102,21 @@ def test_set_rewrites_the_api_client_version_too(repo: Path, rel: str) -> None:
     assert version_sh(repo, "check").returncode == 0
     assert '"name": "@sfly/client"' in (repo / "packages/client/package.json").read_text()
     assert "CLIENT_VERSION" in (repo / "packages/client/src/version.ts").read_text()
+
+
+def test_the_assistant_image_reports_the_release_version(repo: Path) -> None:
+    # 助手镜像随每个版本发布，/health 报的助手服务版本读 apps/assistant/package.json（#549）：
+    # 它和别的版本号一起检查、一起改。
+    rel = "apps/assistant/package.json"
+    rewrite(repo, rel, versions(repo)[rel], "9.9.9")
+
+    failed = version_sh(repo, "check")
+    assert failed.returncode == 1
+    assert f"{rel} 的版本号是 '9.9.9'" in failed.stderr
+
+    assert version_sh(repo, "set", "1.2.3").returncode == 0
+    assert versions(repo)[rel] == "1.2.3"
+    assert '"name": "@sfly/assistant"' in (repo / rel).read_text()
 
 
 # 带 tag 的发版检查（release.yml 的 prepare job）多一条：

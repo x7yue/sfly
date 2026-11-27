@@ -1,7 +1,7 @@
 language js
 
 // 控制面往终端写东西只能走统一的出口（apps/server/src/util/output.ts，#578）：错误在那里先去掉数据库查询的参数
-// （密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
+// （密码的哈希、令牌的哈希、secret 参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
 // 助手服务同一个规矩（apps/assistant/src/output.ts，#693）：错误在那里换成一行说明（只取 message，按形状打码、截断），
 // 别处直接打印就可能把它拿到的凭据、会话里的内容、上游的错误原文带进日志。
 //
@@ -206,5 +206,5 @@ or {
 	$filename <: r".*/apps/(?:server|assistant)/src/.*",
 	$filename <: not r".*/apps/server/src/util/output\.ts",
 	$filename <: not r".*/apps/assistant/src/output\.ts",
-	register_diagnostic(span=$span, message=`[$form] 往终端写东西只能走统一的出口：控制面是 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout），错误在那里先去掉数据库查询的参数；助手服务是 apps/assistant/src/output.ts（writeLog、printError、describeError），错误在那里换成打过码、截断的一行。别处直接用 console、process.stdout、process.stderr（或者换个写法拿到它们）可能把密码的哈希、令牌的哈希、保密参数的值、会话里的内容带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。`)
+	register_diagnostic(span=$span, message=`[$form] 往终端写东西只能走统一的出口：控制面是 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout），错误在那里先去掉数据库查询的参数；助手服务是 apps/assistant/src/output.ts（writeLog、printError、describeError），错误在那里换成打过码、截断的一行。别处直接用 console、process.stdout、process.stderr（或者换个写法拿到它们）可能把密码的哈希、令牌的哈希、secret 参数的值、会话里的内容带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。`)
 }

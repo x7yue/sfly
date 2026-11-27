@@ -70,6 +70,15 @@ export class TestAccounts {
 		return id;
 	}
 
+	/** 这个登录名的用户：已经有就返回他的 ID（显示名等别的选项不改），没有就建。同一个库里几个测试辅助各自按昵称要用户时用。 */
+	async userNamed(
+		login: string,
+		options: { displayName?: string; admin?: boolean } = {},
+	): Promise<string> {
+		const { rows } = await this.#pool.query("select id from users where login_name = $1", [login]);
+		return rows[0] === undefined ? this.user(login, options) : (rows[0].id as string);
+	}
+
 	async member(project: string, userId: string, role: ProjectRole): Promise<void> {
 		await this.#pool.query(
 			`insert into project_members (project_id, user_id, role, created_at) values ($1, $2, $3, $4)

@@ -1,4 +1,6 @@
 import { cn } from "cn";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import type { completionGroups, ReferenceChoice } from "./reference-completion";
 
 /**
@@ -54,23 +56,30 @@ export function ReferenceList({
 											tabIndex={-1}
 											aria-selected={index === active}
 											className={cn(
-												"grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-xs hover:bg-raised-2",
+												"flex cursor-pointer flex-wrap items-center gap-x-2 rounded-md px-2 py-1.5 text-xs hover:bg-raised-2",
 												index === active && "bg-raised-2",
 											)}
 											onMouseDown={(e) => e.preventDefault()}
 											onClick={() => onChoose(c)}
 											onKeyDown={() => {}}
 										>
-											<span className="min-w-0 flex-1 truncate font-mono" title={c.expression}>
-												{c.expression}
+											{/* 名字比类型说明重要：放得下整行的名字不被类型说明挤短，类型说明放不下时换到下一行（靠右）。
+											    名字比整行还长时才截断（完整的在 title 里）。 */}
+											<span
+												className="max-w-full min-w-0 truncate font-mono"
+												title={untrustedPlain(c.expression)}
+											>
+												<UntrustedText text={c.expression} />
 											</span>
-											<span className="text-xs text-fg-3">{c.detail}</span>
+											<span className="ml-auto text-xs text-fg-3">
+												<UntrustedText text={c.detail} />
+											</span>
 											{c.description && (
 												<span
-													className="col-span-2 mt-0.5 line-clamp-2 text-xs text-fg-3"
-													title={c.description}
+													className="mt-0.5 line-clamp-2 basis-full text-xs text-fg-3"
+													title={untrustedPlain(c.description, "text")}
 												>
-													{c.description}
+													<UntrustedText text={c.description} mode="text" />
 												</span>
 											)}
 										</div>

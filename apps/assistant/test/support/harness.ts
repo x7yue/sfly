@@ -26,6 +26,7 @@ import { type AgentClient, type AgentOptions, connectAgent } from "../../src/age
 import { EventBus } from "../../src/bus.js";
 import type { Clock } from "../../src/clock.js";
 import { piPackage } from "../../src/launch.js";
+import { ModelHealth, type Probe } from "../../src/model-health.js";
 import { createAssistantServer } from "../../src/server.js";
 import { SessionManager, type SessionManagerOptions } from "../../src/sessions.js";
 import { eventually } from "./eventually.js";
@@ -53,6 +54,9 @@ export interface HarnessOptions {
 	/** 停止一轮时等 `agent_settled` 的时间、硬上限（测试里改短）。 */
 	abortSettleMs?: number;
 	stopWaitMs?: number;
+	/** 一轮结束时的提交、开始前整理工作区的期限（测试里改短）。 */
+	commitBudgetMs?: number;
+	prepareBudgetMs?: number;
 	/** 计时（手动推进的时钟，见 manual-clock.ts）。 */
 	clock?: Clock;
 	hostEnv?: NodeJS.ProcessEnv;
@@ -61,6 +65,18 @@ export interface HarnessOptions {
 	agentDeadlines?: AgentOptions;
 	/** 换掉助手服务拿到的工作台客户端的某几样（造工作台连接之外的错误）。 */
 	wrapAgent?: (client: AgentClient) => AgentClient;
+	/** 模型文件的内容；不给就是指向假模型的那份，`null` 是没有模型文件。 */
+	modelsFile?: string | null;
+	/** `SFLY_ASSISTANT_MODEL`，默认 `fake/fake`；`undefined` 是没设。 */
+	selectedModel?: string | undefined;
+	/** 不检查模型就绪状态（测试开始一轮之后才出的错：模型文件在检查之后才没了）。 */
+	noModelGate?: boolean;
+	/** 试连（测试里换成假的）；默认真的试连。 */
+	probe?: Probe;
+	/** 试连的间隔。 */
+	probeIntervalMs?: number;
+	/** 模型的计时（试连的定时器）；不给用真的时钟。 */
+	modelClock?: Clock;
 }
 
 export class Harness {
@@ -74,12 +90,16 @@ export class Harness {
 		readonly workdir: string,
 		readonly model: FakeModel,
 		readonly workbench: FakeWorkbench,
-		readonly sessions: SessionManager,
-		readonly bus: EventBus,
-		readonly server: Server,
+		public sessions: SessionManager,
+		/** 起 SessionManager 用的选项：{@link restart} 照它再起一个。 */
+		public managerOptions: SessionManagerOptions,
+		public bus: EventBus,
+		public server: Server,
 		readonly url: string,
 		/** 助手服务写的日志。 */
 		readonly logs: string[],
+		/** 模型的就绪状态（配没配好、连不连得上）。 */
+		readonly modelHealth: ModelHealth,
 	) {}
 
 	static async start(options: HarnessOptions = {}): Promise<Harness> {
@@ -91,24 +111,37 @@ export class Harness {
 		const model = await FakeModel.start();
 		const workbench = await FakeWorkbench.start();
 		const modelsFile = join(configDir, "models.json");
-		writeFileSync(modelsFile, modelsJson(model));
+		if (options.modelsFile !== null)
+			writeFileSync(modelsFile, options.modelsFile ?? modelsJson(model));
+		const hostEnv = options.hostEnv ?? {
+			PATH: process.env.PATH,
+			FAKE_MODEL_KEY: "fake-key",
+			SFLY_ASSISTANT_SECRET: SECRET,
+			UNRELATED: "not-for-pi",
+		};
+		const selectedModel = "selectedModel" in options ? options.selectedModel : "fake/fake";
 		const logs: string[] = [];
+		const modelHealth = new ModelHealth({
+			modelsFile,
+			model: selectedModel,
+			env: hostEnv,
+			clock: options.modelClock,
+			probe: options.probe,
+			intervalMs: options.probeIntervalMs,
+			log: (message) => logs.push(message),
+		});
 		const counts = { opened: 0, closed: 0 };
 		const bus = new EventBus();
-		const sessions = new SessionManager({
+		const managerOptions: SessionManagerOptions = {
 			dataDir,
 			modelsFile,
-			model: "fake/fake",
+			model: selectedModel,
 			piArgv: options.piArgv ?? [process.execPath, piPackage().cli],
 			extension: await extensionBundle(),
 			skillsDir,
-			hostEnv: options.hostEnv ?? {
-				PATH: process.env.PATH,
-				FAKE_MODEL_KEY: "fake-key",
-				SFLY_ASSISTANT_SECRET: SECRET,
-				UNRELATED: "not-for-pi",
-			},
+			hostEnv,
 			bus,
+			...(options.noModelGate ? {} : { modelGate: () => modelHealth.gate() }),
 			connect: (address, log) => {
 				const connected = connectAgent(address, { ...options.agentDeadlines, log });
 				const client = options.wrapAgent ? options.wrapAgent(connected) : connected;
@@ -127,15 +160,18 @@ export class Harness {
 			killGraceMs: options.killGraceMs,
 			abortSettleMs: options.abortSettleMs,
 			stopWaitMs: options.stopWaitMs,
+			commitBudgetMs: options.commitBudgetMs,
+			prepareBudgetMs: options.prepareBudgetMs,
 			clock: options.clock,
 			tmpRoot: join(root, "tmp"),
-		});
+		};
+		const sessions = new SessionManager(managerOptions);
 		const server = createAssistantServer({
 			secret: SECRET,
 			bus,
 			sessions,
 			versions: { assistant: "0.0.0-test", pi: piPackage().version },
-			modelsFile,
+			model: () => modelHealth.snapshot(),
 			log: (message) => logs.push(message),
 			heartbeatMs: options.heartbeatMs,
 		});
@@ -148,15 +184,58 @@ export class Harness {
 			model,
 			workbench,
 			sessions,
+			managerOptions,
 			bus,
 			server,
 			url,
 			logs,
+			modelHealth,
 		);
+		modelHealth.start();
 		harness.events = await EventsClient.connect(url);
 		// 计数从启动时就开始：和 SessionManager 用的是同一个对象。
 		harness.connections = counts;
 		return harness;
+	}
+
+	/**
+	 * 助手服务重启：旧的 SessionManager 退出（在做的一轮以 `interrupted` 结束，不提交），照同样的选项起一个新的（数据目录、工作台、
+	 * 事件总线都是原来的，内存里的状态没有了）。只能直接对 `sessions` 发命令（HTTP 服务还指着旧的）。
+	 */
+	async restart(): Promise<SessionManager> {
+		await this.sessions.shutdown();
+		this.sessions = new SessionManager(this.managerOptions);
+		return this.sessions;
+	}
+
+	/**
+	 * 助手服务**被杀掉再起来**（容器重启，#545）：先断开所有连接、关掉 HTTP 服务（所以旧的会话管理器收尾时发的事件到不了任何人，
+	 * 和 SIGKILL 一样），再换一个新的事件总线（新纪元，序号从头数）、新的会话管理器，在**原来的端口**上重新监听；数据目录、工作台、
+	 * 模型是原来的（pi 的会话文件还在卷上）。`events`（Harness 自己连着的那条事件流）跟着断了，要看新纪元的事件用 {@link reconnectEvents}。
+	 */
+	async restartService(): Promise<void> {
+		const port = Number(new URL(this.url).port);
+		this.events.close();
+		this.server.closeAllConnections();
+		await new Promise<void>((done) => this.server.close(() => done()));
+		await this.sessions.shutdown();
+		this.bus = new EventBus();
+		this.managerOptions = { ...this.managerOptions, bus: this.bus };
+		this.sessions = new SessionManager(this.managerOptions);
+		this.server = createAssistantServer({
+			secret: SECRET,
+			bus: this.bus,
+			sessions: this.sessions,
+			versions: { assistant: "0.0.0-test", pi: piPackage().version },
+			model: () => this.modelHealth.snapshot(),
+			log: (message) => this.logs.push(message),
+		});
+		await new Promise<void>((done) => this.server.listen(port, "127.0.0.1", done));
+	}
+
+	/** 重新连上事件流（新纪元的）。 */
+	async reconnectEvents(): Promise<void> {
+		this.events = await EventsClient.connect(this.url);
 	}
 
 	prompt(
@@ -247,6 +326,7 @@ export class Harness {
 	}
 
 	async close(): Promise<void> {
+		this.modelHealth.close();
 		this.events.close();
 		await this.sessions.shutdown();
 		this.server.closeAllConnections();

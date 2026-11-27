@@ -99,8 +99,10 @@
   {"type": "action_summary", "ts", "mono",
    "total": 120345, "marks": 2, "reported": 100000,
    "capped_ts": 1700000000000, "capped_mono": 123456789,
+   "failed": 12, "names_complete": true, "unlisted": null,
    "names": [{"name": "下单", "total": 120000, "failed": 12, "reported": 50012,
               "capped_ts": 1700000000000, "capped_mono": 123456789}],
+   "running_complete": true, "lists_trimmed": false,
    "running": [{"id", "parent", "depth", "name", "fields", "ts", "mono"}],
    "recent": [{"id", "parent", "depth", "name", "fields", "ts", "mono",
                "end_ts", "end_mono", "result", "reason"}],
@@ -121,22 +123,50 @@
     什么时候起只计数（超过 50000 个，或合计超过 100000 个以后；起点是第一个没有上报明细的动作或
     标记的时刻，动作取开始的时刻，标记取它发生的时刻），没有时是 null。失败的动作除外：超过这个
     名称的上限以后，失败的动作仍会补上明细，直到合计已满（见下面的补发）。
+  - `failed`：全部名称合计失败的动作数，包括没进 `names` 的名称的失败（`names` 里各项的 `failed`
+    加起来会少算它们）。`names_complete`：`names` 是不是全部的名称；不是时（名称超过 1000 种，
+    或名称很长、
+    名称表放不下，见下面「大小」）没进表的名称合在一起写在 `unlisted`：`{"total", "failed",
+    "reported"}`
+    （动作和标记的个数、其中失败的动作数、有明细的个数），不写名称，也不记它们有几种；都列出来了时
+    `unlisted` 是 null。`unlisted` 合在一起当作一种名称：明细同样最多 50000 个，失败的动作照常补发。
+    各名称的 `reported` 加上 `unlisted` 的 `reported` 等于外面的 `reported`。
   - `running`：正在做的动作，只有动作，没有标记。最多 50 个，优先取层级浅的、同一层级里 `id` 小的，
     列表按 `id` 排列（不一定是开始的先后，见上面 `id`；要按开始的先后用 `mono`）。每一项有 `id`、
     `parent`、`depth`、`name`、`fields`（开始时的字段加上 `note()` 补充的）、`ts`、`mono`（开始的
     时刻）。最外层（`depth` 为 0）的动作同时进行的超过 50 个时，留下的是 `id` 最小的 50 个，而
     `id` 的先后不一定是开始的先后，所以真正开始得最早的那个可能不在 `running` 里。列表里正好
     50 个时，读取方要当作可能有遗漏（最外层的、更深层的都可能漏掉）；不到 50 个时是全部正在做的
-    动作。
+    动作。`running_complete` 直接说列没列全：`running` 里是全部正在做的动作时为 true（正好 50
+    个也是），
+    超过 50 个，或者因为摘要的大小（见下面「大小」）省去了一些时为 false；旧的 SDK 没有它，
+    读取方按条数判断。
   - `recent`：最近结束的 20 个动作（任何结果），只有动作，最近结束的在前，每一项是 `running` 的
     字段再加 `end_ts`、`end_mono`（结束的时刻）、`result`、`reason`。`recent_failed`：最近失败的
     5 个，格式相同，最近失败的在前。
   - 超过上限没有明细的动作也在 `running`、`recent`、`recent_failed` 里，所以读取方会碰到没有明细的
     `id`：事件里没有它的 `action_start`，也可能没有 `action_end`。
+  - 大小：一份摘要（事件文件里的一行，含换行）序列化之后不超过 1 MiB（`sfly.actions` 的
+    `MAX_SUMMARY_BYTES`），按写出去的字节算，转义也算，不论名称、字段、失败原因写成什么样（它们在传输时各自
+    可以比显示的上限多 4096 个字符）。名称表最多占 512 KiB（`NAMES_BUDGET_BYTES`：
+    每一项按名称写出去的字节数
+    加上计数的字段算，按第一次出现的先后进表，进了就不出），放不下的名称并进 `unlisted`；
+    剩下的字节给
+    `running`、`recent`、`recent_failed`，装不下时按「`recent_failed`、`running`、`recent`」的先后留，
+    每个列表按它自己的先后一项一项装，装不下一项就停，更低优先级的列表不再装。省去了就标明：
+    `lists_trimmed` 为
+    true（三个列表里有因为大小被省去的），`running_complete` 为 false（`running` 没列全）。
+    名称几十个字符的
+    正常用法远小于这个数（1000 种名称加三个列表列满约 0.15 MiB），什么也不省。旧的 SDK
+    没有这个上界，
+    也没有这几个字段（`failed`、`names_complete`、`unlisted`、`running_complete`、`lists_trimmed`）。
   - 标记算进 `total`、`reported`、`names` 和 `capped_*`，不在 `running`、`recent`、`recent_failed`
     里。
 
 上限：每种名称最多上报 50000 个明细，全部名称合计最多 100000 个，动作和标记都算，超过以后只计数。
+摘要的 `names` 最多 1000 种，按第一次出现的先后，名称很长时更少（名称表的字节预算，见下面）；
+放不下的名称
+合在一起当作一种名称（摘要里的 `unlisted`），同样受每种名称的上限，不单独计数。
 动作超过上限时不写 `action_start` 和 `action_end`（失败的见「补发」），标记超过上限时不写 `mark`。
 
 补发：只管动作。超过每种名称的上限（50000 个）、没有上报 `action_start` 的动作，如果以失败结束，
@@ -396,6 +426,13 @@ def _shown(value: object) -> str:
     return text if len(text) <= 60 else f"<{type(value).__name__}，{len(text)} 个字符>"
 
 
+def _dumps(event: Any) -> str:
+    """事件写成一行的样子（不含换行）：字符串里的中文不转义。写入和算大小（`sfly.actions`
+    里一份摘要的
+    字节预算）用同一个函数，量出来的就是写出去的。"""
+    return json.dumps(event, ensure_ascii=False, default=str)
+
+
 class _EventWriter:
     """把事件逐行追加写入事件文件；多线程同时写也保证每行完整。"""
 
@@ -409,7 +446,7 @@ class _EventWriter:
     def write(self, event: dict[str, Any]) -> None:
         if self._path is None:
             return
-        line = (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+        line = (_dumps(event) + "\n").encode("utf-8")
         with self._lock:
             if self._fd is None:
                 self._fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
@@ -503,10 +540,14 @@ class Artifacts:
         cancelled: Callable[[], bool] | None = None,
         downloads_path: str | os.PathLike[str] | None = None,
         limit_bytes: int | None = None,
+        task_token: str | None = None,
     ) -> None:
         from pathlib import Path
 
         self._limit = limit_bytes
+        # 任务凭据（`SFLY_TASK_TOKEN`，#492）：下载产物时只对控制面给的前缀（`url` 去掉结尾的
+        # `tasks/<任务 ID>/artifacts/`）之下、后面接着 `tasks/` 的地址带，规则见 `download.py`。
+        self._task_token = task_token or None
         self._dir = Path(directory) if directory is not None else None
         self._url = url or None
         self._cancelled = cancelled
@@ -550,6 +591,8 @@ class Artifacts:
             timeout=timeout,
             local=self._local_downloads(),
             cancelled=self._cancelled or (lambda: False),
+            task_token=self._task_token,
+            control_plane_url=self._url,
         )
 
     def _local_downloads(self) -> dict[str, str]:
@@ -784,6 +827,7 @@ class Context:
             cancelled=self.cancelled,
             downloads_path=os.environ.get("SFLY_DOWNLOADS"),
             limit_bytes=artifact_limit_bytes,
+            task_token=os.environ.get("SFLY_TASK_TOKEN"),
         )
         # 指标名 → (类型, 声明的标签键)。
         self._metrics = (

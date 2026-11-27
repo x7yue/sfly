@@ -1,12 +1,33 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { Locator, Page } from "@playwright/test";
+import type { SessionEventBody } from "@sfly/schema";
 import {
 	AgentUpdateState,
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
+import { seedSession } from "../../server/test/support/sessions.js";
 import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
+import {
+	assistantMessage,
+	installSessionStream,
+	pushEvent,
+	READY,
+	sessionEnded,
+	sessionView,
+	steerDropped,
+	steerMessage,
+	steerQueue,
+	streamOpens,
+	stubSessionDetail,
+	stubSessionList,
+	turnEnd,
+	turnStarted,
+	userMessage,
+	WAITING_FOR,
+} from "./assistant-support";
 import { canvasFocusRun, openCanvasRun } from "./canvas-focus-support";
 import {
 	createEditorScenario,
@@ -43,6 +64,7 @@ import { attention, attentionRun, openOverview, overviewRun, readouts } from "./
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
+import { allItems } from "./session-timeline-support";
 import { stoppingRun } from "./stop-subflow-scenario";
 import {
 	createFeishuBot,
@@ -1156,7 +1178,7 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-zoom.png");
 	});
 
-	test("入口参数与敏感参数", async ({ page }) => {
+	test("入口参数与 secret 参数", async ({ page }) => {
 		await nodeCard(page, "entry").click();
 		await idle(page);
 		await expect(page.getByRole("group", { name: "参数 api_token" })).toBeVisible();
@@ -1372,7 +1394,16 @@ test("编排画布：引用补全里输出的说明", async ({ page, controlPlan
 	await nodeCard(page, "ping").click();
 	await page.getByRole("combobox", { name: "输入 host" }).fill("");
 	await page.keyboard.type("$");
-	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+	const list = page.getByRole("listbox", { name: "可引用的值" });
+	await expect(list).toBeVisible();
+	// 列表有最大高度，前面的入口参数（secret 参数那一行类型说明换行，更高）会把输出挤到可见区以下：
+	// 先把要拍的输出（fetch 的 status 和它后面的 report，各有一条说明）滚进可见区，并断言两条说明在视口里看得见，
+	// 不然这张图拍不到它要守的东西。
+	await list
+		.getByRole("option", { name: /nodes\.fetch\.outputs\.status/ })
+		.scrollIntoViewIfNeeded();
+	await expect(list.getByText("检查报告的文字，包含每一步的耗时")).toBeInViewport({ ratio: 1 });
+	await expect(list.getByText("HTTP 状态码")).toBeInViewport({ ratio: 1 });
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-reference-output-docs.png");
 });
@@ -2071,4 +2102,249 @@ test.describe("账号与登录", () => {
 			await expect(page).toHaveScreenshot("setup.png");
 		});
 	});
+});
+
+// ---------------------------------------------------------------- 助手页和会话页（#544）：排队、插话、结束会话
+// 会话视图和事件是拦截的（内容固定），事件流由测试推：截图里没有随机的东西。
+
+const STEER_A = "a0000000-0000-4000-8000-00000000000a";
+const STEER_B = "b0000000-0000-4000-8000-00000000000b";
+const STEER_C = "c0000000-0000-4000-8000-00000000000c";
+
+test("会话页：插话的三种状态（等待送达、已送到、没有送到）和排在这一轮后面的话", async ({
+	page,
+}) => {
+	// 有话排在这一轮后面时，会话视图里有排位（在等的是它自己正在停止的这一轮）。
+	const view = sessionView({
+		status: "running",
+		title: "给 http_check 加一个超时参数",
+		queue_position: 1,
+		waiting_for: WAITING_FOR,
+	});
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [
+		userMessage(1, "给 http_check 加一个超时参数"),
+		turnStarted(2),
+		assistantMessage(3, "我先看一下现有的节点。"),
+		steerMessage(4, STEER_A, "先别改测试"),
+		steerMessage(5, STEER_B, "再加一条日志"),
+		steerMessage(6, STEER_C, "改回原来的写法"),
+		steerDropped(7, STEER_C, "这句插话没有确认送到助手（助手服务没有及时回应），需要的话再说一次"),
+		userMessage(8, "停下来之后的话", { author: "bob" }),
+	]);
+	await page.goto(`/sessions/${view.id}`);
+	// 打开页面时在做的这一轮里的插话不知道送到了没有：之后的 steer_queue 告诉页面。事件流订阅上了再推（订阅之前推的事件就丢了）。
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
+	await pushEvent(page, steerQueue(STEER_A, STEER_B));
+	await pushEvent(page, steerQueue(STEER_B));
+	const rows = page.getByTestId("user-message");
+	await expect(rows.filter({ hasText: "先别改测试" }).getByTestId("message-delivery")).toHaveText(
+		"已送到",
+	);
+	await expect(rows.filter({ hasText: "再加一条日志" }).getByTestId("message-delivery")).toHaveText(
+		"等待送达",
+	);
+	await expect(
+		rows.filter({ hasText: "改回原来的写法" }).getByTestId("message-delivery"),
+	).toHaveText("没有送到");
+	await expect(rows.filter({ hasText: "停下来之后的话" }).getByTestId("message-role")).toHaveText(
+		"排在这一轮后面",
+	);
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-steer.png", { mask: [page.locator("time")] });
+});
+
+test("会话页：全部条目（用户的话、助手的话、工具行、平台记录、提示、各种结局、会话结束）", async ({
+	page,
+	controlPlane,
+}) => {
+	// 一屏放下整条时间线：页面是固定版面（时间线自己滚），所以把窗口拉高，而不是截整页。
+	await page.setViewportSize({ width: 1440, height: 2400 });
+	const id = await seedSession(controlPlane.database.url, {
+		title: "给 http_check 加一个超时参数",
+		status: "ended",
+		events: allItems(),
+		at: new Date("2026-01-01T00:00:00Z"),
+	});
+	await page.goto(`/sessions/${id}`);
+	await expect(page.getByTestId("session-ended")).toBeVisible();
+	// 展开三处：失败的命令（颜色码去掉、空行压掉）、编辑（差异）、提交（差异）。
+	const rows = page.getByTestId("tool-row");
+	await rows.nth(2).getByRole("button").click();
+	await rows.nth(4).getByRole("button").click();
+	await page.getByTestId("commit-row").nth(1).getByRole("button").click();
+	await expect(page.getByTestId("tool-diff")).toBeVisible();
+	// 事件和它们的时间都是写进库里的固定值（运行 ID 也是写死的），没有随机的东西，不遮。
+	await expect(page).toHaveScreenshot("session-timeline-all.png");
+});
+
+test("会话页：排队中", async ({ page }) => {
+	const view = sessionView({
+		status: "queued",
+		title: "给 http_check 加一个超时参数",
+		queue_position: 2,
+		waiting_for: WAITING_FOR,
+	});
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [userMessage(1, "给 http_check 加一个超时参数")]);
+	await page.goto(`/sessions/${view.id}`);
+	await expect(page.getByTestId("session-status")).toHaveText("排队中 · 排在第 2 位");
+	await expect(page.getByTestId("composer-blocked")).toContainText("别人在做的事（bob）正在做");
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-queued.png", { mask: [page.locator("time")] });
+});
+
+test("会话页：结束会话的确认框", async ({ page }) => {
+	const view = sessionView({ status: "running", title: "给 http_check 加一个超时参数" });
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [
+		userMessage(1, "给 http_check 加一个超时参数"),
+		turnStarted(2),
+		assistantMessage(3, "我先看一下现有的节点。"),
+	]);
+	await page.goto(`/sessions/${view.id}`);
+	await page.getByRole("button", { name: "结束会话" }).click();
+	await expect(page.getByRole("dialog", { name: "结束这个会话？" })).toBeVisible();
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-end-dialog.png", { mask: [page.locator("time")] });
+});
+
+test("会话页：会话已结束", async ({ page }) => {
+	const view = sessionView({ status: "running", title: "给 http_check 加一个超时参数" });
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [
+		userMessage(1, "给 http_check 加一个超时参数"),
+		turnStarted(2),
+		assistantMessage(3, "我先看一下现有的节点。"),
+	]);
+	await page.goto(`/sessions/${view.id}`);
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
+	await pushEvent(page, turnEnd(4, "stopped", { reason: "会话结束了" }));
+	await pushEvent(page, sessionEnded(5, "bob"));
+	await expect(page.getByTestId("session-ended")).toHaveText("会话已结束（bob）");
+	// 事件的时间来自按调用次数递增的计数器（`eventAt`），同一个 worker 里先跑了哪些用例它就不同：遮掉。
+	await expect(page).toHaveScreenshot("session-ended.png", { mask: [page.locator("time")] });
+});
+
+test("会话页：右侧的成果（提交、场景版本、运行；运行的状态跟着运行变）和时间线上平台留下的两行", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "接口巡检", scenarioUsing("agent"));
+	const done = await triggerRun(controlPlane, scenario);
+	await agent.succeed(await agent.nextAssign());
+	const running = await triggerRun(controlPlane, scenario);
+	await agent.nextAssign();
+	const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+	const events: SessionEventBody[] = [
+		{
+			type: "user_message",
+			message_id: randomUUID(),
+			text: "给 http_check 加一个超时参数，然后跑一遍巡检",
+			steer: false,
+			author: "alice",
+			author_user_id: null,
+		},
+		{ type: "turn_started", turn: 1 },
+		{
+			type: "assistant_message",
+			text: "改好了，场景也保存了，下面是两次运行。",
+			usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+		},
+		{
+			type: "platform",
+			kind: "scenario_version",
+			turn: 1,
+			scenario_id: scenario,
+			name: "接口巡检",
+			version: 2,
+		},
+		{ type: "platform", kind: "run", turn: 1, run_id: done, scenario_name: "接口巡检" },
+		{ type: "platform", kind: "run", turn: 1, run_id: running, scenario_name: "接口巡检" },
+		{
+			type: "platform",
+			kind: "commit",
+			turn: 1,
+			hash: "3f1c2ab9d0e4a5b6c7d8e9f0a1b2c3d4e5f60718",
+			files: [
+				{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+				{ path: "assets/logo.png", additions: null, deletions: null },
+			],
+			diff: "--- a/nodes/http_check.py\n+++ b/nodes/http_check.py\n@@ -1 +1 @@\n-timeout = None\n+timeout = 30\n",
+			truncated: false,
+		},
+		{
+			type: "turn_end",
+			turn: 1,
+			outcome: "completed",
+			reason: "助手已完成",
+			steps: 4,
+			model_calls: 5,
+			duration_ms: 84_000,
+		},
+	];
+	const id = await seedSession(controlPlane.database.url, {
+		title: "给 http_check 加一个超时参数",
+		status: "idle",
+		createdAt: new Date(at(0)),
+		at: new Date(at(0)),
+		events,
+	});
+	await page.goto(`/sessions/${id}`);
+	const runs = page.getByTestId("results-runs").getByTestId("result-run");
+	await expect(runs).toHaveCount(2);
+	await expect(runs.nth(0).getByTestId("result-run-status")).toHaveText("成功");
+	await expect(runs.nth(1).getByTestId("result-run-status")).toHaveText("运行中");
+	await page.getByTestId("results-commits").getByRole("button", { name: "展开看差异" }).click();
+	await expect(page).toHaveScreenshot("session-results.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("助手页：会话列表里排队中的写排在第几位", async ({ page }) => {
+	const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+	const item = (over: Record<string, unknown>) => {
+		const {
+			readiness: _readiness,
+			project: _project,
+			waiting_for: _waitingFor,
+			...listItem
+		} = sessionView(over);
+		return listItem;
+	};
+	await stubSessionList(page, READY, [
+		item({ title: "正在做的事", status: "running", created_by: "bob", last_activity_at: at(50) }),
+		item({
+			title: "排在第一位的事",
+			status: "queued",
+			created_by: "alice",
+			queue_position: 1,
+			last_activity_at: at(40),
+		}),
+		item({
+			title: "排在第二位的事",
+			status: "queued",
+			created_by: "carol",
+			queue_position: 2,
+			last_activity_at: at(30),
+		}),
+		item({
+			title: "做完了的事",
+			status: "idle",
+			created_by: "alice",
+			last_turn_outcome: "completed",
+			last_activity_at: at(20),
+		}),
+	]);
+	await page.goto("/sessions");
+	await expect(page.getByTestId("list-status")).toHaveText([
+		"在做",
+		"排队中 · 排在第 1 位",
+		"排队中 · 排在第 2 位",
+		"空闲",
+	]);
+	await expect(page).toHaveScreenshot("assistant-list-queue.png");
 });

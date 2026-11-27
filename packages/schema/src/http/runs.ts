@@ -128,14 +128,40 @@ export const QueueWaitView = z.object({
 	other_project_holders: z.number().int(),
 });
 
+/**
+ * 运行视图里一个输入或输出（一个名字到值的映射）最多内联多少字节：按数据库里存着的 JSON 文本算（打码之前），
+ * 大于它的只给大小（{@link AttemptView} 的 `inputs_omitted_bytes`、`outputs_omitted_bytes`），全文用 `GET /tasks/:id/io` 取。
+ * 刚好等于它的仍然内联。阈值是按打码之前的大小判的：大小在阈值附近时，看得出「大于还是不大于」这一点，不给别的。
+ */
+export const RUN_VIEW_IO_VALUE_LIMIT_BYTES = 16 * 1024;
+
+/**
+ * 整份运行视图（`GET /runs/:id`、运行的事件流里的每一条 `run`、触发和取消的响应）里内联的输入和输出合计最多多少字节：
+ * 按实际写进响应的字节算（打码之后的 JSON，节点层的 `outputs` 那一份也算），按固定的顺序用——链的顺序、链上节点的顺序、
+ * 节点里各次尝试的顺序（每次尝试先输入、后输出），最后是这个节点的节点层 `outputs`。某一份放不下就只给大小，
+ * 之后的一律只给大小（哪怕再短），所以响应的大小和任务数无关。
+ */
+export const RUN_VIEW_IO_TOTAL_LIMIT_BYTES = 1024 * 1024;
+
 export const AttemptView = z.object({
 	task_id: z.string(),
 	attempt: z.number().int(),
 	status: TaskStatus,
 	agent: z.string().nullable(),
-	/** 已解析的输入；派发前为 null。 */
+	/**
+	 * 已解析的输入；派发前为 null。**内容被省略时也是 null**（单个大于 {@link RUN_VIEW_IO_VALUE_LIMIT_BYTES}，或者整份视图合计已经用完
+	 * {@link RUN_VIEW_IO_TOTAL_LIMIT_BYTES}）：判断是不是被省略了只看 `inputs_omitted_bytes`，不要假定「小的一定内联」。
+	 */
 	inputs: z.record(z.string(), z.unknown()).nullable(),
+	/**
+	 * 输入被省略时，存着的大小（打码之前的字节数）**向上取整到 KiB（1024 的倍数）**，不给精确值：读取时要打码，精确的大小和打码之后的内容
+	 * 一减就露出 secret 值的长度。取整只是让大小变粗，不能完全藏住长度。**只在内容被省略时不是 null**（内容内联着、或者本来就没有输入时都是 null）。全文用 `GET /tasks/:id/io` 取。
+	 */
+	inputs_omitted_bytes: z.number().int().nullable(),
+	/** 输出；没有输出（还没结束、失败、被跳过）为 null，**内容被省略时也是 null**，规矩同 `inputs`。 */
 	outputs: z.record(z.string(), z.unknown()).nullable(),
+	/** 输出被省略时存着的大小，向上取整到 KiB；只在内容被省略时不是 null，规矩同 `inputs_omitted_bytes`。 */
+	outputs_omitted_bytes: z.number().int().nullable(),
 	error: ErrorView.nullable(),
 	queued_at: Timestamp,
 	/** 执行器启动的时间；排队、准备中为 null。 */
@@ -168,7 +194,16 @@ export const NodeRunView = z.object({
 	status: NodeStatus,
 	/** 包节点派发到的 Agent；内置节点为 null。 */
 	agent: z.string().nullable(),
+	/**
+	 * 节点的输出：最后一次尝试的输出（同那次尝试的 `outputs`）；没有输出时为 null，**被省略时也是 null**（这一份也算整份视图的合计），
+	 * 判断只看 `outputs_omitted_bytes`。
+	 */
 	outputs: z.record(z.string(), z.unknown()).nullable(),
+	/**
+	 * 节点的输出被省略时，存着的大小（最后一次尝试输出的大小，打码之前）向上取整到 KiB；只在被省略时不是 null。
+	 * 全文用 `GET /tasks/:id/io` 取，任务是 `attempts` 里最后一次尝试（`task_id`）。
+	 */
+	outputs_omitted_bytes: z.number().int().nullable(),
 	error: ErrorView.nullable(),
 	attempts: z.array(AttemptView),
 });
@@ -282,7 +317,7 @@ export const ParamDeclView = z.object({
 	default: z.unknown().optional(),
 	required: z.boolean().optional(),
 	secret: z.boolean().optional(),
-	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	/** 搭场景的人写的一行说明；secret 参数的说明照常给出，只有值打码。 */
 	description: z.string().optional(),
 });
 
@@ -300,6 +335,25 @@ export const PreflightProblem = z.object({
 	code: z.string(),
 	message: z.string(),
 	node_id: z.string().optional(),
+	/**
+	 * `secret_params_too_large` 的警告说的是哪一组值：场景里的默认值（`defaults`），或某个运行预设（`preset`，`preset_id` 是它的 ID）。
+	 * 触发表单据此只显示和当前选择有关的那一条（没选预设是默认值的，选了预设是这个预设的）。别的问题没有这个字段。
+	 * 默认值的这一条的 `preset_ids` 是 secret 值和只用默认值时完全相同的运行预设（它们没有改变 secret 值）：
+	 * 选了其中一个预设触发，用的也是这些默认值，这一条对它们同样适用。
+	 */
+	origin: z
+		.discriminatedUnion("kind", [
+			z.object({ kind: z.literal("defaults"), preset_ids: z.array(z.string()) }),
+			z.object({ kind: z.literal("preset"), preset_id: z.string() }),
+		])
+		.optional(),
+});
+
+/** 一次尝试的输入和输出的全文（`GET /tasks/:id/io`）：同运行视图里的 `inputs`、`outputs`，不省略；没有的为 null。 */
+export const TaskIoView = z.object({
+	task_id: z.string(),
+	inputs: z.record(z.string(), z.unknown()).nullable(),
+	outputs: z.record(z.string(), z.unknown()).nullable(),
 });
 
 export const runsApi = {
@@ -375,6 +429,21 @@ export const runsApi = {
 			})
 			.default({ params: {} }),
 		response: RunView,
+	}),
+	/**
+	 * 一次尝试的输入和输出的全文（打码之后）：运行视图里被省略的那些在这里取（每一次尝试的，不只是最后一次；节点层被省略的
+	 * 输出取最后一次尝试的）。单个输入、输出本来就不超过 1 MiB，响应不超过 2 MiB 多一点。任务不存在、不在自己的项目里是 404。
+	 */
+	taskIo: endpoint({
+		method: "GET",
+		path: "/tasks/:id/io",
+		summary: "读一次尝试的输入和输出的全文（运行视图里被省略的大输入、输出在这里取）",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
+		client: true,
+		key: ["runs", "taskIo"],
+		params: IdParams,
+		response: TaskIoView,
 	}),
 	/** 运行视图；实时更新见 {@link runsApi.events}。 */
 	get: endpoint({
@@ -503,6 +572,16 @@ export const LogLocate = z.object({
 	exact_seq: z.number().int().nullable(),
 });
 
+/**
+ * 任务的日志文件和数据库记的对不上（#669、#721）：只对有行写入过的任务——`missing` 文件不见了，`short` 文件比数据库记的短
+ * （被删除、截短，主机掉电——追加文件不 fsync、数据库提交了——数据库和数据目录分开恢复，保留期清理删到一半）。
+ * 文件比记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）、从没有日志的任务都不是问题。
+ */
+export const LogFileProblem = z.enum(["missing", "short"]);
+
+/** 运行页和实时流里最多列出几个有问题的任务（总数在 `file_problems_total`）：和下载的 410 `details` 一样。 */
+export const LOG_FILE_PROBLEMS_LIMIT = 20;
+
 export const LogPage = z.object({
 	task_id: z.string(),
 	/** offset：这一行在日志文件中的字节偏移。 */
@@ -518,6 +597,11 @@ export const LogPage = z.object({
 	truncated: z.boolean(),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+	/**
+	 * 这个任务的日志文件的问题（{@link LogFileProblem}）：写过日志但文件不在了（页是空的）或者比记录的短（页里只有剩下的行）；
+	 * 没有问题时、运行已过保留期（`expired` 已经说了）时为 null。每次读页都按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problem: LogFileProblem.nullable(),
 	/** 请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。 */
 	locate: LogLocate.nullable(),
 });
@@ -531,6 +615,9 @@ export const LogOrigin = z.object({
 	node_id: z.string(),
 	attempt: z.number().int(),
 });
+
+/** 日志文件有问题的任务（运行页、实时流）：来源 + 是什么问题（{@link LogFileProblem}）。 */
+export const RunLogFileProblem = LogOrigin.extend({ problem: LogFileProblem });
 
 /**
  * 合并日志里一行排序要用、行本身没有的信息（run-log-order.ts）：由控制面按这一行所在的任务填上，
@@ -624,6 +711,14 @@ export const RunLogPage = z.object({
 	truncated_tasks: z.array(LogOrigin),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+	/**
+	 * 范围（`nodes`）内日志文件有问题的任务（写过日志但文件不在了，或者比记录的短），按运行视图里的顺序，最多 {@link LOG_FILE_PROBLEMS_LIMIT}
+	 * 个；总数在 `file_problems_total`。有问题的任务页里读不到（或只读到剩下的）它的行：页面和命令行据此说明，不要当成「没有日志」。
+	 * 运行已过保留期时为空（`expired` 已经说了）。每个页都带，按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problems: z.array(RunLogFileProblem),
+	/** 范围内日志文件有问题的任务的总数（可能大于 `file_problems` 列出的个数）。 */
+	file_problems_total: z.number().int(),
 });
 
 /**
@@ -651,6 +746,15 @@ export const LogChunk = z.object({
 	offset: z.number().int(),
 });
 
+/** 任务实时流连上时说日志文件有问题（#721）：内容同分页的 `file_problem`。 */
+export const TaskLogFileProblemEvent = z.object({ file_problem: LogFileProblem });
+
+/** 运行实时流连上时说有任务的日志文件有问题（#721）：内容同运行分页的 `file_problems`、`file_problems_total`。 */
+export const RunLogFileProblemsEvent = z.object({
+	file_problems: z.array(RunLogFileProblem),
+	file_problems_total: z.number().int(),
+});
+
 export const logsApi = {
 	/** 按字节偏移分页读取一个任务的日志（服务端按级别、来源筛选）。 */
 	page: endpoint({
@@ -667,7 +771,9 @@ export const logsApi = {
 	}),
 	/**
 	 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
-	 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。
+	 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。连上时如果这个任务的日志文件有问题
+	 * （{@link LogFileProblem}），先发一条事件 `file_problem`（内容同分页的字段），之后不再发（连着期间文件才出问题的不报）；
+	 * 不认识这个事件的客户端忽略它即可（#721）。
 	 */
 	events: stream({
 		path: "/tasks/:id/logs/events",
@@ -680,9 +786,15 @@ export const logsApi = {
 			/** 已经读到的最大序号（分页响应的 `last_seq`）：只推送它之后写入的行。 */
 			after_seq: z.string().optional(),
 		}),
-		events: { logs: LogChunk },
+		events: { logs: LogChunk, file_problem: TaskLogFileProblemEvent },
 	}),
-	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
+	/**
+	 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`（说明是「保留期清理」）；有行写入过的任务日志文件
+	 * 不见了或者比数据库记的短（被删除、截短，主机掉电，数据库和数据目录分开恢复）时同样 410 `expired`，错误的 `details` 是
+	 * `{ tasks: [{ task_id, node_id, attempt, reason: "missing" | "short" }], total }`（#669）；下载进行中文件被截短时响应已经开始，
+	 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时传输层看不出来（见 README「反向代理」），
+	 * 所以 200 的响应带头 {@link LOG_EXPECT_HEADER}，客户端读完核对。
+	 */
 	download: download({
 		path: "/tasks/:id/logs/download",
 		summary: "下载一个任务的完整日志（文件）",
@@ -707,7 +819,9 @@ export const logsApi = {
 	}),
 	/**
 	 * 下载一次运行（范围内）合并后的日志：JSONL，每行是 {@link RunLogDownloadRow}，顺序与合并视图相同，
-	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`，运行不存在时 404。
+	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`（说明是「保留期清理」），运行不存在时 404；范围内有任务的
+	 * 日志文件不见了或者比数据库记的短时同样 410 `expired`，错误的 `details` 同上（列出是哪几个任务）；下载进行中出现这种情况时响应
+	 * 已经开始，连接被断开（#669；看不看得出没下完同上）。
 	 */
 	runDownload: download({
 		path: "/runs/:id/logs/download",
@@ -727,6 +841,9 @@ export const logsApi = {
 	 *   （API 客户端的订阅自动带上），控制面只补发之后的行，不重复也不遗漏。
 	 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
 	 *
+	 * 连上时如果范围内有任务的日志文件有问题（{@link LogFileProblem}），先发一条事件 `file_problems`（内容同分页的字段），之后不再发；
+	 * 不认识这个事件的客户端忽略它即可（#721）。
+	 *
 	 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
 	 */
 	runEvents: stream({
@@ -742,7 +859,11 @@ export const logsApi = {
 			...RunLogScopeQuery.shape,
 			...RunLogLevelQuery.shape,
 		}),
-		events: { logs: RunLogChunk, reload: z.object({}) },
+		events: {
+			logs: RunLogChunk,
+			reload: z.object({}),
+			file_problems: RunLogFileProblemsEvent,
+		},
 	}),
 };
 
@@ -758,6 +879,20 @@ export const ArtifactView = z.object({
 	/** 对 Agent 可见的完整下载地址（节点输出里的产物引用）；浏览器用 `/api/tasks/:id/artifacts/<name>`。 */
 	url: z.string(),
 });
+
+/**
+ * 日志下载的响应头（#721）：`tasks=<m>; last_seq_sum=<S>`——这次下载范围内有日志的任务数 `m`，和它们各自最后一个序号（数据库记的
+ * `log_seq`）之和 `S`。「读的过程中文件被截短、连接被断开」（#669）要靠传输层传到客户端，反向代理用 HTTP/1.0 连控制面时看不出来；
+ * 有了它，客户端读完后按任务记下读到的最大序号，任务数或合计比头里的少就是没下完，不靠传输层。
+ * - 大小固定（几十个字节），和任务个数无关：逐任务列「任务:序号」，几百个任务就几 KB，超过 nginx 默认的 `proxy_buffer_size`（4 KB 或
+ *   8 KB）会回 502。
+ * - 合计的是最后一个序号，不是行数：序号不是一行一个、连续的（Agent 断线排队时丢弃的行在文件里留序号缺口）。
+ * - 每一行带自己的序号：按运行下载只读到请求那一刻的快照，读到的每个任务的最大序号不会超过它的 `log_seq`，所以合计相等当且仅当每个
+ *   任务的最后一行都读到了（运行还在写时也一样）；任务下载读到文件此刻的内容，读到的只会不少于。
+ * 只在 200 的响应里有；从没有日志的任务（没有行写入过）是 `tasks=0; last_seq_sum=0`。旧的控制面没有这个头：客户端不核对。
+ * 浏览器的下载是普通下载，不核对。
+ */
+export const LOG_EXPECT_HEADER = "x-sfly-log-expect";
 
 /** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版本 Agent 不带。 */
 export const AGENT_MODIFIED_MS_HEADER = "x-sfly-agent-modified-ms";
@@ -828,6 +963,7 @@ export type TaskProgressView = z.infer<typeof TaskProgressView>;
 export type SlotHolderView = z.infer<typeof SlotHolderView>;
 export type QueueWaitView = z.infer<typeof QueueWaitView>;
 export type AttemptView = z.infer<typeof AttemptView>;
+export type TaskIoView = z.infer<typeof TaskIoView>;
 export type NodeRunView = z.infer<typeof NodeRunView>;
 export type ChainRunView = z.infer<typeof ChainRunView>;
 export type RunNotificationState = z.infer<typeof RunNotificationState>;
@@ -841,6 +977,8 @@ export type LogLineView = z.infer<typeof LogLineView>;
 export type LogLocate = z.infer<typeof LogLocate>;
 export type LogPage = z.infer<typeof LogPage>;
 export type LogChunk = z.infer<typeof LogChunk>;
+export type LogFileProblem = z.infer<typeof LogFileProblem>;
+export type RunLogFileProblem = z.infer<typeof RunLogFileProblem>;
 export type LogOrigin = z.infer<typeof LogOrigin>;
 export type RunLogTaskOrder = z.infer<typeof RunLogTaskOrder>;
 export type RunLogLine = z.infer<typeof RunLogLine>;

@@ -1,6 +1,8 @@
 import { cn } from "cn";
 import { activityLabel, type CurrentActivity } from "#/actions/current-activity";
 import { Elapsed } from "#/components/elapsed";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { LOD_HIDDEN, ZOOM_TEXT_12 } from "./zoom-text";
 
 /**
@@ -30,10 +32,10 @@ export function ActivityLine({
 			)}
 		>
 			<span id={id} className="sr-only">
-				{activityLabel(activity)}
+				{untrustedPlain(activityLabel(activity))}
 			</span>
 			<span className="min-w-0 truncate">
-				{activity.kind === "action" ? activity.name : activity.message}
+				<UntrustedText text={activity.kind === "action" ? activity.name : activity.message} />
 			</span>
 			{activity.kind === "action" && (
 				<Elapsed since={activity.startedAt} className="ml-auto flex-none font-mono text-fg-3" />

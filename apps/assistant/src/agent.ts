@@ -118,7 +118,7 @@ export interface AgentOptions {
 	pingTimeoutMs?: number;
 	/**
 	 * 认不出、不放行的错误的原文写到哪里（带工作台的地址）。默认整行写到标准错误（output.ts 的 `writeLog`，不截断）：
-	 * 在 pi 里（远程工具扩展）它进 pi 的标准错误，助手服务按这个会话的保密值打码后存下（先截断会把一个值切成认不出的
+	 * 在 pi 里（远程工具扩展）它进 pi 的标准错误，助手服务按这个会话的 secret 环境变量的值打码后存下（先截断会把一个值切成认不出的
 	 * 半截）；助手服务自己用时传它的日志出口（会话里先过 `#forLog`，别处是 `writeRawLog`）。
 	 */
 	log?: (line: string) => void;
@@ -152,10 +152,14 @@ export function connectAgent(address: string, options: AgentOptions = {}) {
 	const files = createClient(AgentFiles, transport);
 	const peer = createClient(AgentPeer, transport);
 
-	/** 工作台还连不连得上：{@link PROBE_DEADLINE_MS} 之内能回 `describe`。 */
-	const reachable = async (): Promise<boolean> => {
+	/**
+	 * 工作台还连不连得上：{@link PROBE_DEADLINE_MS} 之内能回 `describe`。调用方给了 `signal`（提交的期限）时，它先到就不再等：
+	 * 探不通和被放弃都返回 false，调用方自己看它的信号。
+	 */
+	const reachable = async (outer?: AbortSignal): Promise<boolean> => {
+		const deadline = AbortSignal.timeout(probeDeadline);
 		try {
-			await peer.describe({}, { signal: AbortSignal.timeout(probeDeadline) });
+			await peer.describe({}, { signal: outer ? AbortSignal.any([outer, deadline]) : deadline });
 			return true;
 		} catch {
 			return false;

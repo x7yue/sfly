@@ -210,7 +210,7 @@ describe("场景的检查接口和版本对比接口", () => {
 	});
 
 	describe("警告分成这次改动新带进来的和改动之前就有的", () => {
-		/** 入口带一个写了默认值的保密参数，probe 节点缺必填输入 host：最新版本里就有两条警告。 */
+		/** 入口带一个写了默认值的 secret 参数，probe 节点缺必填输入 host：最新版本里就有两条警告。 */
 		const withExisting = (): Doc => {
 			const doc = baseDocument();
 			(doc.nodes[0] as { params: unknown[] }).params.push({
@@ -303,7 +303,7 @@ describe("场景的检查接口和版本对比接口", () => {
 			);
 		});
 
-		/** 入口上两个保密参数：A 写了默认值（最新版本里有一条 secret_param_default），B 没有。 */
+		/** 入口上两个 secret 参数：A 写了默认值（最新版本里有一条 secret_param_default），B 没有。 */
 		const twoSecrets = (): Doc => {
 			const doc = baseDocument();
 			(doc.nodes[0] as { params: unknown[] }).params = [

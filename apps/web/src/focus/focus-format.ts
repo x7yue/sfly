@@ -15,6 +15,7 @@ import {
 	TERM,
 } from "#/lib/copy";
 import { formatClock, formatElapsed } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 
 /**
  * 一次运行没有可显示的读数时写什么：没设关注项时，有执行中（含准备中）的节点是它们都没声明主指标，否则是没有执行中的
@@ -120,7 +121,8 @@ export function attentionSummary<T extends Pick<RunFocusItem, "anomaly" | "sourc
 ): string | null {
 	const reasons = items.flatMap((item) => {
 		const reason = anomalyText(item, generatedAt);
-		return reason === null ? [] : [`${nameOf(item)} ${reason}`];
+		// 可访问名称是纯文字：名称是别人写的，先写出看不见的字符。
+		return reason === null ? [] : [`${untrustedPlain(nameOf(item))} ${reason}`];
 	});
 	return reasons.length === 0
 		? null
@@ -145,7 +147,10 @@ export function readingFoot(item: RunFocusItem, generatedAt: string, runEnded = 
 	return item.unavailable ? node : `${node} · ${readingWhen(item, generatedAt, runEnded)}`;
 }
 
-/** 最新值连同序列名和单位的一行文字：「p99_ms 21.4 ms」「16」；读数的可访问名称和「需要注意」用它。 */
+/**
+ * 最新值连同序列名和单位的一行文字：「p99_ms 21.4 ms」「16」；读数的可访问名称和「需要注意」用它。
+ * 序列名和单位是别人写的，这里是原文：显示时过 `UntrustedText`，放进属性时过 `untrustedPlain`。
+ */
 export function readingValue(item: Pick<RunFocusItem, "latest" | "metrics" | "unit">): string {
 	const series = focusLatestSeriesName(item);
 	return `${series ? `${series} ` : ""}${focusValueText(item)}${item.unit ? ` ${item.unit}` : ""}`;
@@ -160,8 +165,10 @@ export function readingLabel(item: RunFocusItem, generatedAt: string, runEnded =
 	const origin = `来自 ${sourceNodeName(item)}（${status}）`;
 	const reason = anomalyText(item, generatedAt);
 	const attention = reason === null ? "" : `，${FOCUS.attention}：${reason}`;
+	// 名称、图表名、序列名和单位是别人写的：可访问名称是纯文字，先写出看不见的字符。
+	const title = untrustedPlain(item.title);
 	if (item.unavailable) {
-		return `${item.title}，${FOCUS.chartMissing(item.chart)}，${origin}${attention}`;
+		return `${title}，${FOCUS.chartMissing(untrustedPlain(item.chart))}，${origin}${attention}`;
 	}
-	return `${item.title} ${readingValue(item)}，${origin}${attention || `，${readingWhen(item, generatedAt, runEnded)}`}`;
+	return `${title} ${untrustedPlain(readingValue(item))}，${origin}${attention || `，${readingWhen(item, generatedAt, runEnded)}`}`;
 }

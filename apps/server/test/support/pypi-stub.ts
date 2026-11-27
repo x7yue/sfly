@@ -6,16 +6,29 @@ import { strToU8, zipSync } from "fflate";
 export interface PypiStub {
 	/** 传给 Agent 的 `--index-url`。 */
 	readonly indexUrl: string;
-	/** 收到的请求路径（按到达顺序）。 */
+	/** 收到的请求路径（按到达顺序）；要认证时只记认证通过的。 */
 	readonly requests: string[];
+	/** 要认证时，因为没有（或错了）用户名和密码被回 401 的请求数。 */
+	rejected(): number;
 	close(): Promise<void>;
 }
+
+/** 镜像要 HTTP Basic 认证（私有索引）：没带或带错的请求回 401。 */
+export interface BasicAuth {
+	user: string;
+	password: string;
+}
+
+/** 请求带了对的 Basic 凭据。 */
+export const hasBasicAuth = (header: string | undefined, auth: BasicAuth): boolean =>
+	header === `Basic ${Buffer.from(`${auth.user}:${auth.password}`).toString("base64")}`;
 
 const normalize = (name: string) => name.toLowerCase().replace(/[-_.]+/g, "-");
 
 /** 启动镜像，`wheels` 是镜像里的全部 wheel：[项目名, 文件名, 内容]。 */
 export async function startPypiStub(
 	wheels: Array<[project: string, filename: string, body: Uint8Array]>,
+	options: { auth?: BasicAuth } = {},
 ): Promise<PypiStub> {
 	const files = new Map(wheels.map(([, filename, body]) => [`/files/${filename}`, body]));
 	const pages = new Map<string, string>();
@@ -24,8 +37,14 @@ export async function startPypiStub(
 		pages.set(path, `${pages.get(path) ?? ""}<a href="/files/${filename}">${filename}</a><br/>\n`);
 	}
 	const requests: string[] = [];
+	let rejected = 0;
 	const server = createServer((req, res) => {
 		const path = (req.url ?? "/").split(/[?#]/)[0] ?? "/";
+		if (options.auth && !hasBasicAuth(req.headers.authorization, options.auth)) {
+			rejected += 1;
+			res.writeHead(401, { "www-authenticate": 'Basic realm="private index"' }).end();
+			return;
+		}
 		requests.push(path);
 		const page = pages.get(path);
 		const file = files.get(path);
@@ -44,6 +63,7 @@ export async function startPypiStub(
 	return {
 		indexUrl: `http://127.0.0.1:${port}/simple/`,
 		requests,
+		rejected: () => rejected,
 		close: () =>
 			new Promise<void>((resolve) => {
 				server.closeAllConnections();

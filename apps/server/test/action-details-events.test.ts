@@ -54,9 +54,13 @@ const EMPTY: ActionSummaryView = {
 	control_plane_capped: false,
 	capped_at: null,
 	agent_capped_at: null,
+	failed_total: 0,
 	names: [],
+	names_complete: true,
+	unlisted: null,
 	running: [],
 	running_complete: true,
+	lists_trimmed: false,
 	recent: [],
 	recent_failed: [],
 };

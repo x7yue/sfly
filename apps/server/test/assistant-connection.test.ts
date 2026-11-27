@@ -10,7 +10,7 @@ import {
 	type AssistantStreamRecord,
 	type SessionEvent,
 } from "@sfly/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/db/database.js";
 import type { ProjectId } from "../src/projects/project-id.js";
 import {
@@ -25,7 +25,8 @@ import {
 } from "../src/sessions/assistant-client.js";
 import { AssistantConnection } from "../src/sessions/assistant-connection.js";
 import { SessionService } from "../src/sessions/session-service.js";
-import { SessionStore } from "../src/sessions/session-store.js";
+import { SessionNotFoundError, SessionStore } from "../src/sessions/session-store.js";
+import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { messageId } from "./support/sessions.js";
@@ -336,6 +337,8 @@ describe("事件流：心跳和死连接检测", () => {
 				name: "x",
 				version: 1,
 			},
+			// `platform` 助手服务只发 `commit` 这一种：`run`、`scenario_version` 是控制面在记下那条记录的事务里自己写的。
+			{ type: "platform", kind: "run", turn: 1, run_id: randomUUID(), scenario_name: "x" },
 			{ type: "session_ended", by: "x" },
 			{ type: "turn_queued", position: 1, waiting_for: "x" },
 		];
@@ -358,11 +361,19 @@ describe("事件连接：核对会话和轮次", () => {
 	let testDb: TestDatabase;
 	let database: ReturnType<typeof openDatabase>;
 	let store: SessionStore;
+	/** 会话的发起人（用户）：开始一轮要签发会话令牌，没有发起人的用户的会话不开始新的一轮（#547）。 */
+	let author: string;
 
 	beforeAll(async () => {
 		testDb = await createTestDatabase();
 		database = openDatabase(testDb.url, () => {});
 		await database.migrate();
+		const accounts = new TestAccounts(testDb.url);
+		try {
+			author = await accounts.user("connection_author");
+		} finally {
+			await accounts.close();
+		}
 		store = new SessionStore({
 			db: database.db,
 			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
@@ -396,7 +407,7 @@ describe("事件连接：核对会话和轮次", () => {
 			title: "连接",
 			status: "idle",
 			createdBy: "alice",
-			createdByUserId: null,
+			createdByUserId: author,
 		});
 
 	let seq = 0;
@@ -475,7 +486,13 @@ describe("事件连接：核对会话和轮次", () => {
 		const stop = store.follow(
 			sessionId,
 			0,
-			{ emit: (e) => out.push(e), drained: () => Promise.resolve() },
+			// 补发读完切到实时的那一刻发的快照（#545）不算：这些用例看的是推给浏览器的事件有没有、对不对。
+			{
+				emit: (e) => {
+					if (e.type !== "snapshot") out.push(e);
+				},
+				drained: () => Promise.resolve(),
+			},
 			(error) => {
 				throw error;
 			},
@@ -531,6 +548,69 @@ describe("事件连接：核对会话和轮次", () => {
 		expect(joined).toContain("不是会话此刻在做的那一轮");
 		expect(joined).not.toContain("迟到的消息");
 		expect(joined).not.toContain("迟到的增量");
+	});
+
+	it("助手服务发来的 platform（commit）事件：落库（时间是助手服务盖的）、排在这一轮的 turn_end 前面、推给浏览器；被打断那一轮的补提交带上一轮的轮次、在这一轮的事件流里照样收下", async () => {
+		const project = await newProject();
+		const { id } = await newSession(project);
+		await store.beginTurn(id, project, opening);
+		const commit = (turn: number, hash: string) => ({
+			type: "platform" as const,
+			kind: "commit" as const,
+			turn,
+			hash,
+			files: [
+				{ path: "a.txt", additions: 1, deletions: 0 },
+				{ path: "logo.png", additions: null, deletions: null },
+			],
+			diff: "diff --git a/a.txt b/a.txt\n+x\n",
+			truncated: true,
+		});
+		const { out, stop } = collect(id);
+		const first = "a".repeat(40);
+		const logs = await run([
+			{ ...record(id, 1, commit(1, first)), at: "2026-01-01T00:00:07.000Z" },
+			record(id, 1, turnEnd(1)),
+		]);
+		const stored = await store.after(id, 0, 100);
+		expect(stored.map((e) => e.type)).toEqual([
+			"user_message",
+			"turn_started",
+			"platform",
+			"turn_end",
+		]);
+		expect(stored[2]).toMatchObject({
+			type: "platform",
+			kind: "commit",
+			turn: 1,
+			hash: first,
+			files: [
+				{ path: "a.txt", additions: 1, deletions: 0 },
+				{ path: "logo.png", additions: null, deletions: null },
+			],
+			diff: "diff --git a/a.txt b/a.txt\n+x\n",
+			truncated: true,
+			at: "2026-01-01T00:00:07.000Z",
+		});
+		await eventually(() => expect(out.some((e) => e.type === "platform")).toBe(true));
+
+		// 第 2 轮开始前补提交上一轮（被打断的那一轮）留下的改动：记录的轮次是 2（此刻在做的），事件里的轮次是 1。
+		await store.beginTurn(id, project, opening);
+		const second = "b".repeat(40);
+		logs.push(...(await run([record(id, 2, commit(1, second))])));
+		const left = (await store.after(id, 0, 100)).filter(
+			(e): e is Extract<typeof e, { kind: "commit" }> =>
+				e.type === "platform" && e.kind === "commit",
+		);
+		expect(left.map((e) => [e.turn, e.hash])).toEqual([
+			[1, first],
+			[1, second],
+		]);
+		// 这一轮结束之后（会话空闲）才到的不收，和别的助手事件一样。
+		await run([record(id, 2, turnEnd(2)), record(id, 2, commit(2, "c".repeat(40)))]);
+		expect((await store.after(id, 0, 100)).filter((e) => e.type === "platform")).toHaveLength(2);
+		expect(logs.join("\n")).toBe("");
+		stop();
 	});
 
 	it("空闲和已结束的会话也不收助手服务的事件：不落库、不推送、不改状态（空闲的会话收到 turn_end 不变）", async () => {
@@ -842,5 +922,258 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 	it("describeSkippedLine：认得出不是对象的行，也不写内容", () => {
 		expect(describeSkippedLine([1, 2], [])).toBe("");
 		expect(describeSkippedLine("a string", [])).toBe("");
+	});
+});
+
+describe("事件连接：连上、纪元变化时的先后、位置（#545，#764 审查）", () => {
+	let testDb: TestDatabase;
+	let database: ReturnType<typeof openDatabase>;
+	let store: SessionStore;
+	let author: string;
+
+	beforeAll(async () => {
+		testDb = await createTestDatabase();
+		database = openDatabase(testDb.url, () => {});
+		await database.migrate();
+		const accounts = new TestAccounts(testDb.url);
+		try {
+			author = await accounts.user("connection_order_author");
+		} finally {
+			await accounts.close();
+		}
+		store = new SessionStore({
+			db: database.db,
+			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+		});
+	});
+	afterAll(async () => {
+		await database.close();
+		await testDb.drop();
+	});
+
+	const opening = {
+		type: "user_message" as const,
+		message_id: messageId(1),
+		text: "一句话",
+		steer: false,
+		author: "alice",
+		author_user_id: null,
+	};
+	/** 一个在做第 1 轮的会话。 */
+	async function running(): Promise<string> {
+		const project = `o-${randomUUID().slice(0, 8)}`;
+		await database.pool.query(
+			"insert into projects (id, display_name, created_at) values ($1, $1, now())",
+			[project],
+		);
+		const { id } = await store.create({
+			project: project as ProjectId,
+			title: "先后",
+			status: "idle",
+			createdBy: "alice",
+			createdByUserId: author,
+		});
+		await store.beginTurn(id, project as ProjectId, opening);
+		return id;
+	}
+	const message = (text: string) => ({
+		type: "assistant_message" as const,
+		text,
+		usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+	});
+	/** 库里放一条带位置的助手事件（时间由测试给）。 */
+	const seed = (id: string, epoch: string, seq: number, at: string) =>
+		store.appendFromAssistant(id, 1, message(`${epoch}:${seq}`), new Date(at), { epoch, seq });
+
+	const hello = (epoch: string, gap = false): AssistantStreamLine => ({
+		type: "hello",
+		epoch,
+		gap,
+	});
+	const rec = (id: string, epoch: string, seq: number): AssistantStreamLine => ({
+		epoch,
+		seq,
+		session_id: id,
+		turn: 1,
+		at: "2026-03-01T00:00:00.000Z",
+		event: message(`${epoch}:${seq}`),
+	});
+
+	/**
+	 * 一个按剧本回应的假客户端：每次连接依次给下一份剧本（用完了就停在那里等中止），记下每次连接带的 `after`。
+	 */
+	function scripted(rounds: AssistantStreamLine[][]) {
+		const afters: Array<{ epoch: string; seq: number } | undefined> = [];
+		const client = {
+			async *events(
+				signal: AbortSignal,
+				_onSkipped: unknown,
+				after?: { epoch: string; seq: number },
+			) {
+				afters.push(after);
+				const lines = rounds.shift();
+				for (const line of lines ?? []) yield line;
+				// 后面还有剧本：这条流结束（连接重连）；没有了：停在这里等中止。
+				if (lines !== undefined && rounds.length > 0) return;
+				await new Promise<void>((resolve) =>
+					signal.addEventListener("abort", () => resolve(), { once: true }),
+				);
+			},
+		} as unknown as AssistantClient;
+		return { client, afters };
+	}
+
+	it("纪元变了（助手服务重启了）：补结局（`restarted`）发生在标成连着之前，之后才标成连着、调 `connected`（排队的因此不被「事件流没连上」挡到兜底）", async () => {
+		const id = await running();
+		await seed(id, "e-old", 1, "2026-01-01T00:00:01.000Z");
+		const steps: string[] = [];
+		let connection: AssistantConnection | undefined;
+		const { client } = scripted([[hello("e-new")]]);
+		connection = new AssistantConnection({
+			client,
+			sessions: store,
+			log: () => {},
+			reconnect: { minMs: 10, maxMs: 10 },
+			recovery: {
+				restarted: async (candidates) => {
+					steps.push(`restarted（连着：${connection?.connected}，候选：${candidates?.get(id)}）`);
+				},
+				eventsLost: async () => {
+					steps.push("eventsLost");
+				},
+				connected: async () => {
+					steps.push(`connected（连着：${connection?.connected}）`);
+				},
+			},
+		});
+		connection.start();
+		try {
+			await eventually(() => expect(steps).toHaveLength(2), 5000);
+			expect(steps).toEqual(["restarted（连着：false，候选：1）", "connected（连着：true）"]);
+		} finally {
+			await connection.close();
+		}
+	});
+
+	it("每次 hello 处理完都调 connected（第一次连、断线重连、没有缺口的重连）；hello 没处理完（出错）时不标成连着", async () => {
+		const id = await running();
+		await seed(id, "e-same", 1, "2026-01-02T00:00:01.000Z");
+		let calls = 0;
+		const { client, afters } = scripted([[hello("e-same")], [hello("e-same")]]);
+		const connection = new AssistantConnection({
+			client,
+			sessions: store,
+			log: () => {},
+			reconnect: { minMs: 10, maxMs: 10 },
+			recovery: {
+				restarted: async () => {},
+				eventsLost: async () => {},
+				connected: async () => {
+					calls++;
+				},
+			},
+		});
+		connection.start();
+		try {
+			await eventually(() => expect(calls).toBeGreaterThanOrEqual(2), 5000);
+			expect(afters[0]).toEqual({ epoch: "e-same", seq: 1 });
+		} finally {
+			await connection.close();
+		}
+		// 补结局出错（`restarted` 抛错）：这次 hello 没处理完，不标成连着、不调 connected。
+		const other = await running();
+		await seed(other, "e-a", 1, "2026-01-03T00:10:00.000Z");
+		let connectedCalls = 0;
+		const failing = scripted([[hello("e-b")]]);
+		const bad = new AssistantConnection({
+			client: failing.client,
+			sessions: store,
+			log: () => {},
+			reconnect: { minMs: 10, maxMs: 10 },
+			recovery: {
+				restarted: async () => {
+					throw new Error("补结局失败");
+				},
+				eventsLost: async () => {},
+				connected: async () => {
+					connectedCalls++;
+				},
+			},
+		});
+		bad.start();
+		try {
+			await eventually(() => expect(failing.afters.length).toBeGreaterThan(0));
+			await new Promise((resolve) => setTimeout(resolve, 80));
+			expect(bad.connected).toBe(false);
+			expect(connectedCalls).toBe(0);
+		} finally {
+			await bad.close();
+		}
+	});
+
+	it("记着的位置找错了（时钟偏差：旧纪元的事件时间更晚），hello 的纪元库里已经有事件：不当成助手服务重启，改用库里这个纪元的最大序号重连", async () => {
+		const id = await running();
+		// 旧纪元的最后一条事件时间更晚（新的助手服务时钟慢了 5 分钟）；新纪元在库里有序号 3。
+		await seed(id, "e-1", 2, "2026-06-01T00:10:01.000Z");
+		await seed(id, "e-2", 3, "2026-06-01T00:05:00.000Z");
+		expect(await store.lastAssistantSource()).toEqual({ epoch: "e-1", seq: 2 });
+		expect(await store.lastSeqOfEpoch("e-2")).toBe(3);
+		expect(await store.lastSeqOfEpoch("没有这个纪元")).toBeUndefined();
+		const restarted: unknown[] = [];
+		let connectedCalls = 0;
+		const { client, afters } = scripted([[hello("e-2", true)], [hello("e-2"), rec(id, "e-2", 4)]]);
+		const connection = new AssistantConnection({
+			client,
+			sessions: store,
+			log: () => {},
+			reconnect: { minMs: 10, maxMs: 10 },
+			recovery: {
+				restarted: async (candidates) => {
+					restarted.push(candidates);
+				},
+				eventsLost: async () => {},
+				connected: async () => {
+					connectedCalls++;
+				},
+			},
+		});
+		connection.start();
+		try {
+			await eventually(() => expect(connectedCalls).toBe(1), 5000);
+			// 第一次带的是找错的旧纪元，第二次带的是库里新纪元的最大序号；没有当成重启；补回来的第 4 条存下了。
+			expect(afters).toEqual([
+				{ epoch: "e-1", seq: 2 },
+				{ epoch: "e-2", seq: 3 },
+			]);
+			expect(restarted).toEqual([]);
+			await eventually(async () => expect(await store.lastSeqOfEpoch("e-2")).toBe(4));
+			expect((await store.find(id))?.status).toBe("running");
+		} finally {
+			await connection.close();
+		}
+	});
+
+	it("落库时发现会话不存在（SessionNotFoundError）：丢弃也算处理过，位置推进到这一条（重连不再补发、不记第二遍日志）", async () => {
+		const id = await running();
+		await seed(id, "e-n", 1, "2026-07-01T00:00:01.000Z");
+		const spy = vi
+			.spyOn(store, "appendFromAssistant")
+			.mockRejectedValue(new SessionNotFoundError(id));
+		const logs: string[] = [];
+		const { client, afters } = scripted([[hello("e-n"), rec(id, "e-n", 7)], [hello("e-n")]]);
+		const connection = new AssistantConnection({
+			client,
+			sessions: store,
+			log: (message) => logs.push(message),
+			reconnect: { minMs: 10, maxMs: 10 },
+		});
+		connection.start();
+		try {
+			await eventually(() => expect(afters.length).toBeGreaterThanOrEqual(2), 5000);
+			expect(afters[1]).toEqual({ epoch: "e-n", seq: 7 });
+		} finally {
+			spy.mockRestore();
+			await connection.close();
+		}
 	});
 });

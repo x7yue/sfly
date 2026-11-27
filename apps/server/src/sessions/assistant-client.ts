@@ -151,10 +151,13 @@ export class AssistantClient {
 	 * 打开事件流（一条 NDJSON 长连接），一行一条。连接断开、`signal` 中止、读出错时迭代结束或抛错；
 	 * **超过 `eventsIdleMs` 没有收到任何字节**（助手服务按协议每 15 秒写一行心跳）就当连接死了，主动断开并抛
 	 * {@link AssistantUnreachableError}，调用方重连；不是约定形状的行跳过（`onSkipped` 收到原因）。
+	 * `after` 是最后收到的那条持久事件的位置（纪元和助手服务内的序号），助手服务据此补发它之后的（#545，协议见 `AssistantEventsQuery`）；
+	 * 第一行 `hello` 的 `gap` 说补不补得回。
 	 */
 	async *events(
 		signal: AbortSignal,
 		onSkipped: (reason: string) => void,
+		after?: { epoch: string; seq: number },
 	): AsyncGenerator<AssistantStreamLine> {
 		const idle = new AbortController();
 		let timer: NodeJS.Timeout | undefined;
@@ -172,10 +175,13 @@ export class AssistantClient {
 			arm();
 			let res: Response;
 			try {
-				res = await this.#fetch(this.#url("/events"), {
-					headers: this.#headers({ accept: "application/x-ndjson" }),
-					signal: AbortSignal.any([signal, idle.signal]),
-				});
+				res = await this.#fetch(
+					this.#url(after ? `/events?after=${after.epoch}:${after.seq}` : "/events"),
+					{
+						headers: this.#headers({ accept: "application/x-ndjson" }),
+						signal: AbortSignal.any([signal, idle.signal]),
+					},
+				);
 			} catch (error) {
 				throw new AssistantUnreachableError(
 					idled ? idleMessage() : `连不上助手服务：${reasonOf(error)}`,

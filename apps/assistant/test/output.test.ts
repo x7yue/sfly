@@ -112,7 +112,14 @@ describe("打印错误的每一处都走出口", () => {
 			bus: new EventBus(),
 			sessions,
 			versions: { assistant: "0.0.0-test", pi: "0.0.0" },
-			modelsFile: "/nonexistent/models.json",
+			model: () => ({
+				configured: false,
+				endpoint: null,
+				reachable: null,
+				checked_at: null,
+				reason: null,
+				error_class: null,
+			}),
 			log: (message) => logs.push(message),
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

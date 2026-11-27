@@ -6,6 +6,11 @@
 #
 # 离线环境先加载 Release 附件里的镜像：gunzip -c sfly-server-<版本>-linux-amd64.tar.gz | docker load
 # 控制面是单进程设计：同一个数据库只能运行一个实例，不要扩成多个副本。
+#
+# 助手（会话功能，ADR 0027）是可选的：加 `--profile assistant`（或 COMPOSE_PROFILES=assistant）才起助手和工作台两个服务，
+# 不带它时只有控制面。设置和步骤见 README「部署与运维」的「助手和工作台」，变量见 .env.example：
+#
+#   docker compose --profile assistant up -d
 name: sfly
 
 services:
@@ -48,5 +53,65 @@ services:
       - sfly-data:/data # 节点包文件、任务日志与产物
     stop_grace_period: 30s
 
+  # ---- 助手和工作台（assistant profile；不带这个 profile 时下面两个服务不存在）----
+  # 两个服务都不映射端口：助手服务只让控制面连（共享密钥），工作台 Agent 的能力端口没有认证（agent/src/peer.rs），
+  # 只让同一个网络里的控制面和助手服务连得到。
+
+  # 助手服务：拉起和看管 pi，把 pi 的事件翻成会话事件（apps/assistant）。模型和它的密钥只在这个容器里。
+  sfly-assistant:
+    profiles: [assistant]
+    image: ghcr.io/x7yue/sfly-assistant:${SFLY_VERSION:-latest}
+    restart: unless-stopped
+    init: true
+    # 同时活着的 pi 进程最多 8 个，每个约 194 MiB（完整会话、假模型的量，是下限，真实模型的上下文更长，只会更高），
+    # 加上助手服务自己和读写：上限 2 GiB。数字的来由见 README「助手和工作台」。
+    mem_limit: 2g
+    environment:
+      # 和控制面共用的密钥（控制面读同一个 .env 变量）：至少 32 个字符，短了或没设置时助手服务拒绝启动，日志里写明原因。
+      # 这几个变量不写成 ${变量:?}：docker compose 对没有启用的 profile 里的服务也展开变量，那样不开助手的部署也会报错。
+      SFLY_ASSISTANT_SECRET: ${SFLY_ASSISTANT_SECRET:-}
+      # 用模型文件里的哪个模型，写成 <提供方>/<模型 id>；不设时助手服务照常起来，页面上写没有配置模型。
+      SFLY_ASSISTANT_MODEL: ${SFLY_ASSISTANT_MODEL:-}
+      # 模型文件里 "$MODEL_API_KEY" 引用的密钥；别的变量名在 docker-compose.override.yml 里给这个服务加。
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+    volumes:
+      - sfly-assistant-data:/data # 每个会话一个目录、pi 的设置目录
+      # 模型文件（pi 的格式，里面不写密钥）；只读挂载。宿主机上没有这个文件时 docker compose 报错，不会建一个同名的目录。
+      - type: bind
+        source: ${SFLY_ASSISTANT_MODELS_FILE:-./assistant-models.json}
+        target: /config/models.json
+        read_only: true
+        bind:
+          create_host_path: false
+
+  # 工作台：一台按开发方式（--dev）装的普通 Agent。Agent、uv、sfly 命令行第一次启动时从控制面装（deploy/workbench/entrypoint.sh），
+  # 装在家目录卷里：删掉容器再建，工作区和已经装好的环境都在，不重装。每次启动入口脚本对一下控制面的 install.sh，
+  # 变了（控制面升级、改了对外地址）就重装：Agent 会自更新，sfly 命令行不会，靠这一步跟着控制面走。
+  sfly-workbench:
+    profiles: [assistant]
+    image: ghcr.io/x7yue/sfly-workbench:${SFLY_VERSION:-latest}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      sfly:
+        condition: service_healthy
+    environment:
+      # 控制面在这个网络里的地址（服务名）：入口脚本从它下载 install.sh。安装脚本里写给 Agent 的地址是控制面的 SFLY_PUBLIC_URL
+      # （浏览器看到的地址）和网关地址：它们在这个容器里也要连得到（README「助手和工作台」：给 sfly 服务加网络别名，或 extra_hosts）。
+      SFLY_WORKBENCH_URL: http://sfly:8080
+      # 这台 Agent 的名字：和控制面里指名工作台的 SFLY_WORKBENCH_AGENT 是同一个变量，两边读同一个 .env 值。
+      # 没设置时入口脚本拒绝启动并写明原因。
+      SFLY_WORKBENCH_AGENT: ${SFLY_WORKBENCH_AGENT:-}
+      # 控制面和助手服务连这台 Agent 的能力端口用的地址：本服务的名字。
+      SFLY_WORKBENCH_PUBLIC_ADDRESS: sfly-workbench
+      # 这台 Agent 自己的 Agent 凭据（只给这个服务，不是共享令牌）：管理员按上面的名字签发，步骤见 README「助手和工作台」。
+      SFLY_WORKBENCH_TOKEN: ${SFLY_WORKBENCH_TOKEN:-}
+    volumes:
+      - sfly-workbench-home:/home/workbench # 家目录：~/.sfly（Agent、共享 venv、任务目录）、~/.local 和 ~/.cache（uv、sfly 命令行）
+      - sfly-workbench-work:/work # 工作区
+
 volumes:
   sfly-data:
+  sfly-assistant-data:
+  sfly-workbench-home:
+  sfly-workbench-work:

@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { agentBinariesApi } from "@sfly/schema";
+import { agentBinariesApi, TOKEN_PREFIXES } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type AgentBinaries, agentBinaryUrl } from "../agent-binaries/agent-binaries.js";
 import { renderInstallScript } from "../agent-binaries/install-script.js";
@@ -22,7 +22,7 @@ export function registerAgentBinaryRoutes(
 	app: FastifyInstance,
 	deps: { binaries: AgentBinaries; installScript: string; publicConfig: PublicConfig },
 ): void {
-	const { httpUrl, grpcUrl, version, mirrors } = deps.publicConfig;
+	const { httpUrl, grpcUrl, version, mirrors, mirrorsWithheld } = deps.publicConfig;
 	contractRoute(app, agentBinariesApi.list, async () => {
 		const base = httpUrl();
 		return {
@@ -61,6 +61,9 @@ export function registerAgentBinaryRoutes(
 					SHA256_AARCH64: sha256("aarch64"),
 					PYPI_MIRROR: mirrors.pypi ?? "",
 					GITHUB_RELEASE_MIRROR: mirrors.githubRelease ?? "",
+					PYPI_MIRROR_WITHHELD: mirrorsWithheld.includes("pypi") ? "1" : "",
+					GITHUB_RELEASE_MIRROR_WITHHELD: mirrorsWithheld.includes("githubRelease") ? "1" : "",
+					AGENT_CREDENTIAL_PREFIX: TOKEN_PREFIXES.agent,
 				}),
 			);
 	});

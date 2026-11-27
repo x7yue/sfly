@@ -14,8 +14,10 @@ import { cn } from "cn";
 import { AlertTriangleIcon, CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Banner } from "#/components/feedback/banner";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
@@ -43,7 +45,7 @@ export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
 	onLocate?: (nodeId: string) => void;
 	/**
-	 * 「再次运行」的来源运行：入口参数用它的值预填（敏感参数不沿用，需要重新填写），预设选中它用的预设
+	 * 「再次运行」的来源运行：入口参数用它的值预填（secret 参数不沿用，需要重新填写），预设选中它用的预设
 	 * （预设用不了时在表单上方写明原因），不看浏览器里记住的预设。不给时是直接运行。
 	 */
 	rerunOf?: RerunSource;
@@ -150,12 +152,13 @@ function ParamsForm({
 	const queryClient = useQueryClient();
 	const nickname = useNickname();
 	const decls = preflight.params;
-	const checks = preflightChecks(preflight, options);
 	const [presetId, setPresetId] = useState<string | null>(() =>
 		initialPresetId(preflight.presets, readLastPreset(orchestrationId), options.rerunOf),
 	);
 	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）或被删除时，当作没有选。
 	const preset = usablePreset(preflight.presets, presetId);
+	// 检查清单按现在的选择显示（默认值或选中的预设有没有 secret 参数太大的问题）。
+	const checks = preflightChecks(preflight, options, { presetId: preset?.id ?? null });
 	// 选中预设时，预设参数取预设的值、不能修改，只提交其余参数和预设（控制面填入预设的值）。
 	const lockedParams = (p: PresetView | undefined) =>
 		new Map(p?.params.map((q) => [q.name, q.value]));
@@ -346,8 +349,14 @@ function CheckItem({ row, onLocate }: { row: CheckRow; onLocate?: (nodeId: strin
 				<span className="sr-only">{icon.label}：</span>
 			</span>
 			<div className="min-w-0 flex-1">
-				<div>{row.title}</div>
-				{row.detail && <div className="text-xs text-fg-3">{row.detail}</div>}
+				<div>
+					<UntrustedText text={row.title} />
+				</div>
+				{row.detail && (
+					<div className="text-xs text-fg-3">
+						<UntrustedText text={row.detail} />
+					</div>
+				)}
 				{row.problems.length > 0 && <ProblemList problems={row.problems} onLocate={onLocate} />}
 			</div>
 		</li>
@@ -365,7 +374,9 @@ function ProblemList({
 		<ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0 text-xs text-fg-2">
 			{problems.map((p) => (
 				<li key={`${p.code}:${p.node_id ?? ""}:${p.message}`} className="flex items-baseline gap-2">
-					<span className="min-w-0 flex-1">{p.message}</span>
+					<span className="min-w-0 flex-1 whitespace-pre-line">
+						<UntrustedText text={p.message} mode="text" />
+					</span>
 					{p.node_id && onLocate && (
 						<Button
 							variant="link"
@@ -392,9 +403,9 @@ function TriggerError({ error, onLocate }: { error: Error; onLocate?: (nodeId: s
 	return (
 		<div
 			role="alert"
-			className="mb-3.5 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-fg"
+			className="mb-3.5 whitespace-pre-line rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-fg"
 		>
-			触发失败：{problems ? "预检没有通过（场景刚刚被修改过）" : error.message}
+			触发失败：{problems ? "预检没有通过（场景刚刚被修改过）" : <ErrorMessage error={error} />}
 			{problems && <ProblemList problems={problems} onLocate={onLocate} />}
 		</div>
 	);

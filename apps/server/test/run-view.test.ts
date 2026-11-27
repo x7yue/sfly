@@ -281,7 +281,10 @@ describe("运行视图", () => {
 					status: "success",
 					agent: "agent-a",
 					inputs: { text: "世界" },
+					// 小的输入输出内联：没有被省略（`*_omitted_bytes` 只在内容被省略时不是 null，#633）。
+					inputs_omitted_bytes: null,
 					outputs: { text: "你好" },
+					outputs_omitted_bytes: null,
 					error: null,
 					queued_at: "2026-01-01T00:00:00.000Z",
 					started_at: "2026-01-01T00:00:05.000Z",

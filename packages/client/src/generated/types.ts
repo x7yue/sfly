@@ -131,12 +131,36 @@ export interface ActionSummaryView {
 	capped_at: Timestamp | null;
 	/** 同 `capped_at`，用 Agent 时间表示。 */
 	agent_capped_at: Timestamp | null;
-	/** 每种名称一项，按第一次出现的先后。 */
+	/**
+	 * 全部名称合计失败的动作数：包括没进 `names` 的名称的失败（`names` 里各项的 `failed` 加起来会少算它们）。
+	 * 控制台的失败数用它。
+	 */
+	failed_total: number;
+	/**
+	 * 每种名称一项，按第一次出现的先后，最多 `ACTION_LIMITS.summaryNames` 种，名称很长时更少（名称表的字节预算
+	 * `ACTION_LIMITS.summaryNamesBytes`）。没进表的名称合在一起写在 `unlisted`；`names_complete` 为 false。
+	 */
 	names: ActionNameCount[];
-	/** 正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。 */
+	/** `names` 是不是全部的名称。 */
+	names_complete: boolean;
+	/**
+	 * 没进 `names` 的名称合在一起的计数（动作和标记的个数、其中失败的动作数、有明细的个数）：`names_complete` 为
+	 * false 时有，否则为 null。不写名称，也没有它们有几种名称的数（SDK 不记）。
+	 */
+	unlisted: {
+		total: number;
+		failed: number;
+		reported: number;
+	} | null;
+	/**
+	 * 正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列；摘要装不下
+	 * （`ACTION_LIMITS.summaryBytes`）时更少，优先级低的先省。
+	 */
 	running: RunningActionView[];
-	/** `running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。 */
+	/** `running` 是不是全部正在做的动作：没列全（超过 `ACTION_LIMITS.running` 个，或因为摘要的大小被省去了）时为 false。 */
 	running_complete: boolean;
+	/** `running`、`recent`、`recent_failed` 里有没有因为摘要的大小（`ACTION_LIMITS.summaryBytes`）被省去的项。 */
+	lists_trimmed: boolean;
 	/** 最近结束的 `ACTION_LIMITS.recent` 个动作，最近结束的在前。 */
 	recent: EndedActionView[];
 	/** 最近失败的 `ACTION_LIMITS.recentFailed` 个动作，最近失败的在前。 */
@@ -345,9 +369,20 @@ export interface AttemptView {
 	attempt: number;
 	status: TaskStatus;
 	agent: string | null;
-	/** 已解析的输入；派发前为 null。 */
+	/**
+	 * 已解析的输入；派发前为 null。**内容被省略时也是 null**（单个大于 `RUN_VIEW_IO_VALUE_LIMIT_BYTES`，或者整份视图合计已经用完
+	 * `RUN_VIEW_IO_TOTAL_LIMIT_BYTES`）：判断是不是被省略了只看 `inputs_omitted_bytes`，不要假定「小的一定内联」。
+	 */
 	inputs: Record<string, unknown> | null;
+	/**
+	 * 输入被省略时，存着的大小（打码之前的字节数）**向上取整到 KiB（1024 的倍数）**，不给精确值：读取时要打码，精确的大小和打码之后的内容
+	 * 一减就露出 secret 值的长度。取整只是让大小变粗，不能完全藏住长度。**只在内容被省略时不是 null**（内容内联着、或者本来就没有输入时都是 null）。全文用 `GET /tasks/:id/io` 取。
+	 */
+	inputs_omitted_bytes: number | null;
+	/** 输出；没有输出（还没结束、失败、被跳过）为 null，**内容被省略时也是 null**，规矩同 `inputs`。 */
 	outputs: Record<string, unknown> | null;
+	/** 输出被省略时存着的大小，向上取整到 KiB；只在内容被省略时不是 null，规矩同 `inputs_omitted_bytes`。 */
+	outputs_omitted_bytes: number | null;
 	error: ErrorView | null;
 	queued_at: Timestamp;
 	/** 执行器启动的时间；排队、准备中为 null。 */
@@ -1209,6 +1244,13 @@ export interface LogChunk {
 }
 
 /**
+ * 任务的日志文件和数据库记的对不上（#669、#721）：只对有行写入过的任务——`missing` 文件不见了，`short` 文件比数据库记的短
+ * （被删除、截短，主机掉电——追加文件不 fsync、数据库提交了——数据库和数据目录分开恢复，保留期清理删到一半）。
+ * 文件比记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）、从没有日志的任务都不是问题。
+ */
+export type LogFileProblem = "missing" | "short";
+
+/**
  * 一行日志，带两种时间（ADR 0018）。日志文件是 JSONL，每行就是这个对象（字段顺序也相同：页面按它算字节偏移）；
  * 升级之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
  */
@@ -1278,6 +1320,11 @@ export interface LogPage {
 	truncated: boolean;
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: boolean;
+	/**
+	 * 这个任务的日志文件的问题（`LogFileProblem`）：写过日志但文件不在了（页是空的）或者比记录的短（页里只有剩下的行）；
+	 * 没有问题时、运行已过保留期（`expired` 已经说了）时为 null。每次读页都按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problem: LogFileProblem | null;
 	/** 请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。 */
 	locate: LogLocate | null;
 }
@@ -1462,7 +1509,16 @@ export interface NodeRunView {
 	status: NodeStatus;
 	/** 包节点派发到的 Agent；内置节点为 null。 */
 	agent: string | null;
+	/**
+	 * 节点的输出：最后一次尝试的输出（同那次尝试的 `outputs`）；没有输出时为 null，**被省略时也是 null**（这一份也算整份视图的合计），
+	 * 判断只看 `outputs_omitted_bytes`。
+	 */
 	outputs: Record<string, unknown> | null;
+	/**
+	 * 节点的输出被省略时，存着的大小（最后一次尝试输出的大小，打码之前）向上取整到 KiB；只在被省略时不是 null。
+	 * 全文用 `GET /tasks/:id/io` 取，任务是 `attempts` 里最后一次尝试（`task_id`）。
+	 */
+	outputs_omitted_bytes: number | null;
 	error: ErrorView | null;
 	attempts: AttemptView[];
 }
@@ -1713,7 +1769,7 @@ export interface ParamDeclView {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
-	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	/** 搭场景的人写的一行说明；secret 参数的说明照常给出，只有值打码。 */
 	description?: string;
 }
 
@@ -1922,6 +1978,19 @@ export interface PreflightProblem {
 	code: string;
 	message: string;
 	node_id?: string;
+	/**
+	 * `secret_params_too_large` 的警告说的是哪一组值：场景里的默认值（`defaults`），或某个运行预设（`preset`，`preset_id` 是它的 ID）。
+	 * 触发表单据此只显示和当前选择有关的那一条（没选预设是默认值的，选了预设是这个预设的）。别的问题没有这个字段。
+	 * 默认值的这一条的 `preset_ids` 是 secret 值和只用默认值时完全相同的运行预设（它们没有改变 secret 值）：
+	 * 选了其中一个预设触发，用的也是这些默认值，这一条对它们同样适用。
+	 */
+	origin?: {
+		kind: "defaults";
+		preset_ids: string[];
+	} | {
+		kind: "preset";
+		preset_id: string;
+	};
 }
 
 /**
@@ -2316,6 +2385,23 @@ export interface RunLogChunk {
 	lines: RunLogLine[];
 }
 
+/** 日志文件有问题的任务（运行页、实时流）：来源 + 是什么问题（`LogFileProblem`）。 */
+export interface RunLogFileProblem {
+	task_id: string;
+	chain_instance_id: string;
+	/** 所在子流程的名称（与运行视图里链的 name 相同）；主链为 null。 */
+	subflow: string | null;
+	node_id: string;
+	attempt: number;
+	problem: LogFileProblem;
+}
+
+/** 运行实时流连上时说有任务的日志文件有问题（#721）：内容同运行分页的 `file_problems`、`file_problems_total`。 */
+export interface RunLogFileProblemsEvent {
+	file_problems: RunLogFileProblem[];
+	file_problems_total: number;
+}
+
 /** 按运行合并的一行：任务日志里的一行，加上它的来源和排序要用的信息。 */
 export interface RunLogLine {
 	/** 任务内从 1 开始递增的序号，用来排序和去重。 */
@@ -2383,6 +2469,14 @@ export interface RunLogPage {
 	truncated_tasks: LogOrigin[];
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: boolean;
+	/**
+	 * 范围（`nodes`）内日志文件有问题的任务（写过日志但文件不在了，或者比记录的短），按运行视图里的顺序，最多 `LOG_FILE_PROBLEMS_LIMIT`
+	 * 个；总数在 `file_problems_total`。有问题的任务页里读不到（或只读到剩下的）它的行：页面和命令行据此说明，不要当成「没有日志」。
+	 * 运行已过保留期时为空（`expired` 已经说了）。每个页都带，按读那一刻的文件判断，和下载同一个标准。
+	 */
+	file_problems: RunLogFileProblem[];
+	/** 范围内日志文件有问题的任务的总数（可能大于 `file_problems` 列出的个数）。 */
+	file_problems_total: number;
 }
 
 export interface RunLogPageQuery {
@@ -2645,7 +2739,7 @@ export interface RunReportFailedTask {
 		kind: string;
 		/** 失败原因的一行（同 `RunStateError` 的 `headline`）。 */
 		headline: string;
-		/** 完整的错误信息：异常信息加堆栈，原文（已按保密参数的值打码）。 */
+		/** 完整的错误信息：异常信息加堆栈，原文（已按 secret 参数的值打码）。 */
 		detail: string;
 		/** 节点代码里出错的位置，同 `RunStateError` 的 `location`；没有时为 null。 */
 		location: string | null;
@@ -2689,7 +2783,7 @@ export interface RunStateChain {
 	nodes: RunStateNode[];
 }
 
-/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的保密参数的值打码，和运行视图里看到的一样。 */
+/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的 secret 参数的值打码，和运行视图里看到的一样。 */
 export interface RunStateError {
 	/** 错误类型：node_error（节点代码抛出异常）、timeout、agent_lost、env_error、config_error。 */
 	kind: string;
@@ -3020,9 +3114,24 @@ export interface SlotHolderView {
 }
 
 /**
- * 会话此刻的状态：控制面在浏览器刚连上事件流时，只发给这一条连接，让断线期间错过的增量不用补发
- * （`partial_text` 是正在输出的那条助手消息已有的文字，没有时为空字符串；`running_tool` 没有在跑的工具时为 null；
- * `steer_queue` 是还没送到模型的插话；`waiting_for` 是排队中在等谁，不在排队时为 null）。不存。#545 起（`waiting_for` #544）。
+ * 会话此刻的状态：控制面在这条事件流**补发读完、切到实时的那一刻**发一条，**只发给这一条连接**（带 `Last-Event-ID` 或 `after`
+ * 重连的连接同样收到一条）。增量不持久，浏览器断线期间错过的增量、刚打开的浏览器没有见过的增量，补发里没有，靠它补上。
+ * 它发在补发之后：`partial_text` 是**相对「上一条持久的助手消息」的**，页面要先读完补发的历史才知道是哪一条，发在前面会被补发里的
+ * 那条整条消息盖掉。它是控制面内存里的状态（控制面重启后是空的，到下一条持久事件才恢复正常），不是历史：页面按「取代」处理，
+ * 不追加——同一个快照收到几次、和已经收到的增量重叠，结果一样。
+ *
+ * - `status`：会话此刻的状态；
+ * - `partial_text`：上一条持久的助手消息之后收到的全部增量文字，没有时为空字符串；
+ * - `running_tool`：正在跑的工具调用（`tool_call` 到 `tool_result` 之间）和它输出的最后一段（至多
+ *   `SESSION_EVENT_LIMITS` 的 `runningToolOutputBytes` 个 UTF-8 字节，不切开字符）；没有在跑的工具时为 null；
+ * - `steer_queue`：最近一份还没送到模型的插话（同 `SteerQueueEvent`）；
+ * - `waiting_for`、`queue_position`：排队中（`queued`，或停止途中说了话、排在这一轮后面的在做的会话）排第几、在等谁；
+ *   不在排队时都是 null，项目里没有会话在做时 `waiting_for` 是 null、`queue_position` 有值（同 `TurnQueuedEvent`）。
+ *
+ * **文字都打过码**：`partial_text` 和输出的最后一段是控制面把收到的增量拼起来、整段按会话令牌的格式打码之后才发的，整条快照发出前还会再
+ * 按令牌的格式过一遍：令牌被拆在两条增量里、窗口的起点切在令牌里，里面都没有原值（窗口开头被起点切掉了前缀、认不出的令牌后半截，打码之后从
+ * 开头削掉）。输出的最后一段先整窗打码、再削开头、最后才按字节截断，所以截断落在哪里都不会留下半截原值。不存。#545 起（`waiting_for` #544，
+ * `queue_position` #545）。
  */
 export interface SnapshotEvent {
 	type: "snapshot";
@@ -3031,6 +3140,7 @@ export interface SnapshotEvent {
 	running_tool: RunningTool | null;
 	steer_queue: SteerEntry[];
 	waiting_for: WaitingFor | null;
+	queue_position: number | null;
 }
 
 /** 插话队列里的一条：用户这句话的 ID（`user_message.message_id`）和文字。 */
@@ -3139,6 +3249,18 @@ export interface SubflowEntryNodeInput {
 	params?: ParamDeclarationInput[];
 }
 
+/** 一次尝试的输入和输出的全文（`GET /tasks/:id/io`）：同运行视图里的 `inputs`、`outputs`，不省略；没有的为 null。 */
+export interface TaskIoView {
+	task_id: string;
+	inputs: Record<string, unknown> | null;
+	outputs: Record<string, unknown> | null;
+}
+
+/** 任务实时流连上时说日志文件有问题（#721）：内容同分页的 `file_problem`。 */
+export interface TaskLogFileProblemEvent {
+	file_problem: LogFileProblem;
+}
+
 /** 一个任务（一次尝试）的指标摘要。 */
 export interface TaskMetricSummary {
 	task_id: string;
@@ -3219,13 +3341,15 @@ export type TurnOutcome = "completed" | "stopped" | "limit" | "model_unavailable
 
 /**
  * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
- * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
- * （`SessionView`）和快照（`SnapshotEvent`）里，刷新页面后拿得回来。#544 起。
+ * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）；
+ * **项目里没有会话在做时为 null**（排队的会话在等助手服务或工作台恢复、等下一次开始，没有「在等谁」可写；#545 起，之前这种
+ * 情况不推 `turn_queued`，别的标签页和别的人要等这一轮开始才看得到）。不存：排队的状态记在会话的 `status`、`queue_position` 上，
+ * 在等谁也在会话视图（`SessionView`）和快照（`SnapshotEvent`）里，刷新页面后拿得回来。#544 起。
  */
 export interface TurnQueuedEvent {
 	type: "turn_queued";
 	position: number;
-	waiting_for: WaitingFor;
+	waiting_for: WaitingFor | null;
 }
 
 /** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */

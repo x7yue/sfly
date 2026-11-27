@@ -553,6 +553,35 @@ def artifacts(
     return {"refs": refs}
 
 
+@node(title="任务凭据", outputs=["token_env", "artifacts_url_env", "agent_token_env"])
+def task_credential(ctx: Context) -> dict[str, Any]:
+    """任务凭据测试用（#492）：输出执行器环境变量 `SFLY_TASK_TOKEN` 的原文（没有时为 None）。
+
+    测试用它确认 Agent 把任务凭据放进了环境变量，并拿它去核对任务目录和日志里没有原值。
+    `agent_token_env` 是 `SFLY_TOKEN`（Agent 凭据经环境变量交给 Agent 时的名字）：
+    节点的环境里不该有。
+    """
+    return {
+        "token_env": os.environ.get("SFLY_TASK_TOKEN"),
+        "artifacts_url_env": os.environ.get("SFLY_ARTIFACTS_URL"),
+        "agent_token_env": os.environ.get("SFLY_TOKEN"),
+    }
+
+
+@node(title="用 SDK 下载产物", outputs=["texts", "token_reversed"])
+def artifact_download(ctx: Context, refs: dict[str, str]) -> dict[str, Any]:
+    """用 SDK 的 `ctx.artifacts.download` 下载产物引用（任务凭据由 SDK 带上，#492）。
+
+    输出下载到的文本，和环境变量里任务凭据**倒过来**的原文（控制面把输出和日志里长得像令牌的值盖成
+    `******`，原样输出会被盖住）：测试把它倒回来，在任务结束之后拿它再下载，应当是 401。
+    """
+    texts = {}
+    for name, ref in refs.items():
+        path = ctx.artifacts.download(ref, f"downloaded/{name}")
+        texts[name] = path.read_text(encoding="utf-8")
+    return {"texts": texts, "token_reversed": (os.environ.get("SFLY_TASK_TOKEN") or "")[::-1]}
+
+
 @node(title="产物上限", outputs=["refs", "limit", "refused", "limit_env"])
 def artifact_limit(
     ctx: Context,
@@ -633,6 +662,62 @@ def long_line(ctx: Context, head: int, value: str, tail: int, stream: str = "std
     out = sys.stderr if stream == "stderr" else sys.stdout
     out.write("a" * head + value + "b" * tail + "\n")
     out.flush()
+
+
+@node(title="一条很长的 SDK 日志", outputs=[])
+def long_log(ctx: Context, head: int, value: str, tail: int) -> None:
+    """超长 SDK 日志拆分测试用（#674）：用 ctx.log 写一条消息（head 个 a、value、tail 个 b），
+    再写一条短的 "after"。"""
+    ctx.log("a" * head + value + "b" * tail)
+    ctx.log("after")
+
+
+@node(title="一行很长的事件", outputs=[])
+def long_event_line(
+    ctx: Context, size: int, count: int = 1, kind: str = "", newline: bool = True
+) -> None:
+    """事件管道一行超过上限的测试用（#674）：先写一条日志 "before"，再直接往事件管道写 count 行、
+    每行 size 个字节，最后写一条日志 "after"。kind 为空时每行是 size 个 x（不是 JSON）；否则是
+    合法的 JSON 事件 {"type": kind, ...}（message 填满），type 就是 kind。newline 为假时最后一行
+    后面不补换行、也不写 "after"（管道在一行中间关闭）。"""
+    ctx.log("before")
+    if kind:
+        head = f'{{"type":"{kind}","ts":1700000000000,"level":"info","message":"'
+        line = head + "x" * (size - len(head) - 2) + '"}'
+    else:
+        line = "x" * size
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        for index in range(count):
+            events.write(line + ("\n" if newline or index < count - 1 else ""))
+        events.flush()
+    if newline:
+        ctx.log("after")
+
+
+@node(title="异常文字很长", outputs=[])
+def big_exception(ctx: Context, size: int) -> None:
+    """失败文字有上界的测试用（#723）：抛出一条 size 个字符的异常。"""
+    raise RuntimeError("e" * size)
+
+
+@node(title="直接写 output.json", outputs=[])
+def raw_output(
+    ctx: Context, kind: str, size: int, traceback_size: int = 0, char: str = "m"
+) -> None:
+    """Agent 自己判断输出大小的测试用（#723）：绕过执行器的检查（也是旧版本的执行器的写法：
+    说明和堆栈都不限长），直接写 output.json 然后退出。kind 是 success（outputs 里一个
+    size 个字符的文字）或 failed（message 是 size 个 `char`，traceback 是 traceback_size 个
+    `char`）。"""
+    if kind == "success":
+        doc: dict[str, Any] = {"status": "success", "outputs": {"text": "x" * size}}
+    else:
+        doc = {
+            "status": "failed",
+            "error": {"message": char * size, "traceback": char * traceback_size},
+        }
+    with open(os.environ["SFLY_OUTPUT"], "w", encoding="utf-8") as output:
+        json.dump(doc, output)
+    os._exit(0)
 
 
 @node(title="写盘失败", outputs=[])

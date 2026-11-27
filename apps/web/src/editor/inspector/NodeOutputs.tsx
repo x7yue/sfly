@@ -1,4 +1,5 @@
 import { type NodeTypeIo, schemaDescription } from "@sfly/orchestration";
+import { UntrustedText } from "#/components/untrusted-text";
 import {
 	Table,
 	TableBody,
@@ -24,16 +25,22 @@ export function NodeOutputs({ outputs }: { outputs: NodeTypeIo["outputs"] }) {
 				</TableRow>
 			</TableHeader>
 			<TableBody>
-				{Object.entries(outputs.properties).map(([name, schema]) => (
-					<TableRow key={name}>
-						<TableCell width="fit" className="px-0 py-1.5 pr-3 align-baseline font-mono text-fg-1">
-							{name}
-						</TableCell>
-						<TableCell className="px-0 py-1.5 align-baseline whitespace-pre-line text-fg-2 wrap-anywhere">
-							{schemaDescription(schema)}
-						</TableCell>
-					</TableRow>
-				))}
+				{Object.entries(outputs.properties).map(([name, schema]) => {
+					const description = schemaDescription(schema);
+					return (
+						<TableRow key={name}>
+							<TableCell
+								width="fit"
+								className="px-0 py-1.5 pr-3 align-baseline font-mono text-fg-1"
+							>
+								<UntrustedText text={name} />
+							</TableCell>
+							<TableCell className="px-0 py-1.5 align-baseline whitespace-pre-line text-fg-2 wrap-anywhere">
+								{description !== undefined && <UntrustedText text={description} mode="text" />}
+							</TableCell>
+						</TableRow>
+					);
+				})}
 			</TableBody>
 		</Table>
 	);

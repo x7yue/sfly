@@ -667,6 +667,8 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			const sse = await SseClient.open(cp, `/sessions/${sessionId}/events`, bearer(token));
 			try {
 				await sse.next("turn_started");
+				// 连上时补发读完的那一刻发的快照（#545）：先收掉，之后不应有任何推送。
+				await sse.next("snapshot");
 				const res = await asSession("POST", `/orchestrations/${id}/runs`, {
 					params: { host: "h" },
 				});

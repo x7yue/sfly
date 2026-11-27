@@ -508,3 +508,238 @@ async fn lines_that_are_not_split_carry_no_context() {
             .all(|(_, l)| l.before.is_empty() && l.after.is_empty())
     );
 }
+
+/// SDK 日志（`ctx.log`）一条超过 64 KiB 时和标准输出的超长行一样拆开，每一段带前后的上下文：一个值正好跨在拆分处时，
+/// 任何一段单独都看不到整个值，但「这一段加上它的上下文」里有整个值（#674）。拆开之后下一条日志照常。
+#[tokio::test]
+async fn an_sdk_log_message_over_64_kib_is_split_with_context_like_a_stdout_line() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-long-sdk-log"));
+    cp.hello(0).await;
+
+    // 65536 字节处正好落在值的中间：65526 个 a、21 个字符的值、70000 个 b。
+    let value = "FAKE-VALUE-ABCDEFGHIJ";
+    cp.assign(stub_task(
+        "task-long-log",
+        "long_log",
+        json!({ "head": 65526, "value": value, "tail": 70000 }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-long-log").await;
+    assert_eq!(
+        result.status(),
+        sfly_agent::proto::TaskStatus::Success,
+        "{result:?}"
+    );
+
+    let lines: Vec<LogLine> = log_lines(&cp.received_with_session(), "task-long-log")
+        .into_iter()
+        .map(|(_, l)| l)
+        .filter(|l| l.source() == LogSource::Sdk)
+        .collect();
+    let original = format!("{}{value}{}", "a".repeat(65526), "b".repeat(70000));
+    let (pieces, rest) = lines.split_at(lines.len() - 1);
+    assert_eq!(rest[0].text, "after", "拆开之后的下一条日志照常");
+    let joined: String = pieces.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(joined, original);
+    assert!(pieces.len() >= 2, "没有拆开：{} 行", pieces.len());
+    assert!(pieces.iter().all(|l| l.text.len() <= 64 * 1024));
+    assert!(
+        pieces
+            .iter()
+            .all(|l| l.before.len() <= 16 * 1024 && l.after.len() <= 16 * 1024)
+    );
+    assert!(pieces.iter().all(|l| !l.text.contains(value)));
+    assert_eq!(pieces[0].before, "");
+    assert_eq!(pieces[pieces.len() - 1].after, "");
+    assert!(format!("{}{}", pieces[0].text, pieces[0].after).contains(value));
+    assert!(format!("{}{}", pieces[1].before, pieces[1].text).contains(value));
+    assert!(rest[0].before.is_empty() && rest[0].after.is_empty());
+    let seqs: Vec<u64> = lines.iter().map(|l| l.seq).collect();
+    assert!(seqs.windows(2).all(|w| w[1] == w[0] + 1));
+}
+
+/// 事件管道里一行超过上限（4 MiB）时整行丢弃，Agent 写一行警告（只有大小，没有内容）：一行 200 MiB、没有换行的内容不会让
+/// Agent 的内存涨到 200 MiB 以上，前后的日志照常到达，节点照常成功（#674）。
+#[tokio::test]
+async fn an_event_line_over_the_cap_is_dropped_with_a_warning_and_the_agent_does_not_grow() {
+    const MIB: u64 = 1024 * 1024;
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-event-line-cap"));
+    let pid = agent.child.id().unwrap();
+    cp.hello(0).await;
+    let before = peak_rss_bytes(pid);
+
+    let size = 200 * MIB;
+    cp.assign(stub_task(
+        "task-big-event",
+        "long_event_line",
+        json!({ "size": size }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-big-event").await;
+    assert_eq!(
+        result.status(),
+        sfly_agent::proto::TaskStatus::Success,
+        "{result:?}"
+    );
+    let growth = peak_rss_bytes(pid).saturating_sub(before);
+
+    let lines: Vec<LogLine> = log_lines(&cp.received_with_session(), "task-big-event")
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect();
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert_eq!(texts[0], "before");
+    assert_eq!(texts[2], "after");
+    // 警告排在被丢弃的行原来的位置，来源 agent、级别 warn，写了这一行的字节数和上限，没有这一行的内容
+    assert_eq!(lines[1].source(), LogSource::Agent);
+    assert_eq!(lines[1].level(), LogLevel::Warn);
+    assert!(
+        texts[1].contains(&size.to_string()) && texts[1].contains(&(4 * MIB).to_string()),
+        "{}",
+        texts[1]
+    );
+    assert!(!texts[1].contains("xxxx"));
+    // 开头认不出是哪一种事件：不说是日志，也不叫人拆开写。
+    assert!(
+        texts[1].contains("认不出") && !texts[1].contains("日志") && !texts[1].contains("拆开写"),
+        "{}",
+        texts[1]
+    );
+    let seqs: Vec<u64> = lines.iter().map(|l| l.seq).collect();
+    assert_eq!(seqs, vec![1, 2, 3]);
+    // 不丢弃的话，这一行在 Agent 里至少攒两三份（读到的、转成字符串的、拆出来的）
+    assert!(
+        growth < 40 * MIB,
+        "Agent 峰值内存增长了 {} MiB",
+        growth / MIB
+    );
+}
+
+const MIB: u64 = 1024 * 1024;
+
+/// 跑一个往事件管道写超长行的任务（桩节点 `long_event_line`），返回任务成功后收到的全部日志，按序号。
+async fn long_event_logs(
+    cp: &FakeControlPlane,
+    id: &str,
+    input: serde_json::Value,
+) -> Vec<LogLine> {
+    cp.assign(stub_task(id, "long_event_line", input)).await;
+    let (result, _) = cp.result(id).await;
+    assert_eq!(
+        result.status(),
+        sfly_agent::proto::TaskStatus::Success,
+        "{result:?}"
+    );
+    log_lines(&cp.received_with_session(), id)
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect()
+}
+
+/// 被丢掉的一行是一条日志（合法的 JSON，message 很长）：警告写明是日志、请拆开写，不带内容；前后的日志照常（#674）。
+#[tokio::test]
+async fn an_oversized_log_event_is_dropped_and_the_warning_says_it_was_a_log() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-oversized-log"));
+    cp.hello(0).await;
+
+    let size = 5 * MIB;
+    let lines = long_event_logs(
+        &cp,
+        "task-oversized-log",
+        json!({ "size": size, "kind": "log" }),
+    )
+    .await;
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert_eq!((texts[0], texts[2]), ("before", "after"));
+    assert_eq!(lines[1].source(), LogSource::Agent);
+    assert_eq!(lines[1].level(), LogLevel::Warn);
+    assert!(
+        texts[1].contains("日志") && texts[1].contains("拆开写"),
+        "{}",
+        texts[1]
+    );
+    assert!(
+        texts[1].contains(&size.to_string()) && texts[1].contains(&(4 * MIB).to_string()),
+        "{}",
+        texts[1]
+    );
+    assert!(!texts[1].contains("xxxx"));
+}
+
+/// 被丢掉的一行是动作摘要（合法的 JSON）：警告写明是动作摘要、摘要停在之前的一份，不说「日志写得太长」——
+/// 节点没有写过长日志，按那句话无从下手（#674 的第一次审查）。
+#[tokio::test]
+async fn an_oversized_summary_event_is_dropped_and_the_warning_says_it_was_the_summary() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-oversized-summary"));
+    cp.hello(0).await;
+
+    let size = 5 * MIB;
+    let lines = long_event_logs(
+        &cp,
+        "task-oversized-summary",
+        json!({ "size": size, "kind": "action_summary" }),
+    )
+    .await;
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert_eq!((texts[0], texts[2]), ("before", "after"));
+    assert_eq!(lines[1].source(), LogSource::Agent);
+    assert!(
+        texts[1].contains("动作摘要") && texts[1].contains("停在之前的一份"),
+        "{}",
+        texts[1]
+    );
+    assert!(!texts[1].contains("拆开写"), "{}", texts[1]);
+    assert!(texts[1].contains(&size.to_string()), "{}", texts[1]);
+}
+
+/// 管道在一行中间关闭：超长的一行（没有换行）写警告，不超长的最后半行也写一行警告（只有大小）；
+/// 之前的日志照常（#674）。
+#[tokio::test]
+async fn a_line_the_pipe_closes_in_the_middle_of_is_reported() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-pipe-closes-mid-line"));
+    cp.hello(0).await;
+
+    // 超长：一行 5 MiB，没有换行，节点退出。
+    let lines = long_event_logs(
+        &cp,
+        "task-closed-long",
+        json!({ "size": 5 * MIB, "kind": "log", "newline": false }),
+    )
+    .await;
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    assert_eq!(texts[0], "before");
+    assert_eq!(lines[1].source(), LogSource::Agent);
+    assert!(
+        texts[1].contains(&(5 * MIB).to_string()) && texts[1].contains("日志"),
+        "{}",
+        texts[1]
+    );
+
+    // 不超长：1000 字节，没有换行，节点退出：原来不声不响地丢掉，现在写一行警告。
+    let lines = long_event_logs(
+        &cp,
+        "task-closed-short",
+        json!({ "size": 1000, "newline": false }),
+    )
+    .await;
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    assert_eq!(texts[0], "before");
+    assert_eq!(lines[1].source(), LogSource::Agent);
+    assert_eq!(lines[1].level(), LogLevel::Warn);
+    assert!(
+        texts[1].contains("没有写完") && texts[1].contains("1000 字节"),
+        "{}",
+        texts[1]
+    );
+    assert!(!texts[1].contains("xxxx"));
+}

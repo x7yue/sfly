@@ -4,11 +4,13 @@
 // 环境变量覆盖镜像时（单台机器的本地覆盖），uv 和 sfly CLI 的依赖从覆盖的地址安装，覆盖值写进 agent.env。
 import { execFile } from "node:child_process";
 import { cp as copy, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { arch, tmpdir } from "node:os";
+import { arch, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import pg from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { TestAccounts } from "./support/credentials.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { dependencyWheel, type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
@@ -113,14 +115,15 @@ describeWithAgent("全栈：install.sh --dev", () => {
 
 	async function installDev(
 		plane: TestControlPlane,
-		options: { home?: string; env?: Record<string, string> } = {},
+		options: { home?: string; env?: Record<string, string>; args?: string[] } = {},
 	) {
 		const { stdout } = await run(
 			"sh",
 			[
 				"-c",
-				'curl -fsSL "$0/install.sh" | sh -s -- --name dev-agent --no-service --dev',
+				'curl -fsSL "$0/install.sh" | sh -s -- "$@"',
 				plane.httpUrl,
+				...(options.args ?? ["--name", "dev-agent", "--no-service", "--dev"]),
 			],
 			{
 				env: {
@@ -133,6 +136,19 @@ describeWithAgent("全栈：install.sh --dev", () => {
 			},
 		);
 		return stdout;
+	}
+
+	/** 和 `installDev` 一样，但失败时不抛：返回退出码和输出。 */
+	async function installDevResult(
+		plane: TestControlPlane,
+		options: { home: string; env?: Record<string, string>; args?: string[] },
+	) {
+		try {
+			return { code: 0, stdout: await installDev(plane, options), stderr: "" };
+		} catch (error) {
+			const e = error as { code: number; stdout: string; stderr: string };
+			return { code: e.code, stdout: e.stdout, stderr: e.stderr };
+		}
 	}
 
 	const sflyVersion = async (h = home()) =>
@@ -206,4 +222,165 @@ describeWithAgent("全栈：install.sh --dev", () => {
 			await localPypi.close();
 		}
 	}, 300_000);
+
+	// 控制面配了带用户名和密码的镜像（私有的 PyPI 索引、GitHub Release 镜像）：不用登录就能下载的 /install.sh 里的地址不带它们（#755），
+	// 开发机上装 uv 和 sfly CLI 要认证，靠这台机器的 ~/.netrc（install.sh 的 curl、uv 都读它）。
+	it("控制面的镜像带用户名和密码：脚本里的地址不带凭据，没有 ~/.netrc 时 401 装不上，有 ~/.netrc 时装好", async () => {
+		const auth = { user: "idxuser", password: "idxpass-7a2d" };
+		const withCredentials = (url: string) =>
+			url.replace("://", `://${auth.user}:${auth.password}@`);
+		const privateMirror = await startReleaseMirror({ auth });
+		const privatePypi = await startPypiStub([dependencyWheel("jsonschema", "4.23.0")], { auth });
+		const plane = await startTestControlPlane({
+			version,
+			agentBinaries: { [arch() === "arm64" ? "aarch64" : "x86_64"]: agentBinary() },
+			sdkWheelDir: join(dir, "sdk"),
+			githubReleaseMirror: withCredentials(privateMirror.url),
+			pypiMirror: withCredentials(privatePypi.indexUrl),
+		});
+		planes.push(plane);
+		try {
+			const script = await (await plane.fetch("/install.sh")).text();
+			expect(script).not.toContain(auth.user);
+			expect(script).not.toContain(auth.password);
+			expect(script).toContain(`GITHUB_RELEASE_MIRROR='${privateMirror.url}'`);
+
+			// 没有 ~/.netrc：下载 uv 的安装脚本就被拒，安装失败，输出里也没有凭据。
+			const bare = join(dir, "home-private-bare");
+			const failed = await installDevResult(plane, { home: bare });
+			expect(failed.code).not.toBe(0);
+			expect(failed.stderr).toContain("下载 uv 安装脚本失败");
+			expect(failed.stdout + failed.stderr).not.toContain(auth.password);
+			expect(privateMirror.rejected()).toBeGreaterThan(0);
+			expect(privateMirror.uvInstalls()).toBe(0);
+
+			// 有 ~/.netrc（镜像都在 127.0.0.1 上）：uv、sfly CLI 的依赖都装上。
+			const netrcHome = join(dir, "home-private-netrc");
+			await mkdir(netrcHome, { recursive: true });
+			await writeFile(
+				join(netrcHome, ".netrc"),
+				`machine 127.0.0.1\nlogin ${auth.user}\npassword ${auth.password}\n`,
+				{ mode: 0o600 },
+			);
+			const stdout = await installDev(plane, { home: netrcHome });
+			expect(stdout + (await readFile(join(netrcHome, ".sfly/agent.env"), "utf8"))).not.toContain(
+				auth.password,
+			);
+			expect(await sflyVersion(netrcHome)).toBe(`sfly ${version}`);
+			expect(privateMirror.uvInstalls()).toBe(1);
+			expect(privatePypi.requests).toContain("/simple/jsonschema/");
+		} finally {
+			await privateMirror.close();
+			await privatePypi.close();
+		}
+	}, 300_000);
+
+	/** 本机的主机名规整成开发 Agent 名字里「主机」那一段（和 `sfly agent register-dev` 的默认一样）。 */
+	const hostSegment = () =>
+		hostname()
+			.split(".")[0]
+			?.toLowerCase()
+			.replace(/[^a-z0-9-]/g, "-")
+			.slice(0, 32)
+			.replace(/^-+|-+$/g, "") as string;
+
+	// 不给 --name：装好真的 sfly CLI 之后，用 SFLY_API_TOKEN 向真的控制面注册自己的开发 Agent（#492）。
+	it("不给 --name：注册自己的开发 Agent，名字是 dev-<登录名>-<主机>，凭据写进 agent.env；重新运行沿用，不再注册", async () => {
+		const [plane] = planes as [TestControlPlane];
+		const accounts = new TestAccounts(plane.database.url);
+		try {
+			const userId = await accounts.user("devowner", { displayName: "开发者" });
+			await accounts.member("default", userId, "editor");
+			const token = await accounts.personalToken(userId, { name: "装开发机" });
+			const registerHome = join(dir, "home-register");
+			const args = ["--no-service", "--dev"];
+
+			const stdout = await installDev(plane, {
+				home: registerHome,
+				args,
+				env: { SFLY_API_TOKEN: token },
+			});
+			const name = `dev-devowner-${hostSegment()}`;
+			const envFile = join(registerHome, ".sfly/agent.env");
+			const text = await readFile(envFile, "utf8");
+			expect(text).toContain(`SFLY_AGENT_NAME=${name}\n`);
+			const credential = /^SFLY_TOKEN=(sfly_agt_[0-9a-f]{48})$/m.exec(text)?.[1] as string;
+			expect(credential, text).toBeDefined();
+			// 凭据只在 agent.env 里：没有打印，也不在个人令牌的命令行输出里。
+			expect(stdout).not.toContain(credential);
+			expect(stdout).toContain(`已注册开发 Agent ${name}`);
+			// 控制面上这个名字只有一个有效的凭据（库里直接数）。
+			const db = new pg.Client({ connectionString: plane.database.url });
+			await db.connect();
+			const count = async () =>
+				Number(
+					(
+						await db.query(
+							"select count(*)::int as n from agent_credentials where agent_name = $1 and revoked_at is null",
+							[name],
+						)
+					).rows[0]?.n,
+				);
+			expect(await count()).toBe(1);
+
+			// 重新运行（没有令牌也行）：沿用 agent.env 里的名字和凭据，不再注册。
+			const again = await installDev(plane, { home: registerHome, args });
+			expect(again).toContain(`沿用`);
+			expect(await readFile(envFile, "utf8")).toContain(`SFLY_TOKEN=${credential}\n`);
+			expect(await count()).toBe(1);
+			await db.end();
+		} finally {
+			await accounts.close();
+		}
+	}, 300_000);
+	// 同一个人、同一个主机名，丢了 agent.env（换了机器、重装）再注册：控制面回 409，安装脚本写明办法，照着做能成。
+	it("名字被占用：安装失败并写明办法；先 revoke-dev 再重新运行成功，或者 --dev-host 换一个名字成功", async () => {
+		const [plane] = planes as [TestControlPlane];
+		const accounts = new TestAccounts(plane.database.url);
+		try {
+			const userId = await accounts.user("dupowner", { displayName: "重名的人" });
+			await accounts.member("default", userId, "editor");
+			const token = await accounts.personalToken(userId, { name: "装开发机" });
+			const name = `dev-dupowner-${hostSegment()}`;
+			const args = ["--no-service", "--dev"];
+			const env = { SFLY_API_TOKEN: token };
+
+			// 第一台：注册成功。
+			const first = join(dir, "home-dup-1");
+			await installDev(plane, { home: first, args, env });
+			expect(await readFile(join(first, ".sfly/agent.env"), "utf8")).toContain(
+				`SFLY_AGENT_NAME=${name}\n`,
+			);
+
+			// 第二台（同一个主机名、没有 agent.env）：撞名。
+			const second = join(dir, "home-dup-2");
+			const refused = await installDevResult(plane, { home: second, args, env });
+			expect(refused.code).toBe(1);
+			expect(refused.stderr).toContain(name);
+			expect(refused.stderr).toContain("--dev-host <另一个主机名>");
+			expect(refused.stderr).toContain("sfly agent revoke-dev");
+			expect(refused.stderr).toContain("sfly agent credentials issue");
+			expect(await readFile(join(second, ".sfly/agent.env"), "utf8").catch(() => null)).toBeNull();
+
+			// 办法一：换一个名字。
+			const third = join(dir, "home-dup-3");
+			await installDev(plane, { home: third, args: [...args, "--dev-host", "other-host"], env });
+			expect(await readFile(join(third, ".sfly/agent.env"), "utf8")).toContain(
+				"SFLY_AGENT_NAME=dev-dupowner-other-host\n",
+			);
+
+			// 办法二：先 `sfly agent revoke-dev <名字>`（脚本已经把 sfly CLI 装好），再重新运行。
+			await run(
+				join(second, ".local/bin/sfly"),
+				["agent", "revoke-dev", name, "--server", plane.httpUrl],
+				{ env: { PATH: tools, HOME: second, SFLY_API_TOKEN: token } },
+			);
+			await installDev(plane, { home: second, args, env });
+			const text = await readFile(join(second, ".sfly/agent.env"), "utf8");
+			expect(text).toContain(`SFLY_AGENT_NAME=${name}\n`);
+			expect(text).toMatch(/^SFLY_TOKEN=sfly_agt_[0-9a-f]{48}$/m);
+		} finally {
+			await accounts.close();
+		}
+	}, 600_000);
 });

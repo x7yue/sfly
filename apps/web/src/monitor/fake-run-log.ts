@@ -1,4 +1,4 @@
-import type { LogLineView, RunLogLine, RunLogPage } from "@sfly/schema";
+import type { LogLineView, RunLogFileProblem, RunLogLine, RunLogPage } from "@sfly/schema";
 import { FakeLive, FakePages } from "#/lib/fake-ports";
 import type { RunLogPorts } from "./run-log-reader";
 
@@ -55,6 +55,23 @@ export function runPage(
 		live_after: liveAfter,
 		truncated_tasks: [],
 		expired: false,
+		file_problems: [],
+		file_problems_total: 0,
+	};
+}
+
+/** 日志文件有问题的任务（#721）：任务 task 的日志文件 `problem`。 */
+export function fileProblem(
+	task: string,
+	problem: RunLogFileProblem["problem"],
+): RunLogFileProblem {
+	return {
+		task_id: task,
+		chain_instance_id: "main",
+		subflow: null,
+		node_id: task,
+		attempt: 1,
+		problem,
 	};
 }
 
@@ -71,6 +88,9 @@ type LiveHandlers = Parameters<RunLogPorts["subscribeLive"]>[1];
 export class FakeRunLog implements RunLogPorts {
 	/** 为 true 时，最新一页读到的是「运行已超过保留期」的空页。 */
 	expired = false;
+	/** 页里说的有问题的任务（#721）；总数是 `fileProblemsTotal`，默认等于个数。 */
+	fileProblems: RunLogFileProblem[] = [];
+	fileProblemsTotal: number | undefined;
 	readonly pages = new FakePages<RunPosition, RunLogPage>((position) => this.pageAt(position));
 	readonly live = new FakeLive<string, LiveHandlers>();
 	private latestReads = 0;
@@ -98,6 +118,13 @@ export class FakeRunLog implements RunLogPorts {
 		if (matching.length > 0) this.live.push((h) => h.onLines(matching));
 	}
 
+	/** 实时推送连上时说有任务的日志文件有问题（#721）。 */
+	emitFileProblems(problems: RunLogFileProblem[], total = problems.length) {
+		this.live.push((h) =>
+			h.onFileProblems({ file_problems: problems, file_problems_total: total }),
+		);
+	}
+
 	/** 控制面让读取器从最新一页重新读。 */
 	reload() {
 		this.live.push((h) => h.onReload());
@@ -115,6 +142,8 @@ export class FakeRunLog implements RunLogPorts {
 				liveAfter: `live-${this.latestReads}`,
 			}),
 			expired,
+			file_problems: this.fileProblems,
+			file_problems_total: this.fileProblemsTotal ?? this.fileProblems.length,
 		};
 	}
 }

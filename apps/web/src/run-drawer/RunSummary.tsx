@@ -11,6 +11,7 @@ import { ChainBar, ChainProgressCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ViaTag } from "#/components/via-tag";
 import {
 	ACTIVE_LABEL,
@@ -102,7 +103,7 @@ export function RunSummary({ runId }: { runId: string }) {
 				<span className="font-mono text-fg-3">{formatSpan(elapsed, !run.ended_at)}</span>
 				<span className="ml-auto text-xs text-fg-3">
 					{run.triggered_by}
-					<ViaTag via={run.triggered_via} /> 触发 ·{" "}
+					<ViaTag via={run.triggered_via} session={run.session} /> 触发 ·{" "}
 					<span className="font-mono">{formatDateTime(run.started_at)}</span>
 				</span>
 			</div>
@@ -172,7 +173,9 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 			<StatusPill kind={view.kind} className="shrink-0">
 				{view.label}
 			</StatusPill>
-			<span className="min-w-48 flex-1 text-fg-2">{text}</span>
+			<span className="min-w-48 flex-1 text-fg-2">
+				<UntrustedText text={text} />
+			</span>
 		</fieldset>
 	);
 }
@@ -228,9 +231,11 @@ function ActiveNode({
 				<NodeName node={node} />
 				{chain.depth > 0 && <span className="truncate text-xs text-fg-3">{chainLabel(chain)}</span>}
 				<span className="ml-auto font-mono text-2xs text-fg-3">
-					{[node.agent, since ? formatElapsed(now - Date.parse(since)) : null]
-						.filter(Boolean)
-						.join(" · ")}
+					<UntrustedText
+						text={[node.agent, since ? formatElapsed(now - Date.parse(since)) : null]
+							.filter(Boolean)
+							.join(" · ")}
+					/>
 				</span>
 			</div>
 			{metric?.primary_metric && (
@@ -269,7 +274,12 @@ function ActiveNode({
 						{progress.total !== null
 							? `${progress.current} / ${progress.total}`
 							: String(progress.current)}
-						{progress.message && ` · ${progress.message}`}
+						{progress.message && (
+							<>
+								{" · "}
+								<UntrustedText text={progress.message} />
+							</>
+						)}
 					</div>
 				</div>
 			)}
@@ -301,7 +311,7 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	if (logs.error) {
 		return (
 			<p className="m-0 text-xs text-danger-fg">
-				{MESSAGE.loadFailed("日志")}：{logs.error}
+				{MESSAGE.loadFailed("日志")}：<UntrustedText text={logs.error} mode="text" />
 			</p>
 		);
 	}
@@ -320,7 +330,7 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 						<span className="text-fg-3">{time ? formatTime(time) : TIME_NOT_RECORDED}</span>{" "}
 						<span className={level.className}>{level.label}</span>{" "}
 						<span className={cn(line.level === "info" ? "text-log-info" : level.className)}>
-							{line.text}
+							<UntrustedText text={line.text} />
 						</span>
 					</li>
 				);

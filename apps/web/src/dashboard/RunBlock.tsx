@@ -9,6 +9,7 @@ import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
 import { type LineChain, RunLines, RunLineThumb } from "#/components/run-lines";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { TriggeredAt } from "#/components/via-tag";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
@@ -96,7 +97,12 @@ export function RunBlock({
 						</span>
 					</div>
 					<div className="mt-0.5 text-xs text-fg-3">
-						<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
+						<TriggeredAt
+							by={run.triggered_by}
+							via={run.triggered_via}
+							session={run.session}
+							at={run.started_at}
+						/>
 					</div>
 				</div>
 				<div className="flex-none text-right">
@@ -289,7 +295,9 @@ function ActiveNodes({
 									<QueueWaitNote wait={waiting} queuedAt={node.queued_at} now={now} />
 								</span>
 							) : (
-								<span className="whitespace-nowrap text-fg-3">{activeDetail(node, now)}</span>
+								<span className="whitespace-nowrap text-fg-3">
+									<UntrustedText text={activeDetail(node, now)} />
+								</span>
 							)}
 						</li>
 					);

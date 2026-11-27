@@ -63,6 +63,7 @@ type Persisted<T extends SessionEvent["type"]> = Extract<SessionEvent, { type: T
 export const userMessage = (
 	seq: number,
 	text = "给 http_check 加超时",
+	extra: Partial<Persisted<"user_message">> = {},
 ): Persisted<"user_message"> => ({
 	type: "user_message",
 	seq,
@@ -72,6 +73,59 @@ export const userMessage = (
 	steer: false,
 	author: "alice",
 	author_user_id: null,
+	...extra,
+});
+/** 在做时说的话（插话）：`steer` 为 true。 */
+export const steerMessage = (
+	seq: number,
+	messageId: string,
+	text: string,
+	author = "alice",
+): Persisted<"user_message"> =>
+	userMessage(seq, text, { message_id: messageId, steer: true, author });
+/** 还没送到模型的插话的完整列表（不持久）。 */
+export const steerQueue = (...ids: string[]): SessionEvent => ({
+	type: "steer_queue",
+	messages: ids.map((message_id) => ({ message_id, text: "" })),
+});
+/** 插话没有送到：`message` 是通知给的那句说明（控制面写的「没有送到」「没有确认送到」，或助手服务写的）。 */
+export const steerDropped = (
+	seq: number,
+	messageId: string,
+	message: string,
+): Persisted<"notice"> => ({
+	type: "notice",
+	seq,
+	at: eventAt(),
+	kind: "steer_dropped",
+	message,
+	message_id: messageId,
+});
+/** 排着的话被撤掉了。 */
+export const queueCancelled = (seq: number, messageId: string): Persisted<"notice"> => ({
+	type: "notice",
+	seq,
+	at: eventAt(),
+	kind: "queue_cancelled",
+	message: "这句话排队时被取消了，没有交给助手",
+	message_id: messageId,
+});
+/** 排队的位置（不持久）。 */
+export const WAITING_FOR = {
+	session_id: "7a2d9c4e-1b3f-4d85-9c60-2e8f7a1b5d33",
+	title: "别人在做的事",
+	created_by: "bob",
+};
+export const turnQueued = (position: number, waitingFor = WAITING_FOR): SessionEvent => ({
+	type: "turn_queued",
+	position,
+	waiting_for: waitingFor,
+});
+export const sessionEnded = (seq: number, by = "alice"): Persisted<"session_ended"> => ({
+	type: "session_ended",
+	seq,
+	at: eventAt(),
+	by,
 });
 export const turnStarted = (seq: number): Persisted<"turn_started"> => ({
 	type: "turn_started",
@@ -108,6 +162,26 @@ export const toolResult = (
 	duration_ms: 420,
 	...extra,
 });
+/** 平台在一轮结束时提交工作区的记录（`platform` 的 `commit`，#546）。 */
+export const commitEvent = (
+	seq: number,
+	extra: Partial<Persisted<"platform">> = {},
+): Persisted<"platform"> =>
+	({
+		type: "platform",
+		kind: "commit",
+		seq,
+		at: eventAt(),
+		turn: 1,
+		hash: "3f1c2ab9d0e4a5b6c7d8e9f00112233445566778",
+		files: [
+			{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+			{ path: "assets/logo.png", additions: null, deletions: null },
+		],
+		diff: "diff --git a/nodes/http_check.py b/nodes/http_check.py\n+timeout = 30\n",
+		truncated: false,
+		...extra,
+	}) as Persisted<"platform">;
 export const turnEnd = (
 	seq: number,
 	outcome: Persisted<"turn_end">["outcome"],
