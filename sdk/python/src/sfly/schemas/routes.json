@@ -16957,6 +16957,12 @@
             "pattern": "^[0-9a-fA-F-]{1,36}$",
             "description": "只要运行编号以它开头的运行（不分大小写，只能写十六进制数字和 `-`）。`q` 还会按触发人匹配，只想按编号找时用它。"
           },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "只要这个会话触发的运行（会话令牌的 `sfly run … latest` 用它找这个会话触发的最近一次）。"
+          },
           "limit": {
             "default": 200,
             "type": "integer",
@@ -17286,6 +17292,11 @@
         ]
       },
       "notes": [
+        {
+          "part": "query",
+          "path": "session_id",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
         {
           "part": "query",
           "path": "id_prefix",

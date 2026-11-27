@@ -39,7 +39,13 @@ import { readLastPreset, rememberPreset } from "./last-preset";
 import { ParamField } from "./ParamField";
 import { PresetSelect } from "./PresetSelect";
 import { SectionTitle } from "./SectionTitle";
-import { initialValues, lockedValue, paramsSchema, toParams } from "./trigger-form";
+import {
+	initialValues,
+	lockedValue,
+	maskedRerunParams,
+	paramsSchema,
+	toParams,
+} from "./trigger-form";
 
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
@@ -176,6 +182,7 @@ function ParamsForm({
 			onTriggered(run);
 		},
 	});
+	const masked = maskedRerunParams(decls, options.rerunOf?.params);
 	const formElement = useRef<HTMLFormElement>(null);
 	const form = useForm({
 		defaultValues: initialValues(decls, options.rerunOf?.params),
@@ -265,6 +272,7 @@ function ParamsForm({
 									onChange={(v) => field.handleChange(v)}
 									onBlur={field.handleBlur}
 									blankUsesDefault
+									{...(masked.has(p.name) ? { help: MASKED_RERUN_HELP } : {})}
 								/>
 							)}
 						</form.Field>
@@ -288,6 +296,8 @@ function ParamsForm({
 		</form>
 	);
 }
+
+const MASKED_RERUN_HELP = "上一次的值里含有 secret 值，读不回来，请重新填写";
 
 /** 字段错误：zod 的 issue（表单级 schema 分发到字段）或字符串。 */
 function errorText(errors: unknown[]): string | undefined {

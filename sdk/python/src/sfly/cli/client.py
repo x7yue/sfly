@@ -57,6 +57,9 @@ _AGENT_NAME_MAX = 64
 
 # 401 的提示：没有登录、令牌失效或被吊销时都是它。
 LOGIN_HINT = "sfly login"
+SESSION_TOKEN_PREFIX = "sfly_ses_"
+"""会话令牌（平台的工作台上助手用的，控制面按会话签发）的前缀。"""
+SESSION_ID_ENV = "SFLY_SESSION_ID"
 UNAUTHORIZED_TIP = (
     "没有登录，或者令牌已失效、已被吊销：运行 sfly login 登录"
     "（脚本、CI 里设置环境变量 SFLY_API_TOKEN）"
@@ -231,6 +234,7 @@ class Client:
         token: str | None = None,
         sends_password: bool = False,
         nickname_ignored: bool = False,
+        session_id: str | None = None,
         ai_agent: str | None = None,
         stderr: IO[str] | None = None,
         timeout: float = 30.0,
@@ -239,6 +243,8 @@ class Client:
         self.nickname = nickname
         self.token = token
         """有令牌时身份由它决定：请求带 `Authorization: Bearer`，不再带昵称。"""
+        self.session_id = session_id
+        """令牌所属的会话（`SFLY_SESSION_ID`，工作台上控制面设好）：会话令牌的 `latest` 按它找。"""
         self.sends_password = sends_password
         """要把账号密码发给控制面（`sfly login` 换令牌，不带令牌）：往明文地址发之前也提示。"""
         self.ai_agent = ai_agent
@@ -279,6 +285,7 @@ class Client:
             resolve_nickname(nickname, environ),
             token=resolved.token if resolved else None,
             nickname_ignored=given_nickname,
+            session_id=environ.get(SESSION_ID_ENV, "").strip() or None,
             ai_agent=detect_ai_agent(environ),
         )
 
@@ -292,10 +299,14 @@ class Client:
             headers[NICKNAME_HEADER] = urllib.parse.quote(self.nickname, safe="")
         return headers
 
+    @property
+    def session_token(self) -> bool:
+        return self.token is not None and self.token.startswith(SESSION_TOKEN_PREFIX)
+
     def owner_name(self) -> str:
         """「自己」在运行记录里的名字（`latest` 用它找自己触发的最近一次运行）：没有令牌时是昵称，
         有令牌时是令牌所属用户的显示名（问控制面一次，之后记着）；
-        项目令牌没有用户，抛 `CliError`。"""
+        只有个人令牌问得了所属用户，别的令牌抛 `CliError`。"""
         if not self.token:
             return self.nickname
         if self._owner_name is None:
@@ -305,8 +316,8 @@ class Client:
                 if error.status == 403:
                     raise CliError(
                         "token_without_user",
-                        "这个令牌没有所属的用户（项目令牌），没有「自己触发的运行」可言："
-                        "给出运行的 id，或用 sfly login 换成个人令牌",
+                        "这个令牌不是个人令牌（例如项目令牌，它没有所属的用户），"
+                        "没有「自己触发的运行」可言：给出运行的 id，或用 sfly login 换成个人令牌",
                     ) from None
                 raise
             self._owner_name = str(listing["user"]["display_name"])

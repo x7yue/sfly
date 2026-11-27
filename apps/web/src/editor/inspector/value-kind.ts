@@ -25,12 +25,28 @@ export const TYPE_NAMES: Partial<Record<ValueKind, string>> = {
 	run_state: "运行状态",
 };
 
+/**
+ * 「字符串或 null」（`str | None`，`sfly build` 写成 `anyOf: [{type: string}, {type: null}]`）：按文本输入，
+ * 不用写成带引号的 JSON（#404 第 6 条）。成员是别的类型、带枚举或扩展类型的不算。
+ */
+export function isNullableString(schema: JsonSchema): boolean {
+	const members = schema.anyOf;
+	if (!Array.isArray(members) || members.length !== 2) return false;
+	const plain = (m: unknown, type: string) =>
+		typeof m === "object" &&
+		m !== null &&
+		Object.keys(m).length === 1 &&
+		(m as JsonSchema).type === type;
+	return members.some((m) => plain(m, "string")) && members.some((m) => plain(m, "null"));
+}
+
 /** 由输入 schema 决定的控件种类。 */
 export function valueKind(schema: JsonSchema): ValueKind {
 	if (isAgentInput(schema)) return "agent";
 	if (isFeishuBotInput(schema)) return "feishu_bot";
 	if (isRunStateInput(schema)) return "run_state";
 	if (Array.isArray(schema.enum)) return "enum";
+	if (isNullableString(schema)) return "string";
 	switch (schema.type) {
 		case "string":
 		case "number":

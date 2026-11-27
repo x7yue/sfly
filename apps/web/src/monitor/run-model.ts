@@ -21,7 +21,7 @@ import {
 	LOG_FILE_PROBLEMS_SHOWN,
 	MESSAGE,
 } from "#/lib/copy";
-import { shortId } from "#/lib/format";
+import { formatProgress, shortId } from "#/lib/format";
 import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
@@ -196,7 +196,7 @@ export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
 export function progressLabel(node: NodeRunView): string | null {
 	const progress = node.attempts.at(-1)?.progress;
 	if (!progress) return null;
-	return progress.total === null ? `${progress.current}` : `${progress.current}/${progress.total}`;
+	return formatProgress(progress.current, progress.total);
 }
 
 /** 一个最终失败的节点：它的第几次尝试、失败原因的一行和错误信息的全文。 */
