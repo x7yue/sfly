@@ -1,6 +1,7 @@
 import type { AgentView, RunFocusItem } from "@sfly/schema";
-import { acceptsTasks, agentStatusView } from "#/agents/agent-status";
+import { acceptsTasks, agentStatusView, isDisabled } from "#/agents/agent-status";
 import { countAttention, type FocusPreview, focusPreview } from "#/focus/focus-preview";
+import { AGENT_STATUS_LABEL } from "#/lib/copy";
 
 /**
  * 实况墙在数量变多时的退化规则（外壳页方案 4.2）。长链折叠在线路组件里（`components/run-lines` 的 `foldStations`）。
@@ -83,4 +84,16 @@ export function agentColumn(agents: readonly AgentView[]): { listed: AgentView[]
 			agent.queued_tasks.length > 0,
 	);
 	return { listed, idle: agents.length - listed.length };
+}
+
+/**
+ * 控制台右栏 Agent 面板标题旁的计数：「2 / 3 在线」。分母不含已停用的 Agent（管理员停用它是决定，不是掉线了，
+ * 不该让「在线」的比例看起来像出了问题）；有停用的再接「· 1 台已停用」。
+ */
+export function agentCountLabel(agents: readonly AgentView[]): string {
+	const disabled = agents.filter(isDisabled).length;
+	const enabled = agents.length - disabled;
+	const online = agents.filter((a) => !isDisabled(a) && a.status === "online").length;
+	const base = `${online} / ${enabled} ${AGENT_STATUS_LABEL.online}`;
+	return disabled === 0 ? base : `${base} · ${disabled} 台${AGENT_STATUS_LABEL.disabled}`;
 }

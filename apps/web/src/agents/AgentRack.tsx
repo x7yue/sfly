@@ -2,7 +2,7 @@ import type { AgentView, QueuedTaskView } from "@sfly/schema";
 import { cn } from "cn";
 import { useId } from "react";
 import { agentAnchor } from "#/agents/agent-anchor";
-import { acceptsTasks, agentStatusView, updateStatus } from "#/agents/agent-status";
+import { acceptsTasks, agentStatusView, authNotice, updateStatus } from "#/agents/agent-status";
 import { PreparingBadge } from "#/agents/PreparingBadge";
 import { queueTiming } from "#/agents/queue-timing";
 import { TaskSlot } from "#/agents/TaskSlot";
@@ -21,7 +21,7 @@ import { Truncate } from "@/components/ui/truncate";
 /**
  * 一台 Agent 的机架面板（外壳页方案 4.1）：头部一行是状态、名称、版本、系统、对外地址和最后在线，状态后面跟着各种告警，
  * 右侧是被引用的场景数和「立即更新」；主体是槽位格，格子下面是排队的任务；底部是节点包与能力。
- * 接不了新任务的 Agent（离线、准备环境中、版本不一致或更新中，`acceptsTasks`）槽位不算空闲，所以不画空闲矮条、不写占用数。
+ * 接不了新任务的 Agent（已停用、离线、准备环境中、版本不一致或更新中，`acceptsTasks`）槽位不算空闲，所以不画空闲矮条、不写占用数。
  */
 export function AgentRack({
 	agent,
@@ -117,7 +117,8 @@ export function AgentRack({
 }
 
 /**
- * 状态（在线、离线，更新中、更新失败这些优先）和跟在它后面的告警：准备环境、更新的说明、安装、时钟偏差、
+ * 状态（已停用最优先，其次更新中、更新失败这些，再是在线、离线）和跟在它后面的告警：停用的时间、
+ * 最近一次连接用的凭据（共享令牌、没有凭据）、准备环境、更新的说明、安装、时钟偏差、
  * 能力不能被其它 Agent 调用、节点包安装失败。
  */
 function RackStatus({ agent }: { agent: AgentView }) {
@@ -132,9 +133,26 @@ function RackStatus({ agent }: { agent: AgentView }) {
 	const unavailable =
 		online && agent.endpoint.port !== null ? agent.endpoint.unavailable_reason : null;
 	const status = agentStatusView(agent);
+	const auth = authNotice(agent);
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
+			{agent.disabled_at !== null && (
+				<span
+					className="text-xs text-fg-3"
+					title={`停用于 ${formatFullDateTime(agent.disabled_at)}`}
+				>
+					停用于 <span className="font-mono">{formatDateTime(agent.disabled_at)}</span>
+				</span>
+			)}
+			{auth && (
+				<span className="text-xs">
+					<span className={auth.severity === "warn" ? "text-warn-fg" : "text-fg-2"}>
+						{auth.label}
+					</span>
+					<span className="text-fg-3"> · {auth.hint}</span>
+				</span>
+			)}
 			{online && agent.preparing_since && <PreparingBadge since={agent.preparing_since} />}
 			{update?.detail && (
 				<span className={cn("text-xs", update.kind === "failed" ? "text-danger-fg" : "text-fg-3")}>

@@ -10,12 +10,12 @@ import { IdleSlots, idleSlotCount, SlotCell } from "#/components/slot-cell";
 import { STATUS, StatusDot } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery } from "#/lib/api";
-import { AGENT_STATUS_LABEL, MESSAGE, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
+import { MESSAGE, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardPanel } from "./DashboardPanel";
 import { PanelLink } from "./panel-link";
-import { agentColumn } from "./wall-rules";
+import { agentColumn, agentCountLabel } from "./wall-rules";
 
 /**
  * 右栏的 Agent：每台 Agent 的槽位格（紧凑形式），按派发顺序列出正在执行的任务，连续的空闲槽合并成一行，下面是排队数；
@@ -25,12 +25,11 @@ import { agentColumn } from "./wall-rules";
 export function AgentsPanel() {
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
 	const list = agents.data?.agents ?? [];
-	const online = list.filter((a) => a.status === "online").length;
 	const { listed, idle } = agentColumn(list);
 	return (
 		<DashboardPanel
 			title={TERM.agent}
-			count={agents.data && `${online} / ${list.length} ${AGENT_STATUS_LABEL.online}`}
+			count={agents.data && agentCountLabel(list)}
 			aside={<PanelLink to="/agents">管理</PanelLink>}
 		>
 			{agents.data && list.length === 0 ? (

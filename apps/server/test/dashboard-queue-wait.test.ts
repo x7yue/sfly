@@ -1,6 +1,7 @@
 // 控制台运行块里排队中的节点在等什么（#601）：`GET /dashboard` 的 `running_runs[].active_nodes[]` 里排队中的节点带 `queue_wait`
 // 和 `queued_at`，和运行视图里排队中的尝试是同一份判断（#457，`agents/queue-wait.ts`）；其余节点两个字段都是 null。
 import { type DashboardView, dashboardApi } from "@sfly/schema";
+import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withQueueWaits } from "../src/dashboard/queued-waits.js";
 import { ApiClient } from "./support/api-client.js";
@@ -96,6 +97,39 @@ describe("控制台运行块里排队中的节点在等什么", () => {
 			other_project_holders: 0,
 		});
 		// 和运行视图里这次尝试的 queue_wait 是同一份。
+		const attempt = (await api.node(runId, "a")).attempts.at(-1);
+		expect(node?.queue_wait).toEqual(attempt?.queue_wait);
+	});
+
+	it("Agent 被管理员停用：控制台上也写已停用和停用的时间，和运行视图里同一份（#492）", async () => {
+		const gone = await connect({ name: "agent-a" });
+		await gone.disconnect();
+		agents.splice(agents.indexOf(gone), 1);
+		await eventually(async () => {
+			const list = (await (await cp.fetch("/agents")).json()) as {
+				agents: Array<{ name: string; status: string }>;
+			};
+			expect(list.agents.find((a) => a.name === "agent-a")?.status).toBe("offline");
+		});
+		// 触发时还没停用（停用之后触发会被预检拒绝），排着队的时候被停用。
+		const runId = await api.triggerOk(await api.orchestrationWith(scenario("agent-a")));
+		clock.advance(30 * SECOND);
+		const db = new pg.Client({ connectionString: cp.database.url });
+		await db.connect();
+		try {
+			await db.query("update agents set disabled_at = $1 where name = 'agent-a'", [clock.now()]);
+		} finally {
+			await db.end();
+		}
+		clock.advance(MINUTE);
+
+		const node = await activeNode(runId);
+		expect(node?.queue_wait).toMatchObject({
+			agent: "agent-a",
+			state: "disabled",
+			since: new Date(clock.now().getTime() - MINUTE).toISOString(),
+			slots: null,
+		});
 		const attempt = (await api.node(runId, "a")).attempts.at(-1);
 		expect(node?.queue_wait).toEqual(attempt?.queue_wait);
 	});
