@@ -1,0 +1,17 @@
+{
+	"说明": "骨架验收（#553）：一轮进行中重启助手容器，这一轮被打断；说一句之后接着做完。",
+	"steps": [
+		{
+			"id": "long",
+			"tool": "bash",
+			"args": {
+				"command": "for i in $(seq 1 40); do echo \"第 $i 行\"; sleep 1; done",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "done",
+			"text": "接着做完了（收到：{last_user}）。"
+		}
+	]
+}

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AccessGuard } from "../src/auth/access-guard.js";
 import { installAccessGuard } from "../src/http/access.js";
 import { contractRoute, guardHttpContract } from "../src/http/contract-route.js";
+import { actAs } from "./support/credentials.js";
 import { FakeAccessStore } from "./support/fake-access-store.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -202,14 +203,14 @@ describe("请求里的 NUL 字符（#212）", () => {
 	it("查询参数与 JSON 请求体里含 NUL 的字符串返回 400 invalid_request", async () => {
 		const create = await cp.fetch("/orchestrations", {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+			headers: { "content-type": "application/json", ...actAs("alice") },
 			body: JSON.stringify({ name: "a\u0000b" }),
 		});
 		expect(create.status).toBe(400);
 		expect(await create.json()).toMatchObject({ error: { code: "invalid_request" } });
 
 		const list = await cp.fetch("/orchestrations?q=%00", {
-			headers: { "x-sfly-nickname": "alice" },
+			headers: { ...actAs("alice") },
 		});
 		expect(list.status).toBe(400);
 		expect(await list.json()).toMatchObject({ error: { code: "invalid_request" } });

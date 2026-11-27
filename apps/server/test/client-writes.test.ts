@@ -234,6 +234,7 @@ describe("API 客户端的写操作", () => {
 
 			const writes = proxy.requests.filter((r) => r.method === "POST");
 			expect(writes).toHaveLength(1);
+			// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发的昵称请求头
 			expect(writes[0]?.headers["x-sfly-nickname"]).toBe("%E5%B0%8F%E6%98%8E");
 		});
 
@@ -289,6 +290,7 @@ describe("API 客户端的写操作", () => {
 			});
 			expect(proxy.requests.map((r) => r.method)).toEqual(["GET", "GET"]);
 			for (const request of proxy.requests) {
+				// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发的昵称请求头
 				expect(request.headers["x-sfly-nickname"]).toBeUndefined();
 			}
 		});

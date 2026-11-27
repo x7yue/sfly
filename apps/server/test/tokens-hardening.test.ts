@@ -86,6 +86,7 @@ describe("令牌的几处收紧", () => {
 				expect((await errorOf(read)).message).toContain("Bearer <令牌>");
 				// 带着昵称的写：以前会以匿名（昵称）身份写成功。
 				const write = await call(
+					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 					{ authorization, "x-sfly-nickname": encodeURIComponent("脚本") },
 					"POST",
 					"/orchestrations",
@@ -288,6 +289,7 @@ describe("令牌的几处收紧", () => {
 				"\u200d开头",
 			]) {
 				const res = await call(
+					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 					{ "x-sfly-nickname": encodeURIComponent(nickname) },
 					"POST",
 					"/orchestrations",
@@ -336,6 +338,7 @@ describe("令牌的几处收紧", () => {
 			] as const) {
 				for (const nickname of nicknames) {
 					const res = await call(
+						// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 						{ "x-sfly-nickname": encodeURIComponent(nickname) },
 						"POST",
 						"/orchestrations",
@@ -354,6 +357,7 @@ describe("令牌的几处收紧", () => {
 				["ab\u0085c", "昵称的第 3 个字符是 U+0085"],
 			] as const) {
 				const res = await call(
+					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 					{ "x-sfly-nickname": encodeURIComponent(nickname) },
 					"POST",
 					"/orchestrations",
@@ -369,6 +373,7 @@ describe("令牌的几处收紧", () => {
 
 		it("昵称请求头没按契约编码（直接写 UTF-8，字节被读成 U+0080–U+009F 的控制字符）：400，报错写明要按 encodeURIComponent 编码", async () => {
 			const raw = Buffer.from("小明", "utf8").toString("latin1");
+			// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 			const res = await call({ "x-sfly-nickname": raw }, "POST", "/orchestrations", {
 				name: "不该建出来",
 			});
@@ -378,6 +383,7 @@ describe("令牌的几处收紧", () => {
 			expect(message).toContain("昵称的第 3 个字符是 U+008F");
 			// 值里带不合法的 %（解码不了）也算没编码：同样提示。
 			const withPercent = await call(
+				// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 				{ "x-sfly-nickname": `50%${raw}` },
 				"POST",
 				"/orchestrations",
@@ -391,6 +397,7 @@ describe("令牌的几处收紧", () => {
 		});
 
 		it("没编码、但被拒的是 ASCII 的字符（直接写的制表符）：编码了一样被拒，不提示编码，只说字符", async () => {
+			// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 			const res = await call({ "x-sfly-nickname": "a\tb" }, "POST", "/orchestrations", {
 				name: "不该建出来",
 			});

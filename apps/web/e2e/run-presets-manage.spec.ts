@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createRunPreset, listRunPresets } from "./run-presets-support";
@@ -200,7 +201,7 @@ test("场景归档期间也能编辑运行预设：已归档的卡片有「更�
 	});
 	const archived = await controlPlane.fetch(`/orchestrations/${id}/archive`, {
 		method: "POST",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	expect(archived.ok).toBe(true);
 

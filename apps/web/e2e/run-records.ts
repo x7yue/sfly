@@ -1,3 +1,4 @@
+import { actAs } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
@@ -76,7 +77,7 @@ export async function seedRunRecords(cp: TestControlPlane, clock: ManualClock, a
 	await advance(clock, agent, 30_000);
 	await cp.fetch(`/runs/${cancelled}/cancel`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: "{}",
 	});
 	await agent.nextCancel();

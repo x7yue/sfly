@@ -291,8 +291,27 @@ export const loginNameOf = (nickname: string): string =>
 		? nickname
 		: `t_${createHash("sha256").update(nickname).digest("hex").slice(0, 24)}`;
 
+/**
+ * 以这个昵称的用户发请求（#493）：测试控制面的 `fetch`、命令行和 API 客户端的辅助按它换成这个用户的个人令牌（`TestUsers`）。
+ * 测试里按昵称选人只用它，不手写昵称请求头（lint 规则 biome-plugins/test-nickname-header.grit）：#494 删掉昵称时只改这里。
+ */
+export const actAs = (nickname: string): Record<string, string> => ({
+	[NICKNAME_HEADER]: encodeURIComponent(nickname),
+});
+
 /** 测试里的请求默认是谁（#493）：昵称请求头没有写时就是他。 */
 export const DEFAULT_TESTER = "tester";
+
+/** 请求以谁的身份发（{@link actAs} 写进去的昵称）：没写是 tester，解不开的编码是 undefined。 */
+export function nicknameIn(headers: Headers): string | undefined {
+	const raw = headers.get(NICKNAME_HEADER);
+	if (raw === null) return DEFAULT_TESTER;
+	try {
+		return decodeURIComponent(raw);
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * 测试控制面默认带的凭据（#493，`TestControlPlane.fetch`）：每个昵称一个用户（显示名是昵称）和他的个人令牌，第一次用到时
@@ -349,6 +368,25 @@ export class TestUsers {
 		});
 	}
 
+	/**
+	 * 显示名是这个昵称的普通成员（不是平台管理员，只在 `project` 里有 `role`）新登录一次，返回登录 Cookie 的值。
+	 * 登录名和默认凭据的用户分开（`m_` 开头），两者可以同时存在。
+	 */
+	async memberLogin(nickname: string, project: string, role: ProjectRole): Promise<string> {
+		return this.#withAccounts(async (accounts) => {
+			const id = await accounts.userNamed(loginNameOf(`m_${nickname}`), { displayName: nickname });
+			await accounts.project(project);
+			await accounts.member(project, id, role);
+			return accounts.login(id);
+		});
+	}
+
+	/** 这个昵称的用户新登录一次，返回登录 Cookie 的值（e2e 的浏览器带它就是登录着的）。 */
+	async loginCookie(nickname = DEFAULT_TESTER): Promise<string> {
+		const { id } = await this.user(nickname);
+		return this.#withAccounts((accounts) => accounts.login(id));
+	}
+
 	/** 以这个昵称的用户发请求要带的请求头（`authorization`）。 */
 	async as(nickname: string): Promise<Record<string, string>> {
 		return bearer(await this.token(nickname));
@@ -370,15 +408,7 @@ export class TestUsers {
 		if (init.credentials === "omit" || headers.has("authorization") || headers.has("cookie")) {
 			return headers;
 		}
-		const raw = headers.get(NICKNAME_HEADER);
-		let nickname: string | undefined = DEFAULT_TESTER;
-		if (raw !== null) {
-			try {
-				nickname = decodeURIComponent(raw);
-			} catch {
-				nickname = undefined;
-			}
-		}
+		const nickname = nicknameIn(headers);
 		// 昵称本身不合格（测的就是控制面怎么拒绝它）：不带凭据，照旧是不带凭据的请求。
 		if (nickname === undefined || !usableNickname(nickname)) return headers;
 		headers.set("authorization", `Bearer ${await this.token(nickname)}`);

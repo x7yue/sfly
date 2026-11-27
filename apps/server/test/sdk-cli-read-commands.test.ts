@@ -4,6 +4,7 @@ import { strToU8 } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, spawn } from "./support/chains.js";
+import { actAs } from "./support/credentials.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import {
@@ -57,7 +58,7 @@ describe("sfly 只读命令 → 控制面", () => {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				"x-sfly-nickname": encodeURIComponent(nickname),
+				...actAs(nickname),
 				...(client === undefined ? {} : { "x-sfly-client": client }),
 			},
 			body: JSON.stringify(body),

@@ -11,6 +11,7 @@ import { resolveRunFocus } from "../src/focus/run-focus.js";
 import { readNodeError } from "../src/runs/run-read.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { ErrorKind, FakeAgent, TaskStatus } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
@@ -980,7 +981,7 @@ describe("运行通知", () => {
 			await eventually(() => expect(feishu.requests).toHaveLength(1));
 			const removed = await cp.fetch("/feishu-bots/ops", {
 				method: "DELETE",
-				headers: { "x-sfly-nickname": "tester" },
+				headers: { ...actAs("tester") },
 			});
 			expect(removed.status).toBe(204);
 
@@ -1006,7 +1007,7 @@ describe("运行通知", () => {
 			const id = await scenario(single(), { bot: "gone", trigger: "failed_or_cancelled" });
 			const removed = await cp.fetch("/feishu-bots/gone", {
 				method: "DELETE",
-				headers: { "x-sfly-nickname": "tester" },
+				headers: { ...actAs("tester") },
 			});
 			expect(removed.status).toBe(204);
 

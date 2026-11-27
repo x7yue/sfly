@@ -2,6 +2,7 @@
 import { orchestrationsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
@@ -52,7 +53,7 @@ describe("场景", () => {
 			method: "PATCH",
 			headers: {
 				"content-type": "application/json",
-				"x-sfly-nickname": encodeURIComponent(nickname),
+				...actAs(nickname),
 			},
 			body: JSON.stringify(body),
 		});
@@ -212,7 +213,7 @@ describe("场景", () => {
 			).toBe(404);
 			const del = await cp.fetch(`/orchestrations/${id}`, {
 				method: "DELETE",
-				headers: { "x-sfly-nickname": "tester" },
+				headers: { ...actAs("tester") },
 			});
 			expect(del.status).toBe(404);
 			expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ id });

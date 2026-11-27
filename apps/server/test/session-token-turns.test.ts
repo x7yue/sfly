@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { PREDATES_LOGIN_MESSAGE } from "../src/sessions/session-service.js";
 import { SESSION_TOKEN_TTL_MS } from "../src/sessions/session-tokens.js";
 import { ApiClient } from "./support/api-client.js";
-import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
+import { actAs, bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { FakeAssistant } from "./support/fake-assistant.js";
@@ -597,7 +597,7 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			const res = await cp.fetch("/projects/default/sessions", {
 				method: "POST",
 				credentials: "omit",
-				headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+				headers: { "content-type": "application/json", ...actAs("alice") },
 				body: JSON.stringify({ text: "没有凭据" }),
 			});
 			expect(res.status).toBe(401);

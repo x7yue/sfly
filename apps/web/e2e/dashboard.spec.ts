@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { setAgentDisabled } from "./agent-admin-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
@@ -627,7 +628,7 @@ test("最近结束：取消的运行也只占一行，写结束时间和耗时�
 	clock.advance(3000);
 	const cancel = await controlPlane.fetch(`/runs/${run}/cancel`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: "{}",
 	});
 	expect(cancel.ok).toBe(true);
@@ -783,7 +784,7 @@ test("右栏没有 Agent、没有场景时写明；场景列加载中显示骨�
 	// 场景全部归档：列表里没有可列的场景。
 	const archived = await controlPlane.fetch(`/orchestrations/${scenario}/archive`, {
 		method: "POST",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	expect(archived.ok).toBe(true);
 	// 接口没有删除 Agent 的操作：让 Agent 列表返回空，相当于一台 Agent 都没有。

@@ -5,6 +5,7 @@
 import { feishuBotsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
@@ -345,7 +346,7 @@ describe("删除飞书机器人之前列出「飞书机器人」类型的输入�
 		const id = await api.orchestrationWith(flow([alertNode("a", { bot: "ops" })]), "scenario");
 		const res = await cp.fetch("/feishu-bots/ops", {
 			method: "DELETE",
-			headers: { "x-sfly-nickname": "tester" },
+			headers: { ...actAs("tester") },
 		});
 		expect(res.status).toBe(204);
 		expect((await api.trigger(id)).status).toBe(400);

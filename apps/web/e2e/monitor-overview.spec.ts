@@ -1,3 +1,4 @@
+import { actAs } from "../../server/test/support/credentials.js";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { ErrorKind, LogLevel } from "../../server/test/support/fake-agent.js";
 import { inspector } from "./editor-support";
@@ -211,7 +212,7 @@ test("取消的运行也先打开详情", async ({ page, controlPlane, connectAg
 	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
 	const res = await controlPlane.fetch(`/runs/${runId}/cancel`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: "{}",
 	});
 	expect(res.status).toBe(200);

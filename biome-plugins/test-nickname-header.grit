@@ -1,0 +1,24 @@
+language js
+
+// 测试代码里不手写昵称请求头（#493）：测试的请求按昵称选人，统一经 apps/server/test/support/credentials.ts 的 `actAs`，
+// 它把昵称交给测试控制面换成这个用户的个人令牌（`TestUsers`）。#494 起不带凭据的请求一律 401、昵称请求头删掉时，只改这一处。
+// 测的就是昵称请求头本身（控制面怎么校验它、命令行和 API 客户端发不发它）的地方，在这一行上方写
+// `// biome-ignore lint/plugin/test-nickname-header: <原因>`。
+//
+// 清单：每一种写法一行，行首是 `[名字]`（报出的诊断以同样的 `[名字]` 开头）。
+//   `[literal]`    字符串或对象的键写出 `x-sfly-nickname`（大小写不论）
+//   `[constant]`   用到 `NICKNAME_HEADER` 这个名字（@sfly/schema 导出的请求头名），导入它也算
+//
+// 范围：apps/server/test、apps/web/e2e、apps/assistant/test 下的文件；`credentials.ts` 自己除外。
+// 认不出的：拼出来的名字（`"x-sfly-" + "nickname"`）、模板字符串。
+or {
+	or {
+		JsStringLiteralExpression(),
+		JsLiteralMemberName()
+	} as $span where { $span <: r"(?i)[\"'`]?x-sfly-nickname[\"'`]?", $form = "literal" },
+	`NICKNAME_HEADER` as $span where { $form = "constant" }
+} where {
+	$filename <: r".*/apps/(?:server/test|web/e2e|assistant/test)/.*",
+	$filename <: not r".*/apps/server/test/support/credentials\.ts",
+	register_diagnostic(span=$span, message=`[$form] 测试里不手写昵称请求头（#493）：按昵称选人用 apps/server/test/support/credentials.ts 的 actAs("名字")，测试控制面会换成这个用户的个人令牌；#494 删掉昵称时只改那一处。测的就是昵称请求头本身的，在这一行上方写 // biome-ignore lint/plugin/test-nickname-header: <原因>。`)
+}

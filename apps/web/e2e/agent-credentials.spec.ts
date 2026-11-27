@@ -656,26 +656,30 @@ test.describe("谁看得到这些按钮", () => {
 		await expect(page).toHaveURL(/\/login\?/, { timeout: 30_000 });
 	});
 
-	test("没有登录（昵称模式）的人看不到凭据、停用的按钮，也看不到「为新 Agent 签发凭据」；接口也要登录", async ({
-		page,
-		controlPlane,
-		connectAgent,
-	}) => {
-		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
-		await page.goto("/agents");
-		await expect(rack(page, "agent-a")).toBeVisible();
-		await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
-		await expect(rack(page, "agent-a").getByRole("button", { name: "agent-a 的凭据" })).toHaveCount(
-			0,
-		);
-		await expect(rack(page, "agent-a").getByRole("button", { name: "停用 agent-a" })).toHaveCount(
-			0,
-		);
-		// 页面不给看，接口本来就拒绝：不带凭据的请求是 401。
-		const refused = await controlPlane.fetch("/projects/default/agents/agent-a/credentials", {
-			credentials: "omit",
+	test.describe("没有登录", () => {
+		test.use({ loginAs: null, nickname: "tester" });
+
+		test("没有登录（昵称模式）的人看不到凭据、停用的按钮，也看不到「为新 Agent 签发凭据」；接口也要登录", async ({
+			page,
+			controlPlane,
+			connectAgent,
+		}) => {
+			await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+			await page.goto("/agents");
+			await expect(rack(page, "agent-a")).toBeVisible();
+			await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
+			await expect(
+				rack(page, "agent-a").getByRole("button", { name: "agent-a 的凭据" }),
+			).toHaveCount(0);
+			await expect(rack(page, "agent-a").getByRole("button", { name: "停用 agent-a" })).toHaveCount(
+				0,
+			);
+			// 页面不给看，接口本来就拒绝：不带凭据的请求是 401。
+			const refused = await controlPlane.fetch("/projects/default/agents/agent-a/credentials", {
+				credentials: "omit",
+			});
+			expect(refused.status).toBe(401);
 		});
-		expect(refused.status).toBe(401);
 	});
 });
 

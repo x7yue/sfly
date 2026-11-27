@@ -1,0 +1,17 @@
+{
+	"说明": "骨架验收（#553）：命令在跑时插话，下一步的回复里带着插话的原文。",
+	"steps": [
+		{
+			"id": "long",
+			"tool": "bash",
+			"args": {
+				"command": "for i in $(seq 1 20); do echo \"第 $i 行\"; sleep 1; done",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "after",
+			"text": "收到插话：{last_user}"
+		}
+	]
+}

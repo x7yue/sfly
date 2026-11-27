@@ -8,7 +8,7 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLATFORM_ADMIN_SCOPES } from "../src/auth/scopes.js";
 import { SETUP_CODE_FILE } from "../src/auth/setup-code.js";
-import { loginCookie, TestAccounts } from "./support/credentials.js";
+import { actAs, loginCookie, TestAccounts } from "./support/credentials.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { seedTask } from "./support/seed-task.js";
@@ -668,7 +668,7 @@ describe("不登录也能照旧使用（在 #494 之前）", () => {
 		expect(await noNickname.json()).toMatchObject({ error: { code: "nickname_required" } });
 		const withNickname = await cp.fetch("/orchestrations", {
 			method: "POST",
-			headers: { ...JSON_HEADERS, "x-sfly-nickname": "xiaoming" },
+			headers: { ...JSON_HEADERS, ...actAs("xiaoming") },
 			body: JSON.stringify({ name: "场景" }),
 		});
 		expect(withNickname.status).toBe(201);

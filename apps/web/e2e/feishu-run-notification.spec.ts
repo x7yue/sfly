@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import { focusDocument, setFocusItems } from "./focus-support";
 import { httpCheckPoints, metricPackage, pingPoints } from "./monitor-scenario";
@@ -93,7 +94,7 @@ test("在场景的更多菜单里配置运行通知：不产生新版本，复�
 	// 机器人被删除：设置原样保留，选择框标出未登记，并提示运行结束时不会发送。
 	const removed = await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 		method: "DELETE",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	expect(removed.status).toBe(204);
 	await more.click();
@@ -262,7 +263,7 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		await setRunNotification(controlPlane, scenario, { bot: "压测群" });
 		await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 			method: "DELETE",
-			headers: { "x-sfly-nickname": "tester" },
+			headers: { ...actAs("tester") },
 		});
 
 		const summary = await runFromDrawer({ page, connectAgent }, "fail");
@@ -371,7 +372,7 @@ test.describe("卡片的内容", () => {
 		const task = await agent.nextAssign();
 		const cancel = await controlPlane.fetch(`/runs/${runId}/cancel`, {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: "{}",
 		});
 		expect(cancel.status).toBe(200);
