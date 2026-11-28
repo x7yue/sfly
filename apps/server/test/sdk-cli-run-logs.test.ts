@@ -584,10 +584,10 @@ describe("sfly run logs / artifacts → 控制面", () => {
 	});
 
 	describe("run artifacts", () => {
-		const upload = (task: AssignedTask, name: string, body: string | Buffer) =>
+		const upload = (agent: FakeAgent, task: AssignedTask, name: string, body: string | Buffer) =>
 			fetch(`${task.artifactUploadUrl}${name.split("/").map(encodeURIComponent).join("/")}`, {
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream" },
+				headers: { ...agent.auth, "content-type": "application/octet-stream" },
 				body,
 			});
 
@@ -596,12 +596,12 @@ describe("sfly run logs / artifacts → 控制面", () => {
 			const { a, b, runId } = await setup();
 			const z1 = await a.nextAssign();
 			const s = await b.nextAssign();
-			expect((await upload(z1, "report.txt", "attempt one")).status).toBe(201);
-			expect((await upload(s, "out/回放.log", "replayed")).status).toBe(201);
+			expect((await upload(a, z1, "report.txt", "attempt one")).status).toBe(201);
+			expect((await upload(b, s, "out/回放.log", "replayed")).status).toBe(201);
 			await a.fail(z1, "boom");
 			const z2 = await a.nextAssign();
-			expect((await upload(z2, "report.txt", "attempt two")).status).toBe(201);
-			expect((await upload(z2, "图/截图.png", png)).status).toBe(201);
+			expect((await upload(a, z2, "report.txt", "attempt two")).status).toBe(201);
+			expect((await upload(a, z2, "图/截图.png", png)).status).toBe(201);
 			return { runId, z1, z2, s };
 		};
 

@@ -4,6 +4,7 @@
 - `client.get(路径)`、`client.request(方法, 路径)`、`client.open(方法, 路径)` 的路径参数记下方法；
 - 其余所有以 `/字母` 开头的完整字符串（路径常量、传给辅助函数的路径）也记下，只对照路径，
   宁可多查：不是控制面路径的（见 `NOT_CONTROL_PLANE`）要在这里明确排除；
+- `client.in_project(路径)` 还原成 `/projects/x` 加上那段路径（项目写在路径里，#488）；
 - f-string 里的 `{...}` 当作一段任意的值，同一个函数（或模块、类）里先赋过值的变量会展开，
   所以 `base = f"/orchestrations/{id}"` 之后的 `f"{base}/head"` 也能还原成完整路径。
 没法还原成路径的拼接（例如路径来自函数参数）不会被扫到：新增命令请直接把路径写成字面量或 f-string。
@@ -30,6 +31,9 @@ _CLIENT_CALLS = {"get": 0, "request": 1, "open": 1}
 # 或某个路径（GitHub 发布地址的后缀）。
 NOT_CONTROL_PLANE_FILES = {"wheel.py"}
 NOT_CONTROL_PLANE_PATHS = {"/astral-sh/python-build-standalone/"}
+# 赋值给这些名字的字符串是已经不存在的旧路径（`sfly api` 据此提示新写法，#488），
+# 不是命令行要请求的路径。
+NOT_CONTROL_PLANE_NAMES = {"_MOVED_ROUTES", "_PROJECT_QUERY_ROUTES"}
 
 
 @dataclass(frozen=True)
@@ -104,7 +108,7 @@ class _Scanner:
         for node in _own_nodes(scope):
             if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
                 self._remember(node, env)
-        parts = _string_parts(scope)
+        parts = _string_parts(scope) | _old_paths(scope)
         for node in _own_nodes(scope):
             if isinstance(node, ast.Call):
                 self._call(node, env)
@@ -166,6 +170,14 @@ class _Scanner:
         """表达式可能的字符串值；不是字符串时为 None，不认识的 `{...}` 当作 `PLACEHOLDER`。"""
         if isinstance(node, ast.Constant):
             return [node.value] if isinstance(node.value, str) else None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "in_project"
+            and node.args
+        ):
+            inner = self._resolve(node.args[0], env)
+            return None if inner is None else [f"/projects/{PLACEHOLDER}{path}" for path in inner]
         if isinstance(node, ast.Name):
             return env.get(node.id)
         if isinstance(node, ast.Attribute):
@@ -217,14 +229,28 @@ def _without_server_prefix(
 
 
 def _string_parts(scope: ast.AST) -> set[int]:
-    """拼成更长字符串的各个部分（f-string 的片段、`+` 的两边）：整个字符串单独处理，部分不处理。"""
+    """拼成更长字符串的部分（f-string 片段、`+` 两边、`in_project` 的路径）：只处理整个字符串。"""
     parts: set[int] = set()
     for node in _own_nodes(scope):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "in_project" and node.args:
+                parts.add(id(node.args[0]))
         if isinstance(node, ast.JoinedStr):
             parts.update(id(part) for part in node.values)
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             parts.update((id(node.left), id(node.right)))
     return parts
+
+
+def _old_paths(scope: ast.AST) -> set[int]:
+    """赋值给 `NOT_CONTROL_PLANE_NAMES` 里的名字的字符串（连同注解赋值）。"""
+    skipped: set[int] = set()
+    for node in _own_nodes(scope):
+        if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id in NOT_CONTROL_PLANE_NAMES for t in targets):
+                skipped.update(id(n) for n in ast.walk(node.value))
+    return skipped
 
 
 def _direct_children_scopes(scope: ast.AST) -> list[ast.AST]:

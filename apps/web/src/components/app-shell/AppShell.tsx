@@ -17,6 +17,7 @@ import { apiQuery } from "#/lib/api";
 import { useIdentity } from "#/lib/identity";
 import { useNickname } from "#/lib/nickname";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NAV_ITEMS, type NavItem } from "./navigation";
 import { useOverlays } from "./overlays";
@@ -54,7 +55,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function Sidebar({ collapsed }: { collapsed: boolean }) {
 	const { open } = useOverlays();
-	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
+	const agents = useQuery({
+		...apiQuery(agentsApi.list, { params: { project: PROJECT } }),
+		refetchInterval: BACKGROUND_POLL_MS,
+	});
 	// 在线 / 总数，口径和控制台 Agent 面板的标题一样：已停用的不算在总数里（`agentCounts`）。
 	const { online, enabled } = agentCounts(agents.data?.agents ?? []);
 	const counts: Partial<Record<NavItem["to"], string>> = {

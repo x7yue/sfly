@@ -135,7 +135,7 @@ test("任务的进度说明、动作的名称和字段和原因、日志、输�
 	const artifactName = `report${HOSTILE.zeroWidth}${HOSTILE.bidi}.html`;
 	const put = await controlPlane.fetch(
 		`/tasks/${probe.taskId}/artifacts/${encodeURIComponent(artifactName)}`,
-		{ method: "PUT", body: "<html>x</html>" },
+		{ method: "PUT", headers: agent.auth, body: "<html>x</html>" },
 	);
 	clock.advance(1000);
 
@@ -255,7 +255,7 @@ test("Agent 的名称、版本、系统：控制台的 Agent 列、Agent 管理�
 		}
 		return value;
 	};
-	for (const pattern of ["**/api/agents", "**/api/dashboard*"]) {
+	for (const pattern of ["**/api/projects/default/agents", "**/api/projects/default/dashboard*"]) {
 		await page.route(pattern, async (route) => {
 			const response = await route.fetch();
 			await route.fulfill({ response, json: taint(await response.json()) });
@@ -417,7 +417,12 @@ test("下拉、加载失败：运行切换的下拉里读不出运行列表的�
 	await page.keyboard.press("Escape");
 
 	// 加载失败：列表页整页的错误状态（标题、原因、错误详情）。
-	await failRequests(page, "**/api/agents", "GET", hostileText("读 Agent 列表失败"));
+	await failRequests(
+		page,
+		"**/api/projects/default/agents",
+		"GET",
+		hostileText("读 Agent 列表失败"),
+	);
 	await page.goto("/agents");
 	const alert = page.getByRole("alert").first();
 	await expect(alert).toBeVisible();

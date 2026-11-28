@@ -58,7 +58,7 @@ describe("CurrentUser.scopes：登录和 GET /auth/me", () => {
 	 */
 	const manageStatus = async (cookie: string) =>
 		(
-			await cp.fetch("/agents/probe-agent/enable", {
+			await cp.fetch("/projects/default/agents/probe-agent/enable", {
 				method: "POST",
 				headers: { ...loginCookie(cookie), ...SAME_ORIGIN },
 			})

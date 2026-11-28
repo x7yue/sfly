@@ -50,7 +50,11 @@ describe("令牌", () => {
 				done();
 			},
 		});
-		cp = await startTestControlPlane({ initialAdmin: ADMIN, logger: { stream } });
+		cp = await startTestControlPlane({
+			defaultCredentials: false,
+			initialAdmin: ADMIN,
+			logger: { stream },
+		});
 		clock = cp.clock as ManualClock;
 		accounts = new TestAccounts(cp.database.url);
 		db = new pg.Client({ connectionString: cp.database.url });
@@ -125,7 +129,7 @@ describe("令牌", () => {
 
 	/** 默认项目里一个场景（触发运行用）。 */
 	const scenario = () =>
-		new ApiClient(cp).orchestrationWith({
+		new ApiClient(cp.asTester()).orchestrationWith({
 			default_agent: "agent-a",
 			nodes: [{ id: "entry", kind: "entry", params: [] }],
 			edges: [],
@@ -152,7 +156,7 @@ describe("令牌", () => {
 			expect(issued.prefix).toBe(issued.token.slice(0, 13));
 			expect(issued.expires_at).toBe(new Date(clock.now().getTime() + 30 * DAY).toISOString());
 			// 带着它能请求（不用昵称）。
-			const res = await call(bearer(issued.token), "GET", "/orchestrations");
+			const res = await call(bearer(issued.token), "GET", "/projects/default/orchestrations");
 			expect(res.status).toBe(200);
 		});
 
@@ -408,7 +412,9 @@ describe("令牌", () => {
 			expect(downgraded.status).toBe(403);
 			expect((await errorOf(downgraded)).message).toContain("运行");
 			// 读还在。
-			expect((await call(bearer(runner.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(runner.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 		});
 	});
 
@@ -425,12 +431,20 @@ describe("令牌", () => {
 			// 有效期要在范围内（登录的空闲期限是 12 小时：下面推进一天之后这个登录也过期了，所以先测）。
 			expect((await personal(cookie, { name: "x", expires_in_days: 0 })).status).toBe(400);
 			expect((await personal(cookie, { name: "x", expires_in_days: 3651 })).status).toBe(400);
-			expect((await call(bearer(short.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(short.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			clock.advance(DAY - 1);
-			expect((await call(bearer(short.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(short.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			clock.advance(1);
-			expect((await call(bearer(short.token), "GET", "/orchestrations")).status).toBe(401);
-			expect((await call(bearer(forever.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(short.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(401);
+			expect(
+				(await call(bearer(forever.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 		});
 
 		it("用 Cookie 吊销自己的令牌：立即 401，列表里带吊销的时间；再吊销一次是 204", async () => {
@@ -438,10 +452,14 @@ describe("令牌", () => {
 			await accounts.member("default", id, "editor");
 			const cookie = await login("alice", PASSWORD);
 			const issued = await personalOk(cookie, { name: "要吊销的" });
-			expect((await call(bearer(issued.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(issued.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			const revoked = await call(withCookie(cookie), "DELETE", `/account/tokens/${issued.id}`);
 			expect(revoked.status).toBe(204);
-			expect((await call(bearer(issued.token), "GET", "/orchestrations")).status).toBe(401);
+			expect(
+				(await call(bearer(issued.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(401);
 			expect(
 				(await call(withCookie(cookie), "DELETE", `/account/tokens/${issued.id}`)).status,
 			).toBe(204);
@@ -468,7 +486,9 @@ describe("令牌", () => {
 				`/account/tokens/${bobToken.id}`,
 			);
 			expect(res.status).toBe(404);
-			expect((await call(bearer(bobToken.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(bobToken.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			// 不是 UUID 的 ID 是 400（契约校验），不是 500。
 			expect(
 				(await call(withCookie(await login("alice", PASSWORD)), "DELETE", "/account/tokens/xx"))
@@ -486,7 +506,9 @@ describe("令牌", () => {
 			const refused = await call(bearer(mine.token), "DELETE", `/account/tokens/${other.id}`);
 			expect(refused.status).toBe(403);
 			expect(await errorOf(refused)).toMatchObject({ code: "forbidden" });
-			expect((await call(bearer(other.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(other.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			// 改密码：只认登录，个人令牌 403。
 			const changed = await call(bearer(mine.token), "POST", "/auth/password", {
 				old_password: PASSWORD,
@@ -499,8 +521,12 @@ describe("令牌", () => {
 			// 吊销它自己：204，之后它自己是 401，另一个不受影响。
 			const self = await call(bearer(mine.token), "DELETE", `/account/tokens/${mine.id}`);
 			expect(self.status).toBe(204);
-			expect((await call(bearer(mine.token), "GET", "/orchestrations")).status).toBe(401);
-			expect((await call(bearer(other.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(mine.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(401);
+			expect(
+				(await call(bearer(other.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 		});
 
 		it("用个人令牌列出自己的令牌，标出发起请求的这一个（current）；只列自己的", async () => {
@@ -564,7 +590,7 @@ describe("令牌", () => {
 				(await row("select last_used_at from api_tokens where id = $1", [issued.id]))
 					.last_used_at as Date | null;
 			expect(await lastUsed()).toBeNull();
-			const use = () => call(bearer(issued.token), "GET", "/orchestrations");
+			const use = () => call(bearer(issued.token), "GET", "/projects/default/orchestrations");
 			// 第一次使用：记下。
 			const t0 = clock.now();
 			expect((await use()).status).toBe(200);
@@ -615,9 +641,9 @@ describe("令牌", () => {
 			).json()) as Issued;
 			const project = await projectOk(cookie, "default", { name: "ci", scopes: ["read"] });
 			for (const token of [issued.token, viaPassword.token, project.token]) {
-				await call(bearer(token), "GET", "/orchestrations");
+				await call(bearer(token), "GET", "/projects/default/orchestrations");
 				await call(bearer(token), "GET", "/account/tokens");
-				await call(bearer(token), "POST", "/orchestrations", { name: "x" });
+				await call(bearer(token), "POST", "/projects/default/orchestrations", { name: "x" });
 				await call(bearer(token), "GET", "/no-such-route");
 			}
 			await call({}, "POST", "/account/tokens", {
@@ -626,7 +652,7 @@ describe("令牌", () => {
 				password: "wrong-password-1",
 			});
 			await call(withCookie(cookie), "DELETE", `/account/tokens/${issued.id}`);
-			await call(bearer(issued.token), "GET", "/orchestrations");
+			await call(bearer(issued.token), "GET", "/projects/default/orchestrations");
 			await call(withCookie(cookie), "DELETE", `/projects/default/tokens/${project.id}`);
 			await vi.waitFor(() => expect(logs.length).toBeGreaterThan(0));
 			const output = logs.join("");
@@ -654,7 +680,7 @@ describe("令牌", () => {
 		const waitEnded = (stream: SseClient) =>
 			vi.waitFor(() => expect(stream.ended).toBe(true), { timeout: 3000 });
 		const open = async (token: string) => {
-			const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
+			const { run } = await seedTask(cp.asTester(), { agent: "agent-a", status: "running" });
 			return SseClient.open(cp, `/runs/${run}/events`, bearer(token));
 		};
 
@@ -715,7 +741,9 @@ describe("令牌", () => {
 			expect(stored).toMatchObject({ kind: "project", project_id: "default", user_id: null });
 			expect(stored.token_hash).toBe(hashCredential(issued.token));
 			expect(JSON.stringify(stored)).not.toContain(issued.token);
-			expect((await call(bearer(issued.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(issued.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			// 范围必须写。
 			expect(
 				(await call(withCookie(cookie), "POST", "/projects/default/tokens", { name: "x" })).status,
@@ -775,7 +803,9 @@ describe("令牌", () => {
 				(await call(bearer(made.token), "DELETE", `/projects/default/tokens/${made.id}`)).status,
 			).toBe(403);
 			// 没被吊销。
-			expect((await call(bearer(made.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(made.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 		});
 
 		it("令牌不能签发令牌：带「管理」范围的个人令牌可以列出和吊销项目令牌，但不能签发（403）", async () => {
@@ -805,7 +835,9 @@ describe("令牌", () => {
 				`/projects/default/tokens/${made.id}`,
 			);
 			expect(revoked.status).toBe(204);
-			expect((await call(bearer(made.token), "GET", "/orchestrations")).status).toBe(401);
+			expect(
+				(await call(bearer(made.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(401);
 		});
 
 		it("范围按签发的写：只读范围的项目令牌触发运行被拒绝，有「运行」范围的通过检查", async () => {
@@ -822,7 +854,9 @@ describe("令牌", () => {
 			expect((await errorOf(refused)).message).toContain("运行");
 			expect((await trigger(runner.token)).status).not.toBe(403);
 			// 没有「编辑」范围：不能新建场景。
-			const create = await call(bearer(runner.token), "POST", "/orchestrations", { name: "x" });
+			const create = await call(bearer(runner.token), "POST", "/projects/default/orchestrations", {
+				name: "x",
+			});
 			expect(create.status).toBe(403);
 		});
 
@@ -839,7 +873,7 @@ describe("令牌", () => {
 				scopes: ["read"],
 				expires_in_days: 1,
 			});
-			const use = (token: string) => call(bearer(token), "GET", "/orchestrations");
+			const use = (token: string) => call(bearer(token), "GET", "/projects/default/orchestrations");
 			expect((await use(inDefault.token)).status).toBe(200);
 			const revoke = (project: string, tokenId: string) =>
 				call(withCookie(cookie), "DELETE", `/projects/${project}/tokens/${tokenId}`);
@@ -885,10 +919,10 @@ describe("令牌", () => {
 			const defaultToken = await projectOk(cookie, "default", { name: "d", scopes: ["read"] });
 			for (const token of [limited.token, inAlpha.token]) {
 				for (const [method, path, body] of [
-					["GET", "/orchestrations", undefined],
+					["GET", "/projects/default/orchestrations", undefined],
 					["GET", `/orchestrations/${target}`, undefined],
 					["POST", `/orchestrations/${target}/runs`, { params: {} }],
-					["POST", "/orchestrations", { name: "越界" }],
+					["POST", "/projects/default/orchestrations", { name: "越界" }],
 					["GET", "/projects/default/tokens", undefined],
 					["DELETE", `/projects/default/tokens/${defaultToken.id}`, undefined],
 				] as const) {
@@ -898,7 +932,9 @@ describe("令牌", () => {
 				}
 			}
 			// 没有被动过：默认项目的令牌还有效，场景没有多出来。
-			expect((await call(bearer(defaultToken.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(defaultToken.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			expect(
 				(await row("select revoked_at from api_tokens where id = $1", [defaultToken.id]))
 					.revoked_at,

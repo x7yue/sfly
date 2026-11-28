@@ -9,6 +9,7 @@ import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { ACTIVE_LABEL, MESSAGE, PAGE, RUN_STATUS_LABEL, TERM } from "#/lib/copy";
 import { LIVE_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { useNow } from "#/lib/use-now";
 import { useSearchInput } from "#/lib/use-search-input";
 import { RunCard } from "#/run-records/RunCard";
@@ -39,6 +40,7 @@ function RunsPage() {
 	const search = Route.useSearch();
 	const runs = useQuery({
 		...apiQuery(runListApi.list, {
+			params: { project: PROJECT },
 			query: { status: search.status, orchestration_id: search.scenario, q: search.q },
 		}),
 		// 实时更新：进度、新运行、运行结束。
@@ -133,8 +135,12 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 		void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
 
 	// 与命令面板共用同一个缓存（默认列表：没有归档的场景）；已归档的场景单独列出，历史运行仍可回看。
-	const scenarios = useQuery(apiQuery(orchestrationsApi.list, { query: {} }));
-	const archived = useQuery(apiQuery(orchestrationsApi.list, { query: { archived: "true" } }));
+	const scenarios = useQuery(
+		apiQuery(orchestrationsApi.list, { params: { project: PROJECT }, query: {} }),
+	);
+	const archived = useQuery(
+		apiQuery(orchestrationsApi.list, { params: { project: PROJECT }, query: { archived: "true" } }),
+	);
 
 	const searchBox = useSearchInput(search.q, (q) => update({ q }));
 

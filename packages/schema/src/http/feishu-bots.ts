@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { endpoint, Timestamp } from "./contract.js";
+import { endpoint, ProjectParams, Timestamp } from "./contract.js";
 
 /**
  * 飞书机器人（GLOSSARY、ADR 0020）相关接口的契约（约定见 ./contract.ts）。
@@ -88,21 +88,22 @@ export const FeishuBotScenario = z.object({
 	references: z.array(FeishuBotReference).min(1),
 });
 
-const NameParams = z.object({
+const NameParams = ProjectParams.extend({
 	/** 机器人名称（登记时起的，创建后不能改）。 */
 	name: z.string().min(1),
 });
 
 export const feishuBotsApi = {
-	/** 全部飞书机器人，按名称排序。 */
+	/** 项目里的全部飞书机器人，按名称排序。 */
 	list: endpoint({
 		method: "GET",
-		path: "/feishu-bots",
-		summary: "列出全部飞书机器人（Webhook 地址已打码）",
+		path: "/projects/:project/feishu-bots",
+		summary: "列出项目里的飞书机器人（Webhook 地址已打码）",
 		effect: "read",
 		resource: { kind: "feishu_bot", target: "collection" },
 		client: true,
 		key: ["feishu-bots", "list"],
+		params: ProjectParams,
 		response: z.object({ bots: z.array(FeishuBotView) }),
 	}),
 	/**
@@ -110,12 +111,13 @@ export const feishuBotsApi = {
 	 */
 	create: endpoint({
 		method: "POST",
-		path: "/feishu-bots",
+		path: "/projects/:project/feishu-bots",
 		summary: "登记一个飞书机器人",
 		effect: "write",
 		resource: { kind: "feishu_bot", target: "collection" },
 		client: true,
 		key: ["feishu-bots", "create"],
+		params: ProjectParams,
 		body: z.object({
 			/** 机器人名称：全局唯一，创建后不能改。 */
 			name: FeishuBotName,
@@ -130,7 +132,7 @@ export const feishuBotsApi = {
 	 */
 	replaceWebhook: endpoint({
 		method: "PATCH",
-		path: "/feishu-bots/:name",
+		path: "/projects/:project/feishu-bots/:name",
 		summary: "替换一个飞书机器人的 Webhook 地址",
 		effect: "write",
 		resource: { kind: "feishu_bot", target: { params: "name" } },
@@ -157,7 +159,7 @@ export const feishuBotsApi = {
 	 */
 	references: endpoint({
 		method: "GET",
-		path: "/feishu-bots/:name/references",
+		path: "/projects/:project/feishu-bots/:name/references",
 		summary: "列出引用一个飞书机器人的场景",
 		effect: "read",
 		resource: { kind: "feishu_bot", target: { params: "name" } },
@@ -172,7 +174,7 @@ export const feishuBotsApi = {
 	/** 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。 */
 	remove: endpoint({
 		method: "DELETE",
-		path: "/feishu-bots/:name",
+		path: "/projects/:project/feishu-bots/:name",
 		summary: "删除一个飞书机器人",
 		effect: "write",
 		resource: { kind: "feishu_bot", target: { params: "name" } },
@@ -188,7 +190,7 @@ export const feishuBotsApi = {
 	 */
 	test: endpoint({
 		method: "POST",
-		path: "/feishu-bots/:name/test",
+		path: "/projects/:project/feishu-bots/:name/test",
 		summary: "向一个飞书机器人的群里同步发一条测试消息",
 		effect: "write",
 		resource: { kind: "feishu_bot", target: { params: "name" } },

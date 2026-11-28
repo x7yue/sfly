@@ -455,7 +455,7 @@ def test_a_missing_variable_stops_the_container_and_says_which_one(
 def test_the_missing_credential_message_says_how_to_issue_one(harness: Harness) -> None:
     result = harness.run(SFLY_WORKBENCH_TOKEN="")
 
-    assert f"sfly api POST /agents/{NAME}/credentials" in result.stderr
+    assert f"sfly api POST /projects/default/agents/{NAME}/credentials" in result.stderr
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root 写得了任何目录")

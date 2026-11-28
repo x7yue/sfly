@@ -24,7 +24,8 @@ export async function startClientControlPlane(
 	options: Parameters<typeof startTestControlPlane>[0] = {},
 ): Promise<ObservedClient & { cp: TestControlPlane }> {
 	const cp = await startTestControlPlane(options);
-	return { cp, ...observedClient({ baseUrl: cp.httpUrl }) };
+	// 和 `cp.fetch` 一样默认带 tester 的个人令牌（#493）。
+	return { cp, ...observedClient({ baseUrl: cp.httpUrl, token: await cp.users.token() }) };
 }
 
 export interface FinishedRun {
@@ -82,7 +83,7 @@ export async function seedFinishedRun(cp: TestControlPlane): Promise<FinishedRun
 			`${task.artifactUploadUrl}${artifact.name.split("/").map(encodeURIComponent).join("/")}`,
 			{
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream" },
+				headers: { ...agent.auth, "content-type": "application/octet-stream" },
 				body: artifact.body,
 			},
 		);

@@ -1,3 +1,4 @@
+import { actAs } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { createEditorScenario, editorDocument } from "./editor-support";
 
@@ -31,7 +32,7 @@ export const secondVersion = {
 export async function saveSecondVersion(cp: TestControlPlane, id: string, author: string) {
 	const res = await cp.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": author },
+		headers: { "content-type": "application/json", ...actAs(author) },
 		body: JSON.stringify({ base_version: 1, document: secondVersion }),
 	});
 	if (res.status !== 201) throw new Error(`保存失败：${res.status} ${await res.text()}`);

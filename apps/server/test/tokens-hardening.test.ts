@@ -34,6 +34,7 @@ describe("令牌的几处收紧", () => {
 		});
 		// 打开的事件流每 0.2 秒重新检查一次凭据（默认 30 秒）。
 		cp = await startTestControlPlane({
+			defaultCredentials: false,
 			initialAdmin: ADMIN,
 			logger: { stream },
 			streamRecheckMs: 200,
@@ -80,14 +81,15 @@ describe("令牌的几处收紧", () => {
 				`Basic ${token}`,
 			];
 			for (const authorization of wrong) {
-				const read = await call({ authorization }, "GET", "/orchestrations");
+				const read = await call({ authorization }, "GET", "/projects/default/orchestrations");
 				expect(read.status, authorization.slice(0, 20)).toBe(401);
 				expect((await errorOf(read)).message).toContain("Bearer <令牌>");
 				// 带着昵称的写：以前会以匿名（昵称）身份写成功。
 				const write = await call(
+					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 					{ authorization, "x-sfly-nickname": encodeURIComponent("脚本") },
 					"POST",
-					"/orchestrations",
+					"/projects/default/orchestrations",
 					{ name: "不该建出来" },
 				);
 				expect(write.status, authorization.slice(0, 20)).toBe(401);
@@ -95,7 +97,9 @@ describe("令牌的几处收紧", () => {
 			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 			// 回复里不带请求头的原值。
 			const echoed = JSON.stringify(
-				await errorOf(await call({ authorization: token }, "GET", "/orchestrations")),
+				await errorOf(
+					await call({ authorization: token }, "GET", "/projects/default/orchestrations"),
+				),
 			);
 			expect(echoed).not.toContain(token);
 		});
@@ -103,12 +107,18 @@ describe("令牌的几处收紧", () => {
 		it("正确的 Bearer 写法照常（大小写不敏感、多个空格）；和我们无关的方案（Basic 带别的内容、空头）照旧当作没带", async () => {
 			const { token } = await issue({ name: "脚本" });
 			for (const authorization of [`Bearer ${token}`, `bearer ${token}`, `BEARER   ${token}`]) {
-				expect((await call({ authorization }, "GET", "/orchestrations")).status).toBe(200);
+				expect(
+					(await call({ authorization }, "GET", "/projects/default/orchestrations")).status,
+				).toBe(200);
 			}
 			// 前面有反向代理做基本认证的部署：Authorization 是 Basic，里面没有我们的令牌，不能被挡。
 			const basic = `Basic ${Buffer.from("proxy-user:proxy-pass").toString("base64")}`;
-			expect((await call({ authorization: basic }, "GET", "/orchestrations")).status).toBe(200);
-			expect((await call({ authorization: "" }, "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call({ authorization: basic }, "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
+			expect(
+				(await call({ authorization: "" }, "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 		});
 
 		it("登录、初始化状态、健康检查本来就不看凭据：写错的头不挡它们；系统接口同样", async () => {
@@ -129,7 +139,11 @@ describe("令牌的几处收紧", () => {
 			const agent = await accounts.agentCredential("default", "agent-a");
 			const session = await accounts.sessionToken(await accounts.user("alice"), "default");
 			for (const secret of [agent, session]) {
-				const res = await call({ authorization: secret }, "GET", "/orchestrations");
+				const res = await call(
+					{ authorization: secret },
+					"GET",
+					"/projects/default/orchestrations",
+				);
 				expect(res.status).toBe(401);
 			}
 		});
@@ -160,7 +174,9 @@ describe("令牌的几处收紧", () => {
 
 			await db.query("update users set disabled_at = now() where id = $1", [boss]);
 			// 项目令牌属于项目：签发人被停用，它照样有效；记录还在。
-			expect((await call(bearer(created.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(bearer(created.token), "GET", "/projects/default/orchestrations")).status,
+			).toBe(200);
 			expect(await list()).toEqual([
 				expect.objectContaining({ name: "自动化", issued_by: "老板" }),
 			]);
@@ -287,9 +303,10 @@ describe("令牌的几处收紧", () => {
 				"\u200d开头",
 			]) {
 				const res = await call(
+					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 					{ "x-sfly-nickname": encodeURIComponent(nickname) },
 					"POST",
-					"/orchestrations",
+					"/projects/default/orchestrations",
 					{ name: "不该建出来" },
 				);
 				expect(res.status, JSON.stringify(nickname)).toBe(400);
@@ -335,9 +352,10 @@ describe("令牌的几处收紧", () => {
 			] as const) {
 				for (const nickname of nicknames) {
 					const res = await call(
+						// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 						{ "x-sfly-nickname": encodeURIComponent(nickname) },
 						"POST",
-						"/orchestrations",
+						"/projects/default/orchestrations",
 						{ name: `昵称 ${nickname}` },
 					);
 					expect(res.status, JSON.stringify(nickname)).toBe(status);
@@ -353,9 +371,10 @@ describe("令牌的几处收紧", () => {
 				["ab\u0085c", "昵称的第 3 个字符是 U+0085"],
 			] as const) {
 				const res = await call(
+					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 					{ "x-sfly-nickname": encodeURIComponent(nickname) },
 					"POST",
-					"/orchestrations",
+					"/projects/default/orchestrations",
 					{ name: "不该建出来" },
 				);
 				expect(res.status, JSON.stringify(nickname)).toBe(400);
@@ -368,18 +387,25 @@ describe("令牌的几处收紧", () => {
 
 		it("昵称请求头没按契约编码（直接写 UTF-8，字节被读成 U+0080–U+009F 的控制字符）：400，报错写明要按 encodeURIComponent 编码", async () => {
 			const raw = Buffer.from("小明", "utf8").toString("latin1");
-			const res = await call({ "x-sfly-nickname": raw }, "POST", "/orchestrations", {
-				name: "不该建出来",
-			});
+			const res = await call(
+				// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
+				{ "x-sfly-nickname": raw },
+				"POST",
+				"/projects/default/orchestrations",
+				{
+					name: "不该建出来",
+				},
+			);
 			expect(res.status).toBe(400);
 			const { message } = await errorOf(res);
 			expect(message).toContain("encodeURIComponent");
 			expect(message).toContain("昵称的第 3 个字符是 U+008F");
 			// 值里带不合法的 %（解码不了）也算没编码：同样提示。
 			const withPercent = await call(
+				// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
 				{ "x-sfly-nickname": `50%${raw}` },
 				"POST",
-				"/orchestrations",
+				"/projects/default/orchestrations",
 				{ name: "不该建出来" },
 			);
 			expect(withPercent.status).toBe(400);
@@ -390,9 +416,15 @@ describe("令牌的几处收紧", () => {
 		});
 
 		it("没编码、但被拒的是 ASCII 的字符（直接写的制表符）：编码了一样被拒，不提示编码，只说字符", async () => {
-			const res = await call({ "x-sfly-nickname": "a\tb" }, "POST", "/orchestrations", {
-				name: "不该建出来",
-			});
+			const res = await call(
+				// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
+				{ "x-sfly-nickname": "a\tb" },
+				"POST",
+				"/projects/default/orchestrations",
+				{
+					name: "不该建出来",
+				},
+			);
 			expect(res.status).toBe(400);
 			const { message } = await errorOf(res);
 			expect(message).toContain("昵称的第 2 个字符是 U+0009");
@@ -404,9 +436,11 @@ describe("令牌的几处收紧", () => {
 	describe("请求日志", () => {
 		it("令牌放进了查询参数：地址在日志里被盖住，原值不在日志里", async () => {
 			const { token } = await issue({ name: "脚本" });
-			await call({}, "GET", `/orchestrations?token=${token}&x=1`);
-			await call({}, "GET", `/runs?api_key=${token}`);
-			await vi.waitFor(() => expect(logs.join("")).toContain("/orchestrations?token="));
+			await call({}, "GET", `/projects/default/orchestrations?token=${token}&x=1`);
+			await call({}, "GET", `/projects/default/runs?api_key=${token}`);
+			await vi.waitFor(() =>
+				expect(logs.join("")).toContain("/projects/default/orchestrations?token="),
+			);
 			const output = logs.join("");
 			expect(output).not.toContain(token);
 			expect(output).toContain("******");
@@ -418,7 +452,7 @@ describe("令牌的几处收紧", () => {
 			const { token } = await issue({ name: "脚本" });
 			// 让场景的读出错（列改名，查询语句报错）：访问检查读的是令牌、用户、成员，先过得去，处理函数里才 500。
 			await db.query("alter table orchestrations rename column name to name_moved");
-			const res = await call(bearer(token), "GET", "/orchestrations");
+			const res = await call(bearer(token), "GET", "/projects/default/orchestrations");
 			expect(res.status).toBe(500);
 			await vi.waitFor(() => expect(logs.join("")).toContain("Failed query"));
 			const output = logs.join("");
@@ -432,7 +466,7 @@ describe("令牌的几处收紧", () => {
 		const waitEnded = (stream: SseClient) =>
 			vi.waitFor(() => expect(stream.ended).toBe(true), { timeout: 5000 });
 		const open = async (token: string) => {
-			const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
+			const { run } = await seedTask(cp.asTester(), { agent: "agent-a", status: "running" });
 			return SseClient.open(cp, `/runs/${run}/events`, bearer(token));
 		};
 

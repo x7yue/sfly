@@ -20,6 +20,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { ASSISTANT_REJECTION_TEXT, AssistantClient } from "../src/sessions/assistant-client.js";
 import { STOP_GRACE_MS } from "../src/sessions/session-service.js";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { FAKE_SECRET, FakeAssistant } from "./support/fake-assistant.js";
@@ -852,7 +853,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		] as const) {
 			const res = await cp.fetch(path, {
 				method: "POST",
-				headers: { "content-type": "application/json", "x-sfly-nickname": encodeURIComponent(nul) },
+				credentials: "omit",
+				headers: { "content-type": "application/json", ...actAs(nul) },
 				body: JSON.stringify(body),
 			});
 			expect(res.status, `昵称 ${path}`).toBe(400);

@@ -37,7 +37,9 @@ function readThenTrigger(page: Page, baseUrl: string, scenarioId: string) {
 	return page.evaluate(
 		async ({ baseUrl, scenarioId, nickname }) => {
 			const client = window.sfly.createClient({ baseUrl, nickname });
-			const { orchestrations } = await client.orchestrations.list();
+			const { orchestrations } = await client.orchestrations.list({
+				params: { project: "default" },
+			});
 			const run = await client.runs.trigger({ params: { id: scenarioId } });
 			return { scenarios: orchestrations.map((s) => s.name), runId: run.id };
 		},
@@ -67,7 +69,9 @@ test("另一个来源的页面：读到场景列表，带昵称触发运行（�
 	const [preflight, post] = triggers;
 	expect(preflight?.headers.origin).toBe(pageHost.origin);
 	expect(preflight?.headers["access-control-request-method"]).toBe("POST");
+	// biome-ignore lint/plugin/test-nickname-header: 测的是浏览器跨域请求带的昵称请求头
 	expect(preflight?.headers["access-control-request-headers"]).toContain("x-sfly-nickname");
+	// biome-ignore lint/plugin/test-nickname-header: 测的是浏览器跨域请求带的昵称请求头
 	expect(post?.headers["x-sfly-nickname"]).toBe(encodeURIComponent(NICKNAME));
 
 	const subscription = await subscribeToRun(page, controlPlaneProxy.url, runId);
@@ -91,18 +95,26 @@ test.describe("控制面版本和 API 客户端不一致", () => {
 			if (message.type() === "warning") warnings.push(message.text());
 		});
 		await openPage(page, pageHost);
-		const session = await page.evaluateHandle((baseUrl) => {
-			const times: string[] = [];
-			const client = window.sfly.createClient({
-				baseUrl,
-				onControlPlaneTime: (time) => times.push(time),
-			});
-			return { client, times, clientVersion: window.sfly.CLIENT_VERSION };
-		}, controlPlane.httpUrl);
+		const session = await page.evaluateHandle(
+			({ baseUrl, token }) => {
+				const times: string[] = [];
+				const client = window.sfly.createClient({
+					baseUrl,
+					token,
+					onControlPlaneTime: (time) => times.push(time),
+				});
+				return { client, times, clientVersion: window.sfly.CLIENT_VERSION };
+			},
+			{ baseUrl: controlPlane.httpUrl, token: await controlPlane.users.token() },
+		);
 
-		await session.evaluate(({ client }) => client.dashboard.get());
+		await session.evaluate(({ client }) =>
+			client.dashboard.get({ params: { project: "default" } }),
+		);
 		clock.advance(60_000);
-		await session.evaluate(({ client }) => client.dashboard.get());
+		await session.evaluate(({ client }) =>
+			client.dashboard.get({ params: { project: "default" } }),
+		);
 
 		expect(await session.evaluate(({ times }) => times)).toEqual([
 			START_TIME,
@@ -161,7 +173,7 @@ test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 						(error: { code: string }) => error.code,
 					);
 				return {
-					read: await codeOf(() => client.orchestrations.list()),
+					read: await codeOf(() => client.orchestrations.list({ params: { project: "default" } })),
 					write: await codeOf(() => client.runs.trigger({ params: { id: scenarioId } })),
 				};
 			},
@@ -170,7 +182,9 @@ test.describe("SFLY_CORS_ORIGINS 设置了来源名单", () => {
 
 		expect(codes).toEqual({ read: "network_error", write: "network_error" });
 		await expect.poll(() => blocked.length).toBeGreaterThanOrEqual(2);
-		const { runs } = (await (await controlPlane.fetch("/runs")).json()) as { runs: unknown[] };
+		const { runs } = (await (await controlPlane.fetch("/projects/default/runs")).json()) as {
+			runs: unknown[];
+		};
 		expect(runs).toEqual([]);
 	});
 

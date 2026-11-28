@@ -22,6 +22,7 @@ import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
 import { useNickname } from "#/lib/nickname";
+import { PROJECT } from "#/lib/project";
 import { writeRunView } from "#/monitor/live-run";
 import { unusablePresetNotice } from "#/presets/invalid-preset";
 import { draftFromFormValues } from "#/presets/preset-form";
@@ -311,6 +312,7 @@ function errorText(errors: unknown[]): string | undefined {
 function RunningNotice({ orchestrationId }: { orchestrationId: string }) {
 	const running = useQuery(
 		apiQuery(runListApi.list, {
+			params: { project: PROJECT },
 			query: { status: "running", orchestration_id: orchestrationId, limit: 5 },
 		}),
 	);

@@ -2,11 +2,11 @@ import {
 	type ClockOffsetView,
 	type FeishuBotView,
 	feishuBotsApi,
-	NICKNAME_HEADER,
 	type QueueWaitView,
 	runsApi,
 } from "@sfly/schema";
 import { expect } from "vitest";
+import { actAs } from "./credentials.js";
 import type { TestControlPlane } from "./test-control-plane.js";
 
 /** 测试里调用控制面 HTTP API 的小封装。 */
@@ -22,7 +22,7 @@ export class ApiClient {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				[NICKNAME_HEADER]: encodeURIComponent(nickname),
+				...actAs(nickname),
 			},
 			body: JSON.stringify(body),
 		});
@@ -33,7 +33,7 @@ export class ApiClient {
 			method: "PATCH",
 			headers: {
 				"content-type": "application/json",
-				[NICKNAME_HEADER]: encodeURIComponent(nickname),
+				...actAs(nickname),
 			},
 			body: JSON.stringify(body),
 		});
@@ -42,7 +42,7 @@ export class ApiClient {
 	delete(path: string, nickname = "tester"): Promise<Response> {
 		return this.cp.fetch(path, {
 			method: "DELETE",
-			headers: { [NICKNAME_HEADER]: encodeURIComponent(nickname) },
+			headers: actAs(nickname),
 		});
 	}
 
@@ -50,7 +50,7 @@ export class ApiClient {
 	postEmpty(path: string, nickname = "tester"): Promise<Response> {
 		return this.cp.fetch(path, {
 			method: "POST",
-			headers: { [NICKNAME_HEADER]: encodeURIComponent(nickname) },
+			headers: actAs(nickname),
 		});
 	}
 
@@ -61,14 +61,14 @@ export class ApiClient {
 	}
 
 	async createOrchestration(name: string): Promise<string> {
-		const res = await this.post("/orchestrations", { name });
+		const res = await this.post("/projects/default/orchestrations", { name });
 		expect(res.status).toBe(201);
 		return ((await res.json()) as { id: string }).id;
 	}
 
 	/** 登记一个飞书机器人（响应按 HTTP 契约解析）。 */
 	async createFeishuBot(name: string, webhookUrl: string): Promise<FeishuBotView> {
-		const res = await this.post("/feishu-bots", { name, webhook_url: webhookUrl });
+		const res = await this.post("/projects/default/feishu-bots", { name, webhook_url: webhookUrl });
 		expect(res.status, await res.clone().text()).toBe(201);
 		return feishuBotsApi.create.response.parse(await res.json());
 	}

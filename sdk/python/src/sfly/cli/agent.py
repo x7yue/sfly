@@ -35,8 +35,6 @@ EXIT_NOT_LOGGED_IN = 5
 # 名字已经被占用（`dev_agent_exists`，409）：同一个人同一个主机名注册过，或者这个名字是旧版本
 # 留下的 Agent。安装脚本据此写明几条路（换主机名；先吊销；请管理员签发凭据），不混在别的失败里。
 EXIT_NAME_TAKEN = 6
-# 开发 Agent 注册到哪个项目：现在 Agent 都在默认项目里（路径带项目的命令之后随 #488 一起）。
-_PROJECT = "default"
 # 开发 Agent 名字里「主机」那一段的上限
 # （`DEV_AGENT_HOST_MAX`，`packages/schema/src/http/agents.ts`）。
 _HOST_MAX = 32
@@ -105,7 +103,7 @@ def _status(agent: dict[str, Any], now: datetime | None) -> str:
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:
-    listing = session.client.get("/agents")
+    listing = session.client.get(session.client.in_project("/agents"))
     control_plane = listing["control_plane_version"]
     agents = listing["agents"]
     now = session.client.control_plane_time
@@ -216,7 +214,9 @@ def _one_form(args: argparse.Namespace, flag: str) -> None:
 
 def _issue(session: Session, args: argparse.Namespace) -> None:
     _one_form(args, "--token-only")
-    issued = session.client.request("POST", f"/agents/{segment(args.name)}/credentials", body={})
+    issued = session.client.request(
+        "POST", session.client.in_project(f"/agents/{segment(args.name)}/credentials"), body={}
+    )
     token = issued["token"]
     if args.token_only:
         # 原值一行写到 stdout，别的话写到 stderr：管道里只有原值。
@@ -262,7 +262,9 @@ def _credential_state(credential: dict[str, Any]) -> str:
 
 
 def _list_credentials(session: Session, args: argparse.Namespace) -> None:
-    listing = session.client.get(f"/agents/{segment(args.name)}/credentials")
+    listing = session.client.get(
+        session.client.in_project(f"/agents/{segment(args.name)}/credentials")
+    )
     credentials_ = listing["credentials"]
     if credentials_:
         text = format_table(
@@ -285,7 +287,10 @@ def _list_credentials(session: Session, args: argparse.Namespace) -> None:
 
 
 def _revoke(session: Session, args: argparse.Namespace) -> None:
-    session.client.request("DELETE", f"/agents/{segment(args.name)}/credentials/{segment(args.id)}")
+    session.client.request(
+        "DELETE",
+        session.client.in_project(f"/agents/{segment(args.name)}/credentials/{segment(args.id)}"),
+    )
     session.out.emit(
         {"name": args.name, "id": args.id, "revoked": True},
         f"已吊销 {args.name} 的凭据 {args.id}：用它连着的连接已断开，之后它连不上来",
@@ -364,7 +369,7 @@ def _register_dev_agent(session: Session, args: argparse.Namespace) -> int:
         )
     try:
         created = session.client.request(
-            "POST", f"/projects/{_PROJECT}/dev-agents", body={"host": host}
+            "POST", session.client.in_project("/dev-agents"), body={"host": host}
         )
     except CliError as error:
         if error.code != "dev_agent_exists":
@@ -398,7 +403,7 @@ def _register_dev_agent(session: Session, args: argparse.Namespace) -> int:
 
 
 def _revoke_dev(session: Session, args: argparse.Namespace) -> None:
-    session.client.request("DELETE", f"/projects/{_PROJECT}/dev-agents/{segment(args.name)}")
+    session.client.request("DELETE", session.client.in_project(f"/dev-agents/{segment(args.name)}"))
     session.out.emit(
         {"name": args.name, "revoked": True},
         f"已吊销开发 Agent {args.name} 的凭据：之后可以重新注册（sfly agent register-dev）",

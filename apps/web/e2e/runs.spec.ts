@@ -213,7 +213,7 @@ test("取消运行：确认框列出影响、点「取消运行」确认，运�
 });
 
 test("没有运行时显示空状态，加载时显示骨架", async ({ page }) => {
-	const { release } = await holdApi(page, "/runs**");
+	const { release } = await holdApi(page, "/projects/default/runs**");
 	await page.goto("/runs");
 	await expect(page.getByRole("status", { name: "加载中" })).toBeVisible();
 	release();

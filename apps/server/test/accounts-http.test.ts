@@ -8,7 +8,7 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLATFORM_ADMIN_SCOPES } from "../src/auth/scopes.js";
 import { SETUP_CODE_FILE } from "../src/auth/setup-code.js";
-import { loginCookie, TestAccounts } from "./support/credentials.js";
+import { actAs, loginCookie, TestAccounts } from "./support/credentials.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { seedTask } from "./support/seed-task.js";
@@ -68,7 +68,7 @@ describe("第一个管理员", () => {
 		vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
 			printed.push(args.join(" "));
 		});
-		cp = await startTestControlPlane({ logger: true });
+		cp = await startTestControlPlane({ defaultCredentials: false, logger: true });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		expect(code).toMatch(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){4}$/);
 		expect(printed.join("\n")).toContain(code);
@@ -79,7 +79,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("用初始化码建出管理员并登录；码用过即失效，文件删掉，再用同一个码是 409", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		const created = await setup(cp, code);
 		expect(created.status).toBe(201);
@@ -114,7 +114,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("初始化页的显示名和建用户、改显示名同一个检查：带零宽空格、标签字符、位置不对的零宽连接符的 400，不建用户、不用掉初始化码；合格的照常", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		const withName = (display_name: string) =>
 			cp?.fetch("/auth/setup", {
@@ -141,7 +141,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("码不对是 403 invalid_setup_code，不建用户；连着猜错会被限速（429）", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const wrong = await setup(cp, "AAAA-BBBB-CCCC-DDDD-EEEE");
 		expect(wrong.status).toBe(403);
 		expect(await wrong.json()).toMatchObject({ error: { code: "invalid_setup_code" } });
@@ -154,7 +154,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("重启后换一个新码（旧码作废），直到有了用户；有了用户之后重启不再生成", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const first = (await readFile(codeFile(cp), "utf8")).trim();
 		await cp.restart();
 		const second = (await readFile(codeFile(cp), "utf8")).trim();
@@ -167,7 +167,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("并发的两次初始化只有一次成功，只建出一个用户", async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 		const code = (await readFile(codeFile(cp), "utf8")).trim();
 		const results = await Promise.all([setup(cp, code, "a_one"), setup(cp, code, "b_two")]);
 		expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
@@ -181,7 +181,7 @@ describe("第一个管理员", () => {
 	});
 
 	it("环境变量给出初始管理员：没有用户时建出来（不生成初始化码），用它的账号密码能登录", async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		expect(existsSync(codeFile(cp))).toBe(false);
 		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: false });
 		const { res, cookie } = await login(cp, ADMIN.loginName, ADMIN.password);
@@ -198,7 +198,7 @@ describe("第一个管理员", () => {
 describe("登录、登出、改密码", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 	});
 	afterAll(async () => {
 		await cp.close();
@@ -329,9 +329,9 @@ describe("改密码、平台管理员管理账号", () => {
 	let cp: TestControlPlane;
 	let adminCookie: string;
 	beforeEach(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		adminCookie = (await login(cp, "root", ADMIN.password)).cookie;
-		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		await publishPackage(cp.asTester(), "stub", "1.0.0", { echo: ["v"] });
 	});
 	afterEach(async () => {
 		await cp.close();
@@ -460,10 +460,13 @@ describe("改密码、平台管理员管理账号", () => {
 			const devAgent = await accounts.agentCredential("default", "dev-xiaoming-laptop", {
 				userId: made.id,
 			});
-			const read = (headers: Record<string, string>) => cp.fetch("/orchestrations", { headers });
+			const read = (headers: Record<string, string>) =>
+				cp.fetch("/projects/default/orchestrations", { headers });
 			const bearerOf = (t: string) => ({ authorization: `Bearer ${t}` });
 			const download = (t: string) =>
-				cp.fetch("/packages/stub/versions/1.0.0/archive", { headers: bearerOf(t) });
+				cp.fetch("/projects/default/packages/stub/versions/1.0.0/archive", {
+					headers: bearerOf(t),
+				});
 
 			// 启用着：能用；吊销过的不能用。
 			expect((await api(cp, cookie)("GET", "/auth/me")).status).toBe(200);
@@ -502,7 +505,7 @@ describe("改密码、平台管理员管理账号", () => {
 			await accounts.close();
 		}
 		expect((await api(cp, cookie)("GET", "/auth/me")).status).toBe(401);
-		expect((await api(cp, cookie)("GET", "/orchestrations")).status).toBe(401);
+		expect((await api(cp, cookie)("GET", "/projects/default/orchestrations")).status).toBe(401);
 	});
 
 	it("停用时他的个人令牌也立即失效（访问检查每次看用户有没有停用）", async () => {
@@ -511,7 +514,9 @@ describe("改密码、平台管理员管理账号", () => {
 		try {
 			const token = await accounts.personalToken(made.id);
 			const read = () =>
-				cp.fetch("/orchestrations", { headers: { authorization: `Bearer ${token}` } });
+				cp.fetch("/projects/default/orchestrations", {
+					headers: { authorization: `Bearer ${token}` },
+				});
 			// 不是任何项目的成员：能不能读不是这里要的，看 401 和 404 的区别——有效的令牌是 404（不是成员）。
 			expect((await read()).status).toBe(404);
 			await api(cp, adminCookie)("POST", `/users/${made.id}/disable`);
@@ -552,7 +557,7 @@ describe("改密码、平台管理员管理账号", () => {
 describe("登录限速", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 	});
 	afterAll(async () => {
 		await cp.close();
@@ -584,7 +589,7 @@ describe("登出和停用关掉打开的事件流", () => {
 	let cp: TestControlPlane;
 	let adminCookie: string;
 	beforeEach(async () => {
-		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		cp = await startTestControlPlane({ defaultCredentials: false, initialAdmin: ADMIN });
 		adminCookie = (await login(cp, "root", ADMIN.password)).cookie;
 	});
 	afterEach(async () => {
@@ -596,7 +601,7 @@ describe("登出和停用关掉打开的事件流", () => {
 	};
 	/** 打开一条事件流（运行的事件流，运行存在即可；带着这个登录 Cookie）。 */
 	const openStream = async (cookie: string) => {
-		const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
+		const { run } = await seedTask(cp.asTester(), { agent: "agent-a", status: "running" });
 		return SseClient.open(cp, `/runs/${run}/events`, loginCookie(cookie));
 	};
 
@@ -649,24 +654,24 @@ describe("登出和停用关掉打开的事件流", () => {
 describe("不登录也能照旧使用（在 #494 之前）", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
-		cp = await startTestControlPlane();
+		cp = await startTestControlPlane({ defaultCredentials: false });
 	});
 	afterAll(async () => {
 		await cp.close();
 	});
 
 	it("没有任何用户、不带凭据：现有接口照常可用（写操作照旧要昵称）；登录页的状态接口说要初始化", async () => {
-		expect((await cp.fetch("/orchestrations")).status).toBe(200);
-		const noNickname = await cp.fetch("/orchestrations", {
+		expect((await cp.fetch("/projects/default/orchestrations")).status).toBe(200);
+		const noNickname = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: JSON_HEADERS,
 			body: JSON.stringify({ name: "场景" }),
 		});
 		expect(noNickname.status).toBe(400);
 		expect(await noNickname.json()).toMatchObject({ error: { code: "nickname_required" } });
-		const withNickname = await cp.fetch("/orchestrations", {
+		const withNickname = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
-			headers: { ...JSON_HEADERS, "x-sfly-nickname": "xiaoming" },
+			headers: { ...JSON_HEADERS, ...actAs("xiaoming") },
 			body: JSON.stringify({ name: "场景" }),
 		});
 		expect(withNickname.status).toBe(201);

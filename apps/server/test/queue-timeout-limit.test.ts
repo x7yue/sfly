@@ -248,7 +248,9 @@ describe("节点的排队超时上限", () => {
 			const runId = await api.triggerOk(id);
 
 			// 排队：截止时间 = 进入排队的时刻（测试时钟 2026-01-01）+ 4294967295 秒。
-			const listed = agentsApi.list.response.parse(await (await cp.fetch("/agents")).json()).agents;
+			const listed = agentsApi.list.response.parse(
+				await (await cp.fetch("/projects/default/agents")).json(),
+			).agents;
 			const queued = (listed as AgentView[])[0]?.queued_tasks[0];
 			const expected = new Date(Date.UTC(2026, 0, 1) + QUEUE_TIMEOUT_MAX_SECONDS * 1000);
 			expect(Number.isNaN(expected.getTime())).toBe(false);

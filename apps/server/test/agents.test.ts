@@ -12,7 +12,7 @@ const OLD_AGENT_REASON = "Agent 版本过旧，不监听供其它 Agent 连接�
 
 /** Agent 列表；响应按契约解析（不符合契约时测试失败）。 */
 async function listAgents(cp: TestControlPlane): Promise<AgentView[]> {
-	const res = await cp.fetch("/agents");
+	const res = await cp.fetch("/projects/default/agents");
 	expect(res.status).toBe(200);
 	return agentsApi.list.response.parse(await res.json()).agents;
 }

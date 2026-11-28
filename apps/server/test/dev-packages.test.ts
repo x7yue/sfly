@@ -45,7 +45,7 @@ describe("开发模式", () => {
 		return agent;
 	};
 	const agentView = async (name: string): Promise<AgentView | undefined> => {
-		const { agents } = await api.getJson<{ agents: AgentView[] }>("/agents");
+		const { agents } = await api.getJson<{ agents: AgentView[] }>("/projects/default/agents");
 		return agents.find((a) => a.name === name);
 	};
 
@@ -117,7 +117,9 @@ describe("开发模式", () => {
 	});
 
 	it("开发版本的任务派发到没有加载它的 Agent 时以 env_error 失败（触发时 Agent 不在线，预检不知道它加载了什么）；同一编排里的已发布版本照常带下载地址", async () => {
-		expect((await cp.fetch("/packages", publishInit(packageArchive()))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive()))).status,
+		).toBe(201);
 		const id = await api.orchestrationWith({
 			default_agent: "agent-plain",
 			nodes: [

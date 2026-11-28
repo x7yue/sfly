@@ -27,3 +27,11 @@ export const readableProjects = (project: ProjectId): ProjectId[] =>
 export function parseProjectId(value: string): ProjectId | undefined {
 	return PROJECT_ID.test(value) ? (value as ProjectId) : undefined;
 }
+
+/** 路径里的项目（`/projects/:project/…`）：访问检查已经核对过它存在，写法不对说明请求没经过访问检查。 */
+export function pathProject(params: { project: string }): ProjectId {
+	const project = parseProjectId(params.project);
+	if (project === undefined)
+		throw new Error(`路径里的项目 ${params.project} 写法不对（访问检查应该已经拒绝）`);
+	return project;
+}

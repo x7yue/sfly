@@ -23,6 +23,9 @@ const DOC = {
 	packages: { stub: "1.0.0" },
 };
 
+/** 上传产物带的凭据：这台 Agent 的 Agent 凭据（和真实的 Agent 一样，#492；`setup` 里取）。默认的个人令牌不能上传。 */
+let agentAuth: Record<string, string> = {};
+
 interface PutResult {
 	status: number;
 	body: string;
@@ -44,6 +47,7 @@ function slowPut(
 			{
 				method: "PUT",
 				headers: {
+					...agentAuth,
 					"content-type": "application/octet-stream",
 					...(options.declare
 						? { "content-length": String(size) }
@@ -87,6 +91,7 @@ describe("同一个任务并发上传产物", () => {
 		cp = await startTestControlPlane({ artifactLimitBytes: LIMIT, ...options });
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agentAuth = agent.auth;
 		const api = new ApiClient(cp);
 		const runId = await api.triggerOk(await api.orchestrationWith(DOC));
 		return { task: await agent.nextAssign(), runId };
@@ -198,6 +203,7 @@ describe("同一个任务并发上传产物", () => {
 
 		const res = await cp.fetch(`/tasks/${task.taskId}/artifacts/report.html`, {
 			method: "PUT",
+			headers: agentAuth,
 			body: "<html>report</html>",
 		});
 
@@ -212,7 +218,11 @@ describe("同一个任务并发上传产物", () => {
 		await new Promise<void>((resolve) => {
 			const req = httpRequest(urlOf(task, "dropped.bin"), {
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream", "content-length": "800" },
+				headers: {
+					...agentAuth,
+					"content-type": "application/octet-stream",
+					"content-length": "800",
+				},
 			});
 			req.on("error", () => {});
 			req.write(Buffer.alloc(600, 1), () => {
@@ -244,6 +254,7 @@ describe("卡住的上传（连着、不发数据）", () => {
 		cp = await startTestControlPlane({ artifactLimitBytes: LIMIT, artifactUploadIdleMs: idleMs });
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agentAuth = agent.auth;
 		const api = new ApiClient(cp);
 		const runId = await api.triggerOk(await api.orchestrationWith(DOC));
 		return { task: await agent.nextAssign(), runId };
@@ -254,7 +265,11 @@ describe("卡住的上传（连着、不发数据）", () => {
 		new Promise<{ status: number; body: string } | { error: string }>((resolve) => {
 			const req = httpRequest(url, {
 				method: "PUT",
-				headers: { "content-type": "application/octet-stream", "content-length": "1000" },
+				headers: {
+					...agentAuth,
+					"content-type": "application/octet-stream",
+					"content-length": "1000",
+				},
 			});
 			req.on("response", (res) => {
 				let body = "";
@@ -275,7 +290,11 @@ describe("卡住的上传（连着、不发数据）", () => {
 				url,
 				{
 					method: "PUT",
-					headers: { "content-type": "application/octet-stream", "transfer-encoding": "chunked" },
+					headers: {
+						...agentAuth,
+						"content-type": "application/octet-stream",
+						"transfer-encoding": "chunked",
+					},
 				},
 				(res) => {
 					res.resume();
@@ -310,7 +329,7 @@ describe("卡住的上传（连着、不发数据）", () => {
 		const next = await new Promise<number>((resolve, reject) => {
 			const req = httpRequest(
 				`${task.artifactUploadUrl}next.bin`,
-				{ method: "PUT", headers: { "content-length": "300" } },
+				{ method: "PUT", headers: { ...agentAuth, "content-length": "300" } },
 				(res) => {
 					res.resume();
 					res.on("end", () => resolve(res.statusCode ?? 0));
@@ -355,7 +374,11 @@ describe("卡住的上传（连着、不发数据）", () => {
 				const req = httpRequest(`${task.artifactUploadUrl}stuck-close.bin`, {
 					method: "PUT",
 					agent,
-					headers: { "content-type": "application/octet-stream", "content-length": "1000" },
+					headers: {
+						...agentAuth,
+						"content-type": "application/octet-stream",
+						"content-length": "1000",
+					},
 				});
 				req.on("response", (res) => {
 					res.resume();

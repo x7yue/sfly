@@ -38,7 +38,7 @@ export async function goOffline(
 	await agent.disconnect();
 	await expect
 		.poll(async () => {
-			const list = (await (await controlPlane.fetch("/agents")).json()) as {
+			const list = (await (await controlPlane.fetch("/projects/default/agents")).json()) as {
 				agents: Array<{ name: string; status: string }>;
 			};
 			return list.agents.find((a) => a.name === name)?.status;

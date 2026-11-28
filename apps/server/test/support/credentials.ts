@@ -1,11 +1,13 @@
 // 测试里造用户、项目、成员和各种凭据：直接写库（不经签发的接口：个人令牌、项目令牌的签发在 tokens-http.test.ts 里经 HTTP 测），
 // 返回请求里要带的原值。
 // 访问检查（src/auth/access-guard.ts）只认库里已有的凭据，所以访问检查的测试、跨项目的测试都从这里取。
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { NICKNAME_HEADER } from "@sfly/schema";
 import pg from "pg";
 import { hashCredential } from "../../src/auth/credential-hash.js";
 import { SCOPES } from "../../src/auth/scopes.js";
 import type { ApiTokenKind, ProjectRole } from "../../src/db/schema.js";
+import { usableNickname } from "./sfly-cli.js";
 
 const AT = new Date("2026-01-01T00:00:00Z");
 const secret = (prefix: string) => `${prefix}${randomBytes(24).toString("hex")}`;
@@ -75,8 +77,16 @@ export class TestAccounts {
 		login: string,
 		options: { displayName?: string; admin?: boolean } = {},
 	): Promise<string> {
+		// 几个测试辅助可能同时要同一个登录名的用户（各自查不到、各自去建）：插入时撞上就用已有的那一个。
+		const { rows: inserted } = await this.#pool.query(
+			`insert into users (id, login_name, display_name, password_hash, is_platform_admin, disabled_at, created_at)
+			values ($1, $2, $3, 'scrypt$placeholder', $4, null, $5)
+			on conflict (login_name) do nothing returning id`,
+			[randomUUID(), login, options.displayName ?? login, options.admin ?? false, AT],
+		);
+		if (inserted[0] !== undefined) return inserted[0].id as string;
 		const { rows } = await this.#pool.query("select id from users where login_name = $1", [login]);
-		return rows[0] === undefined ? this.user(login, options) : (rows[0].id as string);
+		return rows[0].id as string;
 	}
 
 	async member(project: string, userId: string, role: ProjectRole): Promise<void> {
@@ -269,5 +279,139 @@ export class TestAccounts {
 			],
 		);
 		return token;
+	}
+}
+
+/**
+ * 昵称对应的登录名：合登录名格式（小写字母、数字、下划线，最多 32 个）的就用它，别的（中文、大写、空格……）用它的哈希，
+ * 显示名仍是昵称原样。
+ */
+export const loginNameOf = (nickname: string): string =>
+	/^[a-z0-9_]{1,32}$/.test(nickname)
+		? nickname
+		: `t_${createHash("sha256").update(nickname).digest("hex").slice(0, 24)}`;
+
+/**
+ * 以这个昵称的用户发请求（#493）：测试控制面的 `fetch`、命令行和 API 客户端的辅助按它换成这个用户的个人令牌（`TestUsers`）。
+ * 测试里按昵称选人只用它，不手写昵称请求头（lint 规则 biome-plugins/test-nickname-header.grit）：#494 删掉昵称时只改这里。
+ */
+export const actAs = (nickname: string): Record<string, string> => ({
+	[NICKNAME_HEADER]: encodeURIComponent(nickname),
+});
+
+/** 测试里的请求默认是谁（#493）：昵称请求头没有写时就是他。 */
+export const DEFAULT_TESTER = "tester";
+
+/** 请求以谁的身份发（{@link actAs} 写进去的昵称）：没写是 tester，解不开的编码是 undefined。 */
+export function nicknameIn(headers: Headers): string | undefined {
+	const raw = headers.get(NICKNAME_HEADER);
+	if (raw === null) return DEFAULT_TESTER;
+	try {
+		return decodeURIComponent(raw);
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * 测试控制面默认带的凭据（#493，`TestControlPlane.fetch`）：每个昵称一个用户（显示名是昵称）和他的个人令牌，第一次用到时
+ * 直接写库建出来。用户是平台管理员，也是默认项目的项目管理员：#494 之前不带凭据的请求哪个项目都能读写，平台管理员也是；
+ * 他是默认项目的成员，在默认项目里的写不记进 `platform_admin_actions`（在别的项目里的写会记）。
+ * 要普通成员、只读、别的项目的凭据时用 {@link TestAccounts} 自己建。
+ */
+export class TestUsers {
+	readonly #databaseUrl: string;
+	readonly #users = new Map<string, Promise<{ id: string; token: string }>>();
+	readonly #ready = new Map<string, string>();
+
+	constructor(databaseUrl: string) {
+		this.#databaseUrl = databaseUrl;
+	}
+
+	/** 每次写库用一个自己的连接池，用完就关：库可能在测试里被删掉（健康检查的用例），不留空闲的连接。 */
+	async #withAccounts<T>(work: (accounts: TestAccounts) => Promise<T>): Promise<T> {
+		const accounts = new TestAccounts(this.#databaseUrl);
+		try {
+			return await work(accounts);
+		} finally {
+			await accounts.close();
+		}
+	}
+
+	/** 这个昵称的用户（没有就建）。昵称要能当显示名（不空、不超过 64 个字符、没有控制字符等），不然建不出来。 */
+	user(nickname = DEFAULT_TESTER): Promise<{ id: string; token: string }> {
+		let found = this.#users.get(nickname);
+		if (found === undefined) {
+			found = this.#withAccounts(async (accounts) => {
+				const id = await accounts.userNamed(loginNameOf(nickname), {
+					displayName: nickname,
+					admin: true,
+				});
+				await accounts.member("default", id, "project_admin");
+				const token = await accounts.personalToken(id, { name: "测试" });
+				this.#ready.set(nickname, token);
+				return { id, token };
+			});
+			// 建失败了（例如库还是旧的结构）不留在表里，下次再试。
+			found.catch(() => this.#users.delete(nickname));
+			this.#users.set(nickname, found);
+		}
+		return found;
+	}
+
+	/** 让这个昵称的用户也是这个项目的成员（项目不存在时先建）。 */
+	async joinProject(nickname: string, project: string, role: ProjectRole): Promise<void> {
+		const { id } = await this.user(nickname);
+		await this.#withAccounts(async (accounts) => {
+			await accounts.project(project);
+			await accounts.member(project, id, role);
+		});
+	}
+
+	/**
+	 * 显示名是这个昵称的普通成员（不是平台管理员，只在 `project` 里有 `role`）新登录一次，返回登录 Cookie 的值。
+	 * 登录名和默认凭据的用户分开（`m_` 开头），两者可以同时存在。
+	 */
+	async memberLogin(nickname: string, project: string, role: ProjectRole): Promise<string> {
+		return this.#withAccounts(async (accounts) => {
+			const id = await accounts.userNamed(loginNameOf(`m_${nickname}`), { displayName: nickname });
+			await accounts.project(project);
+			await accounts.member(project, id, role);
+			return accounts.login(id);
+		});
+	}
+
+	/** 这个昵称的用户新登录一次，返回登录 Cookie 的值（e2e 的浏览器带它就是登录着的）。 */
+	async loginCookie(nickname = DEFAULT_TESTER): Promise<string> {
+		const { id } = await this.user(nickname);
+		return this.#withAccounts((accounts) => accounts.login(id));
+	}
+
+	/** 以这个昵称的用户发请求要带的请求头（`authorization`）。 */
+	async as(nickname: string): Promise<Record<string, string>> {
+		return bearer(await this.token(nickname));
+	}
+
+	/** 已经建出来的这个昵称的个人令牌（同步，给起子进程的地方用）；还没建时为 undefined。 */
+	tokenNow(nickname: string | undefined): string | undefined {
+		return this.#ready.get(nickname ?? DEFAULT_TESTER);
+	}
+
+	/** 这个昵称的个人令牌原值。 */
+	async token(nickname: string | undefined = DEFAULT_TESTER): Promise<string> {
+		return (await this.user(nickname ?? DEFAULT_TESTER)).token;
+	}
+
+	/** 请求要带的请求头：自己带了凭据、或 `credentials: "omit"` 时原样返回。 */
+	async sign(init: RequestInit): Promise<Headers> {
+		const headers = new Headers(init.headers);
+		if (init.credentials === "omit" || headers.has("authorization") || headers.has("cookie")) {
+			return headers;
+		}
+		const nickname = nicknameIn(headers);
+		// 昵称本身不合格（测的就是控制面怎么拒绝它）：不带凭据，照旧是不带凭据的请求。
+		if (nickname === undefined || !usableNickname(nickname)) return headers;
+		headers.set("authorization", `Bearer ${await this.token(nickname)}`);
+		return headers;
 	}
 }

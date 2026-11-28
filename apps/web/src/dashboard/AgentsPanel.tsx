@@ -12,6 +12,7 @@ import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery } from "#/lib/api";
 import { MESSAGE, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardPanel } from "./DashboardPanel";
 import { PanelLink } from "./panel-link";
@@ -23,7 +24,10 @@ import { agentColumn, agentCountLabel } from "./wall-rules";
  * Agent 很多时只列需要看的，其余合并成「N 台空闲」（wall-rules）。
  */
 export function AgentsPanel() {
-	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
+	const agents = useQuery({
+		...apiQuery(agentsApi.list, { params: { project: PROJECT } }),
+		refetchInterval: STATUS_POLL_MS,
+	});
 	const list = agents.data?.agents ?? [];
 	const { listed, idle } = agentColumn(list);
 	return (

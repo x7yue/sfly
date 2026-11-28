@@ -42,7 +42,7 @@ describe("节点包安装", () => {
 		return agent;
 	};
 	const agentView = async (name: string): Promise<AgentView | undefined> => {
-		const { agents } = await api.getJson<{ agents: AgentView[] }>("/agents");
+		const { agents } = await api.getJson<{ agents: AgentView[] }>("/projects/default/agents");
 		return agents.find((a) => a.name === name);
 	};
 
@@ -57,7 +57,7 @@ describe("节点包安装", () => {
 
 	it("派发的任务带上节点包归档的下载地址和 sha256，Agent 可以据此下载并校验", async () => {
 		const archive = packageArchive();
-		expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(201);
+		expect((await cp.fetch("/projects/default/packages", publishInit(archive))).status).toBe(201);
 		await (await connect({ name: "agent-a" })).disconnect();
 		const id = await api.orchestrationWith(
 			singleNode("demo-checks", "1.2.0", "ping", { host: "h" }),
@@ -69,7 +69,7 @@ describe("节点包安装", () => {
 
 		const expected = createHash("sha256").update(archive).digest("hex");
 		expect(task.packageSha256).toBe(expected);
-		const res = await fetch(task.packageUrl);
+		const res = await fetch(task.packageUrl, { headers: agent.auth });
 		expect(res.status).toBe(200);
 		const downloaded = new Uint8Array(await res.arrayBuffer());
 		expect(createHash("sha256").update(downloaded).digest("hex")).toBe(expected);

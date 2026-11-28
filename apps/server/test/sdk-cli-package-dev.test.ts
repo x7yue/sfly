@@ -153,7 +153,7 @@ describe("sfly package show 包@dev：只算在线的 Agent", () => {
 		await offline.disconnect();
 		const api = new ApiClient(cp);
 		await eventually(async () => {
-			const { agents: listed } = (await api.getJson("/agents")) as {
+			const { agents: listed } = (await api.getJson("/projects/default/agents")) as {
 				agents: Array<{ name: string; status: string }>;
 			};
 			expect(listed.find((a) => a.name === "agent-g")?.status).toBe("offline");
