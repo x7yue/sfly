@@ -96,6 +96,7 @@ import type {
 	TurnLimit,
 	TurnOutcome,
 	TurnQueuedEvent,
+	UpdateSessionBody,
 	VersionCheckView,
 	VersionSummaryView,
 } from "./types.js";
@@ -1166,6 +1167,9 @@ export interface Api {
 		 * 之后修改预设不影响这次运行。`params` 里给 secret 预设参数传了任何值（即使和预设相同，以免调用方猜测原值），或给其他预设参数传了不同的值
 		 * （按 JSON 深比较）时 400 `preset_param_locked`（details 是 `{ param, preset }`：参数名和预设名），其他预设参数传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
 		 * 时 409 `preset_invalid`（details 是问题清单，每项 `{ param, reason }`），不产生运行。
+		 *
+		 * 会话令牌触发、会话没勾选「联调时可以使用项目密钥」时不解析 secret 参数（#497）：场景里的默认值、预设里的 secret 值、传给子流程 secret 参数的
+		 * 常量都当作没有提供（预设里的 secret 参数因此可以在 `params` 里给值），缺了必填的 400 `secret_params_withheld`（details 是每个参数一句说明）。
 		 */
 		trigger: Endpoint<
 			{
@@ -1285,6 +1289,21 @@ export interface Api {
 				query?: SessionDetailQuery;
 			},
 			SessionDetailResponse
+		>;
+		/**
+		 * `PATCH /sessions/:id`
+		 *
+		 * 改会话的「联调时可以使用项目密钥」（#497）：只影响之后触发的运行。会话的写要「凭据是人」（ADR 0032），会话令牌、项目令牌都是 403。
+		 * 已结束的会话也可以改（不影响任何东西）。
+		 */
+		update: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: UpdateSessionBody;
+			},
+			SessionView
 		>;
 		/**
 		 * `GET /sessions/:id/events`
@@ -1410,6 +1429,8 @@ export interface Api {
 					turn: number;
 					run_id: string;
 					scenario_name: string;
+					/** 这次运行不解析 secret 参数（会话没勾选「联调时可以使用项目密钥」，#497）；成果栏据此标出哪些运行用了密钥。#497 之前的记录没有。 */
+					secrets_withheld?: boolean;
 					seq: number;
 					at: Timestamp;
 				};
@@ -1597,6 +1618,7 @@ export const routes = {
 		list: { method: "GET", path: "/projects/:project/sessions", kind: "endpoint" },
 		create: { method: "POST", path: "/projects/:project/sessions", kind: "endpoint" },
 		get: { method: "GET", path: "/sessions/:id", kind: "endpoint" },
+		update: { method: "PATCH", path: "/sessions/:id", kind: "endpoint" },
 		events: { method: "GET", path: "/sessions/:id/events", kind: "stream" },
 		message: { method: "POST", path: "/sessions/:id/messages", kind: "endpoint" },
 		stop: { method: "POST", path: "/sessions/:id/stop", kind: "endpoint" },

@@ -59,6 +59,7 @@ const listItem = {
 	last_activity_at: "2026-11-21T08:05:00.000Z",
 	queue_position: null,
 	last_turn_outcome: null,
+	use_project_secrets: false,
 };
 
 describe("会话事件", () => {

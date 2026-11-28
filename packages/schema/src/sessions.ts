@@ -496,6 +496,8 @@ export const PlatformRunEvent = z.object({
 	turn: z.int().min(1),
 	run_id: z.uuid(),
 	scenario_name: z.string(),
+	/** 这次运行不解析 secret 参数（会话没勾选「联调时可以使用项目密钥」，#497）；成果栏据此标出哪些运行用了密钥。#497 之前的记录没有。 */
+	secrets_withheld: z.boolean().optional(),
 });
 
 /** 平台在会话里留下的东西（按 `kind` 区分，见 {@link PlatformEventKind}）。持久。 */
@@ -663,9 +665,19 @@ export const SessionMessageText = z
 	.refine((text) => !text.includes("\u0000"), "不能含 NUL 字符")
 	.refine((text) => !/\p{Surrogate}/u.test(text), "不能含不成对的代理字符");
 
-/** `POST /projects/:project/sessions`：新建会话，`text` 是它的第一句话，作为第一轮。 */
-export const CreateSessionBody = z.object({ text: SessionMessageText });
+/**
+ * `POST /projects/:project/sessions`：新建会话，`text` 是它的第一句话，作为第一轮；`use_project_secrets` 是
+ * 「联调时可以使用项目密钥」（#497，不写是 false）。
+ */
+export const CreateSessionBody = z.object({
+	text: SessionMessageText,
+	use_project_secrets: z.boolean().optional(),
+});
 export type CreateSessionBody = z.infer<typeof CreateSessionBody>;
+
+/** `PATCH /sessions/:id`：改「联调时可以使用项目密钥」（#497）。 */
+export const UpdateSessionBody = z.object({ use_project_secrets: z.boolean() });
+export type UpdateSessionBody = z.infer<typeof UpdateSessionBody>;
 
 /** `POST /sessions/:id/messages`：对会话说一句话（空闲时开始新的一轮，在做时是插话）。 */
 export const SendMessageBody = z.object({ text: SessionMessageText });
@@ -718,6 +730,11 @@ export const SessionListItem = z.object({
 	last_activity_at: Timestamp,
 	queue_position: z.int().min(1).nullable(),
 	last_turn_outcome: TurnOutcome.nullable(),
+	/**
+	 * 「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。
+	 * 人建会话时勾选、在会话页改；会话令牌改不了。
+	 */
+	use_project_secrets: z.boolean(),
 });
 export type SessionListItem = z.infer<typeof SessionListItem>;
 

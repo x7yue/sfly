@@ -82,6 +82,7 @@ export function toListItem(
 		last_activity_at: row.lastActivityAt.toISOString(),
 		queue_position: row.queuedAt !== null ? queuePosition : null,
 		last_turn_outcome: lastTurnOutcome,
+		use_project_secrets: row.useProjectSecrets,
 	};
 }
 
@@ -360,6 +361,16 @@ export class SessionStore {
 		return row;
 	}
 
+	/** 改「联调时可以使用项目密钥」（#497）；会话不在了返回 undefined。 */
+	async setUseProjectSecrets(id: string, value: boolean): Promise<SessionRow | undefined> {
+		const [row] = await this.deps.db
+			.update(sessions)
+			.set({ useProjectSecrets: value })
+			.where(eq(sessions.id, id))
+			.returning();
+		return row;
+	}
+
 	/**
 	 * 项目里的会话：在做和排队中的在前，其余按最近活动倒序（#551 的写法）；带上一轮的结局，排队中的带排第几。
 	 * 同样活跃的按 ID 排，顺序固定。最多 {@link SESSION_LIST_LIMIT} 个，超出的更早的会话不返回，`truncated` 为 true。
@@ -580,7 +591,13 @@ export class SessionStore {
 	 * `user` 是这一轮开头用户的话（`user_message`），`turn_started` 由这里写。
 	 */
 	async createWithTurn(
-		input: { project: ProjectId; title: string; createdBy: string; createdByUserId: string | null },
+		input: {
+			project: ProjectId;
+			title: string;
+			createdBy: string;
+			createdByUserId: string | null;
+			useProjectSecrets?: boolean;
+		},
 		user: SessionEventBody,
 		started?: (sessionId: string, turn: number) => void,
 	): Promise<{
@@ -609,6 +626,7 @@ export class SessionStore {
 							lastActivityAt: now,
 							currentTurn: queue ? 0 : 1,
 							queuedAt: queue ? now : null,
+							useProjectSecrets: input.useProjectSecrets ?? false,
 						})
 						.returning();
 					const session = row as SessionRow;
@@ -1450,7 +1468,7 @@ export class SessionStore {
 		tx: Tx,
 		sessionId: string,
 		record:
-			| { kind: "run"; run_id: string; scenario_name: string }
+			| { kind: "run"; run_id: string; scenario_name: string; secrets_withheld: boolean }
 			| { kind: "scenario_version"; scenario_id: string; name: string; version: number },
 	): Promise<PersistedSessionEvent> {
 		const session = await lockSession(tx, sessionId);

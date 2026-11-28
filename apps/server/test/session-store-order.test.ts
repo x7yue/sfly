@@ -252,6 +252,7 @@ describe("会话事件的落库和发布顺序", () => {
 					kind: "run",
 					run_id: randomUUID(),
 					scenario_name: `场景${n}`,
+					secrets_withheld: false,
 				}),
 			);
 
@@ -341,6 +342,7 @@ describe("会话事件的落库和发布顺序", () => {
 						kind: "run",
 						run_id: randomUUID(),
 						scenario_name: "回滚的",
+						secrets_withheld: false,
 					});
 					throw new Error("提交之前出错");
 				}),
@@ -396,6 +398,7 @@ describe("会话事件的落库和发布顺序", () => {
 						kind: "run",
 						run_id: randomUUID(),
 						scenario_name: `场景${n}`,
+						secrets_withheld: false,
 					}),
 				);
 			const first = await recordIn(id, 1);
@@ -451,6 +454,7 @@ describe("会话事件的落库和发布顺序", () => {
 							kind: "run",
 							run_id: randomUUID(),
 							scenario_name: "回滚的",
+							secrets_withheld: false,
 						});
 						throw new Error("提交之前出错");
 					})
@@ -505,6 +509,7 @@ describe("会话事件的落库和发布顺序", () => {
 					kind: "run",
 					run_id: randomUUID(),
 					scenario_name: "先提交的",
+					secrets_withheld: false,
 				}),
 			);
 			const read = vi.spyOn(local, "after").mockRejectedValueOnce(new Error("读库坏了"));

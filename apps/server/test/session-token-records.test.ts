@@ -135,7 +135,13 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 				{
 					seq: 2,
 					type: "platform",
-					payload: { kind: "run", turn: 1, run_id: created.id, scenario_name: "接口巡检" },
+					payload: {
+						kind: "run",
+						turn: 1,
+						run_id: created.id,
+						scenario_name: "接口巡检",
+						secrets_withheld: true,
+					},
 				},
 			]);
 		});

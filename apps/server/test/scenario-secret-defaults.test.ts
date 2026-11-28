@@ -973,6 +973,10 @@ describe("场景版本里 secret 参数的默认值", () => {
 			await record("会话：发话", tracked.post(`/sessions/${sessionId}/messages`, { text: "你好" }));
 			await record("会话：停止", tracked.postEmpty(`/sessions/${sessionId}/stop`));
 			await record("会话：结束", tracked.postEmpty(`/sessions/${sessionId}/end`));
+			await record(
+				"会话：改「联调时可以使用项目密钥」",
+				tracked.patch(`/sessions/${sessionId}`, { use_project_secrets: true }),
+			);
 
 			const statuses = new Set<number>();
 			for (const [what, res] of responses) {
