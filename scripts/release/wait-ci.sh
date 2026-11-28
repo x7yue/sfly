@@ -30,10 +30,10 @@ for attempt in $(seq 120); do
 				echo "CI 已通过：$url"
 				exit 0
 			fi
-			echo "CI 没有通过（$conclusion）：$url" >&2
+			echo "CI 没有通过（${conclusion}）：$url" >&2
 			exit 1
 		fi
-		echo "CI 运行中（$status），等待：$url"
+		echo "CI 运行中（${status}），等待：$url"
 	fi
 	sleep 20
 done

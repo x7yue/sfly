@@ -1,6 +1,6 @@
 import { nodeOutsideCardText } from "@sfly/orchestration";
 import type { QueuedTaskView, RunningTaskView, StoredOrchestrationDocument } from "@sfly/schema";
-import { asc, eq, inArray, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, type SQL } from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
 import type { Db, Tx } from "../db/database.js";
 import {
@@ -13,14 +13,19 @@ import {
 } from "../db/schema.js";
 import { NO_SECRETS, type SecretSet } from "../logs/secrets.js";
 import { runSecretValues, taskProgressView } from "../logs/task-logs.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { nodeNameIn, subflowNameOf } from "../runs/run-read.js";
+import { isUuid } from "../util/uuid.js";
 
-/** 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）。 */
+/**
+ * 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）和运行所在的项目：给读者看的时候只给
+ * 读者项目里的，别的项目的只计数（#500，和排队说明的 `slotHolders` 同一个做法）。
+ */
 export interface AgentTasks {
 	/** 占着槽位的（准备中、执行中），按派发顺序（`tasks.seq`）。 */
-	running: Array<{ agent: string; view: RunningTaskView }>;
+	running: Array<{ agent: string; project: string; view: RunningTaskView }>;
 	/** 排队的，按排队顺序（`queued_at`，同一时刻按创建顺序），也就是派发时的先后。 */
-	queued: Array<{ agent: string; view: QueuedTaskView }>;
+	queued: Array<{ agent: string; project: string; view: QueuedTaskView }>;
 }
 
 /**
@@ -36,6 +41,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 			agent: tasks.agentName,
 			taskId: tasks.id,
 			runId: tasks.runId,
+			projectId: runs.projectId,
 			orchestrationId: runs.orchestrationId,
 			orchestrationName: orchestrations.name,
 			versionId: runs.orchestrationVersionId,
@@ -97,6 +103,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 		const displayName = nodeNameIn(document, row.nodeId);
 		return {
 			agent: row.agent,
+			project: row.projectId,
 			fields: {
 				task_id: row.taskId,
 				run_id: row.runId,
@@ -128,7 +135,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 					current_action: currentActionOfTask(row.status, row.currentAction, secretsOf(row.runId)),
 					progress: row.progress ? taskProgressView(row.progress, secretsOf(row.runId)) : null,
 				};
-				return [{ agent: found.agent, view }];
+				return [{ agent: found.agent, project: found.project, view }];
 			}),
 		queued: queuedRows.flatMap((row) => {
 			const found = identity(row);
@@ -138,7 +145,23 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 				queued_at: row.queuedAt.toISOString(),
 				queue_expires_at: row.queueExpiresAt?.toISOString() ?? null,
 			};
-			return [{ agent: found.agent, view }];
+			return [{ agent: found.agent, project: found.project, view }];
 		}),
 	};
+}
+
+/** `ids` 里属于 `project` 的运行的任务（不是任务编号的、查不到的都不在里面）。 */
+export async function tasksInProject(
+	db: Db | Tx,
+	project: ProjectId,
+	ids: readonly string[],
+): Promise<Set<string>> {
+	const candidates = ids.filter(isUuid);
+	if (candidates.length === 0) return new Set();
+	const rows = await db
+		.select({ id: tasks.id })
+		.from(tasks)
+		.innerJoin(runs, eq(runs.id, tasks.runId))
+		.where(and(inArray(tasks.id, candidates), eq(runs.projectId, project)));
+	return new Set(rows.map((r) => r.id));
 }

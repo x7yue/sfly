@@ -11,6 +11,7 @@ import {
 	putFocusItemsOk,
 } from "./support/focus-items.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const LOAD_TPS = { node_id: "load", chart: "TPS" };
@@ -34,6 +35,7 @@ describe("复制场景时复制关注项", () => {
 		cp = await startTestControlPlane({ clock });
 		api = new ApiClient(cp);
 		await publishBench(cp);
+		await registerAgents(cp.database.url, ["agent-a"]);
 	});
 	afterEach(async () => {
 		await agent?.disconnect();

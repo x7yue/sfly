@@ -1,4 +1,4 @@
-"""文档里手写的 HTTP 接口（「方法 + 路径」）要真的有（#802，`check_doc_references.py` 的第 5 类）。
+"""文档里手写的 HTTP 接口（「方法 + 路径」）要真的有（#802，`check_doc_references.py` 的第 6 类）。
 
 查 `README.md`、`docs/ARCHITECTURE.md`、`docs/guide/`、`apps/*/README.md`、`evals/**/README.md`
 的正文和代码块；不查 `docs/adr`、`docs/research`、`docs/perf`（历史记录）。

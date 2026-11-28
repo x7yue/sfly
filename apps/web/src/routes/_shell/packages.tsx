@@ -94,9 +94,18 @@ function PackagesPage() {
 	);
 }
 
+/** 公共项目里的包（#501）：平台维护的，任何项目都能用。 */
+const PUBLIC_HINT = "平台维护的节点包，任何项目都能用，只有平台管理员能发布";
+
 function PackagesView({ packages }: { packages: PackageSummary[] }) {
 	const search = Route.useSearch();
-	const selected = packages.find((p) => p.name === search.name) ?? packages[0];
+	// 本项目发布的在前，公共项目里的单独列在后面（#501）。
+	const groups = [
+		{ label: "本项目", items: packages.filter((p) => !p.public) },
+		{ label: "公共项目", items: packages.filter((p) => p.public) },
+	].filter((g) => g.items.length > 0);
+	const ordered = groups.flatMap((g) => g.items);
+	const selected = ordered.find((p) => p.name === search.name) ?? ordered[0];
 	return (
 		<div className="grid grid-cols-[clamp(220px,22%,300px)_minmax(0,1fr)] items-start gap-3.5">
 			<Panel className="sticky top-5">
@@ -104,13 +113,25 @@ function PackagesView({ packages }: { packages: PackageSummary[] }) {
 					aria-label="节点包"
 					className="max-h-[calc(100dvh-var(--topbar-height)-2.5rem)] overflow-y-auto overscroll-contain"
 				>
-					<ul className="m-0 list-none p-0">
-						{packages.map((pkg) => (
-							<li key={pkg.name} data-list-item className="has-[:focus-visible]:bg-raised">
-								<PackageListItem pkg={pkg} selected={pkg === selected} />
-							</li>
-						))}
-					</ul>
+					{groups.map((group) => (
+						<section key={group.label} aria-label={group.label}>
+							{groups.length > 1 && (
+								<h3
+									className="m-0 border-b border-border-soft px-3 pt-2.5 pb-1.5 text-xs font-medium text-fg-3"
+									title={group.label === "公共项目" ? PUBLIC_HINT : undefined}
+								>
+									{group.label}
+								</h3>
+							)}
+							<ul className="m-0 list-none p-0">
+								{group.items.map((pkg) => (
+									<li key={pkg.name} data-list-item className="has-[:focus-visible]:bg-raised">
+										<PackageListItem pkg={pkg} selected={pkg === selected} />
+									</li>
+								))}
+							</ul>
+						</section>
+					))}
 				</nav>
 			</Panel>
 			{selected && <PackageDetail pkg={selected} version={search.version} />}
@@ -174,6 +195,12 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 					<UntrustedText text={current.version} />
 					{current === latest && " 最新"}
 				</Badge>
+				{pkg.public && (
+					<Tooltip>
+						<TooltipTrigger render={<Badge>公共项目</Badge>} />
+						<TooltipContent>{PUBLIC_HINT}</TooltipContent>
+					</Tooltip>
+				)}
 				<span className="text-xs text-fg-3">
 					发布于 {formatDateTime(current.published_at)} · {formatBytes(current.size)} ·{" "}
 					{lockedText(current.locked_orchestrations)}

@@ -43,7 +43,7 @@ known-first-party = ["sfly", "sfly_std"]
 
 [tool.mypy]
 strict = true
-files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src", "std/tests", "scripts/tests", "scripts/check_doc_references.py", "scripts/doc_routes.py", "evals/assistant/aeval", "evals/assistant/container", "evals/assistant/tests"]
+files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src", "std/tests", "scripts/tests", "scripts/check_doc_references.py", "scripts/check_shell.py", "scripts/doc_commands.py", "scripts/doc_routes.py", "scripts/pr_checks.py", "evals/assistant/aeval", "evals/assistant/container", "evals/assistant/tests"]
 # sdk/python/tests 里 sfly.testing 的测试直接导入桩节点包的节点函数。
 # sdk/python/tests 里的测试从 indexes.py 导入共用的桩，std/tests 里的从 named_sleep.py 导入。
 mypy_path = "testdata/stub-package/src:testdata/agent-files-package/src:sdk/python/tests:std/tests:evals/assistant:evals/assistant/container"

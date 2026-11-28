@@ -99,6 +99,7 @@ def make_repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts" / "check_doc_references.py")
+    shutil.copy(SCRIPT.with_name("doc_commands.py"), root / "scripts" / "doc_commands.py")
     shutil.copy(SCRIPT.with_name("doc_routes.py"), root / "scripts" / "doc_routes.py")
     put(root, BASE_FILES)
     git(root, "init", "-b", "main")
@@ -645,6 +646,7 @@ def run_outside_a_repository(
     root = tmp_path / "not-a-repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts" / "check_doc_references.py")
+    shutil.copy(SCRIPT.with_name("doc_commands.py"), root / "scripts" / "doc_commands.py")
     shutil.copy(SCRIPT.with_name("doc_routes.py"), root / "scripts" / "doc_routes.py")
     return subprocess.run(
         [sys.executable, str(root / "scripts" / "check_doc_references.py")],

@@ -2,7 +2,6 @@
 // 要等那个子流程的实例创建才进入名单，在那之前写下的行里如果有后来才成为 secret 的值，文件里是原文。
 // 读日志的每个出口都在读取时按这次运行此刻的 secret 值再打一遍：按任务读、按运行合并读、下载、实时推送、
 // 关注项里「日志」类异常的说明。写入时已经打过码的行不受影响，没有 secret 参数的运行读出来的日志逐字不变。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type LogLineView, type RunFocus, runFocusApi, runSummaryApi } from "@sfly/schema";

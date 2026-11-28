@@ -48,7 +48,13 @@ import {
 	isActive,
 	isFailed,
 } from "./chart-groups";
-import { balancedColumns, chartLines, chartWindow } from "./charts";
+import {
+	balancedColumns,
+	chartLines,
+	chartWindow,
+	pointsOutsideAttempt,
+	timeRangeText,
+} from "./charts";
 import { MetricChart } from "./MetricChart";
 import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
@@ -698,16 +704,29 @@ function NodeGroup({
 				<LossNotes loss={loss} />
 				{charts.map((chart) => {
 					const result = series.charts.get(chart.title);
+					const lines = chartLines(chart.metrics, entry.metrics, result?.data?.series);
+					const bucketSeconds = result?.data?.bucket_seconds ?? 1;
+					// 缩放时只查到选区里的桶，判断不了整次尝试：选区里没有点就是选区空态。
+					const outside =
+						!zoomed && runAttempt && pointsOutsideAttempt(lines, runAttempt, now, bucketSeconds);
 					return (
 						<MetricChart
 							key={chart.title}
 							title={chart.title}
 							type={chart.type}
 							unit={units.get(chart.metrics[0] ?? "") ?? ""}
-							lines={chartLines(chart.metrics, entry.metrics, result?.data?.series)}
-							bucketSeconds={result?.data?.bucket_seconds ?? 1}
+							lines={lines}
+							bucketSeconds={bucketSeconds}
 							window={window}
-							empty={empty(result?.isPending ?? true)}
+							empty={
+								outside ? (
+									<span data-clock-offset className="px-3 text-center">
+										{MESSAGE.clockOffset(timeRangeText(outside, now))}
+									</span>
+								) : (
+									empty(result?.isPending ?? true)
+								)
+							}
 							dense={dense}
 							// 只有一张图表时不横贯整行：1920 宽下 1870 × 150 的一条线看不出斜率
 							className={charts.length === 1 ? "max-w-[max(50%,720px)]" : undefined}
