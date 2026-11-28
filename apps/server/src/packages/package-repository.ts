@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { newestVersion } from "@sfly/orchestration";
 import { PackageMetadata } from "@sfly/schema";
 import { and, asc, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
@@ -45,8 +46,20 @@ export interface PackageVersionSummary {
 
 export interface PackageSummary {
 	name: string;
+	/** 最新版本：按版本号比较，不是发布时间（@sfly/orchestration 的 `newestVersion`，#434）。 */
+	latest_version: string;
 	/** 按发布时间从新到旧。 */
 	versions: PackageVersionSummary[];
+}
+
+/** 一个节点包的摘要：各版本按发布时间从新到旧（调用方排好），最新版本按版本号。 */
+function summaryOf(name: string, rows: readonly Row[]): PackageSummary {
+	const versions = rows.map(toSummary);
+	return {
+		name,
+		latest_version: newestVersion(versions.map((v) => v.version)) ?? "",
+		versions,
+	};
 }
 
 /** 发布人（ADR 0029）：显示名、用户 ID、经哪个令牌（令牌的名称）；没有带凭据的发布没有（升级之前发布不要任何身份）。 */
@@ -259,16 +272,9 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				.from(nodePackages)
 				.where(inArray(nodePackages.projectId, readableProjects(project)))
 				.orderBy(asc(nodePackages.name), desc(nodePackages.publishedAt));
-			const byName = new Map<string, PackageSummary>();
-			for (const row of rows) {
-				let pkg = byName.get(row.name);
-				if (!pkg) {
-					pkg = { name: row.name, versions: [] };
-					byName.set(row.name, pkg);
-				}
-				pkg.versions.push(toSummary(row));
-			}
-			return [...byName.values()];
+			const byName = new Map<string, Row[]>();
+			for (const row of rows) byName.set(row.name, [...(byName.get(row.name) ?? []), row]);
+			return [...byName].map(([name, versions]) => summaryOf(name, versions));
 		},
 
 		/** 这个项目里按名字取节点包的各个版本（本项目的或公共项目的）；不存在或属于别的项目时返回 undefined。 */
@@ -283,7 +289,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 					),
 				)
 				.orderBy(desc(nodePackages.publishedAt));
-			return rows.length ? { name, versions: rows.map(toSummary) } : undefined;
+			return rows.length ? summaryOf(name, rows) : undefined;
 		},
 
 		/** 这个项目读得到的一个节点包版本；不存在或属于别的项目时返回 undefined。 */

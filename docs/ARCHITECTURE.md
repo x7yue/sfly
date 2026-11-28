@@ -275,7 +275,8 @@ message AgentMessage {
                                    // 监听失败的原因（ADR 0019）
     Heartbeat     heartbeat  = 2;  // running_tasks：Agent 实际持有的任务，只续约这些；
                                    // update：更新状态（无 / 下载中 / 等待任务结束 / 替换中 / 失败 / 需要手动升级）；
-                                   // agent_time_unix_ms、monotonic_ms：更新时钟偏差；
+                                   // agent_time_unix_ms、monotonic_ms：更新时钟偏差；换算偏差超过 2 秒时重新估算
+                                   // 这次连接的「单调时钟读数 → 控制面时间」对应关系（#389，agent-clock.ts 的 ConnectionClock）；
                                    // Welcome 之后的第一次表示 Agent 已准备好环境，控制面从这时起派发
     TaskStarted   started    = 3;  // 执行器子进程真正启动：任务从派发阶段进入 running
     LogBatch      logs       = 4;  // task_id, [seq, ts, stream, level, text]
