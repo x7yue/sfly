@@ -58,7 +58,9 @@ describe("触发准入的读库", () => {
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane({ version: VERSION });
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		runner = await FakeAgent.connect(cp.grpcUrl, { name: "runner" });
 		id = await new ApiClient(cp).orchestrationWith(document, "预检");
 		single = singleConnection(cp.database.url);

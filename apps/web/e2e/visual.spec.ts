@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { Locator, Page } from "@playwright/test";
 import type { SessionEventBody } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	AgentUpdateState,
 	type AssignedTask,
@@ -586,14 +587,14 @@ test("Agent 列表为空", async ({ page }) => {
 });
 
 test("加载骨架", async ({ page }) => {
-	await holdApi(page, "/agents");
+	await holdApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	await expect(page.getByRole("status", { name: "加载中" })).toBeVisible();
 	await expect(page).toHaveScreenshot("agents-loading.png");
 });
 
 test("加载失败", async ({ page }) => {
-	await failApi(page, "/agents");
+	await failApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	await expect(page.getByRole("alert")).toBeVisible();
 	await expect(page).toHaveScreenshot("agents-error.png");
@@ -658,7 +659,7 @@ async function scenarios(
 	const describe = (id: string, description: string) =>
 		controlPlane.fetch(`/orchestrations/${id}`, {
 			method: "PATCH",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ description }),
 		});
 	const ping = (id: string, agent?: string) => ({
@@ -817,9 +818,9 @@ test("场景的运行通知设置：机器人已被删除时的提示", async ({
 		title: "【订单压测-A 环境】",
 		note: "环境 A，负责人 <at id=ou_1></at>",
 	});
-	await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
+	await controlPlane.fetch("/projects/default/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 		method: "DELETE",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	await page.goto("/orchestrations");
 	await page.getByRole("article", { name: "订单压测" }).getByLabel("更多操作").click();
@@ -2126,7 +2127,7 @@ test.describe("开发文档", () => {
 test.describe("账号与登录", () => {
 	const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
 	// 没有预先写昵称：登录页和初始化页上没有昵称弹窗，登录之后也没有。
-	test.use({ nickname: null });
+	test.use({ loginAs: null });
 
 	const signIn = async (page: Page) => {
 		await page.goto("/login");

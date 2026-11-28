@@ -2,7 +2,7 @@
 // 本项目的，加公共项目里的节点包；别的项目的 Agent 和节点包，和没有注册过、没有发布过一样，说明也是同一句，
 // 不透露它在别的项目里存在。
 //
-// 真实控制面和数据库。HTTP 接口现在还只认默认项目（#488 之前路径里没有项目），所以别的项目的资源用库里的
+// 真实控制面和数据库。请求都发在默认项目的路径下（建项目的接口在 #499），所以别的项目的资源用库里的
 // 一条 `update` 造出来：Agent 先正常连上，再把它的记录改到项目 `alpha`；节点包先发布，再改到 `alpha` 或 `public`；
 // 场景同理。每一条断言都对着一个对照：同样的场景用本项目的 Agent、节点包做一遍，没有被拒绝。
 import pg from "pg";
@@ -181,7 +181,7 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 		// 节点包：默认项目里的 logs，只在项目 alpha 里的 alpha-only，在公共项目里的 public-only。
 		for (const name of ["logs", "logs-alpha"]) {
 			const published = await cp.fetch(
-				"/packages",
+				"/projects/default/packages",
 				publishInit(packageArchive(logsMetadata(name))),
 			);
 			expect(published.status, name).toBe(201);
@@ -247,7 +247,9 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 	});
 
 	it("保存：锁定的包版本只在别的项目里发布过，和没有发布过一样；公共项目里的包任何项目都能用", async () => {
-		const only = (pkg: string) => chain("runner", [node("a", pkg, "scan")], { [pkg]: "1.0.0" });
+		// 项目 alpha 里的场景派发到 alpha 自己的 Agent：只看节点包，不带「Agent 没有注册过」（#500）。
+		const only = (pkg: string, agent = "runner") =>
+			chain(agent, [node("a", pkg, "scan")], { [pkg]: "1.0.0" });
 		const missing = (await scenario(only("never-published"))).warnings;
 		expect(missing.length).toBeGreaterThan(0);
 
@@ -259,13 +261,13 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 		);
 
 		// 项目 alpha 里的场景用它自己的包：不警告；用默认项目的 logs：警告。
-		expect((await scenario(only("alpha-only"), "alpha")).warnings).toEqual([]);
+		expect((await scenario(only("alpha-only", "foreign"), "alpha")).warnings).toEqual([]);
 		const alphaLogs = chain("foreign", [node("c", "logs", "pick")], { logs: "1.0.0" });
 		expect((await scenario(alphaLogs, "alpha")).warnings.length).toBeGreaterThan(0);
 
 		// 公共项目里的包：默认项目和 alpha 的场景都不警告。
 		expect((await scenario(only("public-only"))).warnings).toEqual([]);
-		expect((await scenario(only("public-only"), "alpha")).warnings).toEqual([]);
+		expect((await scenario(only("public-only", "foreign"), "alpha")).warnings).toEqual([]);
 	});
 
 	it("节点类型的声明（关注项的图表）也只在场景所在的项目里找：别的项目发布的包没有这张图表，公共项目的有", async () => {
@@ -291,7 +293,9 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 			return ((await res.json()) as { warnings: Problem[] }).warnings.map((w) => w.code);
 		};
 		const copyAndRestore = async (pkg: string, project: string) => {
-			const { id } = await scenario(only(pkg), project);
+			// 派发到场景所在项目自己的 Agent：只看节点包（#500）。
+			const doc = { ...only(pkg), default_agent: project === "alpha" ? "foreign" : "runner" };
+			const { id } = await scenario(doc, project);
 			const copied = await warningsOf(
 				await api.post(`/orchestrations/${id}/copy`, { name: "副本" }),
 			);
@@ -355,9 +359,14 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 		const ghost = await scenario(toAgent(NOBODY));
 		const ghostProblems = (await preflight(ghost.id)).problems;
 		expect(ghostProblems).toMatchObject([{ code: "agent_not_registered", node_id: "a" }]);
+		// 保存时已经警告，说明和预检的同一句（#500）。
+		expect(ghost.warnings).toEqual(ghostProblems);
 
 		for (const foreign of ["foreign", "foreign-off"]) {
-			const { id } = await scenario(toAgent(foreign));
+			const { id, warnings } = await scenario(toAgent(foreign));
+			expect(warnings, foreign).toEqual(
+				ghost.warnings.map((w) => ({ ...w, message: w.message.replace(NOBODY, foreign) })),
+			);
 			const result = await preflight(id);
 			expect(
 				result.problems.map(({ code, node_id }) => ({ code, node_id })),
@@ -410,7 +419,8 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 		const own = await scenario(ping("dev-own"));
 		expect(own.warnings.map((w) => w.code)).toEqual(["input_not_declared"]);
 		const foreign = await scenario(ping("dev-foreign"));
-		expect(foreign.warnings.map((w) => w.code)).toEqual([]);
+		// 没有 input_not_declared；那台 Agent 不在本项目，保存时和没有注册过一样警告（#500）。
+		expect(foreign.warnings.map((w) => w.code)).toEqual(["agent_not_registered"]);
 		// 预检：那台 Agent 没有注册过，派发的目标不对；不会因为它加载了开发版本就多出别的结论。
 		expect((await preflight(foreign.id)).problems.map((p) => p.code)).toEqual([
 			"agent_not_registered",

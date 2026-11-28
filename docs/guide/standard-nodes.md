@@ -8,20 +8,20 @@
 
 `sfly-std` 要发布到**公共项目**：平台自己维护的节点包放在那里，任何凭据都能读，只有**平台管理员**能发布；控制面的包索引也只列公共项目里的 `sfly-std`，依赖它的节点包装依赖时从那里取（见 [安装 Agent](install-agent.md) 的「控制面的包索引」）。
 
-在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验，再用平台管理员的个人令牌（从哪里来见下面的第二条）上传到公共项目（发布请求加查询参数 `project=public`）：
+在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验，再用平台管理员的个人令牌（从哪里来见下面的第二条）上传到公共项目（发布请求的路径是 `/projects/public/packages`）：
 
 ```sh
 cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
 curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer $SFLY_ADMIN_TOKEN" \
-  --data-binary @sfly-std-0.4.0.sflypkg '{{SFLY_URL}}/packages?project=public'
+  --data-binary @sfly-std-0.4.0.sflypkg '{{SFLY_URL}}/projects/public/packages'
 ```
 
 - 上传成功时返回节点包的版本信息（JSON）。装了 sfly 命令行时，平台管理员先 `sfly login`（令牌存在本机的凭据文件里），再 `sfly publish sfly-std-0.4.0.sflypkg --project public`，命令自己带着令牌；脚本里设环境变量 `SFLY_API_TOKEN`（见 [用命令行操作平台](platform-cli.md)）。
-- **需要平台管理员的凭据**（登录，或 `Authorization: Bearer <个人令牌>`）：项目管理员、项目令牌、会话令牌、Agent 凭据、不带凭据都不行，不带凭据是 401，其余是 403，信息写明原因；`project` 现在只能写 `public`，写别的值是 400；不写 `project` 就是发布到默认项目，和以前一样（`sfly-std` 在默认项目里不会出现在包索引里）。发布记录里有发布人（用户和令牌的名称），也在平台管理员的写记录里。平台管理员的个人令牌从哪里来：第一个管理员在控制台的 `/setup` 页用初始化码建；之后他在控制台账号菜单的「令牌」页签发一个个人令牌，放进上面的 `SFLY_ADMIN_TOKEN`（`curl` 用这个）。用命令行时不用自己拿令牌：`sfly login` 把令牌存在本机，`sfly publish … --project public` 自己带着它；`sfly login` 不打印令牌，所以它换来的令牌放不进 `SFLY_ADMIN_TOKEN`。令牌的范围不会超过签发人此刻的角色，要用平台管理员本人的令牌（项目管理员的令牌发布不进公共项目）。这是过渡的写法，路径带项目（#488）之后改成 `/projects/public/packages`。
+- **需要平台管理员的凭据**（登录，或 `Authorization: Bearer <个人令牌>`）：项目管理员、项目令牌、会话令牌、Agent 凭据、不带凭据都不行，不带凭据是 401，其余是 403，信息写明原因；发布到默认项目（`/projects/default/packages`）的 `sfly-std` 不会出现在包索引里。发布记录里有发布人（用户和令牌的名称），也在平台管理员的写记录里。平台管理员的个人令牌从哪里来：第一个管理员在控制台的 `/setup` 页用初始化码建；之后他在控制台账号菜单的「令牌」页签发一个个人令牌，放进上面的 `SFLY_ADMIN_TOKEN`（`curl` 用这个）。用命令行时不用自己拿令牌：`sfly login` 把令牌存在本机，`sfly publish … --project public` 自己带着它；`sfly login` 不打印令牌，所以它换来的令牌放不进 `SFLY_ADMIN_TOKEN`。令牌的范围不会超过签发人此刻的角色，要用平台管理员本人的令牌（项目管理员的令牌发布不进公共项目）。以前的写法 `POST /packages?project=public` 已经去掉。
 - 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里，`{{SFLY_URL}}/simple/sfly-std/` 也提供它的 wheel。Agent 第一次执行时从控制面安装它，依赖（`psutil`）从 PyPI 镜像安装。
 - Release 说明写明了需要的**最低 Agent 版本**。Agent 版本更旧时任务以 `env_error` 失败并提示升级（见 [需要的 SDK 版本](publish.md#需要的-sdk-版本)）；Agent 跟随控制面的版本，升级控制面即可。
-- 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。发布到公共项目时，和已有版本按 PEP 440 规范化之后相同的版本（已有 `0.9.0` 再发 `0.9`、`0.9.0.0`）也会被拒绝：409，信息写明已有的是哪个。同名同版本已经在默认项目里（以前不带 `project=public` 上传过）时发布到公共项目同样是 409，信息写明它在默认项目里、不在包索引里：换一个版本号发布到公共项目（默认项目里的那个不能覆盖，也不会出现在包索引里）。
+- 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。发布到公共项目时，和已有版本按 PEP 440 规范化之后相同的版本（已有 `0.9.0` 再发 `0.9`、`0.9.0.0`）也会被拒绝：409，信息写明已有的是哪个。同名同版本已经在默认项目里（以前发布到了默认项目）时发布到公共项目同样是 409，信息写明它在默认项目里、不在包索引里：换一个版本号发布到公共项目（默认项目里的那个不能覆盖，也不会出现在包索引里）。
 
 ## 安全说明
 

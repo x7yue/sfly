@@ -1,8 +1,8 @@
 import type { FeishuBotView, FeishuTestResult } from "@sfly/schema";
-import { and, asc, count, eq } from "drizzle-orm";
+import { and, asc, count, eq, isNull, or } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { feishuBots, feishuMessages } from "../db/schema.js";
+import { feishuBots, feishuMessages, runs } from "../db/schema.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { discardNote, logDiscards } from "./discards.js";
@@ -124,19 +124,29 @@ export class FeishuBots {
 		return row && toBot(row);
 	}
 
-	/** 每个机器人还在排队的消息条数（没有排队消息的机器人不在里面）。 */
-	async backlogs(): Promise<Map<string, number>> {
+	/**
+	 * 这个项目里每个机器人还在排队的消息条数（没有排队消息的机器人不在里面）。消息属于发起它的运行所在的项目（和投递时
+	 * 按哪个项目找机器人是同一个规则，`getForDelivery`）；没有运行的消息是机器人自己的项目发的，算在这个名字上。
+	 * 别的项目里同名的旧机器人留下的消息不算进来：投递时它们会被丢弃，不会发给这个机器人。
+	 */
+	async backlogs(project: ProjectId): Promise<Map<string, number>> {
 		const rows = await this.deps.db
 			.select({ bot: feishuMessages.botName, queued: count() })
 			.from(feishuMessages)
-			.where(eq(feishuMessages.status, "queued"))
+			.leftJoin(runs, eq(runs.id, feishuMessages.runId))
+			.where(
+				and(
+					eq(feishuMessages.status, "queued"),
+					or(isNull(feishuMessages.runId), eq(runs.projectId, project)),
+				),
+			)
 			.groupBy(feishuMessages.botName);
 		return new Map(rows.map((row) => [row.bot, row.queued]));
 	}
 
-	/** 这个机器人还在排队的消息条数。 */
-	async backlog(name: string): Promise<number> {
-		return (await this.backlogs()).get(name) ?? 0;
+	/** 这个项目里这个机器人还在排队的消息条数（规则见 {@link backlogs}）。 */
+	async backlog(project: ProjectId, name: string): Promise<number> {
+		return (await this.backlogs(project)).get(name) ?? 0;
 	}
 
 	/** 在这个项目里登记机器人；名字已被占用（第一步：不论哪个项目里占用的）时返回 name_taken。 */

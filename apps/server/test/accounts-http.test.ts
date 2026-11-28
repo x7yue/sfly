@@ -8,7 +8,7 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLATFORM_ADMIN_SCOPES } from "../src/auth/scopes.js";
 import { SETUP_CODE_FILE } from "../src/auth/setup-code.js";
-import { loginCookie, TestAccounts } from "./support/credentials.js";
+import { actAs, loginCookie, TestAccounts } from "./support/credentials.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { seedTask } from "./support/seed-task.js";
@@ -460,10 +460,13 @@ describe("改密码、平台管理员管理账号", () => {
 			const devAgent = await accounts.agentCredential("default", "dev-xiaoming-laptop", {
 				userId: made.id,
 			});
-			const read = (headers: Record<string, string>) => cp.fetch("/orchestrations", { headers });
+			const read = (headers: Record<string, string>) =>
+				cp.fetch("/projects/default/orchestrations", { headers });
 			const bearerOf = (t: string) => ({ authorization: `Bearer ${t}` });
 			const download = (t: string) =>
-				cp.fetch("/packages/stub/versions/1.0.0/archive", { headers: bearerOf(t) });
+				cp.fetch("/projects/default/packages/stub/versions/1.0.0/archive", {
+					headers: bearerOf(t),
+				});
 
 			// 启用着：能用；吊销过的不能用。
 			expect((await api(cp, cookie)("GET", "/auth/me")).status).toBe(200);
@@ -502,7 +505,7 @@ describe("改密码、平台管理员管理账号", () => {
 			await accounts.close();
 		}
 		expect((await api(cp, cookie)("GET", "/auth/me")).status).toBe(401);
-		expect((await api(cp, cookie)("GET", "/orchestrations")).status).toBe(401);
+		expect((await api(cp, cookie)("GET", "/projects/default/orchestrations")).status).toBe(401);
 	});
 
 	it("停用时他的个人令牌也立即失效（访问检查每次看用户有没有停用）", async () => {
@@ -511,7 +514,9 @@ describe("改密码、平台管理员管理账号", () => {
 		try {
 			const token = await accounts.personalToken(made.id);
 			const read = () =>
-				cp.fetch("/orchestrations", { headers: { authorization: `Bearer ${token}` } });
+				cp.fetch("/projects/default/orchestrations", {
+					headers: { authorization: `Bearer ${token}` },
+				});
 			// 不是任何项目的成员：能不能读不是这里要的，看 401 和 404 的区别——有效的令牌是 404（不是成员）。
 			expect((await read()).status).toBe(404);
 			await api(cp, adminCookie)("POST", `/users/${made.id}/disable`);
@@ -656,17 +661,17 @@ describe("不登录也能照旧使用（在 #494 之前）", () => {
 	});
 
 	it("没有任何用户、不带凭据：现有接口照常可用（写操作照旧要昵称）；登录页的状态接口说要初始化", async () => {
-		expect((await cp.fetch("/orchestrations")).status).toBe(200);
-		const noNickname = await cp.fetch("/orchestrations", {
+		expect((await cp.fetch("/projects/default/orchestrations")).status).toBe(200);
+		const noNickname = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: JSON_HEADERS,
 			body: JSON.stringify({ name: "场景" }),
 		});
 		expect(noNickname.status).toBe(400);
 		expect(await noNickname.json()).toMatchObject({ error: { code: "nickname_required" } });
-		const withNickname = await cp.fetch("/orchestrations", {
+		const withNickname = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
-			headers: { ...JSON_HEADERS, "x-sfly-nickname": "xiaoming" },
+			headers: { ...JSON_HEADERS, ...actAs("xiaoming") },
 			body: JSON.stringify({ name: "场景" }),
 		});
 		expect(withNickname.status).toBe(201);

@@ -148,7 +148,7 @@ describe("升级：运行通知的触发条件「总是」改成「失败和取�
 		const api = new ApiClient(cp);
 		const list = await api.getJson<{
 			orchestrations: Array<{ id: string; run_notification: { trigger: string } }>;
-		}>("/orchestrations");
+		}>("/projects/default/orchestrations");
 		expect(
 			list.orchestrations.find((o) => o.id === ids(1).scenario)?.run_notification.trigger,
 		).toBe("failed_or_cancelled");

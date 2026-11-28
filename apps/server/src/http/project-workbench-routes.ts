@@ -36,7 +36,7 @@ export function registerProjectWorkbenchRoutes(
 					reply,
 					409,
 					"workbench_agent_disabled",
-					"这台 Agent 被停用了：先恢复它（POST /agents/<名字>/enable），或者换一台作工作台",
+					`这台 Agent 被停用了：先恢复它（POST /projects/${project}/agents/${encodeURIComponent(body.agent)}/enable），或者换一台作工作台`,
 				);
 			case "agent_not_on_credential":
 				return sendError(
@@ -59,7 +59,7 @@ export function registerProjectWorkbenchRoutes(
 					409,
 					"agents_not_on_credentials",
 					`${notOnCredentialsCount(outcome.agents.length, outcome.otherProjects)}，登记之后共享令牌和不带凭据的连接都会被拒绝：` +
-						"为它们签发 Agent 凭据并换上重新连接（sfly agent credentials issue），或者停用它们（POST /agents/<名字>/disable），再登记" +
+						`为它们签发 Agent 凭据并换上重新连接（sfly agent credentials issue），或者停用它们（POST /projects/${project}/agents/<名字>/disable），再登记` +
 						(outcome.otherProjects > 0
 							? `；另有 ${outcome.otherProjects} 台在别的项目里，请部署者处理`
 							: ""),

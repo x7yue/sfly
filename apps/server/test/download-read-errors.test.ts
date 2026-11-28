@@ -101,7 +101,7 @@ describe("下载文件时文件读不了", () => {
 			expect(res.headers.get("cache-control"), path).toBe("no-store");
 		}
 		expect((await cp.fetch("/health")).status).toBe(200);
-		expect((await cp.fetch("/orchestrations")).status).toBe(200);
+		expect((await cp.fetch("/projects/default/orchestrations")).status).toBe(200);
 	};
 
 	it("任务日志", async () => {
@@ -129,7 +129,7 @@ describe("下载文件时文件读不了", () => {
 	});
 
 	it("节点包归档", async () => {
-		const path = "/packages/stub/versions/1.0.0/archive";
+		const path = "/projects/default/packages/stub/versions/1.0.0/archive";
 		expect((await cp.fetch(path)).status).toBe(200);
 		const db = new pg.Client({ connectionString: cp.database.url });
 		await db.connect();

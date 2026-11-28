@@ -4,6 +4,7 @@ import { ANNOTATION_DEFAULT_COLOR, type AnnotationColor } from "@sfly/schema";
 import { KIND_META } from "#/components/canvas/node-display";
 import { NodeNameInline } from "#/components/node-name";
 import { UntrustedText } from "#/components/untrusted-text";
+import { DEFAULT_AGENT_LABEL, NODE_FIELD, PARAM_ITEM } from "#/editor/field-label";
 import { ANNOTATION_COLOR_LABEL, ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 
 /**
@@ -168,8 +169,9 @@ function ChangeRow({
 }) {
 	// 注释框的字段（传了 `label`）是场景里自己写的；节点和设置里这几项的值来自节点包和 Agent。
 	const foreign = label === undefined && isForeignValue(change.path);
+	const seconds = label === undefined && SECONDS_FIELDS.has(change.path);
 	const value = (v: unknown) => {
-		const text = formatValue(v);
+		const text = seconds && typeof v === "number" ? `${v} 秒` : formatValue(v);
 		return foreign ? <UntrustedText text={text} /> : text;
 	};
 	return (
@@ -201,14 +203,8 @@ const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.l
 /** 节点写成「显示名称（节点 ID）」，没有显示名称时只写节点 ID（#341，和运行监控一致）。 */
 const nodeName = (n: NodeRef) => ({ node_id: n.id, display_name: n.display_name });
 
-/** 入口参数声明的字段（`params.<参数名>.<字段>`，#341）：是否必填、是否 secret 写成「是 / 否」。 */
-const PARAM_FIELD_LABEL: Record<string, string> = {
-	type: "类型",
-	required: "必填",
-	secret: TERM.secret,
-	default: "默认值",
-	description: "说明",
-};
+/** 秒数的字段：前后值后面写上单位（字段名和检查器一样，不带单位）。 */
+const SECONDS_FIELDS = new Set(["timeout", "queue_timeout"]);
 
 function paramFieldChange(change: FieldChange): FieldChange {
 	const field = paramField(change.path);
@@ -222,22 +218,6 @@ function paramField(path: string): string | undefined {
 	const [head, , field, ...rest] = path.split(".");
 	return head === "params" && field !== undefined && rest.length === 0 ? field : undefined;
 }
-
-const FIELD_LABEL: Record<string, string> = {
-	default_agent: "默认 Agent",
-	display_name: TERM.displayName,
-	name: "名称",
-	agent: "Agent",
-	always: "always",
-	kind: "种类",
-	package: "包",
-	node: "节点类型",
-	timeout: "超时（秒）",
-	retries: "重试次数",
-	queue_timeout: "排队超时（秒）",
-	subflow: "要停止的子流程",
-	note: TERM.note,
-};
 
 /**
  * 值是节点包或 Agent 报的、不保证内容的字段：默认 Agent 和节点的 Agent、节点的包和节点类型、锁定的包版本。
@@ -272,9 +252,10 @@ function FieldLabel({ path }: { path: string }) {
 	if (head === "params") {
 		const field = paramField(path);
 		if (field === undefined) return `参数 ${tail}`;
-		return `参数 ${rest[0]} 的${PARAM_FIELD_LABEL[field] ?? field}`;
+		return `参数 ${rest[0]} 的${PARAM_ITEM[field] ?? field}`;
 	}
-	return FIELD_LABEL[path] ?? path;
+	if (path === "default_agent") return DEFAULT_AGENT_LABEL;
+	return NODE_FIELD[path] ?? path;
 }
 
 function formatValue(value: unknown): string {

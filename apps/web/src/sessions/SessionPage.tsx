@@ -18,6 +18,7 @@ import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,6 @@ import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EndSession, endMutationKey } from "./EndSession";
-import { SESSION_PROJECT } from "./project";
 import { READINESS_ID, ReadinessLine } from "./ReadinessLine";
 import { ResultsPanel } from "./ResultsPanel";
 import { SessionTimeline } from "./SessionTimeline";
@@ -84,7 +84,7 @@ export function SessionPage({ id }: { id: string }) {
  */
 function useReadiness(initial: Readiness): Readiness {
 	const list = useQuery({
-		...apiQuery(sessionsApi.list, { params: { project: SESSION_PROJECT } }),
+		...apiQuery(sessionsApi.list, { params: { project: PROJECT } }),
 		enabled: hasModelProblem(initial),
 		refetchOnWindowFocus: true,
 		refetchInterval: (query) =>

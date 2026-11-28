@@ -44,7 +44,9 @@ describe("sfly publish → 控制面", () => {
 		// 不断言 stderr 为空：并发跑测试时 uv 可能往 stderr 打等待锁之类的提示（疑为 #11 记录的偶发失败的原因，未复现）。
 		expect(first.code, first.stderr).toBe(0);
 
-		const version = (await (await cp.fetch("/packages/demo-e2e/versions/0.1.0")).json()) as {
+		const version = (await (
+			await cp.fetch("/projects/default/packages/demo-e2e/versions/0.1.0")
+		).json()) as {
 			sha256: string;
 			metadata: unknown;
 		};
@@ -75,7 +77,9 @@ describe("sfly publish → 控制面", () => {
 		expect(first.stdout).toContain(`demo-e2e@0.1.0（sha256 ${version.sha256}）`);
 
 		const archive = new Uint8Array(
-			await (await cp.fetch("/packages/demo-e2e/versions/0.1.0/archive")).arrayBuffer(),
+			await (
+				await cp.fetch("/projects/default/packages/demo-e2e/versions/0.1.0/archive")
+			).arrayBuffer(),
 		);
 		expect(createHash("sha256").update(archive).digest("hex")).toBe(version.sha256);
 
@@ -134,7 +138,7 @@ describe("sfly publish → 控制面", () => {
 			expect(ok.code, ok.stderr).toBe(0);
 			expect(ok.stdout).toContain("已发布 demo-public@0.3.0 到项目 public");
 			// 发布在公共项目里（任何项目都读得到），不在默认项目里。
-			const row = await cp.fetch("/packages/demo-public/versions/0.3.0");
+			const row = await cp.fetch("/projects/default/packages/demo-public/versions/0.3.0");
 			expect(row.status).toBe(200);
 		} finally {
 			await accounts.close();

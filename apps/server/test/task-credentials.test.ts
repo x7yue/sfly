@@ -116,10 +116,10 @@ describe("任务凭据", () => {
 			cp.fetch(path, { method, headers: bearer(task.taskToken) });
 		expect((await upload(task.taskId, "x.txt", "x", task.taskToken)).status).toBe(403);
 		for (const [method, path] of [
-			["GET", "/orchestrations"],
+			["GET", "/projects/default/orchestrations"],
 			["GET", `/orchestrations/${scenario}`],
 			["POST", `/runs/${runId}/cancel`],
-			["GET", "/agents"],
+			["GET", "/projects/default/agents"],
 			["GET", `/runs/${runId}`],
 			["GET", `/tasks/${task.taskId}/artifacts`],
 		] as const) {
@@ -200,7 +200,7 @@ describe("任务凭据", () => {
 			const otherTask = await other.nextAssign();
 			expect((await download(task.taskId, "nothing.txt", task.taskToken)).status).toBe(404);
 
-			const res = await cp.fetch("/agents/agent-a/disable", {
+			const res = await cp.fetch("/projects/default/agents/agent-a/disable", {
 				method: "POST",
 				headers: await adminHeaders(),
 			});

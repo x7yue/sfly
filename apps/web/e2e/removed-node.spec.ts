@@ -58,7 +58,7 @@ test("最新版本里还有已移除的节点：画布提示哪些节点、怎�
 
 	// 保存被拦下：字段错误，没有新版本。
 	await page.keyboard.press("Control+s");
-	await expect(panel.getByText("节点类型：已不再支持，不能保存", { exact: false })).toBeVisible();
+	await expect(panel.getByText("节点种类：已不再支持，不能保存", { exact: false })).toBeVisible();
 	const unchanged = await (await controlPlane.fetch(`/orchestrations/${IDS.scenario}/head`)).json();
 	expect((unchanged as { number: number }).number).toBe(1);
 

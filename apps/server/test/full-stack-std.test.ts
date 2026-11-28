@@ -1,4 +1,4 @@
-// 全栈：标准节点包 sfly-std（ADR 0017、0030）由平台管理员发布到公共项目（POST /packages?project=public，#565），
+// 全栈：标准节点包 sfly-std（ADR 0017、0030）由平台管理员发布到公共项目（POST /projects/public/packages，#565），
 // 场景锁定它的版本，真实的 Agent 从控制面安装它（依赖从 PyPI 镜像桩安装，不访问外网）并执行三个标准节点
 // （shell、start_process、stop_process）。辅助函数在业务节点里的用法在 full-stack-std-helpers.test.ts。
 import { createHash } from "node:crypto";
@@ -124,7 +124,7 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 		});
 		const { agents } = await api.getJson<{
 			agents: Array<{ installed_packages: Array<{ name: string; version: string }> }>;
-		}>("/agents");
+		}>("/projects/default/agents");
 		expect(agents[0]?.installed_packages).toEqual([{ name: "sfly-std", version: std.version }]);
 	}, 180_000);
 
@@ -278,7 +278,7 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 			(
 				await new ApiClient(cp).getJson<{
 					agents: Array<{ installed_packages: Array<{ name: string; version: string }> }>;
-				}>("/agents")
+				}>("/projects/default/agents")
 			).agents[0]?.installed_packages;
 		const outputOf = async ({ api, runId }: { api: ApiClient; runId: string }) => {
 			expect((await api.run(runId)).status).toBe("success");

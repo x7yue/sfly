@@ -102,7 +102,7 @@ describe("真实的控制面进程", () => {
 		// 别的请求不受影响。
 		const health = await cp.fetch("/health");
 		expect(health.status).toBe(200);
-		expect((await cp.fetch("/orchestrations")).status).toBe(200);
+		expect((await cp.fetch("/projects/default/orchestrations")).status).toBe(200);
 		// 再下载一次：同样是一次失败的请求，进程还在。
 		expect((await cp.fetch(`/tasks/${task.taskId}/logs/download`)).status).toBe(500);
 		expect(cp.exit).toBeUndefined();

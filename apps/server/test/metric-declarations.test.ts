@@ -56,15 +56,22 @@ describe("指标与图表声明", () => {
 
 	it("节点包查询 API 返回指标、图表和主指标，并为未被图表引用的指标补上默认图表", async () => {
 		cp = await startTestControlPlane();
-		const res = await cp.fetch("/packages", publishInit(packageArchive(withOrderGen())));
+		const res = await cp.fetch(
+			"/projects/default/packages",
+			publishInit(packageArchive(withOrderGen())),
+		);
 		expect(res.status).toBe(201);
 
-		const version = (await (await cp.fetch("/packages/demo-checks/versions/1.2.0")).json()) as {
+		const version = (await (
+			await cp.fetch("/projects/default/packages/demo-checks/versions/1.2.0")
+		).json()) as {
 			metadata: { nodes: { name: string }[] };
 		};
 		expect(version.metadata.nodes.find((n) => n.name === "order_gen")).toEqual(orderGenView);
 
-		const node = await cp.fetch("/packages/demo-checks/versions/1.2.0/nodes/order_gen");
+		const node = await cp.fetch(
+			"/projects/default/packages/demo-checks/versions/1.2.0/nodes/order_gen",
+		);
 		expect(await node.json()).toEqual(orderGenView);
 	});
 
@@ -73,10 +80,12 @@ describe("指标与图表声明", () => {
 		const { charts: _charts, primary_metric: _primary, ...metricsOnly } = orderGen;
 		const base = packageMetadata();
 		const metadata = { ...base, nodes: [...(base.nodes as unknown[]), metricsOnly] };
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 
 		const node = await (
-			await cp.fetch("/packages/demo-checks/versions/1.2.0/nodes/order_gen")
+			await cp.fetch("/projects/default/packages/demo-checks/versions/1.2.0/nodes/order_gen")
 		).json();
 		expect(node).toEqual({
 			...metricsOnly,
@@ -151,7 +160,7 @@ describe("指标与图表声明", () => {
 		cp = await startTestControlPlane();
 		const base = packageMetadata();
 		const metadata = { ...base, nodes: [...(base.nodes as unknown[]), { ...orderGen, ...fields }] };
-		const res = await cp.fetch("/packages", publishInit(packageArchive(metadata)));
+		const res = await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)));
 		expect(res.status).toBe(400);
 		expect(((await res.json()) as { error: { message: string } }).error.message).toContain(message);
 	});
@@ -170,7 +179,7 @@ describe("指标与图表声明", () => {
 		);
 		const { agents: views } = await new ApiClient(cp).getJson<{
 			agents: { name: string; dev_packages: { metadata: { nodes: unknown[] } }[] }[];
-		}>("/agents");
+		}>("/projects/default/agents");
 		const view = views.find((a) => a.name === "agent-dev");
 		expect(view?.dev_packages[0]?.metadata.nodes).toEqual([orderGenView]);
 	});

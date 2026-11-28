@@ -31,7 +31,7 @@ health=$(curl -fsS "$HTTP_URL/api/health" 2>/dev/null)
 [[ $health == *'"database":"ok"'* ]] && ok "健康检查 $health" || no "健康检查失败：${health:-无响应}"
 
 expected=$(node -p "require('$REPO/apps/server/package.json').version")
-agents=$(curl -fsS "$HTTP_URL/api/agents" 2>/dev/null)
+agents=$(curl -fsS "$HTTP_URL/api/projects/default/agents" 2>/dev/null)
 line=$(AGENTS="$agents" NAME="$AGENT_NAME" python3 -c '
 import json, os
 data = json.loads(os.environ["AGENTS"] or "{}")

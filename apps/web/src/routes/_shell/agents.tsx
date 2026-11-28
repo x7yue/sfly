@@ -14,6 +14,7 @@ import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { AGENT_ADMIN, MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -33,7 +34,10 @@ export const Route = createFileRoute("/_shell/agents")({
 function AgentsPage() {
 	const canAdmin = useCanAdminAgents();
 	const command = useConnectCommand();
-	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
+	const agents = useQuery({
+		...apiQuery(agentsApi.list, { params: { project: PROJECT } }),
+		refetchInterval: STATUS_POLL_MS,
+	});
 	const runFocus = useSlotFocus(agents.data?.agents ?? []);
 	const hasAgents = (agents.data?.agents.length ?? 0) > 0;
 	const loading = agents.data === undefined && !agents.isError;

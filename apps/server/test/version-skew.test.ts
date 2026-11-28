@@ -29,7 +29,7 @@ const orchestration = {
 };
 
 async function listAgents(cp: TestControlPlane) {
-	const res = await cp.fetch("/agents");
+	const res = await cp.fetch("/projects/default/agents");
 	expect(res.status).toBe(200);
 	return agentsApi.list.response.parse(await res.json());
 }

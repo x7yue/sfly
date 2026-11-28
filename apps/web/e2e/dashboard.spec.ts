@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { setAgentDisabled } from "./agent-admin-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
@@ -627,7 +628,7 @@ test("最近结束：取消的运行也只占一行，写结束时间和耗时�
 	clock.advance(3000);
 	const cancel = await controlPlane.fetch(`/runs/${run}/cancel`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: "{}",
 	});
 	expect(cancel.ok).toBe(true);
@@ -783,16 +784,16 @@ test("右栏没有 Agent、没有场景时写明；场景列加载中显示骨�
 	// 场景全部归档：列表里没有可列的场景。
 	const archived = await controlPlane.fetch(`/orchestrations/${scenario}/archive`, {
 		method: "POST",
-		headers: { "x-sfly-nickname": "tester" },
+		headers: { ...actAs("tester") },
 	});
 	expect(archived.ok).toBe(true);
 	// 接口没有删除 Agent 的操作：让 Agent 列表返回空，相当于一台 Agent 都没有。
-	await page.route("**/api/agents", async (route) => {
+	await page.route("**/api/projects/default/agents", async (route) => {
 		const response = await route.fetch();
 		await route.fulfill({ response, json: { ...(await response.json()), agents: [] } });
 	});
 	// 场景列表（不含归档）的请求先挂起，看加载状态。
-	const list = (url: URL) => url.pathname === "/api/orchestrations";
+	const list = (url: URL) => url.pathname === "/api/projects/default/orchestrations";
 	let release: () => void = () => {};
 	const released = new Promise<void>((resolve) => {
 		release = resolve;
@@ -951,7 +952,7 @@ test("运行多时：6 个以上运行时运行块换成一行一个的紧凑行
 	await expect(rows.first()).toContainText("soak");
 	await expect(rows.first().getByRole("img", { name: "主链 2/4" })).toBeVisible();
 	// 紧凑行不取读数：等到控制台接口又轮询了一次，仍然没有读数请求。
-	await page.waitForRequest((r) => new URL(r.url()).pathname === "/api/dashboard");
+	await page.waitForRequest((r) => new URL(r.url()).pathname === "/api/projects/default/dashboard");
 	expect(focusRequests).toEqual([]);
 
 	await rows.first().click();
@@ -1031,18 +1032,18 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 	connectAgent,
 }) => {
 	await runOnce(controlPlane, await connectAgent({ name: "agent-a" }));
-	const hold = await holdApi(page, "/dashboard");
+	const hold = await holdApi(page, "/projects/default/dashboard");
 	await page.goto("/");
 	await expect(page.getByRole("status", { name: "加载中" }).first()).toBeVisible();
 	hold.release();
 	await expect(region(page, "最近结束")).toBeVisible();
 
 	await page.unrouteAll();
-	const outage = await failApi(page, "/dashboard");
+	const outage = await failApi(page, "/projects/default/dashboard");
 	await page.reload();
 	const error = page.getByRole("alert");
 	await expect(error).toContainText("无法加载控制台数据");
-	await expect(error).toContainText("GET /api/dashboard → 503 unavailable");
+	await expect(error).toContainText("GET /api/projects/default/dashboard → 503 unavailable");
 	await outage.restore();
 	await error.getByRole("button", { name: "重试" }).click();
 	await expect(region(page, "最近结束")).toBeVisible();

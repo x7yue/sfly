@@ -55,6 +55,7 @@ uv run sfly api --list runs
 
 - **地址**按 `--server` > 环境变量 `SFLY_SERVER` > `$SFLY_HOME/agent.env`（默认 `~/.sfly/agent.env`）里的 `SFLY_CONTROL_PLANE_URL` > 默认地址 `http://127.0.0.1:8080` 的顺序取值，`sfly publish` 用同样的顺序。`install.sh --dev` 装好的开发机不用传 `--server`。地址里不能带用户名和密码（`http://用户名:密码@主机`）：带了就在发请求之前报错，用 `SFLY_API_TOKEN` 或 `sfly login` 提供身份。
 - **令牌**按环境变量 `SFLY_API_TOKEN` > 凭据文件 `$SFLY_HOME/credentials.json` 里这台控制面的令牌（`sfly login` 写的）的顺序取值，放在请求头 `Authorization: Bearer` 里。脚本、CI 直接设 `SFLY_API_TOKEN`，不用登录；不用 `SFLY_TOKEN`：它是安装脚本和 `agent.env` 里 Agent 的 Agent 凭据，在同一台机器上会混。令牌的范围不会超过签发人此刻的角色；个人令牌在控制台账号菜单的「令牌」页也能签发、查看和吊销。收到 401（没有登录，或令牌已失效、被吊销）时，错误信息的下一步写明 `sfly login`。令牌只发给控制面：请求被重定向到另一个源（协议、主机、端口任一不同）时不再带；在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码是明文）；凭据文件的权限别人也读得到时提示一次。`sfly logout` 收到 401（令牌已经失效）时本机的凭据照样删，但会说明令牌没有被这次登出吊销；403、500、连不上时不删本机的，并说明令牌没有被吊销、本机的凭据保留着。账号被停用期间令牌照样能吊销它自己（别的请求都拒绝，吊销自己的凭据例外），所以停用的账号登出时令牌会被吊销，启用之后不会再有效。`sfly publish` 也带令牌（发布要「发布」范围）。
+- **项目**按环境变量 `SFLY_PROJECT` > 默认项目 `default` 的顺序取值。场景列表和新建（`scenario list`、`scenario create`，按名字找场景）、运行记录（`run list`，`latest` 和按编号前缀找运行）、Agent 列表、Agent 凭据、开发 Agent、节点包列表和详情的请求发到这个项目下（`/projects/<项目>/…`）；`sfly publish` 不写 `--project` 时也发布到这个项目。
 - **昵称**：有令牌时身份由令牌决定，保存场景版本、触发和取消运行时，控制面把令牌所属用户的显示名记为作者、触发人、取消人；`--nickname` 和 `SFLY_NICKNAME` 被忽略，并在 stderr 提示一次。没有令牌时（过渡期，强制鉴权之前）按 `--nickname` > 环境变量 `SFLY_NICKNAME` > 系统用户名的顺序取值，控制面同样把它记为作者、触发人、取消人；只读命令也会带上它，控制面不依赖它。
 
 ### 「经 …」只是标注
@@ -369,14 +370,14 @@ sfly api --describe GET /runs/:id
 sfly api GET /runs/<运行 id>
 sfly api GET /tasks/<任务 id>/io
 sfly api GET /tasks/<任务 id>/actions --query failed=true
-sfly api GET /runs --query status=failed --query limit=5
+sfly api GET /projects/default/runs --query status=failed --query limit=5
 sfly api POST /runs/<运行 id>/cancel
 ```
 
 - **运行视图里大的输入、输出只给大小**（`sfly api GET /runs/<运行 id>`、`sfly run show --json` 都是）：单个输入或输出超过 16 KiB，或者整份视图里内联的输入输出合计已经超过 1 MiB 之后，`inputs`、`outputs`（和节点层的 `outputs`）是 `null`，旁边的 `inputs_omitted_bytes`、`outputs_omitted_bytes` 写着存着的大小（打码之前的字节数，向上取整到 KiB；**只在内容被省略时不是 `null`**，判断是不是被省略了只看它，不要假定小的一定内联）。读全文：`sfly run show <运行> --outputs --node 链:节点 --json`（节点的输出），或者 `sfly api GET /tasks/<任务 id>/io`（每一次尝试的输入和输出，任务 id 是运行视图里每次尝试的 `task_id`；节点层被省略的输出是它最后一次尝试的）。例如把运行视图里的输出换成命令：`sfly run show <运行> --outputs --json | jq '.[] | select(.node == "fetch") | .outputs'`。
   **命令行和控制面要一起升级**：旧的命令行（不认识 `outputs_omitted_bytes`）连新的控制面时，`sfly run show --outputs` 不会取全文，被省略输出的节点悄悄不在列表里，退出码 0，只有标准错误上那句版本不一致的提示；先升级命令行。
-- 路径是带实际 id 的路径，不含 `/api` 前缀；`--query 名=值` 给查询参数（可以重复，也可以直接写在路径后面，`/runs?limit=5`），`--body` 给请求体：JSON 文本，或 `@文件` 从文件读（`@-` 从标准输入读）。
-- 发请求前按随 SDK 打包的路由清单校验方法、路径、查询参数和请求体；对不上时报错并列出最接近的路由，不发请求。上传节点包的接口会被拒绝，上传用 `sfly publish`。
+- 路径是带实际 id 的路径，不含 `/api` 前缀；`--query 名=值` 给查询参数（可以重复，也可以直接写在路径后面，`/projects/default/runs?limit=5`），`--body` 给请求体：JSON 文本，或 `@文件` 从文件读（`@-` 从标准输入读）。
+- 发请求前按随 SDK 打包的路由清单校验方法、路径、查询参数和请求体；对不上时报错并列出最接近的路由，不发请求。项目里的列表和新建、按名字定位的接口在项目下（`/projects/<项目>/orchestrations`、`/projects/<项目>/runs`、`/projects/<项目>/dashboard`、`/projects/<项目>/agents`、`/projects/<项目>/packages`、`/projects/<项目>/feishu-bots`）：写成旧路径（例如 `sfly api GET /agents`、`sfly api GET /runs`）时报 `route_moved`，写明新路径（`/projects/default/agents`，项目取 `SFLY_PROJECT`，默认 `default`；旧的 `POST /packages?project=public` 写成 `POST /projects/public/packages`）。上传节点包的接口会被拒绝，上传用 `sfly publish`。
 - `sfly api --list [关键字…]` 列出全部接口：方法、路径、种类（普通、SSE、下载、上传）、效果、一句话说明和参数（带 `*` 的必填）；后面的关键字筛选接口（要同时出现在「方法 路径 说明」里，可以按用途找，例如 `输出`、`日志`、`产物`、`预设`、`取消`），加 `--json` 看匹配接口完整的 JSON Schema。
 - 效果列写明接口会不会改东西：**只读**的接口不改变场景、运行等任何内容，可以放心试（只在访问日志里留个记录这类没有影响的痕迹也算只读）；**有副作用**的接口会改东西（触发、取消、保存、删除、替换，或者对外发消息、让 Agent 更新），调用之前先确认是不是你要的，别人的东西留给他们自己。有副作用的接口在括号里写明它新建了什么（例如「有副作用（新建运行）」）或是删除、归档（「有副作用（删除或归档）」）。`GET` 的接口一定是只读。
 - `sfly api --describe <METHOD> <路径>` 说明一个接口：一句话说明、种类、效果、作用在哪类资源上（场景、运行、任务、节点包、Agent、飞书机器人、系统）和用哪个参数指向具体的那一个、新建了什么或是不是删除归档、怎么调用、请求的路径参数、查询参数和请求体、成功响应的字段（SSE 是每个事件的字段，带 `*` 的字段一定有；字段后面的「— …」是它的含义，请求的字段都有，响应只写到顶层字段、没有注释的字段只有类型），以及清单表达不了、只由控制面校验的约束。路径可以写成 `--list` 里的模板（`/runs/:id`），也可以带实际的 id。字段只列到第 3 层，加 `--json` 看完整的 JSON Schema。

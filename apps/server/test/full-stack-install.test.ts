@@ -47,7 +47,7 @@ describeWithAgent("全栈：install.sh 安装的 Agent", () => {
 			["run", "--locked", "--quiet", "sfly", "build", "testdata/stub-package", "--out", out],
 			{ cwd: repoRoot },
 		);
-		const res = await cp.fetch("/packages", {
+		const res = await cp.fetch("/projects/default/packages", {
 			method: "POST",
 			headers: { "content-type": "application/octet-stream" },
 			body: await readFile(join(out, "sfly-stub-0.1.0.sflypkg")),

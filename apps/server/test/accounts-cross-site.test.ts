@@ -5,7 +5,7 @@
 import { request } from "node:http";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { TestAccounts } from "./support/credentials.js";
+import { actAs, TestAccounts } from "./support/credentials.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
@@ -90,12 +90,12 @@ describe("跨站检查：带 Cookie 的请求", () => {
 	});
 
 	const write = (headers: Record<string, string>, nickname?: string) =>
-		cp.fetch("/orchestrations", {
+		cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: {
 				...JSON_HEADERS,
 				...headers,
-				...(nickname ? { "x-sfly-nickname": encodeURIComponent(nickname) } : {}),
+				...(nickname ? { ...actAs(nickname) } : {}),
 			},
 			body: JSON.stringify({ name: "场景" }),
 		});
@@ -222,7 +222,7 @@ describe("CORS：永远不发 Access-Control-Allow-Credentials，允许 authoriz
 	});
 
 	it("预检的响应允许 authorization，没有 Allow-Credentials；普通响应也没有", async () => {
-		const preflight = await cp.fetch("/orchestrations", {
+		const preflight = await cp.fetch("/projects/default/orchestrations", {
 			method: "OPTIONS",
 			headers: {
 				origin: "https://dash.example.com",
@@ -279,7 +279,7 @@ describe("跨项目：只是项目甲成员的用户，他的 Cookie 请求项�
 		}
 		alphaCookie = await loginCookie(cp, "bob", "bob-password-1");
 		// 默认项目里的场景（项目乙）；项目甲里的场景。
-		const created = await cp.fetch("/orchestrations", {
+		const created = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: { ...JSON_HEADERS, ...browser(adminCookie, sameOrigin) },
 			body: JSON.stringify({ name: "默认项目的场景" }),

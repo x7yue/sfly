@@ -9,6 +9,7 @@ import {
 	publishInit,
 	publishPackage,
 } from "./support/package-archive.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 发布 checks@<version>：节点 fetch（输入 url，输出 outputs 里的键）和 verify。 */
@@ -70,11 +71,15 @@ describe("保存时的静态检查", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
+		await registerAgents(cp.database.url, ["agent-a"]);
 		for (const [version, outputs] of [
 			["1.0.0", ["body", "status"]],
 			["2.0.0", ["content", "status"]],
 		] as const) {
-			const res = await cp.fetch("/packages", publishInit(checksPackage(version, [...outputs])));
+			const res = await cp.fetch(
+				"/projects/default/packages",
+				publishInit(checksPackage(version, [...outputs])),
+			);
 			expect(res.status).toBe(201);
 		}
 	});

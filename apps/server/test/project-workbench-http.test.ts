@@ -187,10 +187,13 @@ describe("登记项目的工作台", () => {
 				other_projects: 0,
 			});
 			expect(blocked.error.message).toContain("2 台");
+			expect(blocked.error.message).toContain("POST /projects/default/agents/<名字>/disable");
 			expect(await column()).toBeNull();
 
 			// 停用 legacy-shared：不再挡；「mixed」还挡着（签发过凭据不算换了）。
-			expect((await send("POST", "/agents/legacy-shared/disable", boss)).status).toBe(204);
+			expect(
+				(await send("POST", "/projects/default/agents/legacy-shared/disable", boss)).status,
+			).toBe(204);
 			const stillBlocked = await json<ApiError>(await register("wb"), 409);
 			expect(stillBlocked.error.details?.agents).toEqual(["mixed"]);
 
@@ -237,7 +240,7 @@ describe("登记项目的工作台", () => {
 			const alpha = await cp.current.agentCredentials.issue("alpha" as never, "in-alpha");
 			await connect("in-alpha", alpha.token);
 			await onCredential("off");
-			expect((await send("POST", "/agents/off/disable", boss)).status).toBe(204);
+			expect((await send("POST", "/projects/default/agents/off/disable", boss)).status).toBe(204);
 			await connect("shared-one", SHARED);
 
 			const code = async (name: string) => (await json<ApiError>(await register(name), 409)).error;
@@ -246,7 +249,10 @@ describe("登记项目的工作台", () => {
 			expect(await code("in-alpha")).toEqual({
 				...(await code("nobody")),
 			});
-			expect((await code("off")).code).toBe("workbench_agent_disabled");
+			const disabled = await code("off");
+			expect(disabled.code).toBe("workbench_agent_disabled");
+			// 说明里恢复它的写法照着做得通（路径带项目，#488）。
+			expect(disabled.message).toContain("POST /projects/default/agents/off/enable");
 			expect((await code("shared-one")).code).toBe("workbench_agent_not_on_credential");
 			expect(await column()).toBeNull();
 		});
@@ -318,7 +324,9 @@ describe("登记项目的工作台", () => {
 			await before.disconnect();
 			agents.splice(agents.indexOf(before), 1);
 			// 旧方式的 Agent 要先换成凭据（或停用）才能登记。
-			expect((await send("POST", "/agents/legacy/disable", boss)).status).toBe(204);
+			expect((await send("POST", "/projects/default/agents/legacy/disable", boss)).status).toBe(
+				204,
+			);
 			await json<Registered>(await register("wb"), 200);
 
 			const assertClosed = async () => {
@@ -426,7 +434,8 @@ describe("助手页：没有登记工作台", () => {
 		expect(await readiness()).toMatchObject({ ready: true, workbench: "wb" });
 
 		const toggle = async (action: "disable" | "enable") =>
-			(await cp.fetch(`/agents/wb/${action}`, { method: "POST", headers: boss })).status;
+			(await cp.fetch(`/projects/default/agents/wb/${action}`, { method: "POST", headers: boss }))
+				.status;
 		expect(await toggle("disable")).toBe(204);
 		const disabled = await readiness();
 		expect(disabled).toMatchObject({ ready: false, workbench: "wb" });

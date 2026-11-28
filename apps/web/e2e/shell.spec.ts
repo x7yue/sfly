@@ -335,7 +335,7 @@ test("弹窗锁定焦点，Esc 关闭后焦点回到打开它的按钮", async (
 });
 
 test.describe("没有昵称时", () => {
-	test.use({ nickname: null });
+	test.use({ loginAs: null });
 
 	test("第一次打开要求填写昵称，不能跳过；之后可以在顶栏修改", async ({ page }) => {
 		await page.goto("/agents");
