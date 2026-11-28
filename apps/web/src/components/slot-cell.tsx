@@ -106,6 +106,27 @@ export function IdleSlots({ count, compact = false }: { count: number; compact?:
 	);
 }
 
+/** 别的项目的运行占着的槽位（#500）：只有个数，不写场景、节点。 */
+export function OtherProjectSlots({
+	count,
+	compact = false,
+}: {
+	count: number;
+	compact?: boolean;
+}) {
+	return (
+		<li
+			data-other-project-slots
+			className={cn(
+				"min-w-0 border border-border-soft text-xs text-fg-3",
+				compact ? "rounded-md px-2.5 py-2" : "rounded-lg px-3 py-2.25",
+			)}
+		>
+			{count} 个槽位被别的项目的任务占着
+		</li>
+	);
+}
+
 /** 没被占用的槽位数；只有在线的 Agent 才把它们当空闲槽画出来（调用方判断）。 */
 export const idleSlotCount = (slots: number, running: number): number =>
 	Math.max(0, slots - running);
