@@ -6,8 +6,8 @@ import { strToU8 } from "fflate";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ManualClock } from "./support/manual-clock.js";
-import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
-import { moveIntoPublicProject, publishIntoPublicProject } from "./support/std-package.js";
+import { packageArchive, packageMetadata } from "./support/package-archive.js";
+import { leftOverIn, publishIntoPublicProject } from "./support/std-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const sha256 = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex");
@@ -70,7 +70,7 @@ describe("sfly-std 在控制面的包索引里", () => {
 	describe("公共项目里发布了 sfly-std 之后", () => {
 		const older = archiveOf("sfly-std", "0.3.0");
 		const newer = archiveOf("sfly-std", "0.4.0");
-		const own = archiveOf("sfly-std", "0.9.0"); // 默认项目里发布的
+		const own = archiveOf("sfly-std", "0.9.0"); // 留在默认项目里的（迁移之前发布的，#501）
 		const other = archiveOf("sfly-std-extras", "1.0.0"); // 公共项目里别的名字
 
 		beforeAll(async () => {
@@ -80,8 +80,6 @@ describe("sfly-std 在控制面的包索引里", () => {
 				name: "sfly-std-extras",
 				version: "1.0.0",
 			});
-			const res = await cp.fetch("/projects/default/packages", publishInit(own.archive));
-			expect(res.status).toBe(201);
 		});
 
 		it("项目页按发布的先后列出公共项目里每个版本的 wheel：链接带 wheel 的 sha256，写明 requires-python", async () => {
@@ -108,10 +106,18 @@ describe("sfly-std 在控制面的包索引里", () => {
 			expect(await wheel.text()).toBe(older.wheel);
 		});
 
-		it("别的项目里发布的 sfly-std 版本不在索引里，下载它的文件名得到 404", async () => {
+		it("留在别的项目里的 sfly-std 版本不在索引里，下载它的文件名得到 404", async () => {
+			await leftOverIn(cp, "default", own.archive, { name: "sfly-std", version: "0.9.0" });
 			const html = await (await cp.fetch("/simple/sfly-std/")).text();
 			expect(html).not.toContain("0.9.0");
 			expect((await cp.fetch(`/simple/sfly-std/files/${own.filename}`)).status).toBe(404);
+			// 后面的用例要往公共项目里发 sfly-std：去掉这条留下的记录。
+			const db = new pg.Client({ connectionString: cp.database.url });
+			await db.connect();
+			await db.query(
+				"delete from node_packages where name = 'sfly-std' and project_id = 'default'",
+			);
+			await db.end();
 		});
 
 		it("公共项目里别的名字的包不在索引里：项目页、下载都是 404，根页面也不列", async () => {
@@ -219,7 +225,7 @@ describe("wheel 要和归档登记的名字、版本对得上", () => {
 		] as const) {
 			// 发布到公共项目时会拒绝规范化之后相同的版本（#565）：这里要的是升级迁移、手工改库留下的数据，
 			// 所以挪进去，索引自己的去重才是被测的东西。
-			await moveIntoPublicProject(cp, archive.archive, { name: "sfly-std", version });
+			await leftOverIn(cp, "public", archive.archive, { name: "sfly-std", version });
 			// 发布时间不同（测试里的时钟是手动的）：「最早发布的」按它排，不是按版本的写法。
 			(cp.clock as ManualClock).advance(1_000);
 		}

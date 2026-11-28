@@ -1,0 +1,55 @@
+name: PR 信息
+
+# 读 PR 的信息（改了哪些文件、带了哪些标签），规则见 scripts/pr_checks.py 和 docs/agents/branching-and-release.md「PR」。
+# 加上、去掉标签时重新检查，所以和 CI 分开：打个标签不用重跑整套 CI。
+# 规则不能由被检查的 PR 改掉：检查脚本和关键路径清单从目标分支检出到 rules/，PR 只提供文件列表和标签（经 API 读）。
+# 目标分支上还没有检查脚本时（新增它的 PR），用 PR 里的。
+# 不用 pull_request_target：它总是取默认分支（main）上的工作流和代码，以 dev 为目标的 PR 会用错规则。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# 读 PR 的文件列表和标签：pull-requests: read；检出脚本：contents: read。fork 来的 PR 也只有这两项读权限。
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-info:
+    name: PR 信息
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出目标分支上的检查脚本和关键路径清单
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: rules
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/pr_checks.py
+            docs/agents/perf-critical-paths.json
+          sparse-checkout-cone-mode: false
+      - name: 目标分支上还没有检查脚本时（新增它的 PR），用 PR 里的
+        if: hashFiles('rules/scripts/pr_checks.py') == ''
+        uses: actions/checkout@v7
+        with:
+          path: rules
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/pr_checks.py
+            docs/agents/perf-critical-paths.json
+          sparse-checkout-cone-mode: false
+      - name: 检查兼容性标签和性能关键路径
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' > "$RUNNER_TEMP/files"
+          gh api "repos/$REPO/pulls/$PR" --jq '.labels[].name' > "$RUNNER_TEMP/labels"
+          python3 rules/scripts/pr_checks.py "$RUNNER_TEMP/files" "$RUNNER_TEMP/labels"

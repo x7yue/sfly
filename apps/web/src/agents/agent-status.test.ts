@@ -1,6 +1,14 @@
 import type { AgentView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { acceptsTasks, agentCounts, agentStatusView, authNotice, isDisabled } from "./agent-status";
+import {
+	acceptsTasks,
+	agentCounts,
+	agentStatusView,
+	authNotice,
+	isDisabled,
+	queuedCount,
+	usedSlots,
+} from "./agent-status";
 
 const base: Pick<AgentView, "status" | "preparing_since" | "version_mismatch" | "disabled_at"> = {
 	status: "online",
@@ -86,5 +94,15 @@ describe("在线和停用各有几台（#492）", () => {
 		expect(agentCounts([online, closing])).toEqual({ online: 1, enabled: 1, disabled: 1 });
 		expect(agentCounts([stopped])).toEqual({ online: 0, enabled: 0, disabled: 1 });
 		expect(agentCounts([])).toEqual({ online: 0, enabled: 0, disabled: 0 });
+	});
+});
+
+describe("占用的槽位数和排队数算上别的项目的任务（#500）", () => {
+	it("别的项目的任务只有个数，也占槽位、也在排队", () => {
+		const running = [{}, {}] as AgentView["running_tasks"];
+		const queued = [{}] as AgentView["queued_tasks"];
+		expect(usedSlots({ running_tasks: running, other_project_running: 1 })).toBe(3);
+		expect(queuedCount({ queued_tasks: queued, other_project_queued: 2 })).toBe(3);
+		expect(usedSlots({ running_tasks: [], other_project_running: 0 })).toBe(0);
 	});
 });

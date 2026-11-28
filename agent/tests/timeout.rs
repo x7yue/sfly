@@ -10,18 +10,9 @@ use serde_json::json;
 use sfly_agent::proto::{CancelTask, ErrorKind, TaskStatus, server_message};
 use support::calls::{call, open_call, read_reply, referenced, request, silent_peer, socket_of};
 use support::{
-    AgentOptions, FakeControlPlane, assert_quiet_termination, capture_stderr, spawn_agent,
-    stub_task, wait_until,
+    AgentOptions, FakeControlPlane, alive, assert_all_gone, assert_quiet_termination,
+    capture_stderr, spawn_agent, stub_task, wait_for_file, wait_until,
 };
-
-fn alive(pid: u32) -> bool {
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => !stat
-            .rsplit_once(')')
-            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
-        Err(_) => false,
-    }
-}
 
 fn pids(path: &Path) -> Vec<u32> {
     std::fs::read_to_string(path)
@@ -29,14 +20,6 @@ fn pids(path: &Path) -> Vec<u32> {
         .split_whitespace()
         .map(|p| p.parse().unwrap())
         .collect()
-}
-
-async fn assert_all_gone(pids: &[u32]) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while pids.iter().any(|&p| alive(p)) {
-        assert!(Instant::now() < deadline, "processes still alive: {pids:?}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 #[tokio::test]
@@ -93,7 +76,7 @@ async fn timed_out_task_sees_the_cancel_marker_while_it_cleans_up_and_still_fail
     let (result, _) = cp.result("task-timeout-marker").await;
     assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
     assert_eq!(result.error.expect("error").kind(), ErrorKind::Timeout);
-    assert_eq!(wait_for_report(&report).await, "cancelled");
+    assert_eq!(wait_for_file(&report).await, "cancelled");
     assert!(
         agent
             .work_dir
@@ -190,20 +173,6 @@ async fn a_cancel_marker_that_cannot_be_written_does_not_stop_the_timeout_from_t
     assert!(lines.iter().all(|l| !l.contains("panicked")), "{lines:?}");
 }
 
-/// 等节点在 `finally` 里写出报告（超时的任务结果和节点收尾的先后不保证）。
-async fn wait_for_report(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path)
-            && !text.is_empty()
-        {
-            return text;
-        }
-        assert!(Instant::now() < deadline, "没有等到 {}", path.display());
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 #[tokio::test]
 async fn processes_ignoring_sigterm_are_killed_after_the_grace_period() {
     let cp = FakeControlPlane::start().await;
@@ -271,7 +240,7 @@ async fn a_forced_cancel_during_the_grace_period_after_a_timeout_kills_the_proce
     );
     task.timeout_seconds = 2;
     cp.assign(task).await;
-    wait_for_report(&pid_file).await;
+    wait_for_file(&pid_file).await;
     let pids = pids(&pid_file);
     // 取消标记出现了：超时已经进入收尾时间，进程树理会不了 SIGTERM，还活着。
     let marker = agent.work_dir.path().join("task-timeout-force/cancel");
@@ -316,7 +285,7 @@ async fn a_graceful_cancel_during_the_grace_period_after_a_timeout_does_not_cut_
     );
     task.timeout_seconds = 2;
     cp.assign(task).await;
-    wait_for_report(&pid_file).await;
+    wait_for_file(&pid_file).await;
     let pids = pids(&pid_file);
     let marker = agent.work_dir.path().join("task-timeout-graceful/cancel");
     wait_until("the cancel marker", || marker.exists()).await;
@@ -358,7 +327,7 @@ async fn an_agent_call_in_flight_ends_when_the_task_times_out_while_the_node_is_
     task.referenced_agents = vec![referenced("silent", "127.0.0.1", port)];
     task.timeout_seconds = 3;
     cp.assign(task).await;
-    wait_for_report(&pid_file).await;
+    wait_for_file(&pid_file).await;
     let pids = pids(&pid_file);
 
     // 不限调用的超时：只有任务进入收尾时间能结束它。

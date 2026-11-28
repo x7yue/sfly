@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, StoredOrchestrationDocument } from "@sfly/schema";
+import { dispatchAgentOf } from "./dev-node-types.js";
 import { inputsOfType, isInputOfType, namesInInputs } from "./input-types.js";
 import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
@@ -82,6 +83,34 @@ export function agentInputWarnings(
 				input,
 			});
 		}
+	}
+	return warnings;
+}
+
+export interface NodeAgentWarning {
+	code: "agent_not_registered";
+	message: string;
+	node_id: string;
+}
+
+/**
+ * 包节点派发到的 Agent（{@link dispatchAgentOf}：节点另选的，否则默认 Agent）的静态检查：必须是这个项目里注册过的 Agent
+ * （`agents`，不要求在线；别的项目里的和没有注册过一样，#500）。保存时是警告，触发前的预检里阻断，说明和预检相同。
+ */
+export function nodeAgentWarnings(
+	doc: StoredOrchestrationDocument,
+	agents: ReadonlySet<string>,
+): NodeAgentWarning[] {
+	const warnings: NodeAgentWarning[] = [];
+	for (const node of doc.nodes) {
+		if (node.kind !== "package") continue;
+		const agent = dispatchAgentOf(doc, node);
+		if (agent === undefined || agents.has(agent)) continue;
+		warnings.push({
+			code: "agent_not_registered",
+			message: nodeAgentNotRegistered(nodeNameWithId(node), agent),
+			node_id: node.id,
+		});
 	}
 	return warnings;
 }

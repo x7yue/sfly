@@ -147,23 +147,32 @@ export async function publishIntoPublicProject(
 }
 
 /**
- * 升级迁移或手工改库留下的数据：先发布到默认项目，再把它挪进公共项目，不经过「发布到公共项目」时的检查
- * （那里会拒绝和已有版本规范化之后相同的版本）。测包索引对这种数据的防御（同一个版本只列最早发布的那个）用它。
+ * 升级迁移或手工改库留下的数据：不经过发布时的检查（公共项目里规范化之后相同的版本、公共项目和别的项目之间同名，#565、#501），
+ * 把这个版本放进 `project`。先把公共项目里同名的版本挪到默认项目，发布到默认项目，再挪回去。测包索引对这种数据的防御用它。
  */
-export async function moveIntoPublicProject(
+export async function leftOverIn(
 	cp: TestControlPlane,
+	project: "public" | "default",
 	archive: Uint8Array,
 	where: { name: string; version: string },
 ): Promise<void> {
-	const res = await cp.fetch("/projects/default/packages", publishInit(archive));
-	if (res.status !== 201)
-		throw new Error(`发布 ${where.name}@${where.version}：${res.status} ${await res.text()}`);
 	const client = new pg.Client({ connectionString: cp.database.url });
 	await client.connect();
 	try {
+		const { rows } = await client.query(
+			"update node_packages set project_id = 'default' where name = $1 and project_id = 'public' returning version",
+			[where.name],
+		);
+		const res = await cp.fetch("/projects/default/packages", publishInit(archive));
+		if (res.status !== 201)
+			throw new Error(`发布 ${where.name}@${where.version}：${res.status} ${await res.text()}`);
+		const back = [
+			...rows.map((r) => r.version as string),
+			...(project === "public" ? [where.version] : []),
+		];
 		await client.query(
-			"update node_packages set project_id = 'public' where name = $1 and version = $2",
-			[where.name, where.version],
+			"update node_packages set project_id = 'public' where name = $1 and version = any($2)",
+			[where.name, back],
 		);
 	} finally {
 		await client.end();
