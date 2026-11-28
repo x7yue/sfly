@@ -31,7 +31,9 @@ def _ts(path: str, name: str) -> int:
 
 def _query_maximum(path: str, field: str = "limit") -> int:
     routes = json.loads(_source("sdk/python/src/sfly/schemas/routes.json"))["routes"]
-    route = next(r for r in routes if r["method"] == "GET" and r["path"] == path)
+    found = [r for r in routes if r["method"] == "GET" and r["path"] == path]
+    assert found, f"routes.json 里没有 GET {path}：路由改了路径时，这里跟着改"
+    route = found[0]
     maximum: int = route["query"]["properties"][field]["maximum"]
     return maximum
 
@@ -52,8 +54,8 @@ def test_metric_limits_are_the_ones_in_packages_schema() -> None:
 
 
 def test_page_limits_are_the_ones_the_control_plane_accepts() -> None:
-    assert run_query._MAX_RUNS == _query_maximum("/runs")
-    assert run_view._RUN_LOOKUP_LIMIT == _query_maximum("/runs")
+    assert run_query._MAX_RUNS == _query_maximum("/projects/:project/runs")
+    assert run_view._RUN_LOOKUP_LIMIT == _query_maximum("/projects/:project/runs")
     for path in ("/tasks/:id/logs", "/runs/:id/logs"):
         assert run_logs._MAX_PAGE_LINES == _query_maximum(path), path
 
