@@ -1,3 +1,4 @@
+import { compareVersions } from "@sfly/orchestration";
 import type { PackageMetadata } from "@sfly/schema";
 
 /**
@@ -18,13 +19,9 @@ function parse(version: string): number[] | undefined {
 	return /^[0-9]+(?:\.[0-9]+)*$/.test(version) ? version.split(".").map(Number) : undefined;
 }
 
-function compare(a: number[], b: number[]): number {
-	for (let i = 0; i < Math.max(a.length, b.length); i++) {
-		const d = (a[i] ?? 0) - (b[i] ?? 0);
-		if (d !== 0) return Math.sign(d);
-	}
-	return 0;
-}
+/** 纯数字的版本号逐段比较（缺的段当 0）：用节点包版本的同一个比较（@sfly/orchestration 的 `compareVersions`，#434）。 */
+const compare = (a: number[], b: number[]): number =>
+	Math.sign(compareVersions(a.join("."), b.join(".")));
 
 function holds(version: number[], op: string, bound: number[]): boolean {
 	const c = compare(version, bound);

@@ -114,7 +114,8 @@ def _list(session: Session, args: argparse.Namespace) -> None:
             "status": a["status"],
             "agent_version": a["info"]["agent_version"],
             "version_matches": not a["version_mismatch"],
-            "running_tasks": len(a["running_tasks"]),
+            # 占用的槽位数：本项目的任务加上别的项目的（只有个数，#500）；旧控制面没有这个字段。
+            "running_tasks": len(a["running_tasks"]) + a.get("other_project_running", 0),
             "slots": a["info"]["slots"],
             "preparing_since": a["preparing_since"],
             "address": _address(a),

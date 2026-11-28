@@ -86,6 +86,7 @@ import { databaseUrlFromEnv } from "./config/url-setting.js";
 import { type ControlPlane, startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { installProcessGuards } from "./process-guards.js";
+import { VaultKeyError } from "./secrets/vault-key.js";
 import { installShutdown } from "./shutdown.js";
 import { ListenError } from "./util/listen-error.js";
 import { printError, printInfo, printWarning, terminalStreams } from "./util/output.js";
@@ -216,8 +217,9 @@ const controlPlane = await startControlPlane({
 	// 把它盖掉的（test/main-env-settings.test.ts 的结构检查守着）。
 	...settings,
 }).catch((error: unknown) => {
-	// 监听失败：说明只有变量名、端口和错误码，不带监听地址、不打印底层错误的原文（里面有填的值，#651 的审查）。
-	if (error instanceof ListenError) printError(`sfly: 控制面没有启动：${error.message}`);
+	// 监听失败、钥匙文件对不上：说明只有变量名、端口、文件和错误码，不带监听地址、不打印底层错误的原文（里面有填的值，#651 的审查）。
+	if (error instanceof ListenError || error instanceof VaultKeyError)
+		printError(`sfly: 控制面没有启动：${error.message}`);
 	else printError("sfly: 控制面没有启动：", error);
 	process.exit(1);
 });

@@ -234,6 +234,29 @@ nc -vz 10.20.30.40 50052
 
 没有 `nc` 时可以用 bash：`timeout 3 bash -c '</dev/tcp/10.20.30.40/50052' && echo 通`。连不上时依次检查：Agent 管理页上这台 Agent 有没有显示「不能被其它 Agent 调用」，这台机器上 `ss -ltnp | grep 50052` 能不能看到 `sfly-agent` 在监听，两台机器之间的防火墙有没有放行这个端口，对外地址是不是另一台机器能访问到的地址。
 
+## 一台机器给两个项目用
+
+一台 Agent 只属于一个项目（凭据是在哪个项目里签发的，它就在哪个项目里）：项目甲的场景看不到、用不了项目乙的 Agent。一台测试机要给两个项目用时，在上面装两台 Agent，每个项目一台：
+
+- **两个名字**：名字在整个部署里唯一，一个名字只能属于一个项目，例如 `box1-alpha` 和 `box1-beta`。
+- **两份凭据**：各自在自己的项目里签发。用命令行时用 `SFLY_PROJECT` 指定项目，例如 `SFLY_PROJECT=beta sfly agent credentials issue box1-beta`（不设置时是默认项目）。控制台现在只能管理默认项目里的 Agent，别的项目的凭据用命令行签发。
+- **两个系统用户**：每个用户各有自己的 `~/.sfly` 和自己的用户级服务 `sfly-agent`，互不覆盖。在同一个用户下装两次会写同一个 `~/.sfly/agent.env`，也会注册同一个服务。
+- **两个端口**：两台 Agent 都要监听供其它 Agent 连接的端口，默认都是 50052，第二台要换一个，例如 `--listen-port 50053`。防火墙两个端口都要放行（见上面「供其它 Agent 连接的端口」）。
+
+例如用户 `qa-alpha` 和 `qa-beta` 分别运行（各自粘贴自己项目的凭据）：
+
+```text
+(read -rs SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name box1-alpha)
+(read -rs SFLY_TOKEN && export SFLY_TOKEN && curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name box1-beta --listen-port 50053)
+```
+
+两台 Agent 各自连接控制面、各自接任务，槽位分开算。机器本身是共用的：
+
+- 系统时钟只有一个：改这台机器的时间，两边的任务都受影响。
+- 被测系统、端口、文件、CPU 和内存也是共用的：两个项目同时在这台机器上跑测试时会互相干扰。要隔开的东西（例如被测服务的端口、数据目录），在各自的场景里分开配置。
+
+两个项目用的标准节点包 `sfly-std` 都来自公共项目，两台 Agent 各自装在自己的共享 venv 里。
+
 ## 版本与自动更新
 
 Agent 和控制面必须是同一个版本。控制面升级（或回滚）后，版本不一致的 Agent 仍然保持连接，手上的任务照常跑完，但不再接新任务；[Agent 管理](/agents) 页面显示 Agent 和控制面各自的版本号和更新状态。用安装脚本安装的 Agent 自动更新到控制面的版本，面板头部的状态依次显示：

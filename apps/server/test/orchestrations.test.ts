@@ -4,6 +4,7 @@ import { ApiClient } from "./support/api-client.js";
 import { actAs } from "./support/credentials.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const docV1 = {
@@ -22,6 +23,7 @@ describe("编排版本", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
+		await registerAgents(cp.database.url, ["agent-a"]);
 	});
 	afterAll(async () => {
 		await cp.close();

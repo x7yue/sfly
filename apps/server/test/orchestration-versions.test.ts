@@ -2,6 +2,7 @@ import { orchestrationsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const doc = (defaultAgent: string) => ({
@@ -21,6 +22,7 @@ describe("编排版本：冲突、历史与恢复", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ clock });
 		api = new ApiClient(cp);
+		await registerAgents(cp.database.url, ["a"]);
 	});
 	afterAll(async () => {
 		await cp.close();

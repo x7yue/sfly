@@ -44,6 +44,7 @@ describe("节点包仓库", () => {
 			packages: [
 				{
 					name: "demo-checks",
+					latest_version: "1.2.0",
 					versions: [
 						{
 							version: "1.2.0",
@@ -107,6 +108,39 @@ describe("节点包仓库", () => {
 			["0.2.0", "2026-01-01T00:00:02.000Z"],
 			["0.1.0", "2026-01-01T00:00:01.000Z"],
 		]);
+	});
+
+	it("最新版本按版本号标出，不按发布时间（#434）：先发 1.10.0 再发 1.9.1，最新的是 1.10.0；预发布版本排在同号正式版之前", async () => {
+		const clock = new ManualClock();
+		cp = await startTestControlPlane({ clock });
+		const latest = async () => {
+			const { packages } = (await (await cp?.fetch("/projects/default/packages"))?.json()) as {
+				packages: { name: string; latest_version: string }[];
+			};
+			const one = (await (await cp?.fetch("/projects/default/packages/bench"))?.json()) as {
+				latest_version: string;
+			};
+			expect(packages.find((p) => p.name === "bench")?.latest_version).toBe(one.latest_version);
+			return one.latest_version;
+		};
+		const publish = async (version: string) => {
+			const res = await cp?.fetch(
+				"/projects/default/packages",
+				publishInit(packageArchive(packageMetadata({ name: "bench", version }))),
+			);
+			expect(res?.status).toBe(201);
+			clock.advance(1000);
+		};
+		await publish("1.10.0");
+		await publish("1.9.1");
+		expect(await latest()).toBe("1.10.0");
+		await publish("1.11.0rc1");
+		expect(await latest()).toBe("1.11.0rc1");
+		await publish("1.11.0");
+		await publish("1.11.1rc1");
+		expect(await latest()).toBe("1.11.1rc1");
+		await publish("1.11.1");
+		expect(await latest()).toBe("1.11.1");
 	});
 
 	it("版本列表返回被多少个场景锁定：只看各场景的最新版本", async () => {
