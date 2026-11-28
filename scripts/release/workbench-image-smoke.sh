@@ -60,7 +60,7 @@ docker build --quiet --platform "$platform" ${DEBIAN_MIRROR:+--build-arg "DEBIAN
 	-t "$workbench_image" deploy/workbench >/dev/null
 if ! docker image inspect "$server_image" >/dev/null 2>&1; then
 	if [[ ! -f out/server/main.mjs ]]; then
-		echo "没有控制面镜像 $server_image，out/server/main.mjs 也不存在，先运行 pnpm bundle:server" >&2
+		echo "没有控制面镜像 ${server_image}，out/server/main.mjs 也不存在，先运行 pnpm bundle:server" >&2
 		exit 1
 	fi
 	docker build --quiet --platform "$platform" -f apps/server/Dockerfile \
@@ -71,7 +71,7 @@ fi
 inside() { docker run --rm --entrypoint "$1" "$workbench_image" "${@:2}"; }
 for missing in node npm pi; do
 	if docker run --rm --entrypoint sh "$workbench_image" -c "command -v $missing" >/dev/null 2>&1; then
-		fail "工作台镜像里有 $missing：镜像里不该有 Node 和 pi"
+		fail "工作台镜像里有 ${missing}：镜像里不该有 Node 和 pi"
 	fi
 done
 for tool in git rg fd jq curl pgrep python python3; do
@@ -106,7 +106,7 @@ for _ in $(seq 60); do
 	[[ $(docker inspect --format '{{.State.Running}}' "$cp") == true ]] || fail "控制面容器已退出"
 	sleep 2
 done
-[[ $status == healthy ]] || fail "控制面的健康检查没有转为 healthy（$status）"
+[[ $status == healthy ]] || fail "控制面的健康检查没有转为 healthy（${status}）"
 base=http://127.0.0.1:$(docker port "$cp" 8080/tcp | head -n 1 | sed 's/.*://')
 
 # 管理员登录（登录 Cookie 只对同源的请求有效，所以带 Sec-Fetch-Site），再给工作台签发 Agent 凭据（只显示这一次）。
@@ -154,9 +154,9 @@ start_workbench
 wait_online
 read -r status _ agent_version control_plane_version mismatch auth address port <<<"$(agent_state)"
 [[ $agent_version == "$version" && $control_plane_version == "$version" ]] ||
-	fail "版本不一致：Agent $agent_version，控制面 $control_plane_version，仓库 $version"
+	fail "版本不一致：Agent ${agent_version}，控制面 ${control_plane_version}，仓库 $version"
 [[ $mismatch == false ]] || fail "Agent 页上写版本不一致"
-[[ $auth == agent ]] || fail "工作台没有用 Agent 凭据连接（auth_kind 是 $auth）"
+[[ $auth == agent ]] || fail "工作台没有用 Agent 凭据连接（auth_kind 是 ${auth}）"
 [[ $address == sfly-workbench && $port =~ ^[0-9]+$ ]] || fail "能力端口的地址不对：$address:$port"
 
 # 开发方式装的：uv 和 sfly 命令行都在，版本和控制面一致；Agent 的配置里是这个名字。
@@ -254,4 +254,4 @@ contains "$(docker logs "$wb" 2>&1)" 'install.sh 变了' || fail "恢复之后�
 contains "$(docker exec "$wb" cat /home/workbench/.sfly/.workbench-installed)" '^install_sh_sha256=[0-9a-f]\{64\}$' ||
 	fail "恢复之后重装成功，标记里没有记下 install.sh 的 sha256"
 
-echo "工作台镜像冒烟通过：$workbench_image（控制面 $server_image，sfly $version）"
+echo "工作台镜像冒烟通过：${workbench_image}（控制面 ${server_image}，sfly ${version}）"
