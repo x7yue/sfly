@@ -422,6 +422,11 @@ const FIXTURES: Record<OrchestrationWarning["code"], Doc | { single: string }> =
 		],
 		chain("entry", "w1"),
 	),
+	// 两个包节点派发到没有注册过的 Agent：靠 node_id 分开
+	agent_not_registered: doc(
+		[entry(), work("w1", { agent: "ghost1" }), work("w2", { agent: "ghost2" })],
+		[...chain("entry", "w1"), ...chain("w1", "w2")],
+	),
 	// 一个「Agent」（「飞书机器人」）类型的输入只有一个值：同一个节点上的两个输入
 	agent_input_not_registered: doc(
 		[
@@ -497,6 +502,7 @@ describe("「同一条警告」的键", () => {
 			const found = documentWarnings(fixture as unknown as StoredOrchestrationDocument, catalog, {
 				agents: new Set(["agent-a"]),
 				feishuBots: new Set(),
+				nodeAgents: true,
 			}).filter((w) => w.code === code);
 			expect(found.length, `${code} 的样例要造出至少两条`).toBeGreaterThanOrEqual(2);
 			const keys = found.map(warningIdentity);
