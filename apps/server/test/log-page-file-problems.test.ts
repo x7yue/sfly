@@ -16,6 +16,7 @@ import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
+import { writeRecordedLogs } from "./support/recorded-logs.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane } from "./support/test-control-plane.js";
 
@@ -68,18 +69,9 @@ describe("分页读取和实时流里的日志文件问题（#721）", () => {
 
 	const fileOf = (runId: string, taskId: string) =>
 		join(cp.dataDir, "logs", runId, `${taskId}.jsonl`);
-	/** 写 `count` 行日志（序号从 1 起），等数据库记到。 */
-	const write = async (task: Parameters<typeof agent.logs>[0], count: number) => {
-		if (count === 0) return;
-		agent.logs(
-			task,
-			Array.from({ length: count }, (_, i): [number, string] => [i + 1, `第 ${i + 1} 行`]),
-		);
-		await eventually(async () => {
-			const page = await (await cp.fetch(`/tasks/${task.taskId}/logs?limit=1`)).json();
-			expect(logsApi.page.response.parse(page).last_seq).toBe(count);
-		}, 30_000);
-	};
+	/** 写 `count` 行日志（序号从 1 起），等数据库记下（#790）。 */
+	const write = (task: Parameters<typeof agent.logs>[0], count: number) =>
+		writeRecordedLogs(cp, agent, task, count);
 	/** 一个运行里的一个任务（一直不结束）：`lines` 行（0 是从没有日志）。 */
 	const newTask = async (lines: number) => {
 		const runId = await api.triggerOk(one);

@@ -20,6 +20,7 @@ import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import type { SecretSet } from "../logs/secrets.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
@@ -213,6 +214,8 @@ export class TaskMetrics {
 			clock: Clock;
 			/** 保留期与分区（#32）：写入前确保分区存在。 */
 			retention: MetricRetention;
+			/** 标签的值写进库之前按这次运行的 secret 值打码（#505，`TaskLogs.runSecrets`）。 */
+			secrets: (runId: string) => Promise<SecretSet>;
 			/** 单个任务指标数据的上限（字节，按每点 28 字节折算成点数），默认 {@link DEFAULT_METRIC_LIMIT_BYTES}。 */
 			limitBytes?: number;
 		},
@@ -246,10 +249,13 @@ export class TaskMetrics {
 			}
 			const full = new Set<Series>();
 			const accepted: MetricPointView[] = [];
+			const secrets = await this.deps.secrets(state.runId);
 			for (let i = 0; i < batch.points.length; i++) {
-				const p = batch.points[i] as MetricBatch["points"][number];
-				const keys = state.declared.get(p.name);
+				const reported = batch.points[i] as MetricBatch["points"][number];
+				const keys = state.declared.get(reported.name);
 				if (keys === undefined) continue;
+				const labels = maskedLabels(reported.labels, secrets);
+				const p = labels === reported.labels ? reported : { ...reported, labels };
 				if (!labelsMatch(p.labels, keys)) {
 					state.dropped++;
 					state.countersDirty = true;
@@ -888,4 +894,14 @@ class ArrivalTimes {
 		}
 		return times;
 	}
+}
+
+/** 标签的值打码之后；没有变化时是原来的对象。 */
+function maskedLabels(labels: Labels, secrets: SecretSet): Labels {
+	const entries = Object.entries(labels);
+	if (entries.length === 0) return labels;
+	const masked = entries.map(([key, value]) => [key, secrets.mask(value)] as const);
+	return masked.every(([, value], i) => value === entries[i]?.[1])
+		? labels
+		: Object.fromEntries(masked);
 }
