@@ -77,6 +77,8 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"POST /sessions/:id/messages": "edit",
 	"POST /sessions/:id/stop": "edit",
 	"POST /sessions/:id/end": "edit",
+	// 登记会话构建（会话，写，creates: session_build）：会话只被读，新建的是会话构建 → 会话构建（ADR 0029 范围表，#795）
+	"POST /sessions/:id/builds": "session_build",
 };
 
 /**
@@ -213,9 +215,11 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		]);
 	});
 
-	it("作用在 humanOnly 的类别上、或新建出的是它，任何一个都算（不能靠写成别的 creates 绕过）", () => {
-		expect(writeNeedsPerson(writeOf("session", "scenario"))).toBe(true);
+	it("看写落在哪一类上（和范围同一个取法）：声明了 creates 的看 creates，定位到的那个只被读（#795，ADR 0029「一处检查」）", () => {
 		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
+		// 登记会话构建：定位到会话（只读它），新建的是会话构建，会话令牌能做。
+		expect(writeNeedsPerson(writeOf("session", "session_build"))).toBe(false);
+		expect(writeNeedsPerson(writeOf("session", "scenario"))).toBe(false);
 		expect(writeNeedsPerson(writeOf("scenario", "run"))).toBe(false);
 	});
 

@@ -799,12 +799,17 @@ describe("契约路由的访问检查", () => {
 					message: expect.stringContaining("会话令牌对会话只有读"),
 				});
 			}
-			for (const key of [
-				"GET /projects/:project/sessions",
-				"GET /sessions/:id",
-				"GET /sessions/:id/events",
-			]) {
-				expect(outcome(await run(route(key), session)), key).toBe("ok");
+			expect(outcome(await run(route("GET /projects/:project/sessions"), session))).toBe("ok");
+			// 读自己的会话照常；同一个项目里别的会话 403（会话令牌只能访问自己的会话，#795）。
+			store.sessions.set(MY_SESSION, DEFAULT);
+			for (const key of ["GET /sessions/:id", "GET /sessions/:id/events"]) {
+				const own = await guard.check(request(route(key), session, "default", { id: MY_SESSION }));
+				expect(outcome(own), key).toBe("ok");
+				expect(await run(route(key), session), key).toMatchObject({
+					ok: false,
+					status: 403,
+					message: "会话令牌只能访问它自己的会话",
+				});
 			}
 			// 别的项目的会话令牌：不是它的项目，404（不是 403），读和写一样。
 			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);

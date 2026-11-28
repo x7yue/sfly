@@ -45,12 +45,14 @@ export interface PreflightProblem {
 /**
  * 预检读哪个数据库由调用方传：触发准入（trigger-admission.ts）在事务里调用，传事务对象（#380：预检另从连接池取连接，会和等锁的写入互相等死）。
  * `project` 是场景所在的项目：包（本项目的和公共项目的）和 Agent（只有本项目的）都在这个范围里找，别的项目的当作不存在。
- * 预检和参数检查读库都是一条接一条地执行，不并发。
+ * 预检和参数检查读库都是一条接一条地执行，不并发。`session` 是这个场景版本属于的会话（`orchestration_versions.session_id`）：
+ * 锁定的会话构建只在是这个会话的、会话没结束时找得到（#795），不属于会话的是 null。
  */
 export type Preflight = (
 	db: Db | Tx,
 	project: ProjectId,
 	doc: StoredOrchestrationDocument,
+	session: string | null,
 ) => Promise<PreflightProblem[]>;
 
 /** 文档锁定的节点包版本的元信息（包名 → 元信息；控制面没有这个版本的不在里面）。每个包查一次，一个一个地查。 */
@@ -58,10 +60,11 @@ async function lockedPackages(
 	db: Db | Tx,
 	project: ProjectId,
 	doc: StoredOrchestrationDocument,
+	session: string | null,
 ): Promise<Map<string, PackageMetadata>> {
 	const locked = new Map<string, PackageMetadata>();
 	for (const [name, version] of Object.entries(doc.packages)) {
-		const published = await findPackageVersion(db, project, name, version);
+		const published = await findPackageVersion(db, project, name, version, { session });
 		if (published) locked.set(name, published.metadata);
 	}
 	return locked;
@@ -100,9 +103,9 @@ export function createPreflight(deps: {
 	/** 运行的链接（控制台里的运行页）。 */
 	runLink: (runId: string) => string;
 }): Preflight {
-	return async (db, project, doc) => {
+	return async (db, project, doc, session) => {
 		// 注释框的警告只提示，不阻断触发（docs/SEMANTICS.md §1.6）。
-		const problems: PreflightProblem[] = (await checkDocument(db, project, doc))
+		const problems: PreflightProblem[] = (await checkDocument(db, project, doc, session))
 			.filter(blocksTrigger)
 			.map((w) => ({
 				code: w.code,
@@ -138,7 +141,7 @@ export function createPreflight(deps: {
 		problems.push(...(await checkDevPackagesLoaded(db, project, doc)));
 		problems.push(...(await versionsInUseProblems(db, project, doc, wanted, deps)));
 
-		const locked = await lockedPackages(db, project, doc);
+		const locked = await lockedPackages(db, project, doc, session);
 		// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。
 		const constants: AgentReference[] = [];
 		for (const node of doc.nodes) {
@@ -242,6 +245,7 @@ export type ParamsCheck = (
 	db: Db | Tx,
 	project: ProjectId,
 	doc: StoredOrchestrationDocument,
+	session: string | null,
 	plan: RunPlan,
 	params: Record<string, unknown>,
 	origins: ParamOrigins,
@@ -257,8 +261,8 @@ export type ParamsCheck = (
  * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过。
  */
 export function createParamsCheck(): ParamsCheck {
-	return async (db, project, doc, plan, params, origins) => {
-		const locked = await lockedPackages(db, project, doc);
+	return async (db, project, doc, session, plan, params, origins) => {
+		const locked = await lockedPackages(db, project, doc, session);
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
 		// 触发时请求体里的值是请求体的样子，运行里从库里读回来的是 jsonb 的样子（对象的键重新排过）：算大小之前先变成库里读回来的样子，

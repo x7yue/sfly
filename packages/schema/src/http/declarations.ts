@@ -525,12 +525,19 @@ export function checkDeclarationTables(
 }
 
 /**
- * 每个资源类别至少有一个路径前缀（加了类别没在 {@link PATH_KINDS} 里写前缀会报错）。只看表，不看契约；
- * 契约测试对真正的表运行它。
+ * 只被新建出来（`creates`）、没有自己定位的接口的资源类别：没有路径前缀。会话构建登记和列出都定位到会话（#795）。
+ */
+export const CREATED_ONLY_KINDS: readonly ResourceKind[] = ["session_build"];
+
+/**
+ * 每个资源类别至少有一个路径前缀（加了类别没在 {@link PATH_KINDS} 里写前缀会报错，{@link CREATED_ONLY_KINDS} 除外）。
+ * 只看表，不看契约；契约测试对真正的表运行它。
  */
 export function checkPathKindsCover(rules: DeclarationRules = DECLARATION_RULES): string[] {
 	const kinds = new Set(Object.values(rules.pathKinds).map((entry) => entry.kind));
-	return RESOURCE_KINDS.filter((kind) => !kinds.has(kind)).map(
+	return RESOURCE_KINDS.filter(
+		(kind) => !kinds.has(kind) && !CREATED_ONLY_KINDS.includes(kind),
+	).map(
 		(kind) =>
 			`资源类别 ${kind} 在 PATH_KINDS 里没有任何路径前缀：加了类别要在那张表里写它的前缀（http/declarations.ts）`,
 	);

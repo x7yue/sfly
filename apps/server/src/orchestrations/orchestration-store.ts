@@ -387,6 +387,20 @@ export class OrchestrationStore {
 		};
 	}
 
+	/** 场景的一个版本属于哪个会话（`orchestration_versions.session_id`）；不属于会话、或者没有这个版本时是 null。 */
+	async versionSession(id: string, number: number): Promise<string | null> {
+		const [row] = await this.deps.db
+			.select({ sessionId: orchestrationVersions.sessionId })
+			.from(orchestrationVersions)
+			.where(
+				and(
+					eq(orchestrationVersions.orchestrationId, id),
+					eq(orchestrationVersions.number, number),
+				),
+			);
+		return row?.sessionId ?? null;
+	}
+
 	/**
 	 * 复制编排：新编排使用新名字，说明、运行通知设置、运行预设和关注项一起复制，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
 	 * 关注项的最后修改记为复制的人（{@link copiedFocus}）。源编排不存在时返回 undefined。
@@ -542,6 +556,7 @@ export class OrchestrationStore {
 				const check = await versionCheck(
 					tx,
 					orchestration.projectId,
+					actor.sessionId,
 					orchestrationId,
 					maskSecretDefaults(prepared.document),
 					masked,
@@ -567,6 +582,8 @@ export class OrchestrationStore {
 		orchestrationId: string,
 		document: OrchestrationDocument,
 		baseVersion: number | undefined,
+		/** 检查的人所在的会话：保存出来的版本会属于它（`checkDocument`）。 */
+		session: string | null,
 	): Promise<CheckVersionResult> {
 		const orchestration = await this.#row(orchestrationId);
 		if (!orchestration) return { kind: "not_found" };
@@ -588,6 +605,7 @@ export class OrchestrationStore {
 			check: await versionCheck(
 				this.deps.db,
 				orchestration.projectId,
+				session,
 				orchestrationId,
 				checked,
 				masked,

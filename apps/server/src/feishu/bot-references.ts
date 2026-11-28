@@ -60,7 +60,7 @@ const botInputs: BotReferenceSource = async (db, project, bot) => {
 	// 节点包的元信息按这个项目的范围找（本项目的和公共项目里的）：别的项目发布的包认不出这种输入。
 	const catalog = new Map<string, readonly NodeTypeIo[]>();
 	for (const { name, version } of locked.values()) {
-		const metadata = await findPackageMetadata(db, project, name, version);
+		const metadata = await findPackageMetadata(db, project, name, version, "any");
 		// 开发版本和已不存在的版本没有元信息，认不出这种输入。
 		if (metadata) catalog.set(packageKey(name, version), metadata.nodes);
 	}

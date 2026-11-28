@@ -122,6 +122,51 @@ describe("删除副本和迟到的上报", () => {
 		).toBe(2);
 	});
 
+	it("正常结束之后迟到的动作：明细不存、计一条；摘要不存、不计数（任务已经结束，在准入之前就丢弃）", async () => {
+		const agent = await connect();
+		const runId = await start();
+		const a = await agent.nextAssign();
+		const now = clock.now().getTime();
+		agent.actions(a, [
+			agent.actionStart(1, "early call", now),
+			agent.actionEnd(1, "success", now + 1),
+		]);
+		agent.actionSummary(a, { total: 1, reported: 1 });
+		await agent.sync();
+		await agent.succeed(a);
+		await eventually(async () => expect((await runRow(runId)).vaults).toBe(0));
+		const stored = async () => {
+			const details = await query<{ name: string }>(
+				"select name from task_actions where task_id = $1 order by id",
+				[a.taskId],
+			);
+			const [summary] = await query<{ summary: { total: number } }>(
+				"select summary from task_action_summaries where task_id = $1",
+				[a.taskId],
+			);
+			return { names: details.map((d) => d.name), total: summary?.summary.total };
+		};
+		const dropped = async () => (await runRow(runId)).late_reports_dropped;
+		expect(await stored()).toEqual({ names: ["early call"], total: 1 });
+		expect(await dropped()).toBe(0);
+
+		// 先只发一批迟到的明细（入站消息按顺序处理，sync 之后它已经处理完）：不存，计一条。
+		agent.actions(a, [
+			agent.actionStart(2, `late ${TOKEN}`, now + 2, { fields: { key: TOKEN } }),
+			agent.actionEnd(2, "failed", now + 3, { reason: `late ${TOKEN}` }),
+		]);
+		await agent.sync();
+		expect(await stored()).toEqual({ names: ["early call"], total: 1 });
+		expect(await dropped()).toBe(1);
+
+		// 再发一份迟到的摘要：不存，计数不变（已知边界：摘要是明细的汇总，明细已经计过）。
+		agent.actionSummary(a, { total: 2, reported: 2 });
+		await agent.sync();
+		expect(await stored()).toEqual({ names: ["early call"], total: 1 });
+		expect(await dropped()).toBe(1);
+		expect((await api.run(runId)).late_reports_dropped).toBe(1);
+	});
+
 	it("Agent 离线很久后重连补报：尝试还在它手上，副本保留，补报照常打码存下", async () => {
 		let agent = await connect();
 		const runId = await start();

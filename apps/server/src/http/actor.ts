@@ -24,6 +24,11 @@ export function viaOf(request: FastifyRequest): string | null {
 	return invalid ? VIA_UNKNOWN : null;
 }
 
+/** 发请求的凭据所在的会话（会话令牌）；别的凭据和不带凭据是 null。检查文档时用（会话构建只在本会话的版本里找得到，#795）。 */
+export function sessionOf(request: FastifyRequest): string | null {
+	return request.access?.sessionId ?? null;
+}
+
 /** 写操作的发起人守卫：没有昵称时已回复 400 `nickname_required`，返回 undefined，路由应直接 `return reply`。 */
 export function requireActor(request: FastifyRequest, reply: FastifyReply): Actor | undefined {
 	const nickname = requireNickname(request, reply);

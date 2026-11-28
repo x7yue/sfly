@@ -3007,6 +3007,20 @@ export interface SendMessageResult {
 	seq: number;
 }
 
+export interface SessionBuildListResponse {
+	/** 按登记时间从新到旧。 */
+	builds: SessionBuildView[];
+}
+
+/** 一个会话构建。 */
+export interface SessionBuildView {
+	name: string;
+	version: string;
+	sha256: string;
+	size: number;
+	registered_at: Timestamp;
+}
+
 /** `GET /sessions/:id` 的 query：`before` 是序号，取比它小的事件（往前翻页）。 */
 export interface SessionDetailQuery {
 	before?: number;

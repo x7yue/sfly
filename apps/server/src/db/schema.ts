@@ -766,8 +766,23 @@ export const nodePackages = pgTable(
 		publishedBy: text("published_by"),
 		publishedByUserId: uuid("published_by_user_id").references(() => users.id),
 		publishedToken: text("published_token"),
+		/**
+		 * 会话构建（#795，`src/packages/session-builds.ts`）属于哪个会话；正式版本为空。会话构建只能被这个会话的场景版本锁定，
+		 * 不进包列表、最新和默认版本；会话结束、没有没结束的运行用它之后由周期清理删掉（行和归档文件）。
+		 */
+		sessionId: uuid("session_id"),
 	},
-	(t) => [primaryKey({ columns: [t.name, t.version] })],
+	(t) => [
+		primaryKey({ columns: [t.name, t.version] }),
+		// 会话构建和它的会话在同一个项目里。会话删不掉，除非它的会话构建已经回收：归档文件不会没人管。
+		foreignKey({
+			name: "node_packages_session_project_fk",
+			columns: [t.sessionId, t.projectId],
+			foreignColumns: [sessions.id, sessions.projectId],
+		}).onDelete("restrict"),
+		// 列出一个会话的会话构建、回收时按会话找。
+		index("node_packages_session").on(t.sessionId).where(sql`${t.sessionId} is not null`),
+	],
 );
 
 /**

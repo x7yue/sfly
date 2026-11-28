@@ -9,6 +9,10 @@ import { type ProjectId, readableProjects } from "../projects/project-id.js";
  * 不依赖统计窗口，也不用把 Agent 的槽位和任务读一遍。只看这个项目（ADR 0029）；节点包算上公共项目里的
  * （标准节点包升级后在公共项目里，仍然是「已有节点包」）。
  */
+/** 这个项目读得到的正式版本（会话构建不算，#795）。 */
+const released = (project: ProjectId) =>
+	and(inArray(nodePackages.projectId, readableProjects(project)), isNull(nodePackages.sessionId));
+
 export async function setupSummary(db: Db, project: ProjectId): Promise<DashboardSetup> {
 	const [online, packageTotal, latestPackage, scenarioTotal, latestScenario, firstRun] =
 		await Promise.all([
@@ -20,11 +24,11 @@ export async function setupSummary(db: Db, project: ProjectId): Promise<Dashboar
 			db
 				.select({ n: countDistinct(nodePackages.name) })
 				.from(nodePackages)
-				.where(inArray(nodePackages.projectId, readableProjects(project))),
+				.where(released(project)),
 			db
 				.select({ name: nodePackages.name, version: nodePackages.version })
 				.from(nodePackages)
-				.where(inArray(nodePackages.projectId, readableProjects(project)))
+				.where(released(project))
 				.orderBy(desc(nodePackages.publishedAt), asc(nodePackages.name), desc(nodePackages.version))
 				.limit(1),
 			db

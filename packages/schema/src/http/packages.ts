@@ -118,7 +118,8 @@ export const packagesApi = {
 	}),
 	/**
 	 * 发布：请求体是 .sflypkg 原始字节（application/octet-stream，不在契约里），返回 201；
-	 * 其他 content-type 返回 415，元信息不合法 400 `invalid_package`，`包名@版本` 已存在 409 `conflict`。
+	 * 其他 content-type 返回 415，元信息不合法 400 `invalid_package`，`包名@版本` 已存在 409 `conflict`，
+	 * 名字在公共项目和别的项目之间重了 409 `package_name_taken`（#501，要换名字，换版本号也不行）。
 	 * 发布到路径里的项目；发布到公共项目（`/projects/public/packages`）只有平台管理员能这样做，别的凭据 403、不带凭据 401。
 	 */
 	publish: endpoint({
