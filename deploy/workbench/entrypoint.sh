@@ -83,7 +83,7 @@ unset SFLY_WORKBENCH_TOKEN
 [ -n "$control_plane" ] || fail "没有设置 SFLY_WORKBENCH_URL（控制面的地址，容器里连得到的，例如 http://sfly:8080）"
 [ -n "$name" ] || fail "没有设置 SFLY_WORKBENCH_NAME（这台 Agent 的名字，compose 里在 .env 设置）"
 [ -n "$public_address" ] || fail "没有设置 SFLY_WORKBENCH_PUBLIC_ADDRESS（控制面和助手服务连这台 Agent 用的地址，例如 compose 的服务名）"
-[ -n "$token" ] || fail "没有设置 SFLY_WORKBENCH_TOKEN（这台 Agent 的 Agent 凭据）：管理员给「$name」签发：sfly api POST /agents/$name/credentials，填进 .env 的 SFLY_WORKBENCH_TOKEN"
+[ -n "$token" ] || fail "没有设置 SFLY_WORKBENCH_TOKEN（这台 Agent 的 Agent 凭据）：管理员给「$name」签发：sfly api POST /projects/default/agents/$name/credentials，填进 .env 的 SFLY_WORKBENCH_TOKEN"
 
 # 两个卷要归当前用户。命名卷首次挂载时沿用镜像里的属主；挂宿主机目录或别人建的卷时可能是 root 的：写不了就说清楚怎么改。
 for dir in "$home" "$work"; do

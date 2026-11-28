@@ -5,6 +5,7 @@
 import { feishuBotsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
@@ -87,7 +88,9 @@ describe("「飞书机器人」类型的输入", () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
 		runner = await FakeAgent.connect(cp.grpcUrl, { name: "runner" });
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", "http://127.0.0.1:9/hook/ops");
 		await api.createFeishuBot("dev", "http://127.0.0.1:9/hook/dev");
 	});
@@ -262,7 +265,9 @@ describe("删除飞书机器人之前列出「飞书机器人」类型的输入�
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", "http://127.0.0.1:9/hook/ops");
 		await api.createFeishuBot("dev", "http://127.0.0.1:9/hook/dev");
 	});
@@ -273,7 +278,7 @@ describe("删除飞书机器人之前列出「飞书机器人」类型的输入�
 
 	const references = async (bot: string) =>
 		feishuBotsApi.references.response.parse(
-			await api.getJson(`/feishu-bots/${encodeURIComponent(bot)}/references`),
+			await api.getJson(`/projects/default/feishu-bots/${encodeURIComponent(bot)}/references`),
 		).scenarios;
 
 	const alertNode = (id: string, inputs: Record<string, unknown>) => ({
@@ -339,9 +344,9 @@ describe("删除飞书机器人之前列出「飞书机器人」类型的输入�
 
 	it("引用不拦截删除：删除后保存警告和预检指出机器人没有登记", async () => {
 		const id = await api.orchestrationWith(flow([alertNode("a", { bot: "ops" })]), "scenario");
-		const res = await cp.fetch("/feishu-bots/ops", {
+		const res = await cp.fetch("/projects/default/feishu-bots/ops", {
 			method: "DELETE",
-			headers: { "x-sfly-nickname": "tester" },
+			headers: { ...actAs("tester") },
 		});
 		expect(res.status).toBe(204);
 		expect((await api.trigger(id)).status).toBe(400);

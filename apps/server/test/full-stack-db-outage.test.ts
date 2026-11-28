@@ -29,7 +29,7 @@ const startProcess = (
  * 重启之后照样有效，真实的 Agent 重连时带的还是它。
  */
 const issueAgentCredential = async (target: SourceServer, name: string): Promise<string> => {
-	const res = await target.request("POST", `/agents/${name}/credentials`, {});
+	const res = await target.request("POST", `/projects/default/agents/${name}/credentials`, {});
 	if (res.status !== 201) throw new Error(`签发 Agent 凭据失败：${res.status} ${await res.text()}`);
 	return ((await res.json()) as { token: string }).token;
 };

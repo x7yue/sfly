@@ -37,26 +37,28 @@ describe("API 客户端带令牌", () => {
 		const client = createClient({ baseUrl: proxy.url, token });
 		await client.system.health();
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 		const created = await client.request(
-			{ method: "POST", path: "/orchestrations", kind: "endpoint" },
+			{ method: "POST", path: "/projects/default/orchestrations", kind: "endpoint" },
 			{ body: { name: "令牌建的场景" } },
 		);
 		expect(created).toMatchObject({ name: "令牌建的场景" });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 	});
 
 	it("令牌可以是每次请求时取值的函数（轮换令牌）；空白算没有", async () => {
 		let current: string | undefined = token;
 		const client = createClient({ baseUrl: proxy.url, token: () => current });
-		await client.orchestrations.list();
+		await client.orchestrations.list({ params: { project: "default" } });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
 		current = `  ${readOnlyToken}  `;
-		await client.orchestrations.list();
+		await client.orchestrations.list({ params: { project: "default" } });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${readOnlyToken}`);
 		current = "   ";
-		await client.orchestrations.list();
+		await client.orchestrations.list({ params: { project: "default" } });
 		expect(sent()?.headers.authorization).toBeUndefined();
 	});
 
@@ -72,6 +74,7 @@ describe("API 客户端带令牌", () => {
 			const stream = streaming.requests.find((r) => r.path === `/runs/${run}/events`);
 			expect(stream?.headers.accept).toContain("text/event-stream");
 			expect(stream?.headers.authorization).toBe(`Bearer ${token}`);
+			// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 			expect(stream?.headers["x-sfly-nickname"]).toBeUndefined();
 		} finally {
 			await streaming.close();
@@ -83,7 +86,7 @@ describe("API 客户端带令牌", () => {
 		const before = proxy.requests.length;
 		const failure = await client
 			.request(
-				{ method: "POST", path: "/orchestrations", kind: "endpoint" },
+				{ method: "POST", path: "/projects/default/orchestrations", kind: "endpoint" },
 				{ body: { name: "x" } },
 			)
 			.then(
@@ -99,7 +102,7 @@ describe("API 客户端带令牌", () => {
 
 	it("令牌失效（吊销、范围不够）：控制面的 401、403 抛成带控制面错误码的 ApiError", async () => {
 		const bad = createClient({ baseUrl: proxy.url, token: "sfly_pat_not-a-real-token-0000000000" });
-		const unauthorized = await bad.orchestrations.list().then(
+		const unauthorized = await bad.orchestrations.list({ params: { project: "default" } }).then(
 			() => undefined,
 			(error: unknown) => error,
 		);
@@ -107,7 +110,7 @@ describe("API 客户端带令牌", () => {
 		const readOnly = createClient({ baseUrl: proxy.url, token: readOnlyToken });
 		const forbidden = await readOnly
 			.request(
-				{ method: "POST", path: "/orchestrations", kind: "endpoint" },
+				{ method: "POST", path: "/projects/default/orchestrations", kind: "endpoint" },
 				{ body: { name: "x" } },
 			)
 			.then(
@@ -119,12 +122,14 @@ describe("API 客户端带令牌", () => {
 
 	it("昵称参数还在（控制台没登录的人 #494 之前用它）：有令牌时令牌优先、昵称不发", async () => {
 		const both = createClient({ baseUrl: proxy.url, token, nickname: "冒充的人" });
-		await both.orchestrations.list();
+		await both.orchestrations.list({ params: { project: "default" } });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 		const onlyNickname = createClient({ baseUrl: proxy.url, nickname: "小红" });
-		await onlyNickname.orchestrations.list();
+		await onlyNickname.orchestrations.list({ params: { project: "default" } });
 		expect(sent()?.headers.authorization).toBeUndefined();
+		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
 		expect(sent()?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("小红"));
 	});
 });
@@ -141,8 +146,8 @@ describe("API 客户端在 http 地址上带令牌时提示", () => {
 			onInsecureToken: (message) => messages.push(message),
 			...options,
 		});
-		await client.orchestrations.list();
-		await client.orchestrations.list();
+		await client.orchestrations.list({ params: { project: "default" } });
+		await client.orchestrations.list({ params: { project: "default" } });
 		return messages;
 	};
 
@@ -177,10 +182,10 @@ describe("API 客户端在 http 地址上带令牌时提示", () => {
 			token: () => current,
 			onInsecureToken: (message) => messages.push(message),
 		});
-		await client.orchestrations.list();
+		await client.orchestrations.list({ params: { project: "default" } });
 		expect(messages).toEqual([]);
 		current = TOKEN;
-		await client.orchestrations.list();
+		await client.orchestrations.list({ params: { project: "default" } });
 		expect(messages).toHaveLength(1);
 	});
 });

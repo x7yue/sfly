@@ -217,8 +217,17 @@ test("内网用 http 访问（没有 Clipboard API）时，复制按钮照样把
 		args: ["--host-resolver-rules=MAP sfly.test 127.0.0.1", "--proxy-server=direct://"],
 	});
 	try {
-		const insecure = await (await browser.newContext()).newPage();
-		await insecure.addInitScript(() => window.localStorage.setItem("sfly.nickname", "tester"));
+		const context = await browser.newContext();
+		await context.addCookies([
+			{
+				name: "sfly_login",
+				value: await controlPlane.users.loginCookie(),
+				url: `http://sfly.test:${port}`,
+				httpOnly: true,
+				sameSite: "Lax",
+			},
+		]);
+		const insecure = await context.newPage();
 		await insecure.goto(`http://sfly.test:${port}/agents`);
 		expect(
 			await insecure.evaluate(() => [window.isSecureContext, "clipboard" in navigator]),

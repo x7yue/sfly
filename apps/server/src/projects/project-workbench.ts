@@ -6,7 +6,9 @@
 //   2. 部署里没有停用的 Agent 都已经换成 Agent 凭据（{@link agentsNotOnCredentials}，按每台最近一次连接用的是不是 Agent 凭据算；
 //      只签发过、没用它连上过的不算换了），没换的列在拒绝里。**开关已经开着时（已经有项目登记过工作台）不再检查这一条**：
 //      旧方式的连接反正连不上（登记之后 Hello 拒绝它们），它们留着的 `last_auth_kind` 只是登记之前的最后一次记录，
-//      不能让它们挡住换工作台；工作台本身的那三条照旧。
+//      不能让它们挡住换工作台；工作台本身的那三条照旧。没换的只列这个项目里的名字，别的项目里的只给台数（#778）。
+//   3. 开关还没开时（部署里第一次登记）登记的人是平台管理员：这一步让整个部署只接受 Agent 凭据、不能撤回，是部署一级的决定，
+//      不该由某一个项目的管理员做（#778，ADR 0029 的平台管理员）；开关开着以后项目管理员登记、换自己项目的工作台照旧。
 // **之后**部署里任何一个项目有工作台，{@link AgentAuthenticator} 就拒绝共享令牌和不带凭据的连接（整个部署，不只这个项目），
 // 开关每次从库里得出（{@link ProjectWorkbench.credentialRequired}），控制面重启之后照旧，不是只在内存里。
 //
@@ -25,7 +27,7 @@
 import { eq, isNotNull } from "drizzle-orm";
 import { agentsNotOnCredentials } from "../agents/agent-auth.js";
 import type { Db } from "../db/database.js";
-import { agents, projects } from "../db/schema.js";
+import { agents, projects, users } from "../db/schema.js";
 import type { Mutex } from "../util/mutex.js";
 import type { ProjectId } from "./project-id.js";
 
@@ -37,8 +39,13 @@ export type RegisterWorkbenchOutcome =
 	| { ok: false; reason: "agent_disabled" }
 	/** 这台 Agent 最近一次连接用的不是 Agent 凭据（共享令牌、没有凭据，或者记下之前连接的）。 */
 	| { ok: false; reason: "agent_not_on_credential" }
-	/** 部署里还有没有停用的 Agent 没换成 Agent 凭据：`agents` 是它们的名字（按名字排序）。 */
-	| { ok: false; reason: "agents_not_on_credentials"; agents: string[] };
+	/**
+	 * 部署里还有没有停用的 Agent 没换成 Agent 凭据：`agents` 是这个项目里的（按名字排序），`otherProjects` 是别的项目里的台数
+	 * （不给名字：一个项目的管理员不该看到别的项目里的 Agent，#778）。
+	 */
+	| { ok: false; reason: "agents_not_on_credentials"; agents: string[]; otherProjects: number }
+	/** 开关还没开（部署里还没有项目登记过工作台），登记的人不是平台管理员：第一次登记会让整个部署只接受 Agent 凭据（#778）。 */
+	| { ok: false; reason: "switch_needs_platform_admin" };
 
 export class ProjectWorkbench {
 	constructor(
@@ -74,8 +81,15 @@ export class ProjectWorkbench {
 		return row !== undefined;
 	}
 
-	/** 登记 `project` 的工作台（条件见文件头）。检查和写库在引擎的锁里一起做。 */
-	register(project: ProjectId, agent: string): Promise<RegisterWorkbenchOutcome> {
+	/**
+	 * 登记 `project` 的工作台（条件见文件头）。检查和写库在引擎的锁里一起做。`caller` 是登记的人（用户 ID）：
+	 * 开关还没开时只有平台管理员能登记。
+	 */
+	register(
+		project: ProjectId,
+		agent: string,
+		caller: { userId: string | null },
+	): Promise<RegisterWorkbenchOutcome> {
 		return this.deps.mutex.run(async () => {
 			const { db } = this.deps;
 			const [row] = await db
@@ -93,9 +107,19 @@ export class ProjectWorkbench {
 			if (row.lastAuthKind !== "agent") return { ok: false, reason: "agent_not_on_credential" };
 			// 开关已经开着（有项目登记过）时不再要求「整个部署都换成 Agent 凭据」：旧方式的连接反正连不上，换工作台只看工作台本身。
 			if (!(await this.credentialRequired())) {
+				// 第一次登记打开的是整个部署的开关（不可逆，所有项目都只接受 Agent 凭据）：要平台管理员（#778，ADR 0029）。
+				if (!(await this.#isPlatformAdmin(caller.userId))) {
+					return { ok: false, reason: "switch_needs_platform_admin" };
+				}
 				const pending = await agentsNotOnCredentials(db);
 				if (pending.length > 0) {
-					return { ok: false, reason: "agents_not_on_credentials", agents: pending };
+					const here = pending.filter((p) => p.projectId === project).map((p) => p.name);
+					return {
+						ok: false,
+						reason: "agents_not_on_credentials",
+						agents: here,
+						otherProjects: pending.length - here.length,
+					};
 				}
 			}
 			const [current] = await db
@@ -111,5 +135,14 @@ export class ProjectWorkbench {
 				previous: current.agent === null || current.agent === agent ? null : current.agent,
 			};
 		});
+	}
+
+	async #isPlatformAdmin(userId: string | null): Promise<boolean> {
+		if (userId === null) return false;
+		const [row] = await this.deps.db
+			.select({ admin: users.isPlatformAdmin })
+			.from(users)
+			.where(eq(users.id, userId));
+		return row?.admin === true;
 	}
 }

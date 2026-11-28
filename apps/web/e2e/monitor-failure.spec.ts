@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import {
@@ -673,7 +674,7 @@ for (const viewport of VIEWPORTS) {
 			});
 			const cancel = await controlPlane.fetch(`/runs/${runId}/cancel`, {
 				method: "POST",
-				headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+				headers: { "content-type": "application/json", ...actAs("tester") },
 				body: "{}",
 			});
 			expect(cancel.ok).toBe(true);

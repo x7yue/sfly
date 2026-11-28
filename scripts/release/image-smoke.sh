@@ -68,7 +68,7 @@ contains() { grep -q "${@:2}" <<<"$1"; }
 base=http://127.0.0.1:$http_port
 contains "$(curl -fsS "$base/api/health")" '"status":"ok"' || fail "/api/health"
 contains "$(curl -fsS -H 'accept: text/html' "$base/")" -i '<!doctype html>' || fail "页面"
-curl -fsS "$base/api/agents" >/dev/null || fail "/api/agents"
+curl -fsS "$base/api/projects/default/agents" >/dev/null || fail "/api/projects/default/agents"
 contains "$(curl -fsS "$base/sdk/python")" "\"version\":\"$version\"" || fail "SDK wheel $version"
 contains "$(curl -fsS "$base/client")" "\"version\":\"$version\"" || fail "API 客户端安装包 $version"
 tarball=sfly-client-$version.tgz

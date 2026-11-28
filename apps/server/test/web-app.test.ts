@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { actAs } from "./support/credentials.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const INDEX_HTML = '<!doctype html><html><body><div id="app"></div></body></html>';
@@ -40,14 +41,18 @@ describe("控制面托管前端（SPA）", () => {
 		expect(asset.headers.get("content-type")).toMatch(/^text\/javascript/);
 		expect(await asset.text()).toBe(APP_JS);
 
-		const agents = await cp.fetch("/api/agents");
+		const agents = await cp.fetch("/api/projects/default/agents");
 		expect(agents.status).toBe(200);
 		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 	});
 
 	it("浏览器导航到前端路由时回退到入口页，包括与 API 同名的路径", async () => {
 		cp = await startTestControlPlane({ webDir });
-		for (const path of ["/agents", "/orchestrations/abc/runs", "/no/such/page?x=1"]) {
+		for (const path of [
+			"/projects/default/agents",
+			"/orchestrations/abc/runs",
+			"/no/such/page?x=1",
+		]) {
 			const res = await cp.fetch(path, { headers: NAVIGATE });
 			expect(res.status, path).toBe(200);
 			expect(await res.text(), path).toBe(INDEX_HTML);
@@ -57,9 +62,9 @@ describe("控制面托管前端（SPA）", () => {
 	it("/api 下的路由不回退：浏览器经 /api 调用 API，未知路由返回 JSON 404", async () => {
 		cp = await startTestControlPlane({ webDir });
 
-		const created = await cp.fetch("/api/orchestrations", {
+		const created = await cp.fetch("/api/projects/default/orchestrations", {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ name: "冒烟" }),
 		});
 		expect(created.status).toBe(201);
@@ -75,7 +80,7 @@ describe("控制面托管前端（SPA）", () => {
 
 	it("Agent、CLI 等非浏览器客户端访问根路径上的 API 不受影响", async () => {
 		cp = await startTestControlPlane({ webDir });
-		const agents = await cp.fetch("/agents");
+		const agents = await cp.fetch("/projects/default/agents");
 		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 		const missing = await cp.fetch("/no/such/route");
 		expect(missing.status).toBe(404);
@@ -133,6 +138,6 @@ describe("控制面托管前端（SPA）", () => {
 		cp = await startTestControlPlane();
 		const res = await cp.fetch("/", { headers: NAVIGATE });
 		expect(res.status).toBe(404);
-		expect((await cp.fetch("/api/agents")).status).toBe(200);
+		expect((await cp.fetch("/api/projects/default/agents")).status).toBe(200);
 	});
 });

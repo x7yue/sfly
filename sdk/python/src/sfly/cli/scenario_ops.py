@@ -224,7 +224,9 @@ def _node_inputs(
     try:
         if version is None:
             try:
-                published = client.get(f"/packages/{segment(package)}")["versions"]
+                published = client.get(client.in_project(f"/packages/{segment(package)}"))[
+                    "versions"
+                ]
             except ApiError as e:
                 if e.status != 404:
                     raise
@@ -233,7 +235,9 @@ def _node_inputs(
         if version == DEV_VERSION:
             nodes = _dev_nodes(client, document, package, agent)
         else:
-            detail = client.get(f"/packages/{segment(package)}/versions/{segment(version)}")
+            detail = client.get(
+                client.in_project(f"/packages/{segment(package)}/versions/{segment(version)}")
+            )
             nodes = _field(detail.get("metadata"), "nodes")
     except (ApiError, KeyError, TypeError, IndexError, AttributeError):
         return {}
@@ -261,7 +265,11 @@ def _dev_nodes(client: Client, document: dict[str, Any], package: str, agent: st
                 targets.add(n.get("agent") or default)
     if None in targets or "" in targets:
         return None
-    by_name = {a.get("name"): a for a in client.get("/agents")["agents"] if isinstance(a, dict)}
+    by_name = {
+        a.get("name"): a
+        for a in client.get(client.in_project("/agents"))["agents"]
+        if isinstance(a, dict)
+    }
     reported = []
     for name in targets:
         found = by_name.get(name)

@@ -8,6 +8,7 @@
 import { logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
@@ -84,7 +85,9 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
 		feishu = await startFakeFeishu();
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", feishu.webhookUrl(OPS));
 		await api.createFeishuBot("dev", feishu.webhookUrl(DEV));
 		runner = await connect("runner");
@@ -214,9 +217,9 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 	it("任务派发之后机器人被删除：不发送，任务日志里写 warning，任务和运行不受影响", async () => {
 		const { runId, task } = await start();
 		expect(task.referencedFeishuBots).toEqual(["ops"]);
-		const res = await cp.fetch("/feishu-bots/ops", {
+		const res = await cp.fetch("/projects/default/feishu-bots/ops", {
 			method: "DELETE",
-			headers: { "x-sfly-nickname": "tester" },
+			headers: { ...actAs("tester") },
 		});
 		expect(res.status).toBe(204);
 

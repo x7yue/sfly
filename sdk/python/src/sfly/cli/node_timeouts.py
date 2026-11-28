@@ -105,7 +105,9 @@ def declared_timeouts(client: Client, document: dict[str, Any]) -> dict[str, int
     def published_nodes(name: str, version: str) -> list[dict[str, Any]] | None:
         if (name, version) not in published:
             try:
-                detail = client.get(f"/packages/{segment(name)}/versions/{segment(version)}")
+                detail = client.get(
+                    client.in_project(f"/packages/{segment(name)}/versions/{segment(version)}")
+                )
                 published[(name, version)] = detail["metadata"]["nodes"]
             except (ApiError, KeyError, TypeError):
                 published[(name, version)] = None
@@ -115,7 +117,7 @@ def declared_timeouts(client: Client, document: dict[str, Any]) -> dict[str, int
         nonlocal agents
         if agents is None:
             try:
-                agents = client.get("/agents")["agents"]
+                agents = client.get(client.in_project("/agents"))["agents"]
             except (ApiError, KeyError, TypeError):
                 agents = []
         for a in agents:

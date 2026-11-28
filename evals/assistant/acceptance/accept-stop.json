@@ -1,0 +1,17 @@
+{
+	"说明": "骨架验收（#553）：一条 5 分钟的命令，点停止之后再说一句。",
+	"steps": [
+		{
+			"id": "long",
+			"tool": "bash",
+			"args": {
+				"command": "echo 开始跑一条很长的命令; sleep 300; echo 不该看到这一行",
+				"timeout": 600
+			}
+		},
+		{
+			"id": "after",
+			"text": "停止之后接着说（收到：{last_user}）。"
+		}
+	]
+}

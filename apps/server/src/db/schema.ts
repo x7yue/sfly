@@ -1170,3 +1170,5 @@ export const platformAdminActions = pgTable(
 		),
 	],
 );
+
+export * from "./vault-schema.js";

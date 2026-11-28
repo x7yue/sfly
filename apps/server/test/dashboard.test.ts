@@ -86,7 +86,7 @@ describe("控制台统计", () => {
 	});
 
 	async function dashboard(): Promise<DashboardView> {
-		const res = await cp.fetch("/dashboard");
+		const res = await cp.fetch("/projects/default/dashboard");
 		expect(res.status).toBe(200);
 		return dashboardApi.get.response.parse(await res.json());
 	}
@@ -129,7 +129,10 @@ describe("控制台统计", () => {
 		expect(generated_at).toBe(clock.now().toISOString());
 		expect(runs).toMatchObject({ running: 0, success: 3, failed: 1, cancelled: 1 });
 
-		const raw = (await (await cp.fetch("/dashboard")).json()) as Record<string, unknown>;
+		const raw = (await (await cp.fetch("/projects/default/dashboard")).json()) as Record<
+			string,
+			unknown
+		>;
 		expect(raw).not.toHaveProperty("hourly");
 		expect(raw).not.toHaveProperty("recent_packages");
 		expect(raw.runs).not.toHaveProperty("success_rate");
@@ -568,7 +571,9 @@ describe("控制台统计", () => {
 
 		const { running_runs } = await dashboard();
 		const [run] = running_runs;
-		const listed = runListApi.list.response.parse(await (await cp.fetch("/runs")).json()).runs;
+		const listed = runListApi.list.response.parse(
+			await (await cp.fetch("/projects/default/runs")).json(),
+		).runs;
 		expect(run?.id).toBe(runId);
 		// 和运行列表一致：控制台的进行中的节点只多 queue_wait、queued_at（排队中的节点写明在等什么，#601）。
 		expect(
@@ -614,7 +619,9 @@ describe("控制台统计", () => {
 				used_slots: 1,
 			}),
 		);
-		const raw = (await (await cp.fetch("/dashboard")).json()) as { agents: object };
+		const raw = (await (await cp.fetch("/projects/default/dashboard")).json()) as {
+			agents: object;
+		};
 		expect(raw.agents).not.toHaveProperty("list");
 	});
 });
@@ -630,7 +637,7 @@ describe("控制台的开始使用", () => {
 	};
 	const clock = () => cp.clock as ManualClock;
 	const setup = async () => {
-		const res = await cp.fetch("/dashboard");
+		const res = await cp.fetch("/projects/default/dashboard");
 		expect(res.status).toBe(200);
 		return dashboardApi.get.response.parse(await res.json()).setup;
 	};

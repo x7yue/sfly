@@ -59,7 +59,7 @@ const scenario = (agent?: string) => ({
 async function offline(controlPlane: TestControlPlane, name: string) {
 	await expect
 		.poll(async () => {
-			const res = await controlPlane.fetch("/agents");
+			const res = await controlPlane.fetch("/projects/default/agents");
 			const { agents } = (await res.json()) as { agents: { name: string; status: string }[] };
 			return agents.find((a) => a.name === name)?.status;
 		})
@@ -170,7 +170,7 @@ test("Agent 列表还没拿到时：参数页不列「没有检查」（节点�
 	const held = new Promise<void>((resolve) => {
 		release = resolve;
 	});
-	await page.route("**/api/agents", async (route) => {
+	await page.route("**/api/projects/default/agents", async (route) => {
 		await held;
 		await route.continue();
 	});
@@ -206,7 +206,7 @@ test("Agent 列表一直读取失败（503）：参数页说读取失败，不�
 	controlPlane,
 }) => {
 	const id = await createScenario(controlPlane, "列表读取失败", scenario());
-	await page.route("**/api/agents", (route) =>
+	await page.route("**/api/projects/default/agents", (route) =>
 		route.fulfill({
 			status: 503,
 			contentType: "application/json",

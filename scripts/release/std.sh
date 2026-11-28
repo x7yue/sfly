@@ -92,7 +92,7 @@ print(f"""sfly-std {version}：平台维护的标准节点包，版本号独立�
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
 curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer $SFLY_ADMIN_TOKEN" \\
-  --data-binary @{name} '<控制面地址>/packages?project=public'
+  --data-binary @{name} '<控制面地址>/projects/public/packages'
 ```
 
 `$SFLY_ADMIN_TOKEN` 是平台管理员本人的个人令牌：在控制台账号菜单的「令牌」页签发（范围要含「发布」），或者用 `sfly login` 登录之后直接 `sfly publish {name} --project public`（命令行自己带着令牌）。之后在场景里选用 `sfly-std` 的节点，版本选 `{version}`。

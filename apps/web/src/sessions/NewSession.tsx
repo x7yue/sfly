@@ -5,11 +5,11 @@ import { useRef, useState } from "react";
 import { callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
+import { PROJECT } from "#/lib/project";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
-import { SESSION_PROJECT } from "./project";
 import { READINESS_ID, ReadinessLine } from "./ReadinessLine";
 
 /**
@@ -23,7 +23,7 @@ export function NewSession({ readiness }: { readiness: Readiness }) {
 	const [text, setText] = useState("");
 	const create = useMutation({
 		mutationFn: (first: string) =>
-			callApi(sessionsApi.create, { params: { project: SESSION_PROJECT }, body: { text: first } }),
+			callApi(sessionsApi.create, { params: { project: PROJECT }, body: { text: first } }),
 		onSuccess: (session) => {
 			void client.invalidateQueries({ queryKey: domainKey(sessionsApi.list) });
 			void navigate({ to: "/sessions/$id", params: { id: session.id } });

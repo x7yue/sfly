@@ -85,7 +85,9 @@ describe("「Agent」类型的输入", () => {
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 	});
 
 	afterEach(async () => {

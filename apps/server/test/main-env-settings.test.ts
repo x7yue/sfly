@@ -827,7 +827,7 @@ describe("main.ts：合法的值真的传给了控制面", () => {
 			expect(login.status, cp.output()).toBe(200);
 			const cookie = /sfly_login=([^;]+)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
 			const write = (origin: string) =>
-				fetch(`${cp.httpUrl}/orchestrations`, {
+				fetch(`${cp.httpUrl}/projects/default/orchestrations`, {
 					method: "POST",
 					headers: {
 						"content-type": "application/json",

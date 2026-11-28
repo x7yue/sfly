@@ -21,6 +21,7 @@ import { MESSAGE, PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { firstParagraph } from "#/lib/node-description";
 import { compareVersions } from "#/lib/package-versions";
+import { PROJECT } from "#/lib/project";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import {
 	ChartsCell,
@@ -56,7 +57,7 @@ const byVersionDesc = (versions: PackageVersionSummary[]) =>
 	[...versions].sort((a, b) => compareVersions(b.version, a.version));
 
 function PackagesPage() {
-	const packages = useQuery(apiQuery(packagesApi.list));
+	const packages = useQuery(apiQuery(packagesApi.list, { params: { project: PROJECT } }));
 	useListNavigation();
 	return (
 		<Page>
@@ -156,7 +157,7 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 	const current = versions.find((v) => v.version === version) ?? latest;
 	const detail = useQuery({
 		...apiQuery(packagesApi.version, {
-			params: { name: pkg.name, version: current?.version ?? "" },
+			params: { project: PROJECT, name: pkg.name, version: current?.version ?? "" },
 		}),
 		enabled: current !== undefined,
 		staleTime: Number.POSITIVE_INFINITY, // 已发布的版本不可变

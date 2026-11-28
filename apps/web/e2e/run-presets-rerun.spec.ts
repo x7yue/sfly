@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { expect, test } from "./fixtures";
@@ -23,7 +24,7 @@ async function finishedRun(
 ): Promise<string> {
 	const res = await cp.fetch(`/orchestrations/${scenarioId}/runs`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify(body),
 	});
 	if (res.status !== 201) throw new Error(`触发运行：HTTP ${res.status} ${await res.text()}`);

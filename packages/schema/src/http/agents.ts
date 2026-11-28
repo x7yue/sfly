@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AGENT_NAME_MAX_LENGTH, nameProblem, nameRefinement } from "../text-safety.js";
 import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
-import { endpoint, Timestamp } from "./contract.js";
+import { endpoint, ProjectParams, Timestamp } from "./contract.js";
 import { TaskProgressView } from "./runs.js";
 
 /** Agent 管理相关接口的契约（约定见 ./contract.ts）。 */
@@ -14,6 +14,7 @@ export const InstallProgressView = z.object({
 	package: z.string(),
 	version: z.string(),
 	state: z.enum(["installing", "installed", "failed"]),
+	/** 为哪个任务安装的；不为任务装的为空字符串。确认不了是读者项目里的任务时它和 package、version 都是空字符串，只给 state（#500）。 */
 	task_id: z.string(),
 });
 
@@ -141,10 +142,17 @@ export const AgentView = z.object({
 	/** 本次连接还没有安装过节点包时为 null。 */
 	install: InstallProgressView.nullable(),
 	dev_packages: z.array(DevPackageView),
-	/** 按派发顺序排列；长度即占用的槽位数。 */
+	/** 按派发顺序排列；只列读者项目里的，占用的槽位数是它的长度加上 `other_project_running`。 */
 	running_tasks: z.array(RunningTaskView),
 	/** 在等这台 Agent 的任务，按排队顺序（也是派发顺序）。 */
 	queued_tasks: z.array(QueuedTaskView),
+	/**
+	 * 别的项目的运行占着这台 Agent 的槽位数（#500）：`running_tasks` 只列读者项目里的，占用的槽位数是两者之和。
+	 * 不给别的项目的场景、运行、节点、任务。派发只用场景所在项目的 Agent，正常情况下是 0。
+	 */
+	other_project_running: z.number().int().nonnegative(),
+	/** 别的项目的运行在等这台 Agent 的任务数（`queued_tasks` 只列读者项目里的）。 */
+	other_project_queued: z.number().int().nonnegative(),
 	/**
 	 * Agent 版本与控制面版本（列表响应的 control_plane_version）不一致：控制面不给它派新任务（ADR 0014），
 	 * 它手上的任务照常跑完。按最近一次连接上报的版本判断。
@@ -190,7 +198,7 @@ export const IssuedAgentCredential = z.object({
 	token: z.string(),
 });
 
-const AgentNameParams = z.object({
+const AgentNameParams = ProjectParams.extend({
 	/** Agent 名称。 */
 	name: z.string().min(1),
 });
@@ -209,7 +217,7 @@ export const AgentNameText = z
 		(name) => [...name].length <= AGENT_NAME_MAX_LENGTH,
 		`Agent 的名称不能超过 ${AGENT_NAME_MAX_LENGTH} 个字符`,
 	);
-const NewAgentNameParams = z.object({
+const NewAgentNameParams = ProjectParams.extend({
 	/** Agent 名称。 */
 	name: AgentNameText,
 });
@@ -218,12 +226,13 @@ export const agentsApi = {
 	/** 全部注册过的 Agent，按名称排序。 */
 	list: endpoint({
 		method: "GET",
-		path: "/agents",
-		summary: "列出全部 Agent：在线还是离线、槽位、正在执行和排队的任务、已装的节点包",
+		path: "/projects/:project/agents",
+		summary: "列出项目里的全部 Agent：在线还是离线、槽位、正在执行和排队的任务、已装的节点包",
 		effect: "read",
 		resource: { kind: "agent", target: "collection" },
 		client: true,
 		key: ["agents", "list"],
+		params: ProjectParams,
 		response: z.object({
 			agents: z.array(AgentView),
 			/** 控制面版本，也就是 Agent 的目标版本。 */
@@ -239,16 +248,13 @@ export const agentsApi = {
 	 */
 	updateNow: endpoint({
 		method: "POST",
-		path: "/agents/:name/update-now",
+		path: "/projects/:project/agents/:name/update-now",
 		summary: "让正在更新的 Agent 不再等手上的任务跑完，立即更新（终止这些任务）",
 		effect: "write",
 		resource: { kind: "agent", target: { params: "name" } },
 		client: true,
 		key: ["agents", "update-now"],
-		params: z.object({
-			/** Agent 名称。 */
-			name: z.string().min(1),
-		}),
+		params: AgentNameParams,
 		response: z.object({
 			/** 被终止的任务：它们以 agent_lost 失败，按重试配置重新排队。 */
 			terminated_tasks: z.array(RunningTaskView),
@@ -257,7 +263,7 @@ export const agentsApi = {
 	/** 列出一台 Agent 的凭据（含已吊销的，带状态；不含原值）。 */
 	listCredentials: endpoint({
 		method: "GET",
-		path: "/agents/:name/credentials",
+		path: "/projects/:project/agents/:name/credentials",
 		summary: "列出一台 Agent 的凭据（前缀、状态、最后使用时间，不含原值）",
 		effect: "read",
 		resource: { kind: "agent", target: { params: "name" } },
@@ -273,7 +279,7 @@ export const agentsApi = {
 	 */
 	issueCredential: endpoint({
 		method: "POST",
-		path: "/agents/:name/credentials",
+		path: "/projects/:project/agents/:name/credentials",
 		summary: "为一台 Agent 签发凭据（原值只在这次响应里出现一次）",
 		effect: "write",
 		resource: { kind: "agent", target: { params: "name" } },
@@ -285,7 +291,7 @@ export const agentsApi = {
 	/** 吊销一台 Agent 的凭据，立即失效，用它连着的 Agent 连接被断开。要「管理」范围；已经吊销的再吊销是 204。 */
 	revokeCredential: endpoint({
 		method: "DELETE",
-		path: "/agents/:name/credentials/:id",
+		path: "/projects/:project/agents/:name/credentials/:id",
 		summary: "吊销一台 Agent 的凭据（连着的连接断开）",
 		effect: "write",
 		resource: { kind: "agent", target: { params: "name" } },
@@ -302,7 +308,7 @@ export const agentsApi = {
 	 */
 	disable: endpoint({
 		method: "POST",
-		path: "/agents/:name/disable",
+		path: "/projects/:project/agents/:name/disable",
 		summary: "停用一台 Agent（断开连接，不再派发）",
 		effect: "write",
 		resource: { kind: "agent", target: { params: "name" } },
@@ -314,7 +320,7 @@ export const agentsApi = {
 	/** 恢复一台停用的 Agent：之后同名的连接照常判断。要「管理」范围；没有停用的再恢复是 204。 */
 	enable: endpoint({
 		method: "POST",
-		path: "/agents/:name/enable",
+		path: "/projects/:project/agents/:name/enable",
 		summary: "恢复一台停用的 Agent",
 		effect: "write",
 		resource: { kind: "agent", target: { params: "name" } },
@@ -346,7 +352,7 @@ export const devAgentsApi = {
 		resource: { kind: "dev_agent", target: "collection" },
 		client: false,
 		key: ["dev-agents", "create"],
-		params: z.object({ project: z.string().min(1) }),
+		params: ProjectParams,
 		body: z
 			.object({
 				/** 主机那一段：小写字母、数字、连字符。 */
@@ -365,7 +371,7 @@ export const devAgentsApi = {
 		removes: true,
 		client: false,
 		key: ["dev-agents", "revoke"],
-		params: z.object({ project: z.string().min(1), name: z.string().min(1) }),
+		params: ProjectParams.extend({ name: z.string().min(1) }),
 		response: z.undefined(),
 	}),
 };

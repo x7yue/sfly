@@ -54,7 +54,7 @@ describe("运行列表里的运行预设", () => {
 	});
 
 	const allRuns = async () =>
-		runListApi.list.response.parse(await api.getJson("/runs")).runs.map((r) => ({
+		runListApi.list.response.parse(await api.getJson("/projects/default/runs")).runs.map((r) => ({
 			id: r.id,
 			preset: r.preset,
 		}));

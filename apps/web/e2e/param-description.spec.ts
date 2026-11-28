@@ -1,3 +1,4 @@
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	createEditorScenario,
 	dock,
@@ -202,7 +203,7 @@ test("版本对比列出参数说明的变化", async ({ page, controlPlane }) =
 	};
 	const res = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({ base_version: 1, document: withDescription }),
 	});
 	expect(res.status).toBe(201);
