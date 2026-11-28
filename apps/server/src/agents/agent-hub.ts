@@ -31,12 +31,15 @@ import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../projects/project-id.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
+import { printInfo } from "../util/output.js";
 import { type AgentAuth, registeredElsewhere } from "./agent-auth.js";
 import {
 	type AgentClockReading,
+	CLOCK_OFFSET_THRESHOLD_MS,
 	ConnectionClock,
 	clockOffsetView,
 	measureClockOffset,
+	type RecalibrationNote,
 } from "./agent-clock.js";
 import { agentEndpoint } from "./agent-endpoint.js";
 import { loadAgentTasks } from "./agent-tasks.js";
@@ -333,12 +336,14 @@ export class AgentHub {
 	}
 
 	/**
-	 * Heartbeat 带来的时钟读数：更新保存的时钟偏差（偏差值和测量时刻）。这次连接的折算关系不变。
-	 * 旧连接的上报忽略。
+	 * Heartbeat 带来的时钟读数：更新保存的时钟偏差（偏差值和测量时刻），换算偏差超过阈值时重新估算这次连接的折算
+	 * （{@link ConnectionClock.recalibrate}，#389），并在控制面的日志里写一行。旧连接的上报忽略。
 	 */
 	recordClock(conn: AgentConnection, reading: AgentClockReading, receivedAt: Date): Promise<void> {
 		return this.deps.mutex.run(async () => {
 			if (this.#connections.get(conn.name) !== conn) return;
+			const note = conn.clock.recalibrate(reading.monotonicMs, receivedAt);
+			if (note) printInfo(recalibrationLine(conn.name, note));
 			const offset = measureClockOffset(reading, receivedAt);
 			await this.deps.db
 				.update(agents)
@@ -527,4 +532,10 @@ export class AgentHub {
 		for (const conn of this.#connections.values()) conn.close();
 		this.#connections.clear();
 	}
+}
+
+/** 重新估算换算时写的一行：这次心跳按原来的、按新的换算折算出的时间比控制面时间晚多少（负数是早）。 */
+export function recalibrationLine(name: string, note: RecalibrationNote): string {
+	const ms = (v: number) => `${v > 0 ? "+" : ""}${v} ms`;
+	return `Agent「${name}」的时间换算偏差 ${ms(note.beforeMs)}，超过 ${CLOCK_OFFSET_THRESHOLD_MS} ms，已重新估算：按新的换算这次心跳的偏差 ${ms(note.afterMs)}（之后的点按新的换算，已经写下的点不改）`;
 }
