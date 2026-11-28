@@ -227,5 +227,7 @@ export interface RunView {
 	} | null;
 	/** secret 值太多、要打码的内容整段盖住（#657）。 */
 	secrets_oversize?: boolean;
+	/** 运行清理之后到达、被丢弃的上报条数（#505）。 */
+	late_reports_dropped?: number;
 	chains: ChainView[];
 }

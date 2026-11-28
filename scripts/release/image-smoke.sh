@@ -60,7 +60,7 @@ for _ in $(seq 60); do
 	[[ $(docker inspect --format '{{.State.Running}}' "$container") == true ]] || fail "容器已退出"
 	sleep 2
 done
-[[ $status == healthy ]] || fail "健康检查没有转为 healthy（$status）"
+[[ $status == healthy ]] || fail "健康检查没有转为 healthy（${status}）"
 
 # 先取完整输出再检查，不用 `cmd | grep -q`：grep -q 匹配到就退出，还在输出的 cmd 收到 SIGPIPE，
 # 在 pipefail 下整条管道失败（匹配到了反而报失败）。
@@ -92,4 +92,4 @@ docker exec "$container" sh -c 'touch /data/.write-test && rm /data/.write-test'
 contains "$(docker logs "$container" 2>&1)" "sfly control plane $version" ||
 	fail "启动日志里没有版本号 $version"
 
-echo "镜像冒烟通过：$image（sfly $version）"
+echo "镜像冒烟通过：${image}（sfly ${version}）"

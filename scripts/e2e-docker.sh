@@ -18,8 +18,7 @@ database_url="${DATABASE_URL:-postgres://sfly:sfly@127.0.0.1:5432/sfly}"
 if [[ $(uname) == Darwin ]]; then
 	database_url=$(bash "$root/scripts/docker-host-url.sh" "$database_url")
 fi
-# E2E_DOCKER_FLAGS 按空白拆成多个参数，所以不加引号。
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086 # E2E_DOCKER_FLAGS 按空白拆成多个参数，所以不加引号
 exec docker run --rm --network host --ipc host ${E2E_DOCKER_FLAGS:-} \
 	--user "$(id -u):$(id -g)" -e HOME=/tmp -e CI=1 -e SFLY_VISUAL="${SFLY_VISUAL:-1}" \
 	-e DATABASE_URL="$database_url" \
