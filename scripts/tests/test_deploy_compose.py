@@ -353,9 +353,8 @@ def test_the_workbench_has_memory_and_process_limits_and_cannot_gain_privileges(
     assert workbench["security_opt"] == ["no-new-privileges:true"]
     assert workbench["cap_drop"] == ["ALL"]
     readme = (DEPLOY.parent / "README.md").read_text(encoding="utf-8")
-    assert (
-        "内存上限 **4 GiB**（`mem_limit: 4g`），进程数上限 **4096**（`pids_limit: 4096`" in readme
-    )
+    assert "内存上限 **4 GiB**（`mem_limit: 4g`，`memswap_limit` 同样是 4g" in readme
+    assert "进程数上限 **4096**（`pids_limit: 4096`" in readme
 
     override = readme_override_examples()["limits"]
     tuned = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=override)
