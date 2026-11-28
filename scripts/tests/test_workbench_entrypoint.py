@@ -28,11 +28,11 @@ import os
 import shutil
 import subprocess
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from polling import wait_for
 
 ENTRYPOINT = Path(__file__).resolve().parents[2] / "deploy" / "workbench" / "entrypoint.sh"
 TOKEN = "sfly_agt_" + "a1b2c3d4e5f6" * 4
@@ -194,11 +194,13 @@ def test_with_the_firewall_required_nothing_runs_until_its_rules_are_ready(
     # 宿主机重启时 Docker 直接恢复两个容器，不等 compose 的健康检查：工作台可能比规则先起。
     process = harness.start(SFLY_WORKBENCH_REQUIRE_FIREWALL="1")
     try:
-        deadline = time.monotonic() + 30
-        while len(harness.lines("curl.args")) < 3:
-            assert process.poll() is None, process.communicate()
-            assert time.monotonic() < deadline
-            time.sleep(0.1)
+        # 入口脚本问过三次就绪端口（或者提前退出了：那就是没在等）。
+        wait_for(
+            lambda: len(harness.lines("curl.args")) >= 3 or process.poll() is not None,
+            30,
+            what="入口脚本问三次就绪端口",
+        )
+        assert process.poll() is None, process.communicate()
         # 一直在问就绪端口；没有下载 install.sh、没有安装、没有启动 Agent。
         assert all("http://127.0.0.1:47123/" in line for line in harness.lines("curl.args"))
         assert harness.lines("install.runs") == [] and harness.lines("agent.runs") == []
@@ -250,11 +252,13 @@ def test_a_proxy_in_the_environment_cannot_answer_for_the_firewall(harness: Harn
     )
     ready: HTTPServer | None = None
     try:
-        deadline = time.monotonic() + 30
-        while len(harness.lines("curl.args")) < 3:
-            assert process.poll() is None, process.communicate()
-            assert time.monotonic() < deadline
-            time.sleep(0.1)
+        # 入口脚本问过三次就绪端口（或者提前退出了：那就是没在等）。
+        wait_for(
+            lambda: len(harness.lines("curl.args")) >= 3 or process.poll() is not None,
+            30,
+            what="入口脚本问三次就绪端口",
+        )
+        assert process.poll() is None, process.communicate()
         assert harness.lines("install.runs") == [] and harness.lines("agent.runs") == []
 
         ready, answered = answering(47123)
