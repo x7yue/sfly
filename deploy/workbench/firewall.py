@@ -28,11 +28,19 @@ Docker 按 restart 策略恢复还是手工 docker start，本次的规则写好
 这次结果里没有的地址立刻撤销，有的续 GRACE_SECONDS；名字不存在是成功的空结果，全部撤销。
 包镜像（CDN，每次给的地址不一样）：只续这次见到的，KEEP_SECONDS，不删别的；名字不存在时也全部撤销。
 期限从每次解析成功返回的时刻算；写规则之前按那一刻的时钟筛掉到期的。
+
+探测（PROBE_PORT，#498）：控制面定期请这个进程在同一个网络命名空间里、同一套规则下
+只试连接别的项目里 Agent 的能力端口，连得通说明名单没有挡住它们。测量方是这个进程，
+工作台上的模型改不了、停不了它；只应答 SFLY_WORKBENCH_URL 的主机此刻解析到的地址（控制面）
+发来的请求，工作台自己发的拒绝。每个目标的结果：open 连上了；closed 被拒、超时、不可达；
+error 没测成（写法不对、解析不了、本机资源不够……），控制面不把它当成连不通。
 """
 
 from __future__ import annotations
 
+import errno
 import ipaddress
+import json
 import os
 import re
 import socket
@@ -41,11 +49,15 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlsplit
 
 READY_PORT = 47123
+PROBE_PORT = 47124
+PROBE_MAX_TARGETS = 1000
+PROBE_TIMEOUT_SECONDS = 3.0
 GATEWAY_PORT = 50051
 GRACE_SECONDS = 180
 KEEP_SECONDS = 3600
@@ -255,6 +267,72 @@ def serve_ready() -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
+def dial(target: str) -> str:
+    """试连接「主机:端口」（IPv6 写成「[地址]:端口」）：open、closed 或 error（见文件开头）。"""
+    host, sep, port = target.rpartition(":")
+    host = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    if not sep or not host or not PORT.fullmatch(port) or not 0 < int(port) < 65536:
+        return "error"
+    try:
+        socket.create_connection((host, int(port)), PROBE_TIMEOUT_SECONDS).close()
+    except (ConnectionRefusedError, TimeoutError):
+        return "closed"
+    except OSError as error:
+        return "closed" if error.errno in (errno.EHOSTUNREACH, errno.ENETUNREACH) else "error"
+    return "open"
+
+
+class Probe(BaseHTTPRequestHandler):
+    """POST /probe，`{"targets": ["主机:端口", ...]}`（至多 PROBE_MAX_TARGETS 个）
+    → `{"results": [...]}`，和 targets 同序。"""
+
+    control: Entry
+
+    def do_POST(self) -> None:
+        try:
+            allowed = resolve(self.control.host, self.control.port)
+        except OSError:
+            self.reply(503, {"error": "解析不了控制面的地址"})
+            return
+        if self.client_address[0] not in allowed:
+            self.reply(403, {"error": "只应答控制面"})
+            return
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            body = json.loads(self.rfile.read(length)) if 0 < length <= 1 << 20 else None
+        except ValueError:
+            body = None
+        targets = body.get("targets") if isinstance(body, dict) else None
+        if (
+            self.path != "/probe"
+            or not isinstance(targets, list)
+            or len(targets) > PROBE_MAX_TARGETS
+            or not all(isinstance(t, str) for t in targets)
+        ):
+            self.reply(400, {"error": "要 POST /probe，带至多 1000 个「主机:端口」"})
+            return
+        with ThreadPoolExecutor(32) as pool:
+            self.reply(200, {"results": list(pool.map(dial, targets))})
+
+    def reply(self, status: int, body: object) -> None:
+        data = json.dumps(body, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+def serve_probe(control: Entry, port: int = PROBE_PORT) -> HTTPServer:
+    handler = type("ProbeFor", (Probe,), {"control": control})
+    server = HTTPServer(("0.0.0.0", port), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def apply(command: str, rules: str) -> None:
     subprocess.run([command], input=rules, text=True, check=True)
 
@@ -286,7 +364,14 @@ def main() -> int:
         print(f"出网名单写错了，工作台不会起来：{error}", file=sys.stderr)
         return 1
     print("出网名单：" + " ".join(f"{e.host}:{e.port}" for e in entries), flush=True)
-    run(Grants(entries))
+    control = endpoint(os.environ.get("SFLY_WORKBENCH_URL", ""), url=True)
+
+    def ready() -> None:
+        serve_ready()
+        if isinstance(control, Entry):
+            serve_probe(control)
+
+    run(Grants(entries), ready=ready)
     return 0
 
 

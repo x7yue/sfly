@@ -5,9 +5,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import socket
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -372,3 +375,87 @@ def test_a_failing_rule_write_never_answers_ready() -> None:
     with pytest.raises(firewall.subprocess.CalledProcessError):
         firewall.run(firewall.Grants([]), write, lambda: ready.append("ready"), rounds=0)
     assert ready == []
+
+
+# ---- 探测（#498）：测量方是出网名单这个进程，只应答控制面 ----
+
+
+def listening() -> tuple[socket.socket, str]:
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    return server, f"127.0.0.1:{server.getsockname()[1]}"
+
+
+def closed_port() -> str:
+    server, address = listening()
+    server.close()
+    return address
+
+
+def test_dial_tells_open_closed_and_unmeasured_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    server, open_address = listening()
+    try:
+        assert firewall.dial(open_address) == "open"
+        assert firewall.dial(closed_port()) == "closed"
+    finally:
+        server.close()
+    # 写法不对、解析不了：没测成，不是连不通。
+    for bad in ("x", "x:", "x:0", "x:http", ":80", "nosuch.invalid:80"):
+        assert firewall.dial(bad) == "error", bad
+
+    def failing(error: OSError) -> Callable[..., object]:
+        def connect(*_: object) -> object:
+            raise error
+
+        return connect
+
+    for error, result in (
+        (TimeoutError(), "closed"),
+        (OSError(firewall.errno.EHOSTUNREACH, "x"), "closed"),
+        (OSError(firewall.errno.ENETUNREACH, "x"), "closed"),
+        (OSError(firewall.errno.EMFILE, "x"), "error"),
+        (OSError(firewall.errno.ENOBUFS, "x"), "error"),
+    ):
+        monkeypatch.setattr(firewall.socket, "create_connection", failing(error))
+        assert firewall.dial("10.0.0.9:50052") == result
+
+
+def post(port: int, body: bytes) -> tuple[int, object]:
+    request = urllib.request.Request(f"http://127.0.0.1:{port}/probe", data=body, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+def test_the_probe_answers_only_the_control_plane_in_order() -> None:
+    server, open_address = listening()
+    # 控制面就是本机（127.0.0.1 解析到它自己）：应答，结果和目标同序。
+    probe = firewall.serve_probe(Entry("127.0.0.1", 8080), port=0)
+    port = probe.server_address[1]
+    # 控制面在别处：本机（工作台）发的请求被拒。
+    other = firewall.serve_probe(Entry("192.0.2.10", 8080), port=0)
+    try:
+        targets = [open_address, closed_port(), "x"]
+        assert post(port, json.dumps({"targets": targets}).encode()) == (
+            200,
+            {"results": ["open", "closed", "error"]},
+        )
+        assert post(other.server_address[1], b'{"targets": []}')[0] == 403
+        too_many = json.dumps({"targets": ["x:1"] * (firewall.PROBE_MAX_TARGETS + 1)}).encode()
+        assert post(port, too_many)[0] == 400
+        assert post(port, b"not json")[0] == 400
+        assert post(port, b'{"targets": [1]}')[0] == 400
+    finally:
+        for running in (probe, other):
+            running.shutdown()
+            running.server_close()
+        server.close()
+
+
+def test_the_batch_size_matches_the_control_plane() -> None:
+    # 控制面按这个数分批（apps/server/src/sessions/workbench-exposure.ts）。
+    source = (SCRIPT.parents[2] / "apps/server/src/sessions/workbench-exposure.ts").read_text()
+    assert f"PROBE_BATCH = {firewall.PROBE_MAX_TARGETS:_}" in source

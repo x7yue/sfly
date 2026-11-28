@@ -73,6 +73,11 @@ import { AssistantConnection } from "./sessions/assistant-connection.js";
 import { SessionService } from "./sessions/session-service.js";
 import type { SessionRow } from "./sessions/session-store.js";
 import { SessionStore } from "./sessions/session-store.js";
+import {
+	httpProbe,
+	WorkbenchExposure,
+	type WorkbenchProbe,
+} from "./sessions/workbench-exposure.js";
 import { listening } from "./util/listen-error.js";
 import { Mutex } from "./util/mutex.js";
 import { printError, printInfo, printWarning } from "./util/output.js";
@@ -188,6 +193,10 @@ export interface ControlPlaneOptions {
 	assistantSecret?: string;
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
+	/** 多久看一次哪些工作台该探测项目外 Agent 的能力端口（#498，默认 30 秒；到期才探，见 `WorkbenchExposure`）：测试改短。 */
+	exposureSweepIntervalMs?: number;
+	/** 怎么探测（#498）：默认请工作台前面的出网名单容器（`httpProbe`）；测试换成假的。 */
+	workbenchProbe?: WorkbenchProbe;
 	/**
 	 * 会话结束之后调用（#544 留好的接口）：抛的错只进日志，不影响结束。会话令牌的吊销不在这里：它在会话结束的事务里
 	 * （`SessionStore.end`，#547），不靠一个事后的回调。主要给测试用。
@@ -557,6 +566,14 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 助手服务的事件连接（下面、网关起来之后才建）：HTTP 在那之前就开始监听了，这几毫秒里进来的请求走就绪状态会问「连着没有」，
 	// 所以先声明；还没建好当作没连上（503，不是引用还没初始化的 ReferenceError → 500）。
 	let assistantConnection: AssistantConnection | undefined;
+	const exposure = new WorkbenchExposure({
+		db: database.db,
+		hub,
+		clock,
+		enabled: assistantClient !== undefined,
+		probe: options.workbenchProbe ?? httpProbe,
+		log: (message, error) => logError(`sfly: ${message}`, error),
+	});
 	const sessionService = new SessionService({
 		sessions,
 		db: database.db,
@@ -565,6 +582,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		setup: assistant,
 		client: assistantClient,
 		workbench,
+		exposure,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
 		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
 		// 事件连接连不上时兜底不判中断、也不开始新的一轮；连接还没建好（只有配置了助手服务时才有这个函数）就是没连上。
@@ -758,6 +776,12 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 				await sessionService.startWaiting();
 			},
 			fail("session sweep"),
+		),
+		// 工作台够不够得着项目外 Agent 的能力端口（#498）：到期的才探。
+		periodic(
+			options.exposureSweepIntervalMs ?? 30_000,
+			() => exposure.sweep(),
+			fail("exposure sweep"),
 		),
 		// 任务租约过期与排队超时（#15）。
 		periodic(options.sweepIntervalMs ?? 250, () => engine.expireTasks(), fail("sweep")),

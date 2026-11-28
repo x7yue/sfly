@@ -10,6 +10,7 @@ import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
+import { ExposureLine } from "./ExposureLine";
 import { READINESS_ID, ReadinessLine } from "./ReadinessLine";
 
 /**
@@ -89,6 +90,7 @@ export function NewSession({ readiness }: { readiness: Readiness }) {
 			{create.isError && (
 				<FormAlert>{`${SESSION.createFailed}：${errorText(create.error)}`}</FormAlert>
 			)}
+			<ExposureLine exposure={readiness.exposure} />
 		</form>
 	);
 }

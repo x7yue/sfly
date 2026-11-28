@@ -683,6 +683,22 @@ export const ReadinessProblem = z.object({
 export type ReadinessProblem = z.infer<typeof ReadinessProblem>;
 
 /**
+ * 工作台够得着的项目外 Agent（#498，ADR 0029「隔离做到哪一层」）：控制面定期请工作台前面的出网名单容器只试连接别的项目里
+ * 在线 Agent 的能力端口（不调用）。`agents` 是连得通的（出网名单没有挡住它：工作台上模型的命令能读写那台 Agent 的文件、执行命令），
+ * `unmeasured` 是没测成的（不算连不通），`checked_at` 是这些结果测成的时间（还没测成过为 null）。`failed_at` 不为 null 时最近
+ * 一轮整个没测成（探测服务连不上：多半是工作台前面没有出网名单），`agents`、`unmeasured` 仍是 `checked_at` 那一轮的。不影响 `ready`。
+ */
+export const ExposedAgent = z.object({ agent: z.string(), address: z.string() });
+export type ExposedAgent = z.infer<typeof ExposedAgent>;
+export const WorkbenchExposure = z.object({
+	checked_at: Timestamp.nullable(),
+	agents: z.array(ExposedAgent),
+	unmeasured: z.array(ExposedAgent),
+	failed_at: Timestamp.nullable(),
+});
+export type WorkbenchExposure = z.infer<typeof WorkbenchExposure>;
+
+/**
  * 助手此刻能不能用：`ready` 为 true 当且仅当 `problems` 为空，否则列出全部原因。`workbench` 是配置的工作台（Agent 的名字），
  * 没有设置时为 null：页面据此写「可以用 · 工作台 X 在线」，工作台不在线时也能写出是哪一台。
  */
@@ -691,6 +707,8 @@ export const Readiness = z
 		ready: z.boolean(),
 		problems: z.array(ReadinessProblem),
 		workbench: z.string().nullable(),
+		/** 上一次探测的结果；还没探过（控制面刚启动、工作台不在线、没有开助手）时为 null。 */
+		exposure: WorkbenchExposure.nullable(),
 	})
 	.refine((r) => r.ready === (r.problems.length === 0), "ready 为 true 当且仅当没有 problems");
 export type Readiness = z.infer<typeof Readiness>;

@@ -314,6 +314,7 @@ describe("读：一页事件、列表、上一轮的结局", () => {
 			expect(list.readiness).toEqual({
 				ready: false,
 				workbench: null,
+				exposure: null,
 				problems: [
 					expect.objectContaining({ kind: "assistant_not_configured" }),
 					expect.objectContaining({ kind: "workbench_not_set" }),

@@ -17,7 +17,7 @@ import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
-import { STATUS_POLL_MS } from "#/lib/polling";
+import { BACKGROUND_POLL_MS, STATUS_POLL_MS } from "#/lib/polling";
 import { PROJECT } from "#/lib/project";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { untrustedPlain } from "#/lib/untrusted-text";
@@ -26,6 +26,7 @@ import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EndSession, endMutationKey } from "./EndSession";
+import { ExposureLine } from "./ExposureLine";
 import { READINESS_ID, ReadinessLine } from "./ReadinessLine";
 import { ResultsPanel } from "./ResultsPanel";
 import { SessionTimeline } from "./SessionTimeline";
@@ -78,19 +79,16 @@ export function SessionPage({ id }: { id: string }) {
 }
 
 /**
- * 模型此刻能不能用（没有配置、连不上，#548）：打开会话时随会话视图带来的就绪状态里有模型的问题的，之后用项目的会话列表里的那份
- * （每 5 秒查一次、窗口重新获得焦点时也查），好了页面自己恢复，不用重新打开；打开时没有问题的不再查：之后才出的问题，说话时的 503
- * 把原因写在输入框下面。助手和工作台的问题不在会话页管（助手页的就绪状态写）。
+ * 就绪状态：打开会话时随会话视图带来，之后用项目的会话列表里的那份（窗口重新获得焦点时也查）。模型有问题（没有配置、连不上，#548）
+ * 时每 5 秒查一次，好了页面自己恢复，不用重新打开；没有问题时每 10 秒查一次：工作台探测项目外 Agent 的结果（#498）一直开着的页面
+ * 也要看得到。之后才出的模型问题，说话时的 503 把原因写在输入框下面。助手和工作台的其余问题不在会话页管（助手页的就绪状态写）。
  */
 function useReadiness(initial: Readiness): Readiness {
 	const list = useQuery({
 		...apiQuery(sessionsApi.list, { params: { project: PROJECT } }),
-		enabled: hasModelProblem(initial),
 		refetchOnWindowFocus: true,
 		refetchInterval: (query) =>
-			query.state.data !== undefined && !hasModelProblem(query.state.data.readiness)
-				? false
-				: STATUS_POLL_MS,
+			hasModelProblem(query.state.data?.readiness ?? initial) ? STATUS_POLL_MS : BACKGROUND_POLL_MS,
 		refetchIntervalInBackground: false,
 	});
 	return list.data?.readiness ?? initial;
@@ -167,6 +165,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 								loadingOlder={loadingOlder}
 								olderError={olderError}
 							/>
+							<ExposureLine exposure={readiness.exposure} />
 							<Composer
 								id={detail.id}
 								mode={mode}

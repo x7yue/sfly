@@ -343,6 +343,10 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			// 成果栏的场景名（版本链接的提示用 `untrustedPlain`）和提交里的文件路径；运行卡片里的场景名、失败的节点和原因（#551）。
 			"sessions/ResultsPanel.tsx": { wrapped: ["commit.diff", "scenario.name"], truncate: 2 },
 			"sessions/SessionRunCard.tsx": { wrapped: ["scenarioName", "failure"], truncate: 2 },
+			// 探测到的项目外 Agent 的名字和地址（Agent 自己上报的）。
+			"sessions/ExposureLine.tsx": {
+				wrapped: ["SESSION.exposure.agent(item.agent, item.address)"],
+			},
 			"sessions/ReadinessLine.tsx": {
 				wrapped: ["SESSION.ready(readiness.workbench)", "item.what"],
 			},

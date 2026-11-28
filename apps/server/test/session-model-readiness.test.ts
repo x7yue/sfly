@@ -85,7 +85,12 @@ describe("模型的就绪状态", () => {
 		(await json<SessionListResponse>(await api.get("/projects/default/sessions"))).sessions.length;
 
 	it("模型好：就绪，没有模型的问题", async () => {
-		expect(await readiness()).toEqual({ ready: true, problems: [], workbench: WORKBENCH });
+		expect(await readiness()).toEqual({
+			ready: true,
+			problems: [],
+			workbench: WORKBENCH,
+			exposure: null,
+		});
 	});
 
 	it("没有配置：就绪状态写明缺什么（原因来自助手服务的 /health）；建会话 503 model_unavailable，不留会话、不交给助手服务", async () => {

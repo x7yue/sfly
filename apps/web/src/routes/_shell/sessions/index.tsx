@@ -6,7 +6,7 @@ import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { PAGE, SESSION } from "#/lib/copy";
-import { STATUS_POLL_MS } from "#/lib/polling";
+import { BACKGROUND_POLL_MS, STATUS_POLL_MS } from "#/lib/polling";
 import { PROJECT } from "#/lib/project";
 import { NewSession } from "#/sessions/NewSession";
 import { SessionList } from "#/sessions/SessionList";
@@ -19,18 +19,18 @@ export const Route = createFileRoute("/_shell/sessions/")({
 /**
  * 助手页（#542）：一个输入框（说一句话就开始一个会话，助手此刻能不能用写在输入框旁边，`NewSession`），和本项目的会话。
  * 列表在窗口重新获得焦点时和建会话之后刷新，不开事件流；有会话在做或排队时每 5 秒重新查询，排队的位置前进了、做完的会话回到空闲
- * 才看得到（#544）。
+ * 才看得到（#544）；别的时候每 10 秒（就绪状态里的探测结果，#498）。
  */
 function AssistantPage() {
 	const sessions = useQuery({
 		...apiQuery(sessionsApi.list, { params: { project: PROJECT } }),
 		refetchOnWindowFocus: true,
 		// 有会话在做或排队时每 5 秒重新查询；标签页在后台时不查（`refetchIntervalInBackground` 默认就是 false，写明白）；
-		// 没有在做或排队的会话时不轮询，只在获得焦点和建会话之后刷新。
+		// 没有在做或排队的会话时每 10 秒：就绪状态里工作台探测项目外 Agent 的结果（#498）一直开着的页面也要看得到。
 		refetchInterval: (query) =>
 			query.state.data?.sessions.some((s) => s.status === "running" || s.status === "queued")
 				? STATUS_POLL_MS
-				: false,
+				: BACKGROUND_POLL_MS,
 		refetchIntervalInBackground: false,
 	});
 	useListNavigation();

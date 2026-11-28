@@ -120,6 +120,7 @@ test("就绪：「可以用 · 工作台 X 在线」；工作台不在线时逐�
 	await stubSessionList(page, {
 		ready: false,
 		workbench: "bench-1",
+		exposure: null,
 		problems: [
 			{ kind: "workbench_offline", message: "工作台的 Agent 不在线" },
 			{ kind: "assistant_unreachable", message: "助手服务连不上" },
@@ -153,6 +154,7 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 	const problem = (kind: "model_not_configured" | "model_unreachable", message: string) => ({
 		ready: false,
 		workbench: "bench-1",
+		exposure: null,
 		problems: [{ kind, message }],
 	});
 	const start = page.getByRole("button", { name: "开始" });
@@ -213,12 +215,114 @@ test("模型没有配置、连不上：就绪状态写明缺什么（连不上�
 	await expect(start).toBeEnabled();
 });
 
+const alpha = { agent: "alpha-agent", address: "10.0.0.9:50052" };
+const beta = { agent: "beta-agent", address: "[fd00::7]:50052" };
+const measured = (over: Record<string, unknown> = {}) => ({
+	...READY,
+	exposure: {
+		checked_at: "2026-01-01T00:00:00.000Z",
+		agents: [],
+		unmeasured: [],
+		failed_at: null,
+		...over,
+	},
+});
+
+test("工作台连得到项目外 Agent 的能力端口（#498）：助手页和会话页写出是哪几台、什么地址，该找谁，隔离做到哪一层；不挡着用助手", async ({
+	page,
+}) => {
+	const exposed = measured({ agents: [alpha, beta] });
+	await stubSessionList(page, exposed);
+	await page.goto("/sessions");
+	const warning = page.getByTestId("exposure");
+	await expect(warning).toContainText("工作台连得到项目外 Agent 的能力端口：");
+	await expect(warning.getByTestId("exposed-agent")).toHaveText([
+		"alpha-agent（10.0.0.9:50052）",
+		"beta-agent（[fd00::7]:50052）",
+	]);
+	await expect(warning).toContainText("SFLY_WORKBENCH_EGRESS");
+	await expect(warning).toContainText("机器层面的项目隔离还没有做到");
+	await expect(page.getByTestId("readiness")).toHaveText("可以用 · 工作台 bench-1 在线");
+
+	const session = sessionView({ status: "idle", readiness: exposed });
+	await installSessionStream(page);
+	await stubSessionDetail(page, session, [userMessage(1), turnStarted(2), turnEnd(3, "completed")]);
+	await page.goto(`/sessions/${session.id}`);
+	await expect(page.getByTestId("exposed-agent")).toHaveText([
+		"alpha-agent（10.0.0.9:50052）",
+		"beta-agent（[fd00::7]:50052）",
+	]);
+	await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
+
+	// 测成了、一台也连不通（或还没探过）时不显示。
+	await page.unroute("**/api/projects/*/sessions");
+	await stubSessionList(page, measured());
+	await page.goto("/sessions");
+	await expect(page.getByTestId("readiness")).toBeVisible();
+	await expect(page.getByTestId("exposure")).toHaveCount(0);
+});
+
+test("探测没测成（#498）：没测成的目标单独列出，不当成连不通；一轮整个没测成写明时间和上次测成的结果", async ({
+	page,
+}) => {
+	await stubSessionList(
+		page,
+		measured({ unmeasured: [beta], failed_at: "2026-01-01T00:10:00.000Z", agents: [alpha] }),
+	);
+	await page.goto("/sessions");
+	const line = page.getByTestId("exposure");
+	await expect(line.getByTestId("exposed-agent")).toHaveText(["alpha-agent（10.0.0.9:50052）"]);
+	await expect(line).toContainText("这几台没测成（不算连不通）：");
+	await expect(line.getByTestId("unmeasured-agent")).toHaveText(["beta-agent（[fd00::7]:50052）"]);
+	await expect(line.getByTestId("exposure-failed")).toContainText("那一轮没测成");
+	await expect(line.getByTestId("exposure-failed")).toContainText("测成的结果");
+
+	// 从来没有测成过：只写没测成，没有「一台也连不通」的假象。
+	await page.unroute("**/api/projects/*/sessions");
+	await stubSessionList(
+		page,
+		measured({ checked_at: null, failed_at: "2026-01-01T00:10:00.000Z" }),
+	);
+	await page.goto("/sessions");
+	await expect(page.getByTestId("exposure-failed")).toContainText("之前也没有测成过");
+	await expect(page.getByTestId("exposed-agent")).toHaveCount(0);
+});
+
+test("一直开着的助手页和会话页：下一轮探测连得通了，不用刷新页面就出现告警（#498）", async ({
+	page,
+}) => {
+	let listed: unknown = measured();
+	await page.route("**/api/projects/*/sessions", (route) =>
+		fulfillJson(route, 200, { readiness: listed, sessions: [], truncated: false }),
+	);
+	await page.goto("/sessions");
+	await expect(page.getByTestId("readiness")).toBeVisible();
+	await expect(page.getByTestId("exposure")).toHaveCount(0);
+	listed = measured({ agents: [alpha] });
+	await expect(page.getByTestId("exposed-agent")).toHaveText(["alpha-agent（10.0.0.9:50052）"], {
+		timeout: 25_000,
+	});
+
+	listed = measured();
+	const session = sessionView({ status: "idle", readiness: measured() });
+	await installSessionStream(page);
+	await stubSessionDetail(page, session, [userMessage(1), turnStarted(2), turnEnd(3, "completed")]);
+	await page.goto(`/sessions/${session.id}`);
+	await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
+	await expect(page.getByTestId("exposure")).toHaveCount(0);
+	listed = measured({ agents: [alpha] });
+	await expect(page.getByTestId("exposed-agent")).toHaveText(["alpha-agent（10.0.0.9:50052）"], {
+		timeout: 25_000,
+	});
+});
+
 test("会话页：模型有问题时空闲的会话在输入框旁写缺什么和该找谁，「发送」不可用、输入框照常可以写；模型好了页面自己恢复；在做的会话不受影响", async ({
 	page,
 }) => {
 	const down = {
 		ready: false,
 		workbench: "bench-1",
+		exposure: null,
 		problems: [
 			{
 				kind: "model_unreachable" as const,
@@ -1823,7 +1927,7 @@ test("会话已经没有了：说话遇到 404 回到列表，写一句", async 
 	).toBeVisible();
 });
 
-test("会话列表的重新查询：没有在做或排队的会话时不轮询（只在建会话和获得焦点之后刷新）", async ({
+test("会话列表的重新查询：没有在做或排队的会话时每 10 秒查一次（就绪状态里的探测结果，#498），不是 5 秒", async ({
 	page,
 	controlPlane,
 }) => {
@@ -1841,10 +1945,12 @@ test("会话列表的重新查询：没有在做或排队的会话时不轮询�
 	await expect(page.getByTestId("list-status")).toHaveText("空闲");
 	const first = lists;
 	expect(first).toBeGreaterThanOrEqual(1);
-	// 超过一个轮询周期（5 秒）还是没有新的查询。
-	// biome-ignore lint/plugin/e2e-fixed-wait: 确认「没有再查」只能等过一个轮询周期（5 秒）再数请求
+	// 过了 5 秒的轮询周期还没有新的查询……
+	// biome-ignore lint/plugin/e2e-fixed-wait: 确认「没有按 5 秒查」只能等过这个周期再数请求
 	await page.waitForTimeout(6_500);
 	expect(lists).toBe(first);
+	// ……到 10 秒时查一次。
+	await expect.poll(() => lists, { timeout: 8_000 }).toBeGreaterThan(first);
 });
 
 test("会话列表的重新查询：有在做的会话时每 5 秒查一次（排位前进、做完回到空闲才看得到）", async ({

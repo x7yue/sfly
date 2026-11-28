@@ -9,7 +9,7 @@ import type { Readiness, SessionEvent } from "@sfly/schema";
 export const USAGE = { input: 1200, output: 80, cache_read: 900, cache_write: 0 };
 
 /** 助手可以用、工作台在线。 */
-export const READY: Readiness = { ready: true, problems: [], workbench: "bench-1" };
+export const READY: Readiness = { ready: true, problems: [], workbench: "bench-1", exposure: null };
 
 const json = (route: Route, status: number, body: unknown) =>
 	route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });

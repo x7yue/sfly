@@ -883,6 +883,7 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 			setup: { configured: true, config },
 			client,
 			workbench: { get: async () => undefined },
+			exposure: { get: () => null },
 			log: (message, error) => logs.push({ message, error }),
 		});
 		const readiness = await service.readiness("default" as ProjectId);
@@ -910,6 +911,7 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 				},
 			} as unknown as AssistantClient,
 			workbench: { get: async () => undefined },
+			exposure: { get: () => null },
 			log: (_message, error) => logs.push(error),
 		});
 		const readiness = await service.readiness("default" as ProjectId);

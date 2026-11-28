@@ -49,7 +49,7 @@ function typesOf(union: { options: readonly unknown[] }): string[] {
 }
 
 const sessionId = "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21";
-const readyNow = { ready: true, problems: [], workbench: "workbench-default" };
+const readyNow = { ready: true, problems: [], workbench: "workbench-default", exposure: null };
 const listItem = {
 	id: sessionId,
 	title: "给 http_check 加超时",
@@ -408,14 +408,24 @@ describe("会话接口的类型", () => {
 
 	it("就绪状态：每种问题都能表达，问题要写一句话", () => {
 		for (const kind of ReadinessProblemKind.options) {
-			const readiness = { ready: false, problems: [{ kind, message: "…" }], workbench: null };
+			const readiness = {
+				ready: false,
+				problems: [{ kind, message: "…" }],
+				workbench: null,
+				exposure: null,
+			};
 			expect(
 				SessionListResponse.safeParse({ readiness, sessions: [], truncated: false }).success,
 			).toBe(true);
 		}
 		expect(
 			SessionListResponse.safeParse({
-				readiness: { ready: false, problems: [{ kind: "workbench_offline" }], workbench: "w" },
+				readiness: {
+					ready: false,
+					problems: [{ kind: "workbench_offline" }],
+					workbench: "w",
+					exposure: null,
+				},
 				sessions: [],
 				truncated: false,
 			}).success,
@@ -426,6 +436,7 @@ describe("会话接口的类型", () => {
 					ready: false,
 					problems: [{ kind: "disk_full", message: "…" }],
 					workbench: null,
+					exposure: null,
 				},
 				sessions: [],
 				truncated: false,
@@ -451,12 +462,28 @@ describe("会话接口的类型", () => {
 		const problem = { kind: "workbench_offline", message: "工作台不在线" };
 		const check = (readiness: unknown) =>
 			SessionListResponse.safeParse({ readiness, sessions: [], truncated: false }).success;
-		expect(check({ ready: true, problems: [], workbench: "w" })).toBe(true);
-		expect(check({ ready: false, problems: [problem], workbench: null })).toBe(true);
-		expect(check({ ready: true, problems: [problem], workbench: "w" })).toBe(false);
-		expect(check({ ready: false, problems: [], workbench: null })).toBe(false);
+		expect(check({ ready: true, problems: [], workbench: "w", exposure: null })).toBe(true);
+		expect(check({ ready: false, problems: [problem], workbench: null, exposure: null })).toBe(
+			true,
+		);
+		expect(check({ ready: true, problems: [problem], workbench: "w", exposure: null })).toBe(false);
+		expect(check({ ready: false, problems: [], workbench: null, exposure: null })).toBe(false);
 		// 工作台的名字必须给（没有设置时是 null），不能缺。
 		expect(check({ ready: true, problems: [] })).toBe(false);
+		// 探测结果（#498）也必须给：没有探过是 null。
+		expect(check({ ready: true, problems: [], workbench: "w" })).toBe(false);
+		const exposure = {
+			checked_at: "2026-11-28T00:00:00.000Z",
+			agents: [{ agent: "alpha-agent", address: "10.0.0.9:50052" }],
+			unmeasured: [],
+			failed_at: null,
+		};
+		expect(check({ ready: true, problems: [], workbench: "w", exposure })).toBe(true);
+		// 从来没测成过：checked_at 为 null，failed_at 写明哪一轮没测成；没测成的目标和结果都不能缺。
+		const failed = { ...exposure, checked_at: null, agents: [], failed_at: exposure.checked_at };
+		expect(check({ ready: true, problems: [], workbench: "w", exposure: failed })).toBe(true);
+		const { unmeasured: _, ...partial } = exposure;
+		expect(check({ ready: true, problems: [], workbench: "w", exposure: partial })).toBe(false);
 	});
 
 	it("新建会话和发话：只有 text，非空、不能只有空白、有长度上限", () => {
