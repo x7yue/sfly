@@ -74,7 +74,7 @@ test("运行通知对话框：说明里的文档链接和红字里的「飞书�
 		title: "【订单压测-A 环境】",
 		note: "环境 A",
 	});
-	await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
+	await controlPlane.fetch("/projects/default/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 		method: "DELETE",
 		headers: { ...actAs("tester") },
 	});

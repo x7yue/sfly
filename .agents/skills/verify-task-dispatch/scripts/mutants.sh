@@ -21,7 +21,7 @@ f, t = os.environ["FROM"], os.environ["TO"]
 if s.count(f) != 1:
     sys.exit("变异点在模型里找不到或不唯一：" + f)
 open(sys.argv[2], "w").write(s.replace(f, t))
-' "$MODEL/TaskDispatch.tla" "$WORK/$name/TaskDispatch.tla" || { echo "ERROR $name：模型已改动，更新变异点"; status=1; return; }
+' "$MODEL/TaskDispatch.tla" "$WORK/$name/TaskDispatch.tla" || { echo "ERROR ${name}：模型已改动，更新变异点"; status=1; return; }
 	# 只检查这个变异体针对的性质：TLC 遇到第一个违例就停，别的性质先违反会掩盖它。
 	python3 -c '
 import re, sys
@@ -32,9 +32,9 @@ open(sys.argv[2], "w").write(re.sub(r"INVARIANTS\n(    .*\n)+", "INVARIANTS\n   
 	local got
 	got=$(sed -n 's/^Error: Invariant \([A-Za-z0-9_]*\) is violated.*/\1/p' "$WORK/$name/out.txt" | head -1)
 	if [[ $got == "$want" ]]; then
-		echo "ok    $name（$cfg）：被 $want 抓到"
+		echo "ok    ${name}（${cfg}）：被 $want 抓到"
 	else
-		echo "MISS  $name（$cfg）：期望 $want，实际 ${got:-无违例}"
+		echo "MISS  ${name}（${cfg}）：期望 ${want}，实际 ${got:-无违例}"
 		status=1
 	fi
 }

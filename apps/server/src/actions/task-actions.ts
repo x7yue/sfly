@@ -100,7 +100,7 @@ export class TaskActions {
 		private readonly deps: {
 			db: Db;
 			clock: Clock;
-			logs: Pick<TaskLogs, "runSecrets" | "appendSystem">;
+			logs: Pick<TaskLogs, "runSecrets" | "readSecrets" | "appendSystem">;
 			/** 运行的变化（主题 = 运行 ID）：运行的事件流订阅它，这里发布此刻在做的动作的变化、订阅任务的结束。 */
 			runChanges: Topics<string>;
 		},
@@ -290,7 +290,7 @@ export class TaskActions {
 		// 这一次读取共用一份打码的预算（完整的出现的段数，{@link SecretSet.withBudget}）。
 		return maskedSummary(
 			summaryOfTask(row, row.summary),
-			(await this.deps.logs.runSecrets(row.runId)).withBudget(),
+			(await this.deps.logs.readSecrets(row.runId)).withBudget(),
 		);
 	}
 
@@ -355,7 +355,7 @@ export class TaskActions {
 		const end = taskEndOf(task);
 		// 明细是写入时打过码的；读取时再按此刻的 secret 值打一遍。
 		// 这一页共用一份打码的预算（完整的出现的段数，{@link SecretSet.withBudget}）。
-		const secrets = (await this.deps.logs.runSecrets(task.runId)).withBudget();
+		const secrets = (await this.deps.logs.readSecrets(task.runId)).withBudget();
 		return {
 			...empty,
 			actions: shown.map((row) => maskedAction(detailView(row, end), secrets)),
@@ -421,7 +421,7 @@ export class TaskActions {
 		// 推送的内容是写入时打过码的；发出去之前再按此刻的 secret 值打一遍（连着很久的流里，之后才创建的子流程带来的
 		// secret 值也要算）：每个事件发出前取一次此刻的值，没有 secret 参数的运行不查库（TaskLogs.runSecrets 按版本缓存）。
 		// 每次取一个新的带预算的视图：一个事件、一批明细共用一份预算，不同的事件之间不连着算。
-		const secretsNow = async () => (await this.deps.logs.runSecrets(runId)).withBudget();
+		const secretsNow = async () => (await this.deps.logs.readSecrets(runId)).withBudget();
 		const sendSummary = async (status: TaskStatus) =>
 			emit({
 				kind: "summary",

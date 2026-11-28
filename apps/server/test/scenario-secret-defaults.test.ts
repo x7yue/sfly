@@ -2,7 +2,6 @@
 // 保存时不把占位符当成新的默认值，引擎派发时仍然拿到原值。HTTP API + 假 Agent + 真实 PostgreSQL。
 //
 // 测试里的 secret 值都是明显的假值；断言「没有泄露」都是看响应的文本里没有它，不只看某个字段。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import {
 	ACTION_LIMITS,
 	httpContract,
@@ -775,10 +774,10 @@ describe("场景版本里 secret 参数的默认值", () => {
 			"PUT /projects/:project/workbench":
 				"登记项目的工作台：请求体只有 Agent 的名字，不带场景和参数，另见 project-workbench-http.test.ts",
 			"PUT /tasks/:id/artifacts/*": "上传产物的字节，不带场景和参数",
-			"POST /feishu-bots": "登记 Webhook 地址（地址里的令牌另有打码，ADR 0020）",
-			"PATCH /feishu-bots/:name": "同上",
-			"DELETE /feishu-bots/:name": "同上",
-			"POST /feishu-bots/:name/test": "同上",
+			"POST /projects/:project/feishu-bots": "登记 Webhook 地址（地址里的令牌另有打码，ADR 0020）",
+			"PATCH /projects/:project/feishu-bots/:name": "同上",
+			"DELETE /projects/:project/feishu-bots/:name": "同上",
+			"POST /projects/:project/feishu-bots/:name/test": "同上",
 			"POST /projects/:project/packages": "发布节点包，不带场景和参数",
 			// 账号类接口（登录、初始化、改密码、管理账号）：和场景的默认值无关，但处理的是密码，另有专门的测试
 			// 遍历它们的每个出口（accounts-secrets.test.ts：每个账号类接口成功的和失败的响应里没有密码、Cookie、初始化码、哈希）。

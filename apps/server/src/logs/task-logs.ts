@@ -19,6 +19,7 @@ import {
 	type TaskProgress,
 	tasks,
 } from "../db/schema.js";
+import type { RunSecrets } from "../secrets/run-secrets.js";
 import { Topics } from "../sse/topics.js";
 import { clipChars } from "../util/text.js";
 import { type LogMask, logMask, NO_LOG_MASK } from "./log-mask.js";
@@ -244,8 +245,8 @@ export class TaskLogs {
 
 	#states = new Map<string, Promise<TaskState | undefined>>();
 	#queues = new Map<string, Promise<void>>();
-	/** 运行 ID → 它绑定的版本 ID（{@link TaskLogs.runSecrets} 用）。 */
-	#runVersions = new Map<string, string>();
+	/** 运行 ID → 它绑定的版本 ID、是不是写入时打码的（{@link TaskLogs.runSecrets} 用）。 */
+	#runVersions = new Map<string, { versionId: string; maskedOnWrite: boolean }>();
 	/** 版本 ID → 它的文档（声明了 secret 参数时），没有声明为 undefined。 */
 	#secretVersions = new Map<string, StoredOrchestrationDocument | undefined>();
 
@@ -254,6 +255,8 @@ export class TaskLogs {
 			db: Db;
 			clock: Clock;
 			dataDir: string;
+			/** 写入时打码的运行的加密副本（#505）。 */
+			runSecrets: Pick<RunSecrets, "committedSet">;
 			/** 单个任务日志的上限（字节），默认 {@link DEFAULT_LOG_LIMIT_BYTES}。 */
 			limitBytes?: number;
 		},
@@ -589,33 +592,48 @@ export class TaskLogs {
 	}
 
 	/**
-	 * 一次运行当前的全部 secret 值（{@link runSecretValues}）；写日志、动作摘要打码和读日志（{@link TaskLogs.logMask}）都用它。
-	 * 运行绑定的版本、版本的内容都不会变，所以「这个版本有没有声明 secret 参数」按版本缓存：没有声明的运行（绝大多数）
-	 * 之后每次都不用再查库，也不用读版本文档。
+	 * 写进库之前打码用的值集合：写入时打码的运行（#505）是它加密副本里的原值集合；之前的运行是此刻各链实例里 secret 参数的值
+	 * （{@link runSecretValues}）。写日志、进度、动作、通知、指标都用它。运行绑定的版本、版本的内容都不会变，所以「这个版本有没有声明
+	 * secret 参数」按版本缓存：没有声明的旧运行之后每次都不用再查库。
 	 */
 	async runSecrets(runId: string): Promise<SecretSet> {
-		const document = await this.#secretDocument(runId);
+		const run = await this.#run(runId);
+		if (!run) return NO_SECRETS;
+		if (run.maskedOnWrite) return this.deps.runSecrets.committedSet(this.deps.db, runId);
+		return this.#readTimeSecrets(runId, run.versionId);
+	}
+
+	/** 读取时打码用的值集合：写入时打码的运行已经打过，什么都不用做；之前的运行照旧按此刻的值。 */
+	async readSecrets(runId: string): Promise<SecretSet> {
+		const run = await this.#run(runId);
+		if (!run || run.maskedOnWrite) return NO_SECRETS;
+		return this.#readTimeSecrets(runId, run.versionId);
+	}
+
+	/** 读日志时用的打码（log-mask.ts）：没有要打码的值时读取方什么都不用做。 */
+	async logMask(runId: string): Promise<LogMask> {
+		return logMask(await this.readSecrets(runId));
+	}
+
+	async #readTimeSecrets(runId: string, versionId: string): Promise<SecretSet> {
+		const document = await this.#secretDocument(versionId);
 		if (!document) return NO_SECRETS;
 		return (await runSecretValues(this.deps.db, [{ runId, document }])).get(runId) ?? NO_SECRETS;
 	}
 
-	/** 读日志时用的打码（log-mask.ts）：运行此刻的 secret 值；没有时读取方什么都不用做。 */
-	async logMask(runId: string): Promise<LogMask> {
-		return logMask(await this.runSecrets(runId));
+	async #run(runId: string): Promise<{ versionId: string; maskedOnWrite: boolean } | undefined> {
+		const known = this.#runVersions.get(runId);
+		if (known) return known;
+		const [row] = await this.deps.db
+			.select({ versionId: runs.orchestrationVersionId, maskedOnWrite: runs.maskedOnWrite })
+			.from(runs)
+			.where(eq(runs.id, runId));
+		if (row) remember(this.#runVersions, runId, row);
+		return row;
 	}
 
-	/** 运行绑定的版本的文档，只在它声明了 secret 参数时返回（缓存）；运行不存在或版本没有声明时为 undefined。 */
-	async #secretDocument(runId: string): Promise<StoredOrchestrationDocument | undefined> {
-		let versionId = this.#runVersions.get(runId);
-		if (versionId === undefined) {
-			const [row] = await this.deps.db
-				.select({ versionId: runs.orchestrationVersionId })
-				.from(runs)
-				.where(eq(runs.id, runId));
-			if (!row) return undefined;
-			versionId = row.versionId;
-			remember(this.#runVersions, runId, versionId);
-		}
+	/** 版本的文档，只在它声明了 secret 参数时返回（缓存）；没有声明时为 undefined。 */
+	async #secretDocument(versionId: string): Promise<StoredOrchestrationDocument | undefined> {
 		if (this.#secretVersions.has(versionId)) return this.#secretVersions.get(versionId);
 		const [version] = await this.deps.db
 			.select({ document: orchestrationVersions.document })

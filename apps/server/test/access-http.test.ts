@@ -355,7 +355,7 @@ describe("带凭据的请求", () => {
 			]);
 		});
 
-		it("公共项目里和已有版本规范化（PEP 440）之后相同的版本不能再发布：409，写明已有的是哪个；一模一样的版本也 409；不同的版本照常；默认项目不受这条限制", async () => {
+		it("公共项目里和已有版本规范化（PEP 440）之后相同的版本不能再发布：409，写明已有的是哪个；一模一样的版本也 409；不同的版本照常", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = bearer(await accounts.personalToken(admin));
 			expect((await publish(token, "sfly-std", "public", "0.9.0")).status).toBe(201);
@@ -376,9 +376,7 @@ describe("带凭据的请求", () => {
 			expect((await publish(token, "sfly-std", "public", "0.9.1")).status).toBe(201);
 			expect((await publish(token, "other", "public", "0.9")).status).toBe(201);
 			expect(await versionsOf("sfly-std")).toEqual(["0.9.0", "0.9.1"]);
-			// 默认项目里发布不受这条限制（索引只列公共项目里的包）。
-			expect((await publish(token, "sfly-std", "default", "0.9")).status).toBe(201);
-			expect((await projectOf("sfly-std")).sort()).toEqual(["default", "public", "public"]);
+			expect(await projectOf("sfly-std")).toEqual(["public", "public"]);
 		});
 
 		it("同时发布规范化之后相同的两个版本：只有一个成功，另一个 409（咨询锁，不会两个都通过检查）", async () => {
@@ -407,26 +405,28 @@ describe("带凭据的请求", () => {
 			expect(await versionsOf("plain")).toEqual(["1.0", "1.0.0", "1.0.0.0"]);
 		});
 
-		it("同名同版本已经在另一个项目里：409 的说明写明在哪个项目（公共或默认），平台管理员往公共项目发时说明它不在包索引里", async () => {
+		it("公共项目和默认项目之间同名：409，说的是名字已经被占了（#501），不是哪个版本已存在；同一个项目里重发照旧是「已存在」", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = bearer(await accounts.personalToken(admin));
 
-			// 默认项目里先有了 x@2.0，平台管理员再往公共项目发同一个版本。
+			// 默认项目里先有了 elsewhere，平台管理员再往公共项目发。
 			expect((await publish(token, "elsewhere", "default", "2.0")).status).toBe(201);
 			const toPublic = await publish(token, "elsewhere", "public", "2.0");
 			expect(toPublic.status).toBe(409);
 			expect((await error(toPublic)).message).toBe(
-				"节点包 elsewhere@2.0 已存在（在默认项目里），不能覆盖已发布的版本，它不在包索引里；换一个版本号发布到公共项目",
+				"已经有项目发布了名为 elsewhere 的节点包：公共项目里不能发布和别的项目同名的包，换一个名字",
 			);
 			expect(await projectOf("elsewhere")).toEqual(["default"]);
 
-			// 反过来：公共项目里先有，默认项目再发同一个版本。
+			// 反过来：公共项目里先有，默认项目再发（版本不同也一样）。
 			expect((await publish(token, "shared-first", "public", "3.0")).status).toBe(201);
-			const toDefault = await publish(token, "shared-first", "default", "3.0");
-			expect(toDefault.status).toBe(409);
-			expect((await error(toDefault)).message).toBe(
-				"节点包 shared-first@3.0 已存在（在公共项目里），不能覆盖已发布的版本",
-			);
+			for (const version of ["3.0", "3.1"]) {
+				const toDefault = await publish(token, "shared-first", "default", version);
+				expect(toDefault.status, version).toBe(409);
+				expect((await error(toDefault)).message, version).toContain(
+					"公共项目里已有节点包 shared-first",
+				);
+			}
 
 			// 同一个项目里重发：说明和以前一样，不多说项目。
 			const again = await publish(token, "shared-first", "public", "3.0");
@@ -435,7 +435,7 @@ describe("带凭据的请求", () => {
 			);
 		});
 
-		it("同名同版本在一个无关的项目里：409 的说明不写那个项目的名字，也不说它在哪里（只有公共和默认两个项目会写明）", async () => {
+		it("同名同版本在一个无关的项目里：409 的说明不写那个项目的名字，也不说它在哪里", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = bearer(await accounts.personalToken(admin));
 			await accounts.project("secret-team");
@@ -444,14 +444,18 @@ describe("带凭据的请求", () => {
 				 values ('hidden', '4.0', 'secret-team', '{}'::jsonb, 'packages/hidden/4.0.sflypkg', 'x', 1, now())`,
 			);
 
-			for (const [where, headers, query] of [
-				["往公共项目发", token, "public"],
-				["往默认项目发", token, "default"],
+			for (const [where, query, expected] of [
+				[
+					"往公共项目发",
+					"public",
+					"已经有项目发布了名为 hidden 的节点包：公共项目里不能发布和别的项目同名的包，换一个名字",
+				],
+				["往默认项目发", "default", "节点包 hidden@4.0 已存在，不能覆盖已发布的版本"],
 			] as const) {
-				const res = await publish(headers, "hidden", query, "4.0");
+				const res = await publish(token, "hidden", query, "4.0");
 				expect(res.status, where).toBe(409);
 				const { message } = await error(res);
-				expect(message, where).toBe("节点包 hidden@4.0 已存在，不能覆盖已发布的版本");
+				expect(message, where).toBe(expected);
 				expect(message, where).not.toContain("secret-team");
 			}
 			expect(await projectOf("hidden")).toEqual(["secret-team"]);
@@ -750,7 +754,11 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		}[];
 
 	it("路径参数含 NUL：和不带凭据一样是 404，不是 500，也不留记录（NUL 存不进 PostgreSQL 的文本）", async () => {
-		for (const path of ["/feishu-bots/%00x", "/feishu-bots/a%00", "/feishu-bots/%00"]) {
+		for (const path of [
+			"/projects/default/feishu-bots/%00x",
+			"/projects/default/feishu-bots/a%00",
+			"/projects/default/feishu-bots/%00",
+		]) {
 			const withToken = await call("DELETE", path);
 			const anonymous = await cp.fetch(path, { method: "DELETE" });
 			expect(withToken.status, path).toBe(404);
@@ -764,7 +772,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		// 再长的在进访问检查之前就被 Fastify 拒绝。
 		const names = ["a\u0001b", "机器人😀", "line\nbreak", "n".repeat(128)];
 		for (const name of names) {
-			const res = await call("DELETE", `/feishu-bots/${encodeURIComponent(name)}`);
+			const res = await call("DELETE", `/projects/default/feishu-bots/${encodeURIComponent(name)}`);
 			expect(res.status, JSON.stringify(name)).toBe(404);
 		}
 		await vi.waitFor(async () => {
@@ -774,7 +782,10 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("非法的 UTF-8（%FF）和超长的参数在进访问检查之前就被 Fastify 拒绝（400、414）：这条守的是「不会是 500」，测到的是框架", async () => {
-		for (const path of ["/feishu-bots/%FF", `/feishu-bots/${"n".repeat(129)}`]) {
+		for (const path of [
+			"/projects/default/feishu-bots/%FF",
+			`/projects/default/feishu-bots/${"n".repeat(129)}`,
+		]) {
 			const res = await call("DELETE", path);
 			expect(res.status, path).toBeGreaterThanOrEqual(400);
 			expect(res.status, path).toBeLessThan(500);
@@ -783,31 +794,34 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("记录带着响应的状态码：成功的、请求不合格的（400）、找不到的（404）各一条，先记后回填", async () => {
-		const ok = await call("POST", "/feishu-bots", {
+		const ok = await call("POST", "/projects/default/feishu-bots", {
 			name: "机器人",
 			webhook_url: "https://open.feishu.cn/hook/abc",
 		});
 		expect(ok.status).toBe(201);
 		// 记录按时间排序：每个请求之间推进一下手动时钟。
 		(cp.clock as ManualClock).advance(1000);
-		const invalid = await call("POST", "/feishu-bots", { name: "", webhook_url: "不是地址" });
+		const invalid = await call("POST", "/projects/default/feishu-bots", {
+			name: "",
+			webhook_url: "不是地址",
+		});
 		expect(invalid.status).toBe(400);
 		(cp.clock as ManualClock).advance(1000);
-		const missing = await call("DELETE", "/feishu-bots/不存在");
+		const missing = await call("DELETE", "/projects/default/feishu-bots/不存在");
 		expect(missing.status).toBe(404);
 		// onResponse 在响应发出之后才回填，等一下。
 		await vi.waitFor(async () => {
 			expect((await records()).map((r) => r.status)).toEqual([201, 400, 404]);
 		});
 		expect((await records()).map((r) => [r.route, r.resource_id])).toEqual([
-			["POST /feishu-bots", null],
-			["POST /feishu-bots", null],
-			["DELETE /feishu-bots/:name", "不存在"],
+			["POST /projects/:project/feishu-bots", null],
+			["POST /projects/:project/feishu-bots", null],
+			["DELETE /projects/:project/feishu-bots/:name", "不存在"],
 		]);
 	});
 
 	it("他是成员、但这次写靠的是管理员的权限：记录里有他当时的角色；不是成员为空", async () => {
-		await call("POST", "/feishu-bots", {
+		await call("POST", "/projects/default/feishu-bots", {
 			name: "甲",
 			webhook_url: "https://open.feishu.cn/hook/a",
 		});
@@ -816,7 +830,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		await call("POST", "/projects/default/orchestrations", { name: "场景" });
 		await vi.waitFor(async () => {
 			expect((await records()).map((r) => [r.route, r.member_role])).toEqual([
-				["POST /feishu-bots", null],
+				["POST /projects/:project/feishu-bots", null],
 				["POST /projects/:project/orchestrations", "read_only"],
 			]);
 		});

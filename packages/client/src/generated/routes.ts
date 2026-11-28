@@ -22,7 +22,9 @@ import type {
 	FeishuBotView,
 	FeishuTestResult,
 	FeishuWebhookUrl,
+	FocusEditView,
 	FocusItemInput,
+	FocusItemView,
 	ListOrchestrationsQuery,
 	LogChunk,
 	LogPage,
@@ -66,6 +68,7 @@ import type {
 	RunMetricCatalog,
 	RunMetricSummary,
 	RunNotificationChanges,
+	RunNotificationSettings,
 	RunReport,
 	RunSummary,
 	RunView,
@@ -242,23 +245,26 @@ export interface Api {
 	};
 	feishuBots: {
 		/**
-		 * `GET /feishu-bots`
+		 * `GET /projects/:project/feishu-bots`
 		 *
-		 * 全部飞书机器人，按名称排序。
+		 * 项目里的全部飞书机器人，按名称排序。
 		 */
 		list: Endpoint<
-			{},
+			{
+				params: ProjectParams;
+			},
 			{
 				bots: FeishuBotView[];
 			}
 		>;
 		/**
-		 * `POST /feishu-bots`
+		 * `POST /projects/:project/feishu-bots`
 		 *
 		 * 登记一个飞书机器人（201，需要昵称请求头）。名称已被占用 409 `name_taken`。
 		 */
 		create: Endpoint<
 			{
+				params: ProjectParams;
 				body: {
 					/** 机器人名称：全局唯一，创建后不能改。 */
 					name: FeishuBotName;
@@ -269,7 +275,7 @@ export interface Api {
 			FeishuBotView
 		>;
 		/**
-		 * `PATCH /feishu-bots/:name`
+		 * `PATCH /projects/:project/feishu-bots/:name`
 		 *
 		 * 替换 Webhook 地址（需要昵称请求头）。名称创建后不能修改：请求里带 `name` 返回 400 `name_immutable`。
 		 * 机器人不存在 404 `not_found`。
@@ -277,6 +283,7 @@ export interface Api {
 		replaceWebhook: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -288,7 +295,7 @@ export interface Api {
 			FeishuBotView
 		>;
 		/**
-		 * `GET /feishu-bots/:name/references`
+		 * `GET /projects/:project/feishu-bots/:name/references`
 		 *
 		 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里「飞书机器人」类型的输入的常量值，
 		 * 以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
@@ -297,6 +304,7 @@ export interface Api {
 		references: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -307,13 +315,14 @@ export interface Api {
 			}
 		>;
 		/**
-		 * `DELETE /feishu-bots/:name`
+		 * `DELETE /projects/:project/feishu-bots/:name`
 		 *
 		 * 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。
 		 */
 		remove: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -321,7 +330,7 @@ export interface Api {
 			void
 		>;
 		/**
-		 * `POST /feishu-bots/:name/test`
+		 * `POST /projects/:project/feishu-bots/:name/test`
 		 *
 		 * 发送测试消息：不经过发送队列，直接同步向 Webhook 地址发一条固定文本（单次超时 10 秒），
 		 * 把飞书的结果翻译成中文返回。机器人不存在 404 `not_found`。
@@ -329,6 +338,7 @@ export interface Api {
 		test: Endpoint<
 			{
 				params: {
+					project: string;
 					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
@@ -805,7 +815,30 @@ export interface Api {
 					focus_items?: FocusItemInput[];
 				};
 			},
-			OrchestrationView
+			{
+				id: string;
+				name: string;
+				description: string;
+				/** 最新版本号；0 表示还没有保存过版本。 */
+				head_version: number;
+				created_at: Timestamp;
+				/** 归档时间；没有归档时为 null。 */
+				archived_at: Timestamp | null;
+				/** 运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。 */
+				run_notification: RunNotificationSettings;
+				/** 关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。 */
+				focus_items: FocusItemView[];
+				/** 关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。 */
+				focus_edit: FocusEditView | null;
+				/**
+				 * 修改以后的运行通知设置的问题，只提示、不阻止保存（#501）：要发给的机器人不是这个项目里登记的时，
+				 * 一条 `run_notification_bot_not_registered`。触发前的预检在 `warnings` 里给同一条，不阻断触发。
+				 */
+				warnings: {
+					code: string;
+					message: string;
+				}[];
+			}
 		>;
 		/**
 		 * `POST /orchestrations/:id/copy`
@@ -1480,12 +1513,12 @@ export const routes = {
 		get: { method: "GET", path: "/projects/:project/dashboard", kind: "endpoint" },
 	},
 	feishuBots: {
-		list: { method: "GET", path: "/feishu-bots", kind: "endpoint" },
-		create: { method: "POST", path: "/feishu-bots", kind: "endpoint" },
-		replaceWebhook: { method: "PATCH", path: "/feishu-bots/:name", kind: "endpoint" },
-		references: { method: "GET", path: "/feishu-bots/:name/references", kind: "endpoint" },
-		remove: { method: "DELETE", path: "/feishu-bots/:name", kind: "endpoint" },
-		test: { method: "POST", path: "/feishu-bots/:name/test", kind: "endpoint" },
+		list: { method: "GET", path: "/projects/:project/feishu-bots", kind: "endpoint" },
+		create: { method: "POST", path: "/projects/:project/feishu-bots", kind: "endpoint" },
+		replaceWebhook: { method: "PATCH", path: "/projects/:project/feishu-bots/:name", kind: "endpoint" },
+		references: { method: "GET", path: "/projects/:project/feishu-bots/:name/references", kind: "endpoint" },
+		remove: { method: "DELETE", path: "/projects/:project/feishu-bots/:name", kind: "endpoint" },
+		test: { method: "POST", path: "/projects/:project/feishu-bots/:name/test", kind: "endpoint" },
 	},
 	logs: {
 		page: { method: "GET", path: "/tasks/:id/logs", kind: "endpoint" },

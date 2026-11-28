@@ -40,6 +40,8 @@ const AGENT_CODES = new Set([
 	"agent_input_not_registered",
 	"sdk_version_unsatisfied",
 	"agent_version_unsatisfied",
+	// 节点派发到的 Agent 上，同一个节点包的另一个版本正在执行（#449）。
+	"package_version_in_use",
 ]);
 
 /** 从画布打开时才有的本地检查。 */

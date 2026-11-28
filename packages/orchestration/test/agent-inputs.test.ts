@@ -51,7 +51,7 @@ describe("「Agent」类型的输入的静态检查", () => {
 	const catalog: PackageCatalog = new Map([[packageKey("demo", "1.0.0"), [cleanType]]]);
 	const doc = (inputs: Record<string, unknown>) =>
 		OrchestrationDocument.parse({
-			default_agent: "a",
+			default_agent: "agent-a",
 			packages: { demo: "1.0.0" },
 			nodes: [
 				{ id: "entry", kind: "entry", params: [{ name: "src", type: "string" }] },
@@ -85,6 +85,56 @@ describe("「Agent」类型的输入的静态检查", () => {
 		expect(
 			documentWarnings(doc({ source: "ghost" }), catalog).filter((w) =>
 				w.code.startsWith("agent_"),
+			),
+		).toEqual([]);
+	});
+});
+
+describe("包节点派发到的 Agent 的静态检查（#500）", () => {
+	const doc = OrchestrationDocument.parse({
+		default_agent: "agent-a",
+		packages: { demo: "1.0.0" },
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			{ id: "c", kind: "package", package: "demo", node: "clean", inputs: {} },
+			{
+				id: "d",
+				kind: "package",
+				package: "demo",
+				node: "clean",
+				agent: "other-team-box",
+				inputs: {},
+			},
+		],
+		edges: [
+			{ from: "entry", to: "c", kind: "chain" },
+			{ from: "c", to: "d", kind: "chain" },
+		],
+	});
+	const nodeAgents = (agents: ReadonlySet<string>) =>
+		documentWarnings(doc, new Map(), { agents, nodeAgents: true }).filter(
+			(w) => w.code === "agent_not_registered",
+		);
+
+	it("节点另选的 Agent 和默认 Agent 不是这个项目里注册过的：各节点一条警告，说明和触发前的预检相同", () => {
+		expect(nodeAgents(new Set(["agent-a"]))).toEqual([
+			{
+				code: "agent_not_registered",
+				message: "节点 d 派发到的 Agent other-team-box 还没有注册过",
+				node_id: "d",
+			},
+		]);
+		expect(nodeAgents(new Set()).map((w) => w.node_id)).toEqual(["c", "d"]);
+	});
+
+	it("都注册过时不警告；不知道已注册的 Agent、或者没要求检查（画布）时不检查", () => {
+		expect(nodeAgents(new Set(["agent-a", "other-team-box"]))).toEqual([]);
+		expect(
+			documentWarnings(doc, new Map()).filter((w) => w.code === "agent_not_registered"),
+		).toEqual([]);
+		expect(
+			documentWarnings(doc, new Map(), { agents: new Set() }).filter(
+				(w) => w.code === "agent_not_registered",
 			),
 		).toEqual([]);
 	});

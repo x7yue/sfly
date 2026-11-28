@@ -55,5 +55,5 @@ export async function checkDocument(
 	const catalog = await packageCatalogFor(db, project, doc);
 	const registered = await registeredAgents(db, project);
 	const bots = await registeredBots(db, project);
-	return documentWarnings(doc, catalog, { agents: registered, feishuBots: bots });
+	return documentWarnings(doc, catalog, { agents: registered, feishuBots: bots, nodeAgents: true });
 }

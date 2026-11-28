@@ -1,5 +1,11 @@
 import type { AgentView, RunFocusItem } from "@sfly/schema";
-import { acceptsTasks, agentCounts, agentStatusView } from "#/agents/agent-status";
+import {
+	acceptsTasks,
+	agentCounts,
+	agentStatusView,
+	queuedCount,
+	usedSlots,
+} from "#/agents/agent-status";
 import { countAttention, type FocusPreview, focusPreview } from "#/focus/focus-preview";
 import { AGENT_STATUS_LABEL } from "#/lib/copy";
 
@@ -80,8 +86,8 @@ export function agentColumn(agents: readonly AgentView[]): { listed: AgentView[]
 		(agent) =>
 			!acceptsTasks(agent) ||
 			agentStatusView(agent).kind !== "ok" ||
-			agent.running_tasks.length > 0 ||
-			agent.queued_tasks.length > 0,
+			usedSlots(agent) > 0 ||
+			queuedCount(agent) > 0,
 	);
 	return { listed, idle: agents.length - listed.length };
 }

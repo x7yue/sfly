@@ -68,7 +68,7 @@ export class ApiClient {
 
 	/** 登记一个飞书机器人（响应按 HTTP 契约解析）。 */
 	async createFeishuBot(name: string, webhookUrl: string): Promise<FeishuBotView> {
-		const res = await this.post("/feishu-bots", { name, webhook_url: webhookUrl });
+		const res = await this.post("/projects/default/feishu-bots", { name, webhook_url: webhookUrl });
 		expect(res.status, await res.clone().text()).toBe(201);
 		return feishuBotsApi.create.response.parse(await res.json());
 	}

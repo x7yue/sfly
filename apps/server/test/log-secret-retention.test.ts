@@ -14,20 +14,26 @@ import { publishBench } from "./support/focus-items.js";
 import { withSecretLimits } from "./support/secret-limits.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-/** 控制面里取到过的值集合（有内容的），只留弱引用：`secretValues` 每次返回的对象。 */
+/**
+ * 控制面里取到过的值集合（有内容的），只留弱引用：`secretValues`（读取时打码的旧运行）和 `secretSetOf`（写入时打码的运行按加密副本，
+ * #505）每次返回的对象。
+ */
 const seen = vi.hoisted(() => ({ refs: [] as WeakRef<object>[], known: new WeakSet<object>() }));
 vi.mock("../src/logs/secrets.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../src/logs/secrets.js")>();
+	const record = <T extends { texts: readonly string[] }>(set: T): T => {
+		if (set.texts.length > 0 && !seen.known.has(set)) {
+			seen.known.add(set);
+			seen.refs.push(new WeakRef(set));
+		}
+		return set;
+	};
 	return {
 		...original,
-		secretValues: (...args: Parameters<typeof original.secretValues>) => {
-			const set = original.secretValues(...args);
-			if (set.texts.length > 0 && !seen.known.has(set)) {
-				seen.known.add(set);
-				seen.refs.push(new WeakRef(set));
-			}
-			return set;
-		},
+		secretValues: (...args: Parameters<typeof original.secretValues>) =>
+			record(original.secretValues(...args)),
+		secretSetOf: (...args: Parameters<typeof original.secretSetOf>) =>
+			record(original.secretSetOf(...args)),
 	};
 });
 

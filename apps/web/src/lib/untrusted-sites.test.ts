@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 清单里的表达式是源码里的原文（含 `${…}` 的模板字符串），不是想写模板
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -146,7 +145,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				wrapped: [
 					"logs.error",
 					'a.agent ?? "控制面"',
-					"ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind",
+					"ERROR_KIND_LABEL[a.error.kind as ErrorKind] ?? a.error.kind",
 					"a.error.kind",
 					'error.message || "（没有错误信息）"',
 					"a.error.location",

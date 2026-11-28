@@ -238,7 +238,11 @@ describe("会话令牌：每一轮开始时签发，这一轮以任何结局结�
 			);
 			for (const [method, path, body] of [
 				["POST", "/projects/default/tokens", { name: "x", scopes: ["read"] }],
-				["POST", "/feishu-bots", { name: "x", webhook_url: "https://example.com/hook" }],
+				[
+					"POST",
+					"/projects/default/feishu-bots",
+					{ name: "x", webhook_url: "https://example.com/hook" },
+				],
 				["POST", "/projects/default/sessions", { text: "你好" }],
 				["POST", `/sessions/${view.id}/messages`, { text: "你好" }],
 				["POST", `/sessions/${view.id}/stop`, {}],

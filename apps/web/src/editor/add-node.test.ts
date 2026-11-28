@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import type { AgentView, PackageSummary } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -69,6 +68,8 @@ describe("添加节点菜单的内置节点", () => {
 describe("添加节点菜单的分组与「最近使用」", () => {
 	const pkg = (name: string, version: string, nodes: string[]): PackageSummary => ({
 		name,
+		public: false,
+		latest_version: version,
 		versions: [
 			{
 				version,

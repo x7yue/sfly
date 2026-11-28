@@ -463,14 +463,17 @@ describe("契约路由的访问检查", () => {
 			expect(
 				outcome(
 					await run(
-						route("POST /feishu-bots"),
+						route("POST /projects/:project/feishu-bots"),
 						personal(USERS.editor, { scopes: ["read", "manage"] }),
 					),
 				),
 			).toBe(403);
 			expect(
 				outcome(
-					await run(route("POST /feishu-bots"), personal(USERS.boss, { scopes: ["manage"] })),
+					await run(
+						route("POST /projects/:project/feishu-bots"),
+						personal(USERS.boss, { scopes: ["manage"] }),
+					),
 				),
 			).toBe("ok");
 			// 范围是空的，什么都不能做，连读也不行。
@@ -506,17 +509,19 @@ describe("契约路由的访问检查", () => {
 			const everything = token({ kind: "project", projectId: DEFAULT, scopes: [...SCOPES] });
 			const manager = token({ kind: "project", projectId: DEFAULT, scopes: ["read", "manage"] });
 			for (const c of [everything, manager]) {
-				expect(outcome(await run(route("POST /feishu-bots"), c))).toBe(403);
+				expect(outcome(await run(route("POST /projects/:project/feishu-bots"), c))).toBe(403);
 				expect(
 					outcome(await run(route("POST /projects/:project/agents/:name/update-now"), c)),
 				).toBe(403);
-				expect(outcome(await run(route("GET /feishu-bots"), c))).toBe("ok");
+				expect(outcome(await run(route("GET /projects/:project/feishu-bots"), c))).toBe("ok");
 			}
 			// 别的范围照常：带了全部范围的项目令牌能运行、编辑、发布。
 			expect(outcome(await run(route("POST /orchestrations/:id/runs"), everything))).toBe("ok");
 			expect(outcome(await run(route("POST /projects/:project/packages"), everything))).toBe("ok");
 			// 人的凭据不受影响：项目管理员照样管理。
-			expect(outcome(await run(route("POST /feishu-bots"), personal(USERS.boss)))).toBe("ok");
+			expect(
+				outcome(await run(route("POST /projects/:project/feishu-bots"), personal(USERS.boss))),
+			).toBe("ok");
 		});
 
 		it("没有人和程序能调用的接口（任务的写：上传产物只给 Agent 凭据）：403，管理员也不行", async () => {
@@ -569,13 +574,15 @@ describe("契约路由的访问检查", () => {
 					status: 403,
 					message: expect.stringContaining("缺少「发布」范围"),
 				});
-				expect(await run(route("POST /feishu-bots"), generous)).toMatchObject({
+				expect(await run(route("POST /projects/:project/feishu-bots"), generous)).toMatchObject({
 					ok: false,
 					status: 403,
 					message: expect.stringContaining("缺少「管理」范围"),
 				});
 				// 同一个发起人用个人令牌：放行（说明挡住会话令牌的不是角色）。
-				expect(outcome(await run(route("POST /feishu-bots"), personal(USERS.boss)))).toBe("ok");
+				expect(
+					outcome(await run(route("POST /projects/:project/feishu-bots"), personal(USERS.boss))),
+				).toBe("ok");
 				expect(
 					outcome(await run(route("POST /projects/:project/packages"), personal(USERS.boss))),
 				).toBe("ok");
@@ -590,7 +597,7 @@ describe("契约路由的访问检查", () => {
 					expect.arrayContaining([
 						"POST /orchestrations/:id/archive",
 						"DELETE /orchestrations/:id/presets/:presetId",
-						"DELETE /feishu-bots/:name",
+						"DELETE /projects/:project/feishu-bots/:name",
 					]),
 				);
 				for (const def of removing) {
@@ -1543,7 +1550,7 @@ describe("契约路由的访问检查", () => {
 				route("POST /orchestrations/:id/runs"),
 				personal(USERS.admin, { name: "运维令牌" }),
 			);
-			await run(route("POST /feishu-bots"), login(USERS.admin));
+			await run(route("POST /projects/:project/feishu-bots"), login(USERS.admin));
 			await run(route("POST /projects/:project/packages"), login(USERS.admin));
 			expect(store.adminWrites).toEqual([
 				{
@@ -1568,7 +1575,7 @@ describe("契约路由的访问检查", () => {
 					memberRole: null,
 				},
 				expect.objectContaining({
-					route: "POST /feishu-bots",
+					route: "POST /projects/:project/feishu-bots",
 					resourceKind: "feishu_bot",
 					resourceId: null,
 				}),
@@ -1585,10 +1592,10 @@ describe("契约路由的访问检查", () => {
 			const boss = login(USERS.adminBoss);
 			await run(route("POST /orchestrations/:id/versions"), editor);
 			await run(route("POST /orchestrations/:id/runs"), editor);
-			await run(route("POST /feishu-bots"), boss);
+			await run(route("POST /projects/:project/feishu-bots"), boss);
 			await run(route("POST /projects/:project/packages"), boss);
 			expect(store.adminWrites).toEqual([]);
-			await run(route("POST /feishu-bots"), login(USERS.boss));
+			await run(route("POST /projects/:project/feishu-bots"), login(USERS.boss));
 			await run(route("PUT /tasks/:id/artifacts/*"), login(USERS.admin), "alpha");
 			expect(store.adminWrites).toEqual([]);
 		});
@@ -1599,10 +1606,10 @@ describe("契约路由的访问检查", () => {
 			await run(route("GET /projects/:project/orchestrations"), readOnly);
 			// 只读成员写场景、编辑者管理飞书机器人：都超出了他们作为成员的角色。
 			expect(outcome(await run(route("POST /orchestrations/:id/versions"), readOnly))).toBe("ok");
-			expect(outcome(await run(route("POST /feishu-bots"), editor))).toBe("ok");
+			expect(outcome(await run(route("POST /projects/:project/feishu-bots"), editor))).toBe("ok");
 			expect(store.adminWrites.map((w) => [w.userId, w.route])).toEqual([
 				[USERS.adminMember.id, "POST /orchestrations/:id/versions"],
-				[USERS.adminEditor.id, "POST /feishu-bots"],
+				[USERS.adminEditor.id, "POST /projects/:project/feishu-bots"],
 			]);
 			// 记着他当时作为成员的角色：和「不是成员」（空）区分开。
 			expect(store.adminWrites.map((w) => w.memberRole)).toEqual(["read_only", "editor"]);
