@@ -233,24 +233,65 @@ describe("写入时打码：写进库和日志文件的是掩码，Agent 收到�
 		expect((await api.run(runId)).params).toEqual({ token: MASK, host: "h-1" });
 	});
 
-	it("控制面重启之后：重新解析的输入、重试的输入、中途创建的子流程参数，Agent 收到原值，库里是掩码", async () => {
-		const retrying = orchestration(
+	it("没有标记的运行中途创建的子流程：参数从库里的列解析，子流程的节点收到原值", async () => {
+		const legacy = orchestration(
 			[
 				[
 					{ id: "entry", kind: "entry", params: [param("token", { secret: true })] },
 					echo("a", { text: "${{ params.token }}" }),
-					{ ...echo("b", { text: "${{ nodes.a.outputs.url }}" }), retries: 1 },
-					spawn("x", { k: "${{ nodes.a.outputs.url }}" }),
+					spawn("x", { k: "${{ params.token }}", c: "${{ nodes.a.outputs.code }}" }),
 				],
 				[
-					{ id: "sub", kind: "subflow_entry", name: "S", params: [param("k", { secret: true })] },
-					echo("s1", { text: "${{ params.k }}" }),
+					{
+						id: "sub",
+						kind: "subflow_entry",
+						name: "S",
+						params: [param("k", { secret: true }), param("c", { secret: true })],
+					},
+					echo("s1", { text: "got ${{ params.k }} ${{ params.c }}" }),
 				],
 			],
 			[["x", "sub"]],
 		);
-		const runId = await api.triggerOk(await api.orchestrationWith(retrying), { token: TOKEN });
+		const runId = await api.triggerOk(await api.orchestrationWith(legacy), { token: TOKEN });
 		const a = await agent.nextAssign();
+		await asLegacyRun(cp, runId);
+		await agent.succeed(a, { url: "u", code: LATE });
+		const s1 = await agent.nextAssign();
+		expect(s1.inputs.text).toBe(`got ${TOKEN} ${LATE}`);
+		const [sub] = await query<{ params: Record<string, unknown> }>(
+			cp,
+			"select params from chain_instances where run_id = $1 and chain_id = 'sub'",
+			[runId],
+		);
+		expect(sub?.params).toEqual({ k: TOKEN, c: LATE });
+		const [run] = await query<{ masked_on_write: boolean; vaults: number }>(
+			cp,
+			"select masked_on_write, (select count(*)::int from run_vaults where run_id = runs.id) as vaults from runs where id = $1",
+			[runId],
+		);
+		expect(run).toEqual({ masked_on_write: false, vaults: 0 });
+	});
+
+	/** 主链 a → b（失败重试一次）→ x 创建子流程（k 取 a 的输出 url，sub 里声明成 secret）→ s1。 */
+	const RESTARTING = orchestration(
+		[
+			[
+				{ id: "entry", kind: "entry", params: [param("token", { secret: true })] },
+				echo("a", { text: "${{ params.token }}" }),
+				{ ...echo("b", { text: "${{ nodes.a.outputs.url }}" }), retries: 1 },
+				spawn("x", { k: "${{ nodes.a.outputs.url }}" }),
+			],
+			[
+				{ id: "sub", kind: "subflow_entry", name: "S", params: [param("k", { secret: true })] },
+				echo("s1", { text: "${{ params.k }}" }),
+			],
+		],
+		[["x", "sub"]],
+	);
+	const URL = `https://x.test/?t=${TOKEN}`;
+	/** 重启控制面，Agent 重连时列出还在执行的 `running`（控制面重启之后从库和副本重新开始）。 */
+	const restartWith = async (running: AssignedTask[]) => {
 		await agent.disconnect();
 		await cp.restart();
 		agent = await FakeAgent.connect(
@@ -258,24 +299,53 @@ describe("写入时打码：写进库和日志文件的是掩码，Agent 收到�
 			{
 				name: "agent-a",
 				slots: 4,
-				runningTasks: [{ taskId: a.taskId, attempt: a.attempt, started: true }],
+				runningTasks: running.map((t) => ({ taskId: t.taskId, attempt: t.attempt, started: true })),
 			},
 			{ clock: cp.clock },
 		);
-		const url = `https://x.test/?t=${TOKEN}`;
-		await agent.succeed(a, { url });
+	};
+
+	it("控制面重启之后重新解析的输入：Agent 收到原值，库里是掩码", async () => {
+		const runId = await api.triggerOk(await api.orchestrationWith(RESTARTING), { token: TOKEN });
+		const a = await agent.nextAssign();
+		await restartWith([a]);
+		await agent.succeed(a, { url: URL });
+		const b = await agent.nextAssign();
+		expect(b.inputs.text).toBe(URL);
+		expect((await taskOf(cp, runId, "b")).inputs).toEqual({ text: `https://x.test/?t=${MASK}` });
+		expect(await storedText(cp)).not.toContain(TOKEN);
+	});
+
+	it("控制面重启之后重试的输入：第一次在重启之前解析，重试在重启之后，Agent 收到原值，库里是掩码", async () => {
+		const runId = await api.triggerOk(await api.orchestrationWith(RESTARTING), { token: TOKEN });
+		const a = await agent.nextAssign();
+		await agent.succeed(a, { url: URL });
 		const b1 = await agent.nextAssign();
-		expect(b1.inputs.text).toBe(url);
+		expect(b1.inputs.text).toBe(URL);
+		await restartWith([b1]);
 		await agent.fail(b1, "flaky");
 		const b2 = await agent.nextAssign();
 		expect(b2.attempt).toBe(2);
-		expect(b2.inputs.text).toBe(url);
-		await agent.succeed(b2);
-		const s1 = await agent.nextAssign();
-		expect(s1.inputs.text).toBe(url);
+		expect(b2.inputs.text).toBe(URL);
 		expect((await taskOf(cp, runId, "b")).inputs).toEqual({ text: `https://x.test/?t=${MASK}` });
+		expect(await storedText(cp)).not.toContain(TOKEN);
+	});
+
+	it("控制面重启之后中途创建的子流程参数：Agent 收到原值，库里是掩码", async () => {
+		const runId = await api.triggerOk(await api.orchestrationWith(RESTARTING), { token: TOKEN });
+		const a = await agent.nextAssign();
+		await restartWith([a]);
+		await agent.succeed(a, { url: URL });
+		await agent.succeed(await agent.nextAssign()); // b
+		const s1 = await agent.nextAssign();
+		expect(s1.inputs.text).toBe(URL);
+		const [sub] = await query<{ params: Record<string, unknown> }>(
+			cp,
+			"select params from chain_instances where run_id = $1 and chain_id = 'sub'",
+			[runId],
+		);
+		expect(sub?.params).toEqual({ k: MASK });
 		expect((await taskOf(cp, runId, "s1")).inputs).toEqual({ text: MASK });
-		await agent.succeed(s1);
 		expect(await storedText(cp)).not.toContain(TOKEN);
 	});
 
@@ -308,7 +378,7 @@ describe("写入时打码：写进库和日志文件的是掩码，Agent 收到�
 		expect(file).not.toContain(TOKEN);
 	});
 
-	it("原值集合按运行：一个运行的 secret 值不用来打码别的运行（别的项目的运行更不会）", async () => {
+	it("原值集合按运行：一个运行的 secret 值不用来打码同一个项目里别的运行", async () => {
 		await runScenario();
 		const plain = orchestration(
 			[
@@ -327,6 +397,81 @@ describe("写入时打码：写进库和日志文件的是掩码，Agent 收到�
 		expect((await taskOf(cp, runId, "p")).outputs).toEqual({ url: TOKEN });
 		const file = await readFile(join(cp.dataDir, "logs", runId, `${p.taskId}.jsonl`), "utf8");
 		expect(file).toContain(`echo ${TOKEN}`);
+	});
+
+	it("原值集合按运行：项目甲还在跑的运行的 secret 值不用来打码项目乙的运行", async () => {
+		// 项目甲的运行停在 a 执行中：它的加密副本还在（运行结束、离手之后就删了，那时测不出串用）。
+		const alpha = await api.triggerOk(await api.orchestrationWith(SCENARIO), {
+			token: TOKEN,
+			host: "h-1",
+		});
+		await agent.nextAssign();
+		expect(
+			(
+				await query<{ n: number }>(
+					cp,
+					"select count(*)::int as n from run_vaults where run_id = $1",
+					[alpha],
+				)
+			)[0]?.n,
+		).toBe(1);
+		await query(
+			cp,
+			"insert into projects (id, display_name, created_at) values ('beta', '项目乙', now())",
+		);
+		const inBeta = {
+			fetch: (path: string, init?: RequestInit) =>
+				cp.fetch(path.replace("/projects/default/", "/projects/beta/"), init),
+		};
+		await publishPackage(inBeta, "stub", "2.0.0", { echo: ["url"] });
+		const issued = await cp.fetch("/projects/beta/agents/agent-b/credentials", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		});
+		expect(issued.status, await issued.clone().text()).toBe(201);
+		const { token } = (await issued.json()) as { token: string };
+		const agentB = await FakeAgent.connect(cp.grpcUrl, { name: "agent-b", slots: 1, token });
+		try {
+			const created = await cp.fetch("/projects/beta/orchestrations", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "乙的场景" }),
+			});
+			expect(created.status, await created.clone().text()).toBe(201);
+			const { id } = (await created.json()) as { id: string };
+			await api.saveVersion(id, {
+				...orchestration(
+					[
+						[
+							{ id: "entry", kind: "entry", params: [param("v")] },
+							echo("p", { text: "${{ params.v }}" }),
+						],
+					],
+					[],
+				),
+				default_agent: "agent-b",
+				packages: { stub: "2.0.0" },
+			});
+			const runId = await api.triggerOk(id, { v: TOKEN });
+			const p = await agentB.nextAssign();
+			expect(p.inputs.text).toBe(TOKEN);
+			agentB.logs(p, [[1, `echo ${TOKEN}`]]);
+			await agentB.sync();
+			await agentB.succeed(p, { url: TOKEN });
+			const [run] = await query<{ project_id: string; params: unknown }>(
+				cp,
+				"select project_id, params from runs where id = $1",
+				[runId],
+			);
+			expect(run).toEqual({ project_id: "beta", params: { v: TOKEN } });
+			expect((await taskOf(cp, runId, "p")).inputs).toEqual({ text: TOKEN });
+			expect((await taskOf(cp, runId, "p")).outputs).toEqual({ url: TOKEN });
+			const file = await readFile(join(cp.dataDir, "logs", runId, `${p.taskId}.jsonl`), "utf8");
+			expect(file).toContain(`echo ${TOKEN}`);
+		} finally {
+			await agentB.disconnect();
+		}
 	});
 
 	it("派发时类型不符：错误信息里引用的值是掩码", async () => {
