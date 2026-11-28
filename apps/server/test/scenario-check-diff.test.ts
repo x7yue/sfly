@@ -9,6 +9,7 @@ import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 type Doc = Record<string, unknown> & {
@@ -52,6 +53,7 @@ describe("场景的检查接口和版本对比接口", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
+		await registerAgents(cp.database.url, ["agent-a"]);
 		const check = { outputs: [], inputs: { properties: { url: { type: "string" } } } };
 		// probe 有必填输入 host：缺了它保存时有 input_required 警告
 		const probe = {

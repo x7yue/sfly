@@ -3,7 +3,14 @@ import { cn } from "cn";
 import { useId } from "react";
 import { AgentAdminActions } from "#/agents/AgentAdminActions";
 import { agentAnchor } from "#/agents/agent-anchor";
-import { acceptsTasks, agentStatusView, authNotice, updateStatus } from "#/agents/agent-status";
+import {
+	acceptsTasks,
+	agentStatusView,
+	authNotice,
+	queuedCount,
+	updateStatus,
+	usedSlots,
+} from "#/agents/agent-status";
 import { PreparingBadge } from "#/agents/PreparingBadge";
 import { queueTiming } from "#/agents/queue-timing";
 import { TaskSlot } from "#/agents/TaskSlot";
@@ -11,7 +18,12 @@ import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
 import type { FocusByRun } from "#/agents/use-slot-focus";
 import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
-import { IdleSlots, idleSlotCount, taskChainLabel } from "#/components/slot-cell";
+import {
+	IdleSlots,
+	idleSlotCount,
+	OtherProjectSlots,
+	taskChainLabel,
+} from "#/components/slot-cell";
 import { nodeStatusView, StatusDot, StatusPill } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
 import { attemptLabel, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
@@ -37,8 +49,8 @@ export function AgentRack({
 	const headingId = useId();
 	const slotsHeadingId = useId();
 	const slots = agent.info.slots;
-	const used = agent.running_tasks.length;
-	const queued = agent.queued_tasks.length;
+	const used = usedSlots(agent);
+	const queued = queuedCount(agent);
 	const accepts = acceptsTasks(agent);
 	const idle = idleSlotCount(slots, used);
 	// 接不了新任务的 Agent 槽位不算空闲：不画空闲矮条、不写占用数；没有任务还占着槽位时槽位一栏整个不画。
@@ -93,11 +105,14 @@ export function AgentRack({
 								{agent.running_tasks.map((task) => (
 									<TaskSlot key={task.task_id} task={task} runFocus={runFocus.get(task.run_id)} />
 								))}
+								{agent.other_project_running > 0 && (
+									<OtherProjectSlots count={agent.other_project_running} />
+								)}
 								{accepts && idle > 0 && <IdleSlots count={idle} />}
 							</ul>
 						</div>
 					)}
-					{queued > 0 && <QueuedTasks tasks={agent.queued_tasks} />}
+					{agent.queued_tasks.length > 0 && <QueuedTasks tasks={agent.queued_tasks} />}
 				</div>
 			)}
 			<dl
@@ -153,7 +168,7 @@ function RackStatus({ agent }: { agent: AgentView }) {
 					<UntrustedText text={update.detail} />
 				</span>
 			)}
-			{!update && installing && agent.install && (
+			{!update && installing && agent.install?.package && (
 				<span className="font-mono text-2xs text-fg-3">
 					<UntrustedText text={`${agent.install.package}@${agent.install.version}`} />
 				</span>
@@ -177,7 +192,14 @@ function RackStatus({ agent }: { agent: AgentView }) {
 			)}
 			{failed && agent.install && (
 				<span className="text-xs text-danger-fg">
-					安装 <UntrustedText text={`${agent.install.package}@${agent.install.version}`} /> 失败
+					{/* 为别的项目的任务装的没有包名（#500）。 */}
+					{agent.install.package ? (
+						<>
+							安装 <UntrustedText text={`${agent.install.package}@${agent.install.version}`} /> 失败
+						</>
+					) : (
+						"安装节点包失败"
+					)}
 				</span>
 			)}
 		</div>
