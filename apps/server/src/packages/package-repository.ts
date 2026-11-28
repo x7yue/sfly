@@ -21,7 +21,15 @@ import { sameVersion } from "./pep440.js";
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */
 export const METADATA_FILE = "sfly-package.json";
 
-export type PackageErrorKind = "invalid_package" | "conflict" | "session_ended";
+/**
+ * 发布被拒的原因：`conflict` 是 `包名@版本` 已经有了（换一个版本号能过，会话构建的命令行据此换序号重试）；
+ * `package_name_taken` 是名字在公共项目和别的项目之间重了（#501，换版本号也过不了，要换名字）。
+ */
+export type PackageErrorKind =
+	| "invalid_package"
+	| "conflict"
+	| "package_name_taken"
+	| "session_ended";
 
 export class PackageError extends Error {
 	constructor(
@@ -245,7 +253,7 @@ async function rejectNameAcrossPublic(tx: Tx, project: ProjectId, name: string):
 		.limit(1);
 	if (clash === undefined) return;
 	throw new PackageError(
-		"conflict",
+		"package_name_taken",
 		project === PUBLIC_PROJECT
 			? `已经有项目发布了名为 ${name} 的节点包：公共项目里不能发布和别的项目同名的包，换一个名字`
 			: `公共项目里已有节点包 ${name}（任何项目都能直接用它）：别的项目里不能发布同名的包，换一个名字；发布它的新版本要发布到公共项目（只有平台管理员能发布）`,

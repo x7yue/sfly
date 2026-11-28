@@ -54,7 +54,8 @@ export const sessionBuildsApi = {
 	/**
 	 * 登记会话构建：请求体是 `sfly build` 打出的 .sflypkg 原始字节（application/octet-stream，不在契约里），返回 201。
 	 * 版本号要带这个会话的标签（{@link sessionBuildTag}）；会话已结束 409 `session_ended`；元信息不合法、标签不对 400
-	 * `invalid_package`；`包名@版本` 已存在 409 `conflict`。会话令牌只能登记到自己的会话。
+	 * `invalid_package`；`包名@版本` 已存在 409 `conflict`（命令行换下一个序号重试）；名字在公共项目和别的项目之间重了
+	 * 409 `package_name_taken`（要换名字，重试没有用）。会话令牌只能登记到自己的会话。
 	 */
 	register: endpoint({
 		method: "POST",

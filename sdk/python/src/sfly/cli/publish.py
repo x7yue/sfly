@@ -101,6 +101,9 @@ def register_session_build(root: Path, client: Client) -> dict[str, Any]:
                 )
                 return body
             except ApiError as error:
+                # 只有 `conflict`（这个序号已经登记过了，例如并发登记）换下一个序号重试。
+                # 别的原因（名字在公共项目和别的项目之间重了 `package_name_taken`、会话已结束、
+                # 元信息不对）重试也过不了，第一次就把控制面的说明原样给用户。
                 if error.code != "conflict":
                     raise PublishError(
                         f"控制面拒绝登记会话构建（HTTP {error.status} {error.code}）："

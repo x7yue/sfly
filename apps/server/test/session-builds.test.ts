@@ -272,6 +272,49 @@ describe("会话构建", () => {
 		}
 	}, 120_000);
 
+	it("名字被公共项目占了：409 package_name_taken（换名字），和「包名@版本」已存在的 409 conflict（换序号）分开；sfly publish --session-build 第一次就退出、给出换名字的说明，不重试", async () => {
+		await query(
+			`insert into node_packages (name, version, project_id, metadata, file_path, sha256, size, published_at)
+			 values ('demo-session', '9.0', 'public', '{}'::jsonb, 'packages/demo-session/9.0.sflypkg', 'x', 1, now())`,
+		);
+		const archive = packageArchive(
+			packageMetadata({ name: "demo-session", version: buildOf(sessionA, 1, "0.3.1") }),
+		);
+		const taken = await cp.fetch(`/sessions/${sessionA}/builds`, as(tokenA, publishInit(archive)));
+		expect(taken.status).toBe(409);
+		const takenError = ((await taken.json()) as { error: Problem }).error;
+		expect(takenError.code).toBe("package_name_taken");
+		expect(takenError.message).toContain("公共项目里已有节点包 demo-session");
+		// 对照：同一个会话构建登记两次是「包名@版本」已存在。
+		expect((await register(tokenA, sessionA, buildOf(sessionA, 1))).status).toBe(201);
+		const again = await register(tokenA, sessionA, buildOf(sessionA, 1));
+		expect(again.status).toBe(409);
+		expect(((await again.json()) as { error: Problem }).error.code).toBe("conflict");
+
+		const dir = await mkdtemp(join(tmpdir(), "sfly-session-build-"));
+		try {
+			await mkdir(join(dir, "src", "demo_session"), { recursive: true });
+			await writeFile(
+				join(dir, "pyproject.toml"),
+				'[project]\nname = "demo-session"\nversion = "0.3.1"\ndependencies = []\n',
+			);
+			await writeFile(join(dir, "src", "demo_session", "__init__.py"), "");
+			await writeFile(
+				join(dir, "src", "demo_session", "nodes.py"),
+				'from sfly import Context, node\n\n@node(title="回显", outputs=["text"])\ndef echo(ctx: Context, text: str) -> dict:\n    return {"text": text}\n',
+			);
+			const result = await sfly(["publish", dir, "--session-build", "--server", cp.httpUrl], {
+				env: { SFLY_API_TOKEN: tokenA, SFLY_SESSION_ID: sessionA },
+			});
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("package_name_taken");
+			expect(result.stderr).toContain("公共项目里已有节点包 demo-session");
+			expect(result.stderr).not.toContain("序号一直冲突");
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}, 120_000);
+
 	it("会话结束：不能再登记、新的触发找不到它；已经触发的照常派发，运行结束之后周期清理删掉行和归档文件", async () => {
 		const version = buildOf(sessionA, 1);
 		expect((await register(tokenA, sessionA, version)).status).toBe(201);

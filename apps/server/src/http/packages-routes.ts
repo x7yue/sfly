@@ -65,7 +65,12 @@ export function registerPackageRoutes(
 				return published;
 			} catch (error) {
 				if (error instanceof PackageError) {
-					return sendError(reply, error.kind === "conflict" ? 409 : 400, error.kind, error.message);
+					return sendError(
+						reply,
+						error.kind === "conflict" || error.kind === "package_name_taken" ? 409 : 400,
+						error.kind,
+						error.message,
+					);
 				}
 				throw error;
 			}
