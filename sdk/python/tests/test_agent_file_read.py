@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from test_agent_channel import INFO, PACKAGE_SRC, SDK_SRC, FakeAgent, frame, wait_for
+from polling import wait_for
+from test_agent_channel import INFO, PACKAGE_SRC, SDK_SRC, FakeAgent, frame
 
 import sfly
 from sfly import Context, TaskInfo

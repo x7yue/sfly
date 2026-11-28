@@ -10,7 +10,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 import zipfile
 from email.parser import Parser
 from pathlib import Path
@@ -21,6 +20,7 @@ import psutil
 import pytest
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
+from polling import wait_for
 
 from sfly import __version__ as SDK_VERSION
 from sfly.cli.build import build
@@ -463,11 +463,10 @@ def test_the_process_assert_recipe_in_the_upgrade_section_runs_and_needs_every_c
         # 文档里是 name="python"、server.py：换成这台机器上解释器进程的名字和这次的标记。
         code = code.replace('name="python"', f"name={name!r}").replace("server\\.py", marker)
         # 刚起的子进程要等到 exec 完成、命令行才是最终的样子。
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and marker not in " ".join(
-            psutil.Process(both.pid).cmdline()
-        ):
-            time.sleep(0.05)
+        wait_for(
+            lambda: marker in " ".join(psutil.Process(both.pid).cmdline()),
+            what="子进程 exec 完",
+        )
 
         matched = _run_recipe(code)
 
@@ -486,11 +485,10 @@ def test_the_process_assert_recipe_treats_a_vanished_or_unreadable_process_as_no
     alive = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "server.py"])
     gone = subprocess.Popen([sys.executable, "-c", "pass"])
     try:
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and "server.py" not in " ".join(
-            psutil.Process(alive.pid).cmdline()
-        ):
-            time.sleep(0.05)
+        wait_for(
+            lambda: "server.py" in " ".join(psutil.Process(alive.pid).cmdline()),
+            what="子进程 exec 完",
+        )
         vanished = psutil.Process(gone.pid)
         gone.wait()
         denied = mock.Mock(spec=psutil.Process)

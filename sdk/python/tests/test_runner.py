@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polling import wait_for
 
 from sfly import Cancelled, runner
 
@@ -642,10 +643,7 @@ def test_sigterm_raises_cancelled_in_the_node_so_cleanup_runs(
     proc = subprocess.Popen(
         [sys.executable, "-m", "sfly.runner"], cwd=work, env=env, stderr=subprocess.PIPE
     )
-    deadline = time.monotonic() + 30
-    while not ready.exists():
-        assert time.monotonic() < deadline, "node never started"
-        time.sleep(0.02)
+    wait_for(ready.exists, 30, what="节点启动")
     (work / "cancel").write_text("")
     proc.terminate()
     _, stderr = proc.communicate(timeout=10)
@@ -847,10 +845,7 @@ def terminate(
         stderr=subprocess.PIPE,
         text=True,
     )
-    deadline = time.monotonic() + 30
-    while not ready.exists():
-        assert time.monotonic() < deadline, "node never started"
-        time.sleep(0.02)
+    wait_for(ready.exists, 30, what="节点启动")
     (work / "cancel").write_text("")
     proc.terminate()
     _, stderr = proc.communicate(timeout=10)
@@ -1956,7 +1951,7 @@ def test_failing_to_trim_the_traceback_reports_the_full_traceback_of_the_nodes_e
 def frame_in(filename: str, function: str = "f", module: str = "fake") -> types.FrameType:
     """一个代码文件名是 `filename`、模块名是 `module` 的函数的栈帧（函数已经返回，帧对象还在）。"""
     namespace: dict[str, Any] = {"__name__": module}
-    exec(  # noqa: S102 - 测试里造一个带指定文件名的帧
+    exec(  # 测试里造一个带指定文件名的帧
         compile(f"import sys\ndef {function}():\n    return sys._getframe()\n", filename, "exec"),
         namespace,
     )

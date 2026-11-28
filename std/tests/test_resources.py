@@ -67,10 +67,10 @@ def test_a_restarted_process_is_found_again_by_name_within_refind_seconds(
     run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
 
     def restart() -> None:
-        time.sleep(0.8)
+        time.sleep(0.8)  # noqa: TID251 造场景：采样跑了几轮之后进程才重启
         first.kill()
         first.wait()
-        time.sleep(0.8)
+        time.sleep(0.8)  # noqa: TID251 造场景：采样跑了几轮之后进程才重启
         spawn(tag)
 
     restarter = threading.Thread(target=restart)
@@ -212,9 +212,9 @@ def test_refind_finds_a_restarted_process_by_name(tmp_path: Path, named_sleep: N
     run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
 
     def restart() -> None:
-        time.sleep(0.8)
+        time.sleep(0.8)  # noqa: TID251 造场景：采样跑了几轮之后进程才重启
         os.kill(first.pid, signal.SIGKILL)
-        time.sleep(0.8)
+        time.sleep(0.8)  # noqa: TID251 造场景：采样跑了几轮之后进程才重启
         named_sleep.start(name, "300")
 
     restarter = threading.Thread(target=restart)
@@ -242,10 +242,10 @@ def test_refind_keeps_sampling_the_other_target_while_one_of_two_is_restarting(
     run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
 
     def restart_a() -> None:
-        time.sleep(0.8)
+        time.sleep(0.8)  # noqa: TID251 造场景：采样跑了几轮之后进程才重启
         first_a.kill()
         first_a.wait()
-        time.sleep(1.2)
+        time.sleep(1.2)  # noqa: TID251 造场景：采样跑了几轮之后进程才重启
         spawn(tag_a)
 
     restarter = threading.Thread(target=restart_a)

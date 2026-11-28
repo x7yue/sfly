@@ -119,7 +119,7 @@ class LogFile:
 
     def _open(self) -> bool:
         try:
-            self._file = open(self.path, "rb", buffering=0)  # noqa: SIM115
+            self._file = open(self.path, "rb", buffering=0)
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             return False
         st = os.fstat(self._file.fileno())

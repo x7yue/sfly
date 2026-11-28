@@ -21,6 +21,7 @@ import platform_driver
 import pytest
 from aeval.platform import ENVIRONMENT, PLATFORM, UNCLASSIFIED, classify_platform
 from platform_driver import ADMIN_PASSWORD_ENV, HEARTBEAT_EVENT, Client, run, sse_events
+from polling import wait_for
 
 DRIVER = Path(platform_driver.__file__)
 LOGIN_NAME = "aeval_admin"
@@ -126,7 +127,7 @@ class FakeControlPlane:
                 self._json(401, {"error": {"code": "unauthorized", "message": "要登录"}})
                 return True
 
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:
                 length = int(self.headers.get("content-length") or 0)
                 body = self.rfile.read(length).decode() if length else None
                 owner.calls.append(("POST", self.path))
@@ -216,16 +217,16 @@ class FakeControlPlane:
                     owner.stopped.set()
                     return self._json(owner.stop_code, {"code": "x"})
                 if self.path.endswith("/end"):
-                    time.sleep(owner.slow)
+                    time.sleep(owner.slow)  # noqa: TID251 假的控制面：模拟回应慢
                     return self._json(owner.end_code, {"code": "x"})
                 self._json(404, {})
 
-            def do_GET(self) -> None:  # noqa: N802
+            def do_GET(self) -> None:
                 owner.calls.append(("GET", self.path))
                 if self._unauthorized():
                     return
                 if self.path == "/projects/default/sessions":
-                    time.sleep(owner.slow)
+                    time.sleep(owner.slow)  # noqa: TID251 假的控制面：模拟回应慢
                     if owner.mode == "readiness-straddle":
                         head = '{"ready": false, "problems": [], "echo": "'
                         echo = straddle(head, PASSWORD, 20, 200, '"}')
@@ -323,14 +324,14 @@ class FakeControlPlane:
         if mode == "silent":
             until = time.monotonic() + 8
             while not (self.stopped.is_set() or self.closing.is_set()) and time.monotonic() < until:
-                time.sleep(0.05)
+                time.sleep(0.05)  # noqa: TID251 假的事件流：一直不说话，直到被停下或到时
             return
         yield ev({"type": "user_message", "seq": 1})
         # 最多 8 秒（驱动该在时限那一刻自己断开；没断开的话，用例按用时判出来，不一直挂着）。
         until = time.monotonic() + 8
         while not (self.stopped.is_set() or self.closing.is_set()) and time.monotonic() < until:
             yield heartbeat()
-            time.sleep(0.1)
+            time.sleep(0.1)  # noqa: TID251 假的事件流：每 0.1 秒一次心跳
 
     def close(self) -> None:
         self.closing.set()
@@ -652,10 +653,10 @@ def test_a_signal_ends_the_session_writes_the_record_and_is_an_environment_fault
         env={**os.environ, ADMIN_PASSWORD_ENV: PASSWORD},
     )
     try:
-        deadline = time.monotonic() + 10
-        while not any(p.startswith("/sessions/s1/events") for _, p in cp.calls):
-            assert time.monotonic() < deadline
-            time.sleep(0.05)
+        wait_for(
+            lambda: any(p.startswith("/sessions/s1/events") for _, p in cp.calls),
+            what="驱动连上事件流",
+        )
         proc.send_signal(sig)
         output, _ = proc.communicate(timeout=20)
     finally:
@@ -677,7 +678,7 @@ def test_a_deadline_that_passes_while_connecting_still_cuts_the_connection(
     real_request = http.client.HTTPConnection.request
 
     def slow_request(self: Any, *args: Any, **kwargs: Any) -> None:
-        time.sleep(0.5)  # 时限在发请求的时候就到了
+        time.sleep(0.5)  # noqa: TID251 让时限在发请求的时候就到了
         real_request(self, *args, **kwargs)
 
     monkeypatch.setattr(http.client.HTTPConnection, "request", slow_request)

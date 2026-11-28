@@ -35,8 +35,18 @@ extend-exclude = ["node_modules", "apps", "packages", "*.md"]
 [tool.ruff.lint]
 # G：日志参数按 % 传入（sdk-reference「ctx.log」），不在调用前用 f-string、% 或 format 拼好。
 # G010 不适用：`ctx.log.warn` 是 SDK 文档里写明的 `warning` 别名。
-select = ["E", "F", "W", "I", "UP", "B", "G"]
+# RUF100：没用的 `noqa`（针对的规则没有开、或者那一行已经没有问题）要删掉。
+# TID251：测试里不直接 sleep 固定时长再断言（CODING_STANDARDS.md「测试」），等条件用 `polling.wait_for`
+# （sdk/python/tests/polling.py）；确实要 sleep 的（被测节点模拟耗时、假的服务端），那一行写
+# `# noqa: TID251 <原因>`。只对测试目录生效，见下面的 per-file-ignores。
+select = ["E", "F", "W", "I", "UP", "B", "G", "TID251", "RUF100"]
 ignore = ["G010"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"time.sleep".msg = "测试里不要固定 sleep 再断言：用 polling.wait_for 等条件成立；确实要 sleep 时在那一行写 `# noqa: TID251 <原因>`"
+
+[tool.ruff.lint.per-file-ignores]
+"!{sdk/python/tests,std/tests,evals/assistant/tests,scripts/tests}/**" = ["TID251"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["sfly", "sfly_std"]

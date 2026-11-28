@@ -336,7 +336,7 @@ def _node_packages(entry: str, package: str | None) -> set[str]:
             for top, dists in metadata.packages_distributions().items():
                 if any(normalized(d) == wanted for d in dists):
                     names.add(top)
-        except Exception:  # noqa: BLE001 - 取不到发行版信息时只认入口模块的顶层名
+        except Exception:  # 取不到发行版信息时只认入口模块的顶层名
             pass
     return names
 
@@ -558,7 +558,7 @@ def _termination_message(error: BaseException, entry: str = "", package: str | N
     text = str(error) or "任务被终止"
     try:
         place = _terminated_at(error, entry, package)
-    except Exception:  # noqa: BLE001 - 位置只是附带的信息，取不到不能影响结果
+    except Exception:  # 位置只是附带的信息，取不到不能影响结果
         place = None
     return f"{text}，执行到 {place}" if place else text
 
@@ -568,7 +568,7 @@ def _log(level: str, message: str) -> None:
     写不进去时丢弃：写日志失败不能让任务丢掉 output.json。"""
     try:
         Context().log(message, level=level)
-    except Exception:  # noqa: BLE001 - 同上
+    except Exception:  # 同上
         pass
 
 
@@ -601,7 +601,7 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
         message = _bound_text(str(error), MAX_FAILURE_MESSAGE_BYTES, "说明")
         failure = {"status": "failed", "error": {"kind": "config_error", "message": message}}
         return 1, json.dumps(failure, ensure_ascii=False)
-    except BaseException as error:  # noqa: BLE001 - 节点代码的任何异常（包括 SystemExit）都是失败
+    except BaseException as error:  # 节点代码的任何异常（包括 SystemExit）都是失败
         if isinstance(error, KeyboardInterrupt):
             raise
         import traceback
@@ -621,11 +621,11 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             # 兜底时不能用 `format_exc()`：在这个 `except` 里它格式化的是刚接住的内部错误。
             try:
                 tb = _format_failure(error, importing=importing)
-            except Exception:  # noqa: BLE001 - 整理堆栈只是为了好读
+            except Exception:  # 整理堆栈只是为了好读
                 tb = "".join(traceback.format_exception(error))
             try:
                 place = _failed_at(error, str(task.get("entry") or ""), task.get("package"))
-            except Exception:  # noqa: BLE001 - 位置只是附带的信息
+            except Exception:  # 位置只是附带的信息
                 place = None
             if place:
                 _log("error", f"出错位置：{place}")

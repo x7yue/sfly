@@ -82,7 +82,7 @@ def test_follow_log_file_forwards_lines_and_returns_the_total(tmp_path: Path) ->
     path.write_text("已有\n")
 
     def append() -> None:
-        time.sleep(0.4)
+        time.sleep(0.4)  # noqa: TID251 造场景：被测的等待已经开始之后再写
         with path.open("a") as f:
             f.write("新一\n新二\n")
 
@@ -113,7 +113,7 @@ def test_wait_for_log_line_returns_the_first_matching_line(tmp_path: Path) -> No
     path = tmp_path / "app.log"
 
     def append() -> None:
-        time.sleep(0.4)
+        time.sleep(0.4)  # noqa: TID251 造场景：被测的等待已经开始之后再写
         with path.open("a") as f:
             f.write("启动中\n服务就绪 端口 8080\n")
 

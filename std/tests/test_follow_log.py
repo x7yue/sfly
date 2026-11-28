@@ -115,9 +115,9 @@ def test_keeps_following_after_the_file_is_rotated(
         append(log, "轮转前\n")
         os.rename(log, tmp_path / "app.log.1")
         append(tmp_path / "app.log.1", "旧文件里最后一行\n")
-        time.sleep(0.5)
+        time.sleep(0.5)  # noqa: TID251 造场景：被测的跟踪先读到前面的内容，再发生轮转
         append(log, "新文件第一行\n")
-        time.sleep(0.5)
+        time.sleep(0.5)  # noqa: TID251 造场景：轮转之后隔一会儿再写新文件
         append(log, "新文件第二行\n")
 
     result = run_node(
@@ -139,8 +139,8 @@ def test_keeps_following_after_the_file_is_truncated(
 
     def truncate() -> None:
         append(log, "截断前一\n截断前二\n")
-        time.sleep(0.5)
-        with log.open("r+") as f:  # 与 logrotate 的 copytruncate 相同：原地截断
+        time.sleep(0.5)  # noqa: TID251 造场景：被测的跟踪先读到前面的内容，再截断
+        with log.open("r+") as f:
             f.truncate(0)
         append(log, "截断后\n")
 

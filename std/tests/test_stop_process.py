@@ -16,6 +16,7 @@ from pathlib import Path
 import psutil
 import pytest
 from direct_context import DirectRun
+from polling import wait_for
 
 from sfly.testing import Execution, run_node
 from sfly_std import processes
@@ -35,13 +36,6 @@ def kill(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-
-
-def wait_for(what: str, check: Callable[[], bool], timeout: float = 10) -> None:
-    deadline = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < deadline, f"等待超时：{what}"
-        time.sleep(0.05)
 
 
 @pytest.fixture
@@ -103,7 +97,7 @@ def test_kills_a_process_that_ignores_sigterm_once_the_grace_period_ends(
 
 def test_the_whole_process_group_is_terminated(tmp_path: Path, start: Callable[[str], int]) -> None:
     pid = start("sleep 30 & sleep 30 & wait")
-    wait_for("两个子进程", lambda: len(psutil.Process(pid).children()) == 2)
+    wait_for(lambda: len(psutil.Process(pid).children()) == 2, what="两个子进程")
     children = [child.pid for child in psutil.Process(pid).children()]
 
     result = stop(tmp_path, pid)
@@ -111,14 +105,14 @@ def test_the_whole_process_group_is_terminated(tmp_path: Path, start: Callable[[
     assert result.status == "success", result.error
     assert result.outputs is not None and result.outputs["was_running"] is True
     # 信号是异步生效的：节点等到组长退出就返回，同组的子进程可能还要片刻才退出。
-    wait_for("整组进程退出", lambda: not any(alive(p) for p in [pid, *children]))
+    wait_for(lambda: not any(alive(p) for p in [pid, *children]), what="整组进程退出")
 
 
 def test_a_process_that_already_exited_succeeds_with_its_exit_code(
     tmp_path: Path, start: Callable[[str], int]
 ) -> None:
     pid = start("exit 3")
-    wait_for("进程退出", lambda: not alive(pid))
+    wait_for(lambda: not alive(pid), what="进程退出")
 
     result = stop(tmp_path, pid)
 
@@ -131,10 +125,12 @@ def test_background_processes_left_by_an_exited_process_are_terminated(
 ) -> None:
     pid = start("sleep 30 & echo $! > child.pid")
     child_file = tmp_path / "child.pid"
-    wait_for("子进程 pid", lambda: child_file.exists() and child_file.read_text().strip() != "")
+    wait_for(
+        lambda: child_file.exists() and child_file.read_text().strip() != "", what="子进程 pid"
+    )
     child = int(child_file.read_text())
     request.addfinalizer(lambda: kill(child))
-    wait_for("进程退出", lambda: not alive(pid))
+    wait_for(lambda: not alive(pid), what="进程退出")
     assert alive(child)
 
     result = stop(tmp_path, pid)

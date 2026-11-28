@@ -397,7 +397,7 @@ def test_the_unit_test_snippet_in_the_documentation_builds_a_working_context(
         if any(isinstance(n, ast.FunctionDef) and n.name == "make_context" for n in ast.walk(tree))
     )
     namespace: dict[str, Any] = {}
-    exec(source, namespace)  # noqa: S102 -- 文档里的片段，只定义一个函数
+    exec(source, namespace)  # 文档里的片段，只定义一个函数
     ctx = namespace["make_context"](tmp_path)
 
     assert not ctx.cancelled()

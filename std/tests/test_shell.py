@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from pathlib import Path
+
+from polling import wait_for
 
 from sfly.testing import Execution, run_node
 from sfly_std.shell import shell
@@ -175,10 +176,7 @@ def test_cancel_terminates_the_whole_process_tree(tmp_path: Path) -> None:
     assert result.status == "cancelled"
     pids = [int(line) for line in (tmp_path / "pids").read_text().split()]
     assert len(pids) == 2
-    deadline = time.monotonic() + 5
-    while any(_alive(pid) for pid in pids) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert [pid for pid in pids if _alive(pid)] == []
+    wait_for(lambda: not any(_alive(pid) for pid in pids), 5, what="两个进程都退出")
 
 
 def test_exit_code_of_a_command_killed_by_a_signal_is_128_plus_the_signal(tmp_path: Path) -> None:

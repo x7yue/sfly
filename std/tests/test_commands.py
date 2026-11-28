@@ -147,7 +147,7 @@ def test_an_invalid_artifact_name_fails_before_the_command_starts(tmp_path: Path
         run_command(
             run.ctx, command, save_output=True, stdout_artifact="a.txt", stderr_artifact="a.txt"
         )
-    time.sleep(0.8)
+    time.sleep(0.8)  # noqa: TID251 确认某件事没有发生：等一会儿再看命令确实没有起来
 
     assert not marker.exists(), "命令在参数检查失败之后还是被启动了"
 
@@ -169,7 +169,7 @@ def test_a_given_name_that_is_the_default_name_of_the_other_stream_is_refused(
     (artifacts / "stderr.txt").write_text("前一次")
     with pytest.raises(ValueError, match="不能是同一个产物"):
         run_command(run.ctx, command, save_output=True, stdout_artifact="stderr-2.txt")
-    time.sleep(0.3)
+    time.sleep(0.3)  # noqa: TID251 确认某件事没有发生：等一会儿再看命令确实没有起来
 
     assert not marker.exists(), "命令在名称检查失败之后还是被启动了"
     # 没有留下认领默认名时创建的空文件。
@@ -185,7 +185,7 @@ def test_a_missing_artifact_directory_is_reported_before_the_command_starts(
 
     with pytest.raises(RuntimeError, match="没有产物目录"):
         run_command(run.ctx, f"touch {marker}", save_output=True)
-    time.sleep(0.3)
+    time.sleep(0.3)  # noqa: TID251 确认某件事没有发生：等一会儿再看命令确实没有起来
 
     assert not marker.exists(), "命令在检查失败之后还是被启动了"
     # 不要产物时没有产物目录也能跑。

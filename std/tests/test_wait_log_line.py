@@ -104,7 +104,7 @@ def test_matches_only_complete_lines(tmp_path: Path) -> None:
 
     def write_slowly() -> None:
         append(log, "服务 已")()
-        time.sleep(0.3)
+        time.sleep(0.3)  # noqa: TID251 造场景：一行分两次写完
         append(log, "启动\n")()
 
     result = run_node(
