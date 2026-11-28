@@ -1,6 +1,6 @@
 // biome.json 的 overrides 作用在哪些路径上。
 // 引用语法 `${{ ... }}`（GLOSSARY「引用」）在测试里写成字符串很常见，`noTemplateCurlyInString` 会把它当成写错的模板字符串；
-// 测试目录整体关掉这条规则，而不是在每个文件顶上写 biome-ignore-all。应用代码（apps/web/src、apps/server/src）里仍然开着。
+// 测试目录和源码旁边的测试文件（*.test.ts）整体关掉这条规则，而不是在每个文件顶上写 biome-ignore-all。应用代码（apps/web/src、apps/server/src）里仍然开着。
 // 做法：把真实 biome.json 的 linter 和 overrides 原样放进临时目录的配置，在对应路径下放样例文件，用 biome lint 看报不报。
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -49,10 +49,11 @@ describe("biome.json 对 noTemplateCurlyInString 的覆盖", () => {
 		"apps/server/test/support/example.ts",
 		"packages/orchestration/test/example.test.ts",
 		"apps/web/e2e/example.spec.ts",
+		"apps/web/src/editor/example.test.ts",
 	])("%s：引用语法写成字符串不报", (path) => {
 		expect(
 			rulesReportedAt(path),
-			`${path} 里写 \${{ ... }} 不该报 ${RULE}：biome.json 的 overrides 要对 **/test/** 和 apps/web/e2e/** 关掉这条规则，不要在文件里写 biome-ignore。`,
+			`${path} 里写 \${{ ... }} 不该报 ${RULE}：biome.json 的 overrides 要对 **/test/**、apps/web/e2e/** 和 **/*.test.ts 关掉这条规则，不要在文件里写 biome-ignore。`,
 		).not.toContain(RULE);
 	});
 

@@ -1,49 +1,23 @@
 //! 进程树终止（`sfly_agent::process_tree`）：超时、取消共用的抽象。Linux 下用进程组实现。
 #![cfg(unix)]
 
+mod support;
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use sfly_agent::process_tree::ProcessTree;
-
-/// 进程是否还活着（僵尸进程算已经结束）。
-pub fn alive(pid: u32) -> bool {
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        // 第三个字段是状态；命令名在括号里，可能有空格，从最后一个 ')' 之后取。
-        Ok(stat) => !stat
-            .rsplit_once(')')
-            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
-        Err(_) => false,
-    }
-}
+use support::{assert_all_gone, wait_until};
 
 /// 等到 pid 文件写好，读出其中的 PID。
 async fn read_pids(path: &Path) -> Vec<u32> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path)
-            && !text.trim().is_empty()
-        {
-            return text
-                .split_whitespace()
-                .map(|p| p.parse().unwrap())
-                .collect();
-        }
-        assert!(
-            Instant::now() < deadline,
-            "pid file {} not written",
-            path.display()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-async fn assert_all_gone(pids: &[u32]) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while pids.iter().any(|&p| alive(p)) {
-        assert!(Instant::now() < deadline, "processes still alive: {pids:?}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let written = || std::fs::read_to_string(path).is_ok_and(|text| !text.trim().is_empty());
+    wait_until(&format!("pid 文件 {} 写好", path.display()), written).await;
+    std::fs::read_to_string(path)
+        .unwrap()
+        .split_whitespace()
+        .map(|p| p.parse().unwrap())
+        .collect()
 }
 
 /// `sh -c script`，script 里用 `$PIDS` 指向 pid 文件。
@@ -107,6 +81,8 @@ async fn descendants_are_killed_even_when_the_leader_exits_on_sigterm_first() {
     ))
     .unwrap();
     let pids = read_pids(&pid_file).await;
+    #[allow(clippy::disallowed_methods)]
+    // 等子 shell 装好忽略 SIGTERM 的 trap，pid 文件写好时它可能还没装
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let started = Instant::now();

@@ -58,6 +58,8 @@ describe("Agent 注册", () => {
 				dev_packages: [],
 				running_tasks: [],
 				queued_tasks: [],
+				other_project_running: 0,
+				other_project_queued: 0,
 				// 控制面是 package.json 的版本，与 1.2.3 不一致。
 				version_mismatch: true,
 				update: { state: "none", remaining_tasks: 0, reason: "" },

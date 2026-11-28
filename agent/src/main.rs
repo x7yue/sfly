@@ -1,3 +1,6 @@
+// 产品代码可以 sleep（重连退避、轮询）；clippy.toml 里禁 sleep 是给测试 crate 的（#432）。
+#![allow(clippy::disallowed_methods)]
+
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::time::Duration;

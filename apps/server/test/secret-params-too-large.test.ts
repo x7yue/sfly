@@ -16,6 +16,7 @@ import { asStoredJson } from "../src/util/jsonb.js";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";
 import { FakeAgent } from "./support/fake-agent.js";
+import { LegacyRunsApi } from "./support/legacy-run.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, triggerWithPreset } from "./support/presets.js";
 import { withSecretLimits, withSecretLimitsSync } from "./support/secret-limits.js";
@@ -246,8 +247,9 @@ describe("secret 参数的值合计太大：触发前拦下", () => {
 				expect(codes(error.details)).toEqual([CODE]);
 				expect(await runsOf(id)).toEqual([]);
 			});
-			// 上限放宽之后触发：这个值在运行里的合计就是 asStored，超过 between，运行里确实是整段盖住（触发和运行是同一个判断）
-			const runId = await api.triggerOk(id, { cfg: value });
+			// 上限放宽之后触发：这个值在运行里的合计就是 asStored，超过 between，运行里确实是整段盖住（触发和运行是同一个判断）。
+			// 写入时打码的运行（#505）在写入时就定下了，这里看读取时打码的运行（`LegacyRunsApi`）此刻按库里的值算的结果。
+			const runId = await new LegacyRunsApi(cp).triggerOk(id, { cfg: value });
 			await withSecretLimits({ automatonChars: between }, async () => {
 				expect((await api.run(runId)).secrets_oversize).toBe(true);
 			});

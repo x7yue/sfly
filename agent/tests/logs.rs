@@ -297,6 +297,7 @@ async fn logs_and_last_progress_of_a_timed_out_task_are_forwarded_before_the_tim
         "{result:?}"
     );
     // 给晚到的消息一点时间：结果之后不应该再有这个任务的日志或进度。
+    #[allow(clippy::disallowed_methods)] // 确认某件事没有发生：结果之后不再有这个任务的日志或进度
     tokio::time::sleep(Duration::from_millis(500)).await;
     let all = cp.received_with_session();
 
@@ -366,6 +367,7 @@ async fn logs_queued_while_disconnected_are_capped_and_the_result_still_arrives(
     .await;
     // 控制面下线：执行器继续输出，Agent 只在内存里排队有限的日志。
     drop(cp);
+    #[allow(clippy::disallowed_methods)] // 造场景：控制面下线一段时间，执行器继续输出
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let cp = FakeControlPlane::start_on(port).await;
 

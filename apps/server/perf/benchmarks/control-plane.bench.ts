@@ -31,12 +31,14 @@ import { ConnectionClock } from "../../src/agents/agent-clock.js";
 import { type Database, openDatabase } from "../../src/db/database.js";
 import { tasks } from "../../src/db/schema.js";
 import { SAMPLE_POINTS } from "../../src/focus/focus-anomaly.js";
+import { TaskLogs } from "../../src/logs/task-logs.js";
 import { MetricQueries } from "../../src/metrics/metric-queries.js";
 import { MetricRetention } from "../../src/metrics/metric-retention.js";
 import { type MetricSource, SEGMENT_POINTS, TaskMetrics } from "../../src/metrics/task-metrics.js";
 import { ApiClient } from "../../test/support/api-client.js";
 import { FakeAgent } from "../../test/support/fake-agent.js";
 import { publishPackage } from "../../test/support/package-archive.js";
+import { runSecretsOf } from "../../test/support/run-secrets.js";
 import {
 	startTestControlPlane,
 	type TestControlPlane,
@@ -163,10 +165,17 @@ beforeAll(async () => {
 	database = openDatabase(cp.database.url, () => {});
 	const retention = new MetricRetention({ db: database.db, clock: cp.clock });
 	// 上限放宽：写入基准会接收几十万个点。
+	const logs = new TaskLogs({
+		db: database.db,
+		clock: cp.clock,
+		dataDir: cp.dataDir,
+		runSecrets: await runSecretsOf(cp.dataDir),
+	});
 	metrics = new TaskMetrics({
 		db: database.db,
 		clock: cp.clock,
 		retention,
+		secrets: (runId, work) => logs.withRunSecrets(runId, work),
 		limitBytes: Number.MAX_SAFE_INTEGER,
 	});
 	queries = new MetricQueries({ db: database.db, clock: cp.clock, metrics });

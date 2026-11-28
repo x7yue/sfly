@@ -1,0 +1,6 @@
+# Rust 工具链只在这里写版本（#433）：CI、发版和 pnpm linux 都用它，新的 stable 出来时 CI 不会因为新的 clippy 规则突然变红。
+# 升级时改 channel，pnpm linux pnpm lint:rust 和 CI 都通过再合入。musl 目标由用到它们的地方另装（CI 的 package、发版）。
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

@@ -291,6 +291,7 @@ async fn serve(
                     break;
                 }
                 body.extend_from_slice(&slow[..n]);
+                #[allow(clippy::disallowed_methods)] // 假的 HTTP 服务端：模拟慢的连接
                 tokio::time::sleep(tick).await;
             }
         }
@@ -359,6 +360,7 @@ async fn serve(
     });
     match file {
         Some(file) => {
+            #[allow(clippy::disallowed_methods)] // 假的 HTTP 服务端：按设定的延迟回应
             tokio::time::sleep(file.delay).await;
             let marker = marker
                 .map(|value| format!("{PACKAGE_INDEX_MARKER}: {value}\r\n"))
