@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-approve",
         action="store_true",
-        help="不信任项目里的资源（臂 B：skill 由扩展从开发环境取来，不在本地目录里找）",
+        help="不信任项目里的资源（加固工作台的探针用）",
     )
     args = parser.parse_args(argv)
 

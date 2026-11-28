@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         "--arm",
         action="append",
         choices=list(ARMS),
-        help="对照实验的臂：a 工具在本地执行（默认），b 工具经能力端口在开发环境里执行，"
+        help="对照实验的臂：a 工具在本地执行（默认），"
         "p 平台（经控制面的会话接口交给平台内的助手，要 up --assistant）；可以重复",
     )
     run.add_argument("--max-turns", type=int, default=40)
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-<模型>"
     )
     camp.add_argument("--budget", type=int, default=40, help="第一轮和臂 A 补跑的会话上限")
-    camp.add_argument("--budget-b", type=int, default=40, help="臂 B 的会话上限")
+    camp.add_argument("--budget-p", type=int, default=40, help="平台臂的会话上限")
     camp.add_argument("--max-turns", type=int, default=40)
     camp.add_argument("--max-seconds", type=float, default=1200)
     pack_cmd = sub.add_parser("pack", help="生成离线包（镜像、评测目录、镜像站缓存）")
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     trans.add_argument("session", type=Path, help="会话目录")
     trans.add_argument("--lines", type=int, default=8, help="每个工具结果显示几行")
     tc = sub.add_parser(
-        "toolcheck", help="工具自检：假的模型端点照剧本调用四个工具，对比臂 A 和臂 B"
+        "toolcheck", help="工具自检：假的模型端点照剧本调用四个工具，对比臂 A 和平台臂"
     )
     tc.add_argument(
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-toolcheck"
@@ -374,7 +374,7 @@ def plan_sessions(
 ) -> list[tuple[str, str, int, str]]:
     """要跑的会话：每个（题目、模型、臂）跑到 repeat 次；给了 have 时已有的有效会话也算进去。
 
-    两臂交替：同一道题的同一次重复，臂 A 和臂 B 挨着跑。上游的状态随时间变，先跑完一臂再跑另一臂
+    两臂交替：同一道题的同一次重复，臂 A 和平台臂挨着跑。上游的状态随时间变，先跑完一臂再跑另一臂
     会把这种变化算到臂的头上。
     """
     plan = []
@@ -493,19 +493,20 @@ def campaign(stack: Stack, args: argparse.Namespace) -> int:
     """拿到一个新模型后要跑的全部会话，一条命令跑完；中途停下（模型端点故障）后重跑同一条命令接着跑。
 
     1. 第一轮：每道题 3 次（臂 A）；
-    2. 对照实验：每道题臂 A、臂 B 各 5 次，两臂交替跑（臂 A 沿用第一轮的）。
+    2. 对照实验：每道题臂 A、平台臂各 5 次，两臂交替跑（臂 A 沿用第一轮的）。
+       平台臂要 up --assistant。
     过线检查（「写」「修」的 2/3 和 4/5）在 report 里给出。两份上限分开算：臂 A 算 --budget，
-    臂 B 算 --budget-b，都按结果目录里已有的会话（作废的也算）每跑一次之前检查。
+    平台臂算 --budget-p，都按结果目录里已有的会话（作废的也算）每跑一次之前检查。
     """
     results: Path = args.results or DATA_HOME / f"{date.today().isoformat()}-{args.model}"
     model = args.model
-    caps = {"a": args.budget, "b": args.budget_b}
+    caps = {"a": args.budget, "p": args.budget_p}
     first = plan_sessions(ROUND_TASKS, [model], ["a"], 3, existing(results))
     if first:
         code = run_plan(stack, first, results, args.max_turns, args.max_seconds, caps)
         if code:
             return code
-    rest = plan_sessions(ROUND_TASKS, [model], ["a", "b"], 5, existing(results))
+    rest = plan_sessions(ROUND_TASKS, [model], ["a", "p"], 5, existing(results))
     code = run_plan(stack, rest, results, args.max_turns, args.max_seconds, caps) if rest else 0
     print(render(results))
     return code

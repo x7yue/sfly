@@ -2,7 +2,7 @@
 带到不能联网的环境里，对那里的模型跑同样的评测、输出同样格式的结果。
 
 包里有：
-- `images.tar`：控制面、PostgreSQL、工作台、臂 B 的 pi、加固工作台（`probe` 用）五个镜像；
+- `images.tar`：控制面、PostgreSQL、工作台、加固工作台（`probe` 用）四个镜像；
 - `evals/`：这个评测目录里被 git 跟踪的文件（命令、题目、判分），
   加上两份 skill 的副本（`vendor/skills/`）；
 - `mirror-cache/`：镜像站的缓存（uv、Python、`sfly init` 项目和节点包要的 PyPI 包）。
@@ -43,13 +43,11 @@ def pack(stack: Stack, out_dir: Path, say: Callable[[str], None] = print) -> Pat
     root = out_dir / name
     root.mkdir(parents=True)
     pi = d.docker("run", "--rm", stack.workbench_image, "pi", "--version").stdout.strip()
-    stack.ensure_remote_image(say)
     probe.ensure_image(stack)
     images = [
         stack.server_image,
         POSTGRES_IMAGE,
         stack.workbench_image,
-        stack.remote_image,
         probe.image(stack),
     ]
     say(f"保存镜像：{'、'.join(images)}")

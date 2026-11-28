@@ -29,17 +29,11 @@ DRIVER = f"{OPT}/session_driver.py"
 SESSION_DIR = "/root/aeval-session"
 
 
-# 臂：a 工具在本地执行（原版 pi 在开发环境里）；b 工具经能力端口落到开发环境（#443 的原型）；
-# p 平台：经控制面的会话接口交给平台内的助手（aeval.platform，#552）。
-ARMS = ("a", "b", "p")
-REMOTE_EXTENSION = "/opt/aeval-remote/extension.mjs"
+# 臂：a 原版 pi 在开发环境里，工具在本地执行；p 平台：经控制面的会话接口交给平台内的助手
+# （aeval.platform，#552）。#443 的臂 B（工具经能力端口落到开发环境的原型）在 #552 删掉了。
+ARMS = ("a", "p")
 # 助手的命令带上的环境变量：控制面把它的操作记成「eval 经 pi」，和判分（grader）的操作分开。
 ASSISTANT_ENV = {"SFLY_NICKNAME": ASSISTANT_NICKNAME, "AI_AGENT": "pi"}
-
-
-def pi_container(stack: Stack, arm: str) -> str:
-    """pi 进程在哪个容器里：臂 A 在开发环境里（工具在本地执行），臂 B 在单独的 pi 容器里。"""
-    return stack.dev if arm == "a" else stack.pi
 
 
 def prepare_pi(stack: Stack, model: Model, container: str | None = None) -> None:
@@ -108,9 +102,7 @@ def run_session(
             max_seconds=max_seconds,
             session_id=session_id,
         )
-    if arm == "b":
-        stack.ensure_pi_container()
-    runner = pi_container(stack, arm)
+    runner = stack.dev
     check_endpoint(stack, model, runner)
     session_id = session_id or f"{task.id}-{model.name}-{datetime.now().strftime('%H%M%S')}"
     out = results / session_id
@@ -121,18 +113,6 @@ def run_session(
     d.docker(
         "exec", "-i", runner, "sh", "-c", "cat > /tmp/aeval-prompt.md", input_text=task.prompt()
     )
-    extra_env: dict[str, str] = {}
-    if arm == "b":
-        # pi 本地只有一个同名的空目录：工作目录的路径两边一样，文件和命令都经扩展落到开发环境。
-        d.sh(runner, f"mkdir -p {shlex.quote(task.workspace)}")
-        extra_env = {
-            "AEVAL_AGENT_ADDR": "dev:50052",
-            "AEVAL_REMOTE_ENV": json.dumps(ASSISTANT_ENV),
-            "AEVAL_REMOTE_LOG": f"{SESSION_DIR}/remote-tools.jsonl",
-            # 模型没给超时的命令：臂 A 的会一直等到会话被结束，臂 B 的默认超时就设成会话的时间上限，
-            # 两臂在同一个时刻结束，臂 B 不会因此把卡住的命令提前救回来。
-            "AEVAL_DEFAULT_TIMEOUT": str(int(max_seconds)),
-        }
     if model.name == "fake" and f"{task.id}/reference" in task.files:
         # 假的模型端点照剧本执行参考答案，只有这时参考答案才进开发环境容器。
         stage_reference(stack, task)
@@ -157,16 +137,13 @@ def run_session(
     ]
     if model.thinking:
         args += ["--thinking", model.thinking]
-    if arm == "b":
-        args += ["--extension", REMOTE_EXTENSION, "--no-approve"]
-        d.sh(runner, f"mkdir -p {SESSION_DIR}")
     started = time.monotonic()
     timed_out = False
     try:
         driver = d.sh(
             runner,
             " ".join(shlex.quote(a) for a in args),
-            env={**ASSISTANT_ENV, "PI_TELEMETRY": "0", **extra_env},
+            env={**ASSISTANT_ENV, "PI_TELEMETRY": "0"},
             check=False,
             timeout=max_seconds + 300,
         )

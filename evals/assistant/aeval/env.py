@@ -7,7 +7,6 @@
 | `sfly-aeval-<槽位>-cp` | 控制面，网络别名 `sfly.internal`，HTTP 映射到宿主机 127.0.0.1 |
 | `sfly-aeval-<槽位>-dev` | 开发环境容器（工作台的雏形）：`--dev` 装的 Agent、uv、sfly、pi |
 | `sfly-aeval-<槽位>-sut` | 被测机：普通的 Agent，上面跑着被测服务 |
-| `sfly-aeval-<槽位>-pi` | 臂 B 的 pi：本地没有工作区，工具经能力端口落到 `dev` 上 |
 | `sfly-aeval-<槽位>-assistant` | `up --assistant`：平台的助手服务，控制面把会话交给它 |
 
 两个槽位可以同时跑会话，互不影响。容器、网络、卷都以 `sfly-aeval-` 开头，`down` 全部删掉。
@@ -20,8 +19,6 @@ import json
 import os
 import re
 import secrets
-import shutil
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,10 +65,9 @@ OPT = "/opt/aeval"
 # 每台助手够得着的容器里放哪些脚本：只放这台要运行的，别的（假的模型端点、自检剧本……）不放。
 # 这些文件的内容、文件名都不能有指向答案或判分的东西，
 # 单测对着禁用词查（tests/test_assistant_files.py）。
-# 臂 A 的助手在 dev 上，臂 B 的命令也落在 dev 上；sut 的能力端口在评测网络里谁都连得上。
+# 臂 A 的助手在 dev 上，平台臂的命令也落在 dev 上；sut 的能力端口在评测网络里谁都连得上。
 ASSISTANT_SCRIPTS: dict[str, tuple[str, ...]] = {
     "dev": ("session_driver.py", "pi_memory.py"),
-    "pi": ("session_driver.py", "pi_memory.py"),
     "sut": ("demo_svc.py",),
     "hardened": ("session_driver.py",),
 }
@@ -190,10 +186,6 @@ class Stack:
         return 18100 + self.slot
 
     @property
-    def pi(self) -> str:
-        return self.name("pi")
-
-    @property
     def dev(self) -> str:
         return self.name("dev")
 
@@ -240,51 +232,6 @@ class Stack:
 
     def workbench_source(self) -> str | None:
         return source_hash([self.evals_dir / "workbench"], self.workbench_image)
-
-    @property
-    def remote_image(self) -> str:
-        """臂 B 的 pi 镜像：工作台镜像加上远程工具扩展。"""
-        return self.workbench_image.replace("sfly-aeval-workbench", "sfly-aeval-pi-remote", 1)
-
-    def ensure_remote_image(self, log: Any = print) -> None:
-        gen = "packages/proto/src/gen/sfly/agent/v1"
-        wanted = source_hash(
-            [EVALS_DIR / "remote-tools", REPO_DIR / gen], image_source(self.workbench_image) or ""
-        )
-        if not needs_build(self.remote_image, wanted):
-            return
-        log(f"构建臂 B 的镜像 {self.remote_image}")
-        with tempfile.TemporaryDirectory(prefix="sfly-aeval-remote-") as tmp:
-            context = Path(tmp)
-            shutil.copytree(EVALS_DIR / "remote-tools", context / "evals/assistant/remote-tools")
-            shutil.copytree(REPO_DIR / gen, context / gen)
-            args = [
-                "build",
-                "-t",
-                self.remote_image,
-                "--build-arg",
-                f"WORKBENCH_IMAGE={self.workbench_image}",
-                "--label",
-                f"{SOURCE_LABEL}={wanted}",
-            ]
-            if os.environ.get("AEVAL_NPM_REGISTRY"):
-                args += ["--build-arg", f"NPM_REGISTRY={os.environ['AEVAL_NPM_REGISTRY']}"]
-            args += ["-f", str(context / "evals/assistant/remote-tools/Dockerfile"), str(context)]
-            d.docker(*args, timeout=3600)
-
-    def ensure_pi_container(self, log: Any = print) -> None:
-        """臂 B 的 pi 容器：同一个网络，能连到 dev 的能力端口和宿主机的模型转发口，什么都不挂载。"""
-        if d.container_running(self.pi):
-            return
-        self.ensure_remote_image(log)
-        self._run(
-            "pi",
-            self.remote_image,
-            ["sleep", "infinity"],
-            hostname="pi",
-            extra=["--memory", "2g", "--add-host", "host.docker.internal:host-gateway"],
-        )
-        copy_scripts(self.pi, "pi", self.evals_dir)
 
     def network_internal(self) -> bool | None:
         """网络现在是不是 internal（不通外网和宿主机）；网络不存在时是 None。"""
@@ -406,7 +353,7 @@ class Stack:
         for role in (
             "rpcprobe",
             "hardened",
-            "pi",
+            "pi",  # 以前臂 B 的 pi 容器（#552 删了）：留着名字，旧环境 down 时一起删
             "assistant",
             "dev",
             "sut",
@@ -816,11 +763,11 @@ class Stack:
     def reset(self) -> None:
         """回到刚 `up` 完的状态：控制面整库重建，Agent 的工作目录、开发包和共享 venv 恢复成基线。
 
-        dev、sut（和 pi）重启一次：上一次会话里助手起的后台进程不会留到下一次；/tmp 清空。
+        dev、sut 重启一次：上一次会话里助手起的后台进程不会留到下一次；/tmp 清空。
         家目录里 Agent、uv、sfly 之外的东西不清（uv 的缓存要留着），这一点不完全隔离。
         """
         self.stop_agents()
-        containers = [c for c in (self.dev, self.sut, self.pi) if d.container_running(c)]
+        containers = [c for c in (self.dev, self.sut) if d.container_running(c)]
         d.docker("restart", "-t", "2", *containers)
         d.docker("rm", "-f", self.name("cp"), check=False)
         pg = self.name("pg")
@@ -840,17 +787,9 @@ class Stack:
                 f"/root/aeval-session {OPT} && find /tmp -mindepth 1 -delete "
                 "&& cp -a /root/.sfly/venv.base /root/.sfly/venv && : > /var/log/sfly-agent.log",
             )
-        if self.pi in containers:
-            d.sh(
-                self.pi,
-                f"rm -rf /work /root/.pi /root/aeval-session {OPT} "
-                "&& find /tmp -mindepth 1 -delete",
-            )
         # 每次重置都重新放一份脚本：环境起好以后改过的会话驱动等也能用上，以前多放的也清掉了。
         copy_scripts(self.dev, "dev", self.evals_dir)
         copy_scripts(self.sut, "sut", self.evals_dir)
-        if self.pi in containers:
-            copy_scripts(self.pi, "pi", self.evals_dir)
         self.start_agents()
         self.wait_agents(timeout=180)
         self.start_service()

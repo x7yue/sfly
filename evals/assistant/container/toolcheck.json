@@ -1,5 +1,5 @@
 {
-	"说明": "工具自检的剧本：假的模型端点收到带 AEVAL-TOOLCHECK 的提示时依次发出这些工具调用。{full_output} 换成上一个工具结果里「Full output: 路径」的路径。工作目录是 /work/tc。",
+	"说明": "工具自检的剧本：假的模型端点收到带 AEVAL-TOOLCHECK 的提示时依次发出这些工具调用。{full_output} 换成上一个工具结果里「Full output: 路径」的路径。工作目录是工作区 /work。",
 	"steps": [
 		{
 			"id": "write_new_dir",
@@ -156,7 +156,7 @@
 			"id": "read_skill",
 			"tool": "read",
 			"args": {
-				"path": "/work/tc/.agents/skills/demo/SKILL.md"
+				"path": "/work/.agents/skills/demo/SKILL.md"
 			}
 		}
 	]

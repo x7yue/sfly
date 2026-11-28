@@ -1,12 +1,11 @@
-"""对照实验的判定（#442「pi 的循环跑在哪」、#443 的追加评论），标准是事先定下的，这里只照着算。
+"""对照实验的判定，标准是 #443 事先定下的（当时用来在 #442 里选「pi 的循环跑在哪」，那时的远程臂
+是原型扩展的臂 B，选了之后在 #552 删掉了），这里只照着算。
 
-远程的那一臂（臂 B，#552 起是平台臂 p）和臂 A 比，同时满足下面三条才算没有明显变差：
+平台臂（平台内的助手，#552）和臂 A（原版 pi）比，同时满足下面三条算没有明显变差：
 1. 通过的题数比臂 A 少不超过 1 题；
 2. 轮数的中位数不超过臂 A 的 1.3 倍；
-3. 没有只在远程那一臂出现两次以上的失败类型。
-臂 B 的结论是 #442 的选择：满足选方案甲（单独的助手容器加远程工具），
-否则选方案乙（循环就在工作台里）。
-平台臂的结论是平台内的助手比原版 pi 有没有明显变差：变差了按 #552 记到 #443，再定在产品里补什么。
+3. 没有只在平台臂出现两次以上的失败类型。
+明显变差了，结果记到 #443，再定在产品里补什么。
 
 「通过的题数」按通过的会话数算（同一组题、每题同样的次数，两臂可以直接比）。两臂的会话数不一样时
 判定不成立，要先补齐。环境故障作废的会话不算，但两臂各作废多少要列出来：相差悬殊时提醒。
@@ -24,24 +23,10 @@ from typing import Any
 REQUIRED_TASKS = 4
 REQUIRED_PER_TASK = 5
 
-# 判为方案乙时还有一道前提（#443 里在臂 B 有任何真实模型的结果之前写下的说明）：越权探测发现的两件事
-# （pi 的读工具读得到进程环境里的令牌、编辑工具改得了 pi 自己的文件）要先证明堵得住，且堵住之后
-# 四道题的通过情况不变；堵不住就选方案甲。这里不把它算进三条标准，只在输出里提示。
-OPTION_B_PREREQUISITE = "https://github.com/x7yue/sfly/issues/443#issuecomment-7049455603"
-
-# 两臂之间已知的、可能对臂 B 有利的差别（remote-tools/README.md 的语义差别清单）。
-KNOWN_B_ADVANTAGES = [
-    "命令的超时：能力端口要求命令必须有超时，模型没给时臂 B 用会话的时间上限；pi 本地的命令工具"
-    "没有可设的默认超时，臂 A 的命令一直等到会话被结束。两者在会话的时间上限处一起结束，"
-    "臂 B 不会因此把卡住的命令提前救回来，但实现不同，列在这里。",
-]
-
-
 # 各臂在表格和判定里的叫法。
-ARM_NAMES = {"a": "臂 A（本地）", "b": "臂 B（远程）", "p": "平台臂"}
-SHORT_NAMES = {"a": "臂 A", "b": "臂 B", "p": "平台臂"}
+ARM_NAMES = {"a": "臂 A（本地）", "p": "平台臂"}
+SHORT_NAMES = {"a": "臂 A", "p": "平台臂"}
 VERDICTS = {
-    "b": ("方案甲（单独的助手容器加远程工具）", "方案乙（循环就在工作台里）"),
     "p": ("平台臂没有明显变差", "平台臂明显变差（结果记到 #443，再定在产品里补什么）"),
 }
 
@@ -68,7 +53,7 @@ def turns_within(turns_b: float, turns_a: float) -> bool:
     return round(10 * turns_b) <= 13 * turns_a
 
 
-def decide(records: list[dict[str, Any]], model: str, remote: str = "b") -> dict[str, Any]:
+def decide(records: list[dict[str, Any]], model: str, remote: str = "p") -> dict[str, Any]:
     """records 是全部会话（作废的也在里面，用来数作废次数），判定只用有效的。
     `remote` 是和臂 A 比的那一臂。
     结果里按臂的字母分开（`a` 和 `remote`）。"""
@@ -98,8 +83,7 @@ def decide(records: list[dict[str, Any]], model: str, remote: str = "b") -> dict
         "轮数的中位数不超过臂 A 的 1.3 倍": (
             turns_a is not None and turns_b is not None and turns_within(turns_b, turns_a)
         ),
-        # 中文和字母之间留空格：「臂 B 出现」「平台臂出现」。
-        f"没有只在{name}{' ' if name[-1].isascii() else ''}出现两次以上的失败类型": not only_b,
+        f"没有只在{name}出现两次以上的失败类型": not only_b,
     }
     verdict = None
     if balanced:
@@ -187,20 +171,10 @@ def render_decision(result: dict[str, Any]) -> str:
                 f"- 样本不足：标准要求 {REQUIRED_TASKS} 道题、每题每臂 {REQUIRED_PER_TASK} 次，"
                 "这里不够，结果只作参考"
             )
-        if b == "b" and result["verdict"].startswith("方案乙"):
-            lines.append(
-                "- 注意：三条标准只回答「远程工具会不会让模型明显变差」。"
-                "选方案乙之前，还要证明越权探测发现的两件事堵得住、"
-                "堵住之后四道题的通过情况不变，堵不住就选方案甲，"
-                f"见 {OPTION_B_PREREQUISITE}"
-            )
     if invalid_lopsided(result["invalid"]):
         lines.append(
             "- 提醒：两臂作废的次数相差悬殊，上游的状态可能偏向了某一臂，看一下作废的时间和原因"
         )
-    if b == "b":
-        lines.append("- 对臂 B 有利的已知差别：")
-        lines.extend(f"  - {item}" for item in KNOWN_B_ADVANTAGES)
     return "\n".join(lines)
 
 
