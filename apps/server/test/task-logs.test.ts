@@ -165,7 +165,12 @@ describe("任务日志与进度", () => {
 			await waitForLines(first, 2);
 
 			await cp.restart();
-			agent = await connect();
+			// 重连时 Hello 里列出这个任务：它还在 Agent 手上，接着上报（不列出就是离手了，之后的上报丢弃，#505）。
+			agent = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-a",
+				runningTasks: [{ taskId: task.taskId, attempt: task.attempt, started: true }],
+			});
+			agents.push(agent);
 			agent.logs(task, [
 				[2, "重复"],
 				[3, "a3"],

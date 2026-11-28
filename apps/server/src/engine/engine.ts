@@ -88,6 +88,7 @@ import {
 	renewHeld,
 } from "./leases.js";
 import { fillParams } from "./params.js";
+import type { Releases } from "./released.js";
 import { failRemovedWaits, removedNodeFailure } from "./removed-nodes.js";
 import {
 	type CancelOrder,
@@ -243,6 +244,8 @@ export class Engine implements AgentSessionHandler {
 			agentEnvironment: AgentEnvironmentFor;
 			/** 写入时打码（write-masking.ts）。 */
 			masking: WriteMasking;
+			/** 尝试离开 Agent 之手、删除运行的加密副本（released.ts）。 */
+			releases: Releases;
 			/** 运行的链接（控制台里的运行页），派发时版本冲突的说明里用（version-conflict.ts）。 */
 			runLink: (runId: string) => string;
 		},
@@ -533,6 +536,12 @@ export class Engine implements AgentSessionHandler {
 					lease: this.#leaseFrom(step.now),
 					missing: "重新连接时没有上报这个任务",
 				});
+				await this.deps.releases.hello(
+					step,
+					conn.name,
+					held,
+					out.filter((d) => d.action === TaskAction.ABANDON),
+				);
 				// TaskStarted 可能随断开的连接丢失：Hello 里标记已启动的任务补记为 running。
 				for (const t of held) if (t.started) await this.#started(step, conn.name, t);
 				return out;
@@ -601,19 +610,23 @@ export class Engine implements AgentSessionHandler {
 			const result = message.body.value;
 			const offset = conn.clock.offsetAt(result);
 			try {
-				await this.#event((step) => this.#applyResult(step, conn.name, result, offset));
+				await this.#event(async (step) => {
+					await this.#applyResult(step, conn.name, result, offset);
+					await this.deps.releases.acked(step, conn.name, result);
+				});
 			} catch (error) {
 				// 结果写不进数据库（例如数据库拒绝其中的内容）：这次尝试以 node_error 结束（#207）。否则 Agent 收不到 Ack，
 				// 重连后重发同一条结果，任务一直停在运行中。连这一步也失败时（数据库不可用）照常抛出，由 Agent 重连后重发。
-				await this.#event((step) =>
-					this.#rejectResult(
+				await this.#event(async (step) => {
+					await this.#rejectResult(
 						step,
 						conn.name,
 						result,
 						`控制面无法保存任务结果：${rootMessage(error)}`,
 						offset,
-					),
-				);
+					);
+					await this.deps.releases.acked(step, conn.name, result);
+				});
 			}
 			conn.send(
 				create(ServerMessageSchema, {
@@ -629,6 +642,10 @@ export class Engine implements AgentSessionHandler {
 			const held = runningTasks.map(runningTaskRef);
 			await this.#event(async (step) => {
 				await this.#heartbeat(step, conn.name, held);
+				// 被放弃的尝试只看收到那次 Welcome 的连接的心跳（released.ts）。
+				if (this.deps.hub.connection(conn.name) === conn) {
+					await this.deps.releases.heartbeat(step, conn.name, held);
+				}
 				// Welcome 之后的第一次心跳：Agent 已准备好环境，提交后立即派发排队中的任务（#219）。
 				if (conn.heartbeat()) step.touchedAgents.add(conn.name);
 			});
@@ -1149,6 +1166,7 @@ export class Engine implements AgentSessionHandler {
 		if (!finished) return;
 		// 运行通知和运行的最终状态在同一个事务里（#232）。
 		await this.deps.notifications.runFinished(step, { run, status: runStatus });
+		await this.deps.releases.runEnded(step, run.id);
 	}
 
 	/**

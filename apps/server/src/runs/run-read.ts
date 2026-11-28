@@ -782,6 +782,7 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 		ended_at: iso(run.endedAt),
 		run_notification: read.runNotification,
 		secrets_oversize: read.secretsOversize,
+		late_reports_dropped: read.run.lateReportsDropped,
 		cancel: run.cancelRequestedAt
 			? {
 					requested_by: run.cancelRequestedBy ?? "",

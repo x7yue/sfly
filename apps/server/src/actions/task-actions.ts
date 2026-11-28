@@ -100,7 +100,7 @@ export class TaskActions {
 		private readonly deps: {
 			db: Db;
 			clock: Clock;
-			logs: Pick<TaskLogs, "runSecrets" | "readSecrets" | "appendSystem">;
+			logs: Pick<TaskLogs, "withRunSecrets" | "readSecrets" | "appendSystem">;
 			/** 运行的变化（主题 = 运行 ID）：运行的事件流订阅它，这里发布此刻在做的动作的变化、订阅任务的结束。 */
 			runChanges: Topics<string>;
 		},
@@ -156,29 +156,30 @@ export class TaskActions {
 		// 这里先看一眼省掉打码，写入前在事务里再确认一次。
 		if (!task || task.agentName !== agentName || task.purgedAt !== null || !isDoing(task.status))
 			return;
-		const { summary, current } = actionSummaryView(
-			event,
-			controlPlaneTime,
-			await this.deps.logs.runSecrets(task.runId),
-		);
-		// 和明细一样在事务里锁住任务行再确认还在执行：和结束任务的写入互斥，任务结束之后不会再写进一份。
-		const stored = await this.deps.db.transaction(async (tx) => {
-			const [locked] = await tx
-				.select({ status: tasks.status })
-				.from(tasks)
-				.where(eq(tasks.id, taskId))
-				.for("update");
-			if (!locked || !isDoing(locked.status)) return false;
-			await tx
-				.insert(taskActionSummaries)
-				.values({ taskId, summary, currentAction: current })
-				.onConflictDoUpdate({
-					target: taskActionSummaries.taskId,
-					set: { summary, currentAction: current },
-				});
-			return true;
+		// 准入和写入拿着运行的闸门做（`TaskLogs.withRunSecrets`）：加密副本已经删除时丢弃、计数。
+		const stored = await this.deps.logs.withRunSecrets(task.runId, async (secrets) => {
+			const { summary, current } = actionSummaryView(event, controlPlaneTime, secrets);
+			// 和明细一样在事务里锁住任务行再确认还在执行：和结束任务的写入互斥，任务结束之后不会再写进一份。
+			const ok = await this.deps.db.transaction(async (tx) => {
+				const [locked] = await tx
+					.select({ status: tasks.status })
+					.from(tasks)
+					.where(eq(tasks.id, taskId))
+					.for("update");
+				if (!locked || !isDoing(locked.status)) return false;
+				await tx
+					.insert(taskActionSummaries)
+					.values({ taskId, summary, currentAction: current })
+					.onConflictDoUpdate({
+						target: taskActionSummaries.taskId,
+						set: { summary, currentAction: current },
+					});
+				return true;
+			});
+			return ok ? { summary, current } : undefined;
 		});
 		if (!stored) return;
+		const { summary, current } = stored;
 		this.#published.publish(taskId, { kind: "summary", summary });
 		if (!sameCurrentAction(task.current, current)) {
 			this.deps.runChanges.publish(task.runId, task.runId);
@@ -210,60 +211,61 @@ export class TaskActions {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(eq(tasks.id, taskId));
 		if (!task || task.agentName !== agentName || task.purgedAt !== null) return;
-		const prepared = prepareEvents(
-			events,
-			controlPlaneTime,
-			await this.deps.logs.runSecrets(task.runId),
-		);
-		const names = startedNames(prepared);
-		const stored =
-			names.length === 0
-				? []
-				: await db
-						.select({ name: taskActionNames.name, stored: taskActionNames.stored })
-						.from(taskActionNames)
-						.where(
-							and(
-								eq(taskActionNames.taskId, taskId),
-								sql`${taskActionNames.name} = any(${sql.param(names)}::text[])`,
-							),
-						);
-		const rev = task.rev + 1;
-		const plan = planBatch(taskId, rev, prepared, {
-			details: task.details,
-			stored: new Map(stored.map((n) => [n.name, n.stored])),
+		// 准入和写入拿着运行的闸门做（`TaskLogs.withRunSecrets`）：加密副本已经删除时丢弃、计数。
+		const batch = await this.deps.logs.withRunSecrets(task.runId, async (secrets) => {
+			const prepared = prepareEvents(events, controlPlaneTime, secrets);
+			const names = startedNames(prepared);
+			const stored =
+				names.length === 0
+					? []
+					: await db
+							.select({ name: taskActionNames.name, stored: taskActionNames.stored })
+							.from(taskActionNames)
+							.where(
+								and(
+									eq(taskActionNames.taskId, taskId),
+									sql`${taskActionNames.name} = any(${sql.param(names)}::text[])`,
+								),
+							);
+			const rev = task.rev + 1;
+			const plan = planBatch(taskId, rev, prepared, {
+				details: task.details,
+				stored: new Map(stored.map((n) => [n.name, n.stored])),
+			});
+			if (plan.inserts.length + plan.ends.length + plan.dropped.size === 0) return undefined;
+			const capping = plan.dropped.size > 0 && !task.capped;
+			const written = await db.transaction(async (tx): Promise<StoredDetail[] | undefined> => {
+				// 任务已经不在执行（成功、失败、取消、agent_lost）：还没结束的动作定格为未结束（detailView），这一批不再写。
+				// Agent 在结果之前发完明细（ADR 0015），之后才到的只可能是断线补发。锁住任务行，和结束任务的写入互斥。
+				const [locked] = await tx
+					.select({ status: tasks.status })
+					.from(tasks)
+					.where(eq(tasks.id, taskId))
+					.for("update");
+				if (!locked || !isDoing(locked.status)) return undefined;
+				const inserted = await insertDetails(tx, plan.inserts);
+				// 库里已经有的动作在这一批里重复开始又结束：插入被忽略，结束补到已有的行上。
+				const kept = new Set(inserted);
+				const repeated = plan.inserts.flatMap((i) => (!kept.has(i) && i.end ? [i.end] : []));
+				const ended = await endDetails(tx, taskId, rev, [...plan.ends, ...repeated]);
+				await countNames(tx, taskId, inserted, plan.dropped);
+				const changed = inserted.length + ended.length > 0;
+				if (changed || capping) {
+					await tx
+						.update(tasks)
+						.set({
+							actionDetails: sql`${tasks.actionDetails} + ${inserted.length}`,
+							...(changed ? { actionRev: rev } : {}),
+							...(capping ? { actionCapped: true } : {}),
+						})
+						.where(eq(tasks.id, taskId));
+				}
+				return [...inserted.map((i) => i.row), ...ended];
+			});
+			return written === undefined ? undefined : { written, rev, capping };
 		});
-		if (plan.inserts.length + plan.ends.length + plan.dropped.size === 0) return;
-		const capping = plan.dropped.size > 0 && !task.capped;
-		const written = await db.transaction(async (tx): Promise<StoredDetail[] | undefined> => {
-			// 任务已经不在执行（成功、失败、取消、agent_lost）：还没结束的动作定格为未结束（detailView），这一批不再写。
-			// Agent 在结果之前发完明细（ADR 0015），之后才到的只可能是断线补发。锁住任务行，和结束任务的写入互斥。
-			const [locked] = await tx
-				.select({ status: tasks.status })
-				.from(tasks)
-				.where(eq(tasks.id, taskId))
-				.for("update");
-			if (!locked || !isDoing(locked.status)) return undefined;
-			const inserted = await insertDetails(tx, plan.inserts);
-			// 库里已经有的动作在这一批里重复开始又结束：插入被忽略，结束补到已有的行上。
-			const kept = new Set(inserted);
-			const repeated = plan.inserts.flatMap((i) => (!kept.has(i) && i.end ? [i.end] : []));
-			const ended = await endDetails(tx, taskId, rev, [...plan.ends, ...repeated]);
-			await countNames(tx, taskId, inserted, plan.dropped);
-			const changed = inserted.length + ended.length > 0;
-			if (changed || capping) {
-				await tx
-					.update(tasks)
-					.set({
-						actionDetails: sql`${tasks.actionDetails} + ${inserted.length}`,
-						...(changed ? { actionRev: rev } : {}),
-						...(capping ? { actionCapped: true } : {}),
-					})
-					.where(eq(tasks.id, taskId));
-			}
-			return [...inserted.map((i) => i.row), ...ended];
-		});
-		if (written === undefined) return;
+		if (!batch) return;
+		const { written, rev, capping } = batch;
 		if (written.length > 0)
 			this.#published.publish(taskId, { kind: "actions", rev, rows: written });
 		if (capping) {

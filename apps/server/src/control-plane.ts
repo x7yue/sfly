@@ -38,6 +38,7 @@ import { loadClientTarballs } from "./downloads/client-tarballs.js";
 import { createAssignContent } from "./engine/assign-content.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
+import { Releases } from "./engine/released.js";
 import { WriteMasking } from "./engine/write-masking.js";
 import { EngineNotifications } from "./feishu/engine-notifications.js";
 import { FeishuBots } from "./feishu/feishu-bots.js";
@@ -408,15 +409,22 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		retentionDays: options.metricRetentionDays,
 	});
 	const metrics = new TaskMetrics({
-		secrets: (runId) => logs.runSecrets(runId),
+		secrets: (runId, work) => logs.withRunSecrets(runId, work),
 		db: database.db,
 		clock,
 		retention: metricRetention,
 		limitBytes: options.metricLimitBytes,
 	});
 	const metricQueries = new MetricQueries({ db: database.db, clock, metrics });
+	const releases = new Releases({
+		db: database.db,
+		clock,
+		secrets: runSecrets,
+		onError: logError,
+	});
 	const engine = new Engine({
 		masking: new WriteMasking(runSecrets),
+		releases,
 		runLink,
 		db: database.db,
 		clock,
@@ -486,6 +494,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 		purgeWaitMs: options.purgeWaitMs,
+		deletingVault: (runId, work) => runSecrets.deleting(runId, work),
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);
@@ -776,6 +785,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		// 还是在做的：中止已经发出，助手服务带回结局就照常收下，带不回来由兜底结束（#545）。
 		await sessionService.close();
 		await retention.idle();
+		await releases.idle();
 		await metricRetention.idle();
 		hub.closeAll();
 		await gateway.close();

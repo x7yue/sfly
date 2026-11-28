@@ -297,6 +297,11 @@ export const RunView = z.object({
 	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
 	 */
 	secrets_oversize: z.boolean().optional(),
+	/**
+	 * 运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，
+	 * 每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。
+	 */
+	late_reports_dropped: z.number().int().nonnegative().optional(),
 	/** 按深度、开始时间排序。 */
 	chains: z.array(ChainRunView),
 });
