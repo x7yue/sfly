@@ -316,6 +316,13 @@
       "when": 1795822581941,
       "tag": "0045_std_package_into_public",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1795822728455,
+      "tag": "0046_package_version_conflicts",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@ import { type ParamDeclaration, SECRET_MASK, type StoredOrchestrationDocument } 
 import { and, eq } from "drizzle-orm";
 import type { Tx } from "../db/database.js";
 import { orchestrations, orchestrationVersions } from "../db/schema.js";
-import { planRun, type RunPlan } from "../engine/chain.js";
+import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
 import { fillParams, placeholderParams, withPresetValues } from "../engine/params.js";
 import type { RunRow } from "../engine/step.js";
 import { findPreset, PRESET_NOT_FOUND } from "../presets/preset-store.js";
@@ -25,6 +25,17 @@ export interface TriggerRejection {
 	code: string;
 	message: string;
 	details?: unknown;
+	/** 预检因为版本冲突（`package_version_in_use`）阻断时，要记下的拒绝（不进响应，`engine.ts` 的 trigger 写进库）。 */
+	versionConflicts?: VersionConflict[];
+}
+
+/** 预检阻断的一次版本冲突：哪个项目、哪台 Agent、哪个节点包的哪个版本，和给用户的说明。 */
+export interface VersionConflict {
+	projectId: ProjectId;
+	agentName: string;
+	package: string;
+	version: string;
+	message: string;
 }
 
 /** 可以触发：运行用什么版本、什么计划、什么入口参数，以及运行上记下的预设。 */
@@ -69,6 +80,27 @@ function reject(
 	return details === undefined
 		? { ok: false, status, code, message }
 		: { ok: false, status, code, message, details };
+}
+
+/** 预检的问题里版本冲突的那些：按问题指到的节点得出 Agent、节点包和版本（`preflight.ts` 的 `versionsInUseProblems`）。 */
+function versionConflicts(
+	projectId: ProjectId,
+	doc: StoredOrchestrationDocument,
+	problems: readonly { code: string; message: string; node_id?: string }[],
+): VersionConflict[] {
+	return problems.flatMap((p) => {
+		const node = doc.nodes.find((n) => n.id === p.node_id);
+		if (p.code !== "package_version_in_use" || node?.kind !== "package") return [];
+		return [
+			{
+				projectId,
+				agentName: agentFor(doc, node),
+				package: node.package,
+				version: doc.packages[node.package] ?? "",
+				message: p.message,
+			},
+		];
+	});
 }
 
 const invalidOrchestration = (problems: readonly { message: string }[]) =>
@@ -150,7 +182,12 @@ export function createTriggerAdmission(checks: {
 		if (!version) return reject(400, "no_version", "orchestration has no saved version");
 
 		const problems = await checks.preflight(tx, orchestration.projectId, version.document);
-		if (problems.length > 0) return invalidOrchestration(problems);
+		if (problems.length > 0) {
+			return {
+				...invalidOrchestration(problems),
+				versionConflicts: versionConflicts(orchestration.projectId, version.document, problems),
+			};
+		}
 		const plan = planRun(version.document);
 		if ("errors" in plan) {
 			return invalidOrchestration(
