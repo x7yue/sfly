@@ -9,6 +9,7 @@ import { buildRunReport } from "../src/runs/run-summary.js";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
+import { runSecretsOf } from "./support/run-secrets.js";
 import { singleConnection } from "./support/single-connection.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -58,15 +59,26 @@ describe("运行摘要的查询次数", () => {
 		try {
 			const { db } = single;
 			const clock = cp.clock;
+			const logs = new TaskLogs({
+				db,
+				clock,
+				dataDir: cp.dataDir,
+				runSecrets: await runSecretsOf(cp.dataDir),
+			});
 			const deps = {
 				db,
 				clock,
 				queries: new MetricQueries({
 					db,
 					clock,
-					metrics: new TaskMetrics({ db, clock, retention: new MetricRetention({ db, clock }) }),
+					metrics: new TaskMetrics({
+						db,
+						clock,
+						retention: new MetricRetention({ db, clock }),
+						secrets: (runId) => logs.runSecrets(runId),
+					}),
 				}),
-				logs: new TaskLogs({ db, clock, dataDir: cp.dataDir }),
+				logs,
 			};
 			const counted = async (runId: string) => {
 				const before = single.queryCount();

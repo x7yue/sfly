@@ -170,6 +170,8 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	 * 动作用 `actions/action-text.ts` 的 `maskedAction`）。
 	 */
 	secrets: SecretSet;
+	/** secret 值合计太长、文字整段盖住了：写入时打码的运行（#505）记在运行上，之前的运行按此刻的值集合算。 */
+	secretsOversize: boolean;
 	chains: RunChain<A>[];
 	/** 进行中的节点（排队、准备中、执行中、等待），按链与链上的顺序。 */
 	activeNodes: RunListActiveNode[];
@@ -352,11 +354,12 @@ export async function readTaskIo(db: Db | Tx, taskId: string): Promise<TaskIoVie
 		.where(eq(tasks.id, taskId.toLowerCase()));
 	if (!row) return undefined;
 	const [version] = await db
-		.select({ document: orchestrationVersions.document })
+		.select({ document: orchestrationVersions.document, maskedOnWrite: runs.maskedOnWrite })
 		.from(runs)
 		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 		.where(eq(runs.id, row.runId));
 	if (!version) return undefined;
+	if (version.maskedOnWrite) return { task_id: row.id, inputs: row.inputs, outputs: row.outputs };
 	const chains = await db
 		.select({ chainId: chainInstances.chainId, params: chainInstances.params })
 		.from(chainInstances)
@@ -587,7 +590,11 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 		const { document } = version;
 		const runChains = chainsOf.get(run.id) ?? [];
 		// 每个运行一份预算（完整的出现的段数，{@link SecretSet.withBudget}）：一个运行用光了预算，也只盖住它自己的内容，不牵连同一次读取里别的运行。
-		const mask = masker(document, secretValues(document, runChains).withBudget());
+		// 写入时打码的运行（#505）写进库的已经打过码，读取时不再打。
+		const mask = masker(
+			document,
+			run.maskedOnWrite ? NO_SECRETS : secretValues(document, runChains).withBudget(),
+		);
 		const nodesOf = planOf(version);
 		const chains = runChains.map(
 			(chain): RunChain<A> => ({
@@ -629,6 +636,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				scenario,
 				session: run.sessionId === null ? undefined : refs.get(run.sessionId),
 				secrets: mask.secrets,
+				secretsOversize: run.maskedOnWrite ? run.secretsOversize : mask.secrets.oversize,
 				chains,
 				activeNodes: activeNodesOf(chains),
 				failures: failuresInOrder(
@@ -773,7 +781,7 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 		run_notification: read.runNotification,
-		secrets_oversize: read.secrets.oversize,
+		secrets_oversize: read.secretsOversize,
 		cancel: run.cancelRequestedAt
 			? {
 					requested_by: run.cancelRequestedBy ?? "",

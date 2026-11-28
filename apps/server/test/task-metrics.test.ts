@@ -506,6 +506,8 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["orchestrations", "run_notify_note", "text DEFAULT '' NOT NULL"],
 	["runs", "notification_bot", "text"],
 	["runs", "notification_not_sent", "text"],
+	["runs", "masked_on_write", "boolean DEFAULT false NOT NULL"],
+	["runs", "secrets_oversize", "boolean DEFAULT false NOT NULL"],
 	["tasks", "referenced_feishu_bots", "text[] DEFAULT '{}' NOT NULL"],
 	["tasks", "log_agent_seq", "bigint DEFAULT 0 NOT NULL"],
 	["runs", "triggered_via", "text"],

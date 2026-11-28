@@ -5,6 +5,7 @@ import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { runs, tasks } from "../db/schema.js";
+import { maskValue } from "../logs/secrets.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
@@ -48,7 +49,7 @@ export class TaskNotifications {
 		private readonly deps: {
 			db: Db;
 			clock: Clock;
-			logs: Pick<TaskLogs, "appendSystem">;
+			logs: Pick<TaskLogs, "appendSystem" | "runSecrets">;
 			delivery: Pick<FeishuDelivery, "wake">;
 		},
 	) {}
@@ -94,11 +95,14 @@ export class TaskNotifications {
 		if (!referenced.includes(event.bot)) {
 			return `飞书机器人「${event.bot}」不是通过「飞书机器人」类型的参数传给这个节点的，把它声明成 sfly.FeishuBot 类型的参数`;
 		}
+		// 发到群里的就是存下的这份：先按这次运行的 secret 值打码（#505），再按长度上限组装。
+		const secrets = await this.deps.logs.runSecrets(runId);
 		const message =
 			event.text === undefined
-				? rawMessage(event.message)
-				: { body: textMessage(event.text, event.at_all) };
+				? rawMessage(maskValue(event.message, secrets))
+				: { body: textMessage(secrets.mask(event.text), event.at_all) };
 		if ("problem" in message) return message.problem;
+		const { body } = message;
 		return this.deps.db.transaction(async (tx) => {
 			if (!(await registeredBots(tx, project, [event.bot])).has(event.bot)) {
 				return feishuBotGone(event.bot);
@@ -108,7 +112,7 @@ export class TaskNotifications {
 				source: "notify",
 				runId,
 				taskId: notification.taskId,
-				body: message.body,
+				body,
 				now: this.deps.clock.now(),
 			});
 			return undefined;
