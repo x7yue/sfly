@@ -348,6 +348,7 @@ def test_the_workbench_has_memory_and_process_limits_and_cannot_gain_privileges(
         "sfly-workbench"
     ]
     assert int(workbench["mem_limit"]) == 4 * 1024**3
+    assert int(workbench["memswap_limit"]) == 4 * 1024**3
     assert workbench["pids_limit"] == 4096
     assert workbench["security_opt"] == ["no-new-privileges:true"]
     assert workbench["cap_drop"] == ["ALL"]
@@ -360,5 +361,6 @@ def test_the_workbench_has_memory_and_process_limits_and_cannot_gain_privileges(
     tuned = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=override)
     tuned_workbench = tuned["services"]["sfly-workbench"]
     assert int(tuned_workbench["mem_limit"]) == 8 * 1024**3
+    assert int(tuned_workbench["memswap_limit"]) == 8 * 1024**3
     assert tuned_workbench["pids_limit"] == 8192
     assert tuned_workbench["security_opt"] == ["no-new-privileges:true"]

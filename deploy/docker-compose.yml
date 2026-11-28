@@ -125,6 +125,7 @@ services:
     init: true
     # 内存、进程数的上限和不能提权（#763）：数字怎么定见 README「工作台容器的资源」，数字只写在那里。
     mem_limit: 4g
+    memswap_limit: 4g # 和 mem_limit 一样：不能靠 swap 撑过上限
     pids_limit: 4096
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
