@@ -51,9 +51,12 @@ node_major=$(tr -d '[:space:]' <.node-version)
 python_version=$(tr -d '[:space:]' <.python-version)
 pnpm_version=$(sed -nE 's/.*"packageManager": *"pnpm@([^"]+)".*/\1/p' package.json)
 actionlint_image=$(sed -n 's/^image=//p' scripts/lint-actions.sh)
+uv_version=$(sed -n 's/^uv //p' .tool-versions)
+rust_toolchain=$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml)
 args=(
 	--build-arg "NODE_MAJOR=$node_major" --build-arg "PYTHON_VERSION=$python_version"
 	--build-arg "PNPM_VERSION=$pnpm_version" --build-arg "ACTIONLINT_IMAGE=$actionlint_image"
+	--build-arg "UV_VERSION=$uv_version" --build-arg "RUST_TOOLCHAIN=$rust_toolchain"
 )
 mirrors=${XDG_CONFIG_HOME:-$HOME/.config}/sfly/linux.env
 if [[ -f $mirrors ]]; then
@@ -67,7 +70,7 @@ image=sfly-linux:$({
 	printf '%s\n' "${args[@]}"
 } | git hash-object --stdin | cut -c1-12)
 if ! docker image inspect "$image" >/dev/null 2>&1; then
-	echo "pnpm linux：构建镜像 $image（第一次要几分钟）" >&2
+	echo "pnpm linux：构建镜像 ${image}（第一次要几分钟）" >&2
 	docker build -t "$image" "${args[@]}" - <scripts/linux/Dockerfile >&2
 fi
 

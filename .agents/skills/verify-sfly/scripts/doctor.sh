@@ -6,7 +6,7 @@ set -uo pipefail
 VERIFY_ROOT=${SFLY_VERIFY_ROOT:-$HOME/.local/state/sfly-verify}
 RUN=${1:-$VERIFY_ROOT/current}
 [[ -f $RUN/state.env ]] || { echo "FAIL 没有 $RUN/state.env：先运行 up.sh"; exit 1; }
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091 # state.env 是 up.sh 运行时写的，检查时不存在
 source "$RUN/state.env"
 
 bad=0
@@ -28,7 +28,7 @@ else
 fi
 
 health=$(curl -fsS "$HTTP_URL/api/health" 2>/dev/null)
-[[ $health == *'"database":"ok"'* ]] && ok "健康检查 $health" || no "健康检查失败：${health:-无响应}"
+if [[ $health == *'"database":"ok"'* ]]; then ok "健康检查 ${health}"; else no "健康检查失败：${health:-无响应}"; fi
 
 expected=$(node -p "require('$REPO/apps/server/package.json').version")
 agents=$(curl -fsS "$HTTP_URL/api/projects/default/agents" 2>/dev/null)
@@ -42,7 +42,7 @@ for a in data.get("agents", []):
 if [[ $line == "online $expected $expected" ]]; then
 	ok "Agent $AGENT_NAME 在线，Agent 与控制面都是工作区版本 $expected"
 else
-	no "Agent $AGENT_NAME 状态 / Agent 版本 / 控制面版本：${line:-未找到}（期望 online $expected $expected）"
+	no "Agent $AGENT_NAME 状态 / Agent 版本 / 控制面版本：${line:-未找到}（期望 online $expected ${expected}）"
 fi
 
 exit $bad

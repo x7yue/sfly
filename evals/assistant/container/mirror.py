@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
+import re
 import shutil
 import socketserver
 import sys
@@ -31,6 +33,38 @@ UPSTREAMS = {
 }
 
 JSON_SIMPLE = "application/vnd.pypi.simple.v1+json"
+
+# 录缓存时 uv 用的固定版本（#847）。Agent 和 install.sh 按产品的写法从
+# `astral-sh/uv/LatestRelease/` 取 uv；中科大镜像只留最新的一个版本，`LatestRelease` 跟着上游变。
+# 录缓存时这个路径下的文件取固定版本的：先从中科大取，中科大没取到（已经换成新版本，或者出错）时
+# 从 GitHub 上这个版本的 Release 取。缓存仍按 `LatestRelease` 的路径存，离线时照样命中。
+UV_VERSION = "0.13.10"
+UV_LATEST = "/github-release/astral-sh/uv/LatestRelease/"
+UV_GITHUB = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/"
+
+
+# 18 位够表示任何真实的大小，也远在 Python 整数转换的位数上限之内。
+LENGTH = re.compile(r"[0-9]{1,18}")
+
+
+def content_length(raw: str | None) -> tuple[bool, int | None]:
+    """上游的 content-length：(合法, 长度)。没有这个头是 (True, None)。
+    去掉两头空白后整串是 1 到 18 位 ASCII 的 0–9 才合法；校验和转换用同一条规则，转换不会失败。
+    别的写法（`unknown`、`-1`、`1.0`、`+5`、非 ASCII 的数字、超过 18 位）是 (False, None)。"""
+    if raw is None:
+        return True, None
+    text = raw.strip()
+    if LENGTH.fullmatch(text) is None:
+        return False, None
+    return True, int(text)
+
+
+def upstream_urls(path: str, prefix: str) -> list[str]:
+    """录缓存时这个路径依次去哪里取：前一个没取到才取下一个（uv 的固定版本有两个来源）。"""
+    if path.startswith(UV_LATEST):
+        name = path[len(UV_LATEST) :]
+        return [f"{UPSTREAMS[prefix]}/astral-sh/uv/{UV_VERSION}/{name}", UV_GITHUB + name]
+    return [UPSTREAMS[prefix] + path[len(prefix) + 1 :]]
 
 
 def cache_key(path: str, accept: str) -> str:
@@ -54,12 +88,20 @@ class Store:
             return body, json.loads(meta.read_text())
         return None
 
-    def put(self, key: str, source: Any, meta: dict[str, Any]) -> Path:
+    def put(self, key: str, source: Any, meta: dict[str, Any], length: int | None) -> Path | None:
+        """存下来返回文件；取到的是空的，或者和 content-length 对不上时不存，返回 None。"""
         body, meta_path = self._paths(key)
         body.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=body.parent, delete=False) as tmp:
-            shutil.copyfileobj(source, tmp, 1 << 20)
-        os.replace(tmp.name, body)
+        tmp = tempfile.NamedTemporaryFile(dir=body.parent, delete=False)
+        try:
+            with tmp:
+                shutil.copyfileobj(source, tmp, 1 << 20)
+            size = Path(tmp.name).stat().st_size
+            if size == 0 or (length is not None and size != length):
+                return None
+            os.replace(tmp.name, body)
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
         meta_path.write_text(json.dumps(meta))
         return body
 
@@ -83,11 +125,13 @@ class Handler(BaseHTTPRequestHandler):
         prefix = path.lstrip("/").split("/", 1)[0]
         accept = self.headers.get("accept", "")
         key = cache_key(path, accept)
-        hit = self.store.get(key)
+        hit: tuple[Path, dict[str, Any]] | int | None = self.store.get(key)
         if hit is None and self.record and prefix in UPSTREAMS:
             hit = self._fetch(path, prefix, accept, key)
-        if hit is None:
-            self._status(404, f"镜像里没有 {path}")
+        if hit is None or isinstance(hit, int):
+            code = 404 if hit is None else hit
+            where = "镜像里没有" if hit is None else f"上游没有取到（{code}，原因在镜像站的日志里）"
+            self._status(code, f"{where} {path}")
             return
         body, meta = hit
         self.send_response(200)
@@ -100,22 +144,38 @@ class Handler(BaseHTTPRequestHandler):
 
     def _fetch(
         self, path: str, prefix: str, accept: str, key: str
-    ) -> tuple[Path, dict[str, Any]] | None:
-        url = UPSTREAMS[prefix] + path[len(prefix) + 1 :]
-        request = urllib.request.Request(
-            url, headers={"accept": accept or "*/*", "user-agent": "sfly-aeval-mirror/1"}
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=120) as resp:
-                meta = {"content_type": resp.headers.get("content-type", ""), "url": url}
-                body = self.store.put(key, resp, meta)
-        except urllib.error.HTTPError as error:
-            sys.stderr.write(f"上游 {url} 返回 {error.code}\n")
-            return None
-        except OSError as error:
-            sys.stderr.write(f"上游 {url} 失败：{error}\n")
-            return None
-        return body, meta
+    ) -> tuple[Path, dict[str, Any]] | int:
+        """取到了返回缓存的文件；都没取到返回给客户端的状态码（看最后一个来源）：上游 404 是 404，
+        别的失败（5xx、限流、连不上、200 但内容是空的或不完整、长度头不合法）是 502。"""
+        code = 404
+        for url in upstream_urls(path, prefix):
+            request = urllib.request.Request(
+                url, headers={"accept": accept or "*/*", "user-agent": "sfly-aeval-mirror/1"}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=120) as resp:
+                    meta = {
+                        "content_type": resp.headers.get("content-type", ""),
+                        "url": resp.geturl(),
+                    }
+                    raw = resp.headers.get("content-length")
+                    valid, length = content_length(raw)
+                    if not valid:
+                        sys.stderr.write(f"上游 {url} 的 content-length 不合法（{raw!r}）\n")
+                        code = 502
+                        continue
+                    body = self.store.put(key, resp, meta, length)
+                    if body is not None:
+                        return body, meta
+                    sys.stderr.write(f"上游 {url} 返回 200，但内容是空的或和长度对不上\n")
+                    code = 502
+            except urllib.error.HTTPError as error:
+                sys.stderr.write(f"上游 {url} 返回 {error.code}（最后的地址 {error.geturl()}）\n")
+                code = 404 if error.code == 404 else 502
+            except (OSError, http.client.HTTPException) as error:
+                sys.stderr.write(f"上游 {url} 失败：{error!r}\n")
+                code = 502
+        return code
 
     def _status(self, code: int, message: str) -> None:
         data = message.encode()

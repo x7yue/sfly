@@ -85,19 +85,19 @@ check_pointers() {
 			clause=$(sed -E "s/.*($clause_end)//" <<<"$before")
 			case $clause in *不* | *未* | *没* | *无* | *非* | *勿*) continue ;; esac
 			phrase=$match
-			for target in $(grep -oE '[0-9]{4}' <<<"$phrase"); do
+			while IFS= read -r target; do
 				[[ $target == "$number" || $seen == *" $line:$target "* ]] && continue
 				seen+="$line:$target "
 				old=(docs/adr/"$target"-*.md)
 				# 没有这个编号的 ADR（写错了），或者它也是这个分支新加的（想怎么改都行）：没有旧 ADR 要留指针。
-				[[ -e ${old[0]:-} ]] && git cat-file -e "$base:${old[0]}" 2>/dev/null || continue
-				grep -qE "<!--[[:space:]]*不加指针[[:space:]]+ADR[[:space:]]*$target[[:space:]]*(：|:)[[:space:]]*[^[:space:]>-]" "$path" && continue
+				if [[ ! -e ${old[0]:-} ]] || ! git cat-file -e "$base:${old[0]}" 2>/dev/null; then continue; fi
+				grep -qE "<!--[[:space:]]*不加指针[[:space:]]+ADR[[:space:]]*${target}[[:space:]]*(：|:)[[:space:]]*[^[:space:]>-]" "$path" && continue
 				grep -qE "ADR[[:space:]-]*${number}([^0-9]|$)" "${old[0]}" && continue
 				echo "${path}:${line} 写了「${phrase}」，但 ${old[0]} 末尾没有指向 ADR ${number} 的一行。" >&2
 				echo "  在 ${old[0]} 末尾追加一行（只追加，不改正文），写明是 ADR ${number} 取代、推翻还是修订了它，部分取代的写清是哪一部分，例如「已被 ADR ${number} 取代」。" >&2
 				echo "  这句话只是普通引用、不需要指针时，在 ${path} 里加一行 <!-- 不加指针 ADR ${target}：原因 -->（原因必填）；普通引用写「见 ADR ${target}」，不会触发这条检查。" >&2
 				status=1
-			done
+			done < <(grep -oE '[0-9]{4}' <<<"$phrase")
 		done
 	done < <(grep -nE "$supersede_re" "$path" || true)
 }

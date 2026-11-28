@@ -21,7 +21,7 @@ f, t = os.environ["FROM"], os.environ["TO"]
 if s.count(f) != 1:
     sys.exit("变异点在模型里找不到或不唯一：" + f)
 open(sys.argv[2], "w").write(s.replace(f, t))
-' "$MODEL/TaskDispatch.tla" "$WORK/$name/TaskDispatch.tla" || { echo "ERROR $name：模型已改动，更新变异点"; status=1; return; }
+' "$MODEL/TaskDispatch.tla" "$WORK/$name/TaskDispatch.tla" || { echo "ERROR ${name}：模型已改动，更新变异点"; status=1; return; }
 	# 只检查这个变异体针对的性质：TLC 遇到第一个违例就停，别的性质先违反会掩盖它。
 	python3 -c '
 import re, sys
@@ -32,9 +32,9 @@ open(sys.argv[2], "w").write(re.sub(r"INVARIANTS\n(    .*\n)+", "INVARIANTS\n   
 	local got
 	got=$(sed -n 's/^Error: Invariant \([A-Za-z0-9_]*\) is violated.*/\1/p' "$WORK/$name/out.txt" | head -1)
 	if [[ $got == "$want" ]]; then
-		echo "ok    $name（$cfg）：被 $want 抓到"
+		echo "ok    ${name}（${cfg}）：被 $want 抓到"
 	else
-		echo "MISS  $name（$cfg）：期望 $want，实际 ${got:-无违例}"
+		echo "MISS  ${name}（${cfg}）：期望 ${want}，实际 ${got:-无违例}"
 		status=1
 	fi
 }
@@ -77,4 +77,16 @@ mutant replace-fail-to-success Safe SuccessWasRun \
 mutant result-accepts-lost Safe AtMostOneSuccess \
 	'                    /\ cp'"'"' = IF cp[m.a] \notin OnAgent THEN cp' \
 	'                    /\ cp'"'"' = IF cp[m.a] \in {"none", "queued", "success"} THEN cp'
+# released.ts（#505）：租约过期就算离手。Agent 断线时还在执行，之后重连补报，副本却已经删了。
+mutant release-on-lease-expiry Safe ReleasedLeftHand \
+	'    /\ rel'"'"' = rel  \* 租约过期不算离手：Agent 之后可能重连补报' \
+	'    /\ rel'"'"' = [rel EXCEPT !.released = @ \cup {a}]'
+# released.ts hello：Welcome 一给放弃就算离手，不等心跳不再列出它。被放弃时还在执行的尝试要等它结束。
+mutant release-on-welcome Safe ReleasedLeftHand \
+	'                                 !.released = @ \cup (rel.leased \ hello.held)]' \
+	'                                 !.released = @ \cup (rel.leased \ hello.held) \cup abandon]'
+# released.ts heartbeat：心跳里没列出的都算离手，不只是放弃过的。派发消息还在路上的尝试，Agent 收到之后才开始执行。
+mutant heartbeat-releases-unlisted Safe ReleasedLeftHand \
+	'                       /\ rel'"'"' = [rel EXCEPT !.released = @ \cup (rel.told \ m.held)]' \
+	'                       /\ rel'"'"' = [rel EXCEPT !.released = @ \cup (rel.leased \ m.held)]'
 exit $status

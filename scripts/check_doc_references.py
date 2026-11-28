@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """文档里的引用有没有失效（`pnpm lint:docs` 的一部分，规则见 CODING_STANDARDS.md「文档」
-和 AGENTS.md「Agent skills」）。拦四类：
+和 AGENTS.md「Agent skills」）。拦六类：
 
 1. Markdown 里反引号写的仓库路径不存在。只有以仓库顶层目录名或根目录文件名开头的才算仓库路径
    （`apps/web/src/lib/api.ts`、`README.md`）；`task.json`、`out/…`、`~/.sfly/…` 这类运行时才有的
@@ -15,6 +15,11 @@
    `.claude/skills/<名称>` 是指向它的软链接（`../../.agents/skills/<名称>`），两边一一对应：缺软链、
    软链指错、断链（skill 删掉或改过名）、`.claude/skills` 里放了真实目录或普通文件，都报；报错里
    以 `$ ` 开头的行是修复命令，可以照着执行。skill 的问题不能放行。
+5. Markdown 正文和代码块里的 `pnpm <名字>` 不是 pnpm 的命令，也不是根目录、文件所在包或 `--filter`
+   写的包的 script（规则在 scripts/doc_commands.py）。放行时引用原文写报错里的命令原文。
+6. README、docs/ARCHITECTURE.md、docs/guide/、apps/*/README.md、evals/**/README.md 里手写的
+   「方法 + 路径」（`POST /runs/:id/cancel`）不在控制面的契约和助手服务的路由里（规则在
+   scripts/doc_routes.py）。放行时引用原文写报错里的「方法 路径」。
 
 不查：`docs/adr`、`docs/research`（旧名照旧保留）、`docs/perf/<版本>/`（历史报告）、生成的代码、
 测试夹具；符号链接的 .md 只查链接指向的那份。没有可用的 git 时说明跳过了检查，退出码 0
@@ -45,10 +50,16 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import doc_commands  # noqa: E402
+import doc_routes  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 ALLOW_FILE = "scripts/doc-references.allow"
 CHECKER_FILES = (
     "scripts/check_doc_references.py",
+    "scripts/doc_commands.py",
+    "scripts/doc_routes.py",
     "scripts/tests/test_check_doc_references.py",
     ALLOW_FILE,
 )
@@ -647,6 +658,40 @@ def check_skills(repo: Repo) -> list[Finding]:
     return findings
 
 
+# —— 5：文档里的 pnpm 命令 ——
+
+
+def check_pnpm_commands(repo: Repo) -> list[Finding]:
+    if "package.json" not in repo.files:
+        return []
+    packages = doc_commands.Packages(repo.files, lambda p: "\n".join(repo.read_lines(p)))
+    findings: list[Finding] = []
+    for path in sorted(repo.files):
+        if not (path.endswith(".md") and repo.is_source(path)):
+            continue
+        for number, line in enumerate(repo.read_lines(path), 1):
+            for shown, message, hints in doc_commands.check_line(packages, path, line):
+                findings.append(Finding(path, number, shown, message, hints))
+    return findings
+
+
+# —— 6：文档里手写的 HTTP 接口 ——
+
+
+def check_http_routes(repo: Repo) -> list[Finding]:
+    if doc_routes.CONTRACT not in repo.files:
+        return []
+    routes = doc_routes.load_routes(lambda p: "\n".join(repo.read_lines(p)))
+    findings: list[Finding] = []
+    for path in sorted(repo.files):
+        if not (doc_routes.is_checked(path) and repo.is_source(path)):
+            continue
+        for number, line in enumerate(repo.read_lines(path), 1):
+            for written, message, hints in doc_routes.check_line(routes, line):
+                findings.append(Finding(path, number, written, message, hints))
+    return findings
+
+
 # —— 放行 ——
 
 
@@ -701,6 +746,8 @@ def main() -> int:
             findings.extend(check_markdown(repo, path))
     findings.extend(check_sections(repo))
     findings.extend(check_skills(repo))
+    findings.extend(check_pnpm_commands(repo))
+    findings.extend(check_http_routes(repo))
 
     allowed, problems = load_allow(repo)
     used: set[tuple[str, str]] = set()

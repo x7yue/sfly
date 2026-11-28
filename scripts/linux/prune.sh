@@ -90,8 +90,7 @@ kb_text() {
 }
 
 # 清理（或 --dry-run 时只数大小）：容器里先数大小再删，逐行输出「目录名 大小(KB) 状态」。
-# 下面两段单引号里的 $d、$kb 是在容器里的 sh 展开的，不是这里。
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016 # 下面两段单引号里的 $d、$kb 是在容器里的 sh 展开的，不是这里
 if $dry_run; then
 	action='printf "%s\t%s\t%s\n" "$d" "$(du -sk "/vol/$d" | cut -f1)" would-remove'
 	mount="$volume:/vol:ro"
