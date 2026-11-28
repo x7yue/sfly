@@ -12,6 +12,7 @@ import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
+import { withSecretLimits } from "./support/secret-limits.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const DEFAULT = "fake-default-6a1f0c";
@@ -409,5 +410,193 @@ describe("会话令牌触发的运行不解析 secret 参数", () => {
 		const run = await json<{ id: string }>(await trigger(personal, id), 201);
 		expect((await agent.nextAssign()).inputs.text).toBe(DEFAULT);
 		expect((await runView(run.id)).secrets_withheld).toBe(false);
+	});
+	it("副本里把 secret 参数改成普通参数：预设里按 secret 存下的值随之去掉，会话再用这个预设触发拿不到它", async () => {
+		const source = await scenarioBy(
+			personal,
+			orchestration(
+				[
+					[
+						{ id: "entry", kind: "entry", params: [param("token", { secret: true })] },
+						echo("a", { text: "${{ params.token }}" }),
+					],
+				],
+				[],
+			),
+		);
+		await json(
+			await send(personal, "POST", `/orchestrations/${source}/presets`, {
+				name: "存着 secret 值",
+				params: [{ name: "token", value: PRESET }],
+			}),
+			201,
+		);
+		const copy = (
+			await json<{ id: string }>(
+				await send(sessionToken, "POST", `/orchestrations/${source}/copy`, { name: "联调副本" }),
+				201,
+			)
+		).id;
+		await json(
+			await send(sessionToken, "POST", `/orchestrations/${copy}/versions`, {
+				base_version: 1,
+				document: orchestration(
+					[
+						[
+							{ id: "entry", kind: "entry", params: [param("token")] },
+							echo("a", { text: "${{ params.token }}" }),
+						],
+					],
+					[],
+				),
+			}),
+			201,
+		);
+		const [preset] = await query<{ id: string; values: Record<string, unknown> }>(
+			"select id, values from run_presets where orchestration_id = $1",
+			[copy],
+		);
+		expect(preset?.values).toEqual({});
+		await json(await trigger(sessionToken, copy, { preset: preset?.id }), 201);
+		expect((await agent.nextAssign()).inputs.text).toBeNull();
+		// 源场景没有改声明，它的预设照旧。
+		const [kept] = await query<{ values: Record<string, unknown> }>(
+			"select values from run_presets where orchestration_id = $1",
+			[source],
+		);
+		expect(kept?.values).toEqual({ token: PRESET });
+	});
+
+	it("子流程的复合 secret 参数：只留引用的部分，内嵌的常量（字段、数组元素、和引用拼在一起的文字）都不解析", async () => {
+		const id = await scenarioBy(
+			sessionToken,
+			orchestration(
+				[
+					[
+						{ id: "entry", kind: "entry", params: [param("host")] },
+						spawn("x", {
+							cfg: {
+								host: "${{ params.host }}",
+								key: CONSTANT,
+								mixed: "k-${{ params.host }}",
+								list: ["${{ params.host }}", CONSTANT],
+								nested: { inner: CONSTANT },
+							},
+						}),
+					],
+					[
+						{
+							id: "sub",
+							kind: "subflow_entry",
+							name: "S",
+							params: [param("cfg", { type: "json", secret: true })],
+						},
+						echo("s1", { text: "${{ params.cfg }}" }),
+					],
+				],
+				[["x", "sub"]],
+			),
+		);
+		await json(await trigger(sessionToken, id, { params: { host: "h-1" } }), 201);
+		const s1 = await agent.nextAssign();
+		expect(s1.inputs.text).toEqual({ host: "h-1", list: ["h-1", null] });
+		expect(JSON.stringify(s1.inputs)).not.toContain(CONSTANT);
+	});
+
+	it("不解析的常量不进这次运行的原值集合：节点日志里出现它时原样（它在这次运行里不是 secret 值）", async () => {
+		const id = await scenarioBy(
+			sessionToken,
+			orchestration(
+				[
+					[{ id: "entry", kind: "entry", params: [] }, spawn("x", { k: CONSTANT }), echo("p")],
+					[
+						{ id: "sub", kind: "subflow_entry", name: "S", params: [param("k", { secret: true })] },
+						echo("s1", { text: "${{ params.k }}" }),
+					],
+				],
+				[["x", "sub"]],
+			),
+		);
+		const run = await json<{ id: string }>(await trigger(sessionToken, id), 201);
+		const first = await agent.nextAssign();
+		agent.logs(first, [[1, `saw ${CONSTANT}`]]);
+		await agent.sync();
+		const file = await readFile(join(cp.dataDir, "logs", run.id, `${first.taskId}.jsonl`), "utf8");
+		expect(file).toContain(`saw ${CONSTANT}`);
+	});
+
+	it("不解析的常量和默认值不参与大小的检查：可选的子流程 secret 参数的常量超过上限，会话照样能触发，预检也不报", async () => {
+		await withSecretLimits({ automatonChars: 64 }, async () => {
+			const id = await scenarioBy(
+				sessionToken,
+				orchestration(
+					[
+						[
+							{ id: "entry", kind: "entry", params: [] },
+							spawn("x", { k: `${CONSTANT}-${"x".repeat(200)}` }),
+						],
+						[
+							{
+								id: "sub",
+								kind: "subflow_entry",
+								name: "S",
+								params: [param("k", { secret: true })],
+							},
+							echo("s1", { text: "${{ params.k }}" }),
+						],
+					],
+					[["x", "sub"]],
+				),
+			);
+			const problems = runsApi.preflight.response.parse(
+				await json(await send(sessionToken, "GET", `/orchestrations/${id}/preflight`), 200),
+			).problems;
+			expect(problems.map((p) => p.code)).not.toContain("secret_params_too_large");
+			await json(await trigger(sessionToken, id), 201);
+			expect((await agent.nextAssign()).inputs.text).toBeNull();
+		});
+	});
+
+	it("预设里旧的 secret 值类型对不上：不解析时先去掉它，请求里给的新值照常触发", async () => {
+		const id = await scenarioBy(
+			personal,
+			orchestration(
+				[
+					[
+						{ id: "entry", kind: "entry", params: [param("token", { secret: true })] },
+						echo("a", { text: "${{ params.token }}" }),
+					],
+				],
+				[],
+			),
+		);
+		const preset = await json<{ id: string }>(
+			await send(personal, "POST", `/orchestrations/${id}/presets`, {
+				name: "旧的",
+				params: [{ name: "token", value: PRESET }],
+			}),
+			201,
+		);
+		await json(
+			await send(personal, "POST", `/orchestrations/${id}/versions`, {
+				base_version: 1,
+				document: orchestration(
+					[
+						[
+							{
+								id: "entry",
+								kind: "entry",
+								params: [param("token", { type: "number", secret: true, required: true })],
+							},
+							echo("a", { text: "${{ params.token }}" }),
+						],
+					],
+					[],
+				),
+			}),
+			201,
+		);
+		await json(await trigger(sessionToken, id, { preset: preset.id, params: { token: 5 } }), 201);
+		expect((await agent.nextAssign()).inputs.text).toBe(5);
 	});
 });

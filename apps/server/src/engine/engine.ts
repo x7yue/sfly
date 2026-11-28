@@ -63,11 +63,10 @@ import type {
 	TriggerRequest,
 } from "../runs/trigger-admission.js";
 import {
+	planFor,
 	WITHHELD_REASON,
 	withheldNote,
 	withholdsSecrets,
-	withoutSecretConstants,
-	withoutSecretDefaults,
 } from "../runs/withheld-secrets.js";
 import type { SessionStore } from "../sessions/session-store.js";
 import { Topics } from "../sse/topics.js";
@@ -230,6 +229,8 @@ export class Engine implements AgentSessionHandler {
 	#documents = new Map<string, StoredOrchestrationDocument>();
 	/** 场景版本 ID → 执行计划。 */
 	#plans = new Map<string, RunPlan>();
+	/** 不解析 secret 参数的运行的计划，按版本（{@link Engine.#runPlan}）。 */
+	#withheldPlans = new Map<string, RunPlan>();
 
 	constructor(
 		private readonly deps: {
@@ -309,7 +310,7 @@ export class Engine implements AgentSessionHandler {
 			const mainId = chainInstanceId(runId);
 			const masked = this.deps.masking.firstVault({
 				document: version.document,
-				plan,
+				plan: planFor(plan, withholdSecrets),
 				chainInstanceId: mainId,
 				params,
 			});
@@ -714,6 +715,19 @@ export class Engine implements AgentSessionHandler {
 
 	/** 运行的执行计划；场景版本不可变，计划可以缓存。 */
 	async #runPlan(tx: Tx, run: RunRow): Promise<RunPlan> {
+		const plan = await this.#versionPlan(tx, run);
+		if (!run.secretsWithheld) return plan;
+		// 不解析 secret 参数的运行（#497）用去掉默认值和常量的计划，按版本另存一份，原计划不变。
+		let withheld = this.#withheldPlans.get(run.orchestrationVersionId);
+		if (!withheld) {
+			withheld = planFor(plan, true);
+			this.#withheldPlans.set(run.orchestrationVersionId, withheld);
+		}
+		return withheld;
+	}
+
+	/** 运行绑定的版本的执行计划（按版本缓存）。 */
+	async #versionPlan(tx: Tx, run: RunRow): Promise<RunPlan> {
 		const cached = this.#plans.get(run.orchestrationVersionId);
 		if (cached) return cached;
 		// 升级前开始、还没跑完的运行绑定的版本里可以有已移除种类的节点（ADR 0028）：照常排出计划，
@@ -893,18 +907,12 @@ export class Engine implements AgentSessionHandler {
 		let problem: string | undefined;
 		let params: Record<string, unknown> = {};
 		try {
-			// 不解析 secret 参数的运行（#497）：子流程 secret 参数的默认值、传给它的常量都当作没有提供，触发时定下、记在运行上。
-			const withheld = run.secretsWithheld;
-			const mapping = withheld
-				? withoutSecretConstants(node.params, subflow.entry.params)
-				: node.params;
-			const mapped = resolveInputs(mapping, await this.#scope(step, run, chain, plan, index));
-			const declarations = withheld
-				? withoutSecretDefaults(subflow.entry.params)
-				: subflow.entry.params;
-			const filled = fillParams(declarations, mapped);
+			// 不解析 secret 参数的运行（#497）的计划里，子流程 secret 参数的默认值、传给它的常量已经去掉（`#runPlan`）。
+			const mapped = resolveInputs(node.params, await this.#scope(step, run, chain, plan, index));
+			const filled = fillParams(subflow.entry.params, mapped);
 			if ("errors" in filled) {
-				problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}${withheld ? `（${WITHHELD_REASON}）` : ""}`;
+				const why = run.secretsWithheld ? `（${WITHHELD_REASON}）` : "";
+				problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}${why}`;
 			} else params = filled.params;
 		} catch (error) {
 			if (!(error instanceof InvalidReferenceError)) throw error;

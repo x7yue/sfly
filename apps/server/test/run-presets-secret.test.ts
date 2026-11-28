@@ -302,17 +302,15 @@ describe("secret 预设参数", () => {
 			expect(await inputsOf(id, preset.id)).toMatchObject({ host: "a.example", port: 9000 });
 		});
 
-		it("不再是 secret 的参数：按普通参数显示，keep 不再适用", async () => {
+		it("不再是 secret 的参数：预设里按 secret 存下的值随之去掉（#497，不跟着声明降成普通的值），keep 不再适用", async () => {
 			const { id, preset } = await sceneWithSecretPreset();
 			await api.saveVersion(
 				id,
 				scenario(PRESET_PARAMS.map((p) => (p.name === "token" ? { ...p, secret: false } : p))),
 			);
 			const [listed] = await listPresets(api, id);
-			expect(listed?.params).toEqual([
-				{ name: "host", secret: false, value: "a.example" },
-				{ name: "token", secret: false, value: SECRET },
-			]);
+			expect(listed?.params).toEqual([{ name: "host", secret: false, value: "a.example" }]);
+			expect(JSON.stringify(listed)).not.toContain(SECRET);
 			expect(
 				await invalidPresetFields(
 					await updatePreset(api, id, preset.id, { params: [{ name: "token", keep: true }] }),
@@ -357,7 +355,7 @@ describe("secret 预设参数", () => {
 			expect(await inputsOf(id, preset.id)).toMatchObject({ token: 4242 });
 		});
 
-		it("已不在入口参数里的预设参数，值也不返回：原来是不是 secret 已经无从判断", async () => {
+		it("新版本删掉的 secret 参数：预设里它的值随之去掉（#497），哪里都读不到", async () => {
 			const { id } = await sceneWithSecretPreset();
 			await api.saveVersion(id, scenario(PRESET_PARAMS.filter((p) => p.name !== "token")));
 			const responses = [
@@ -366,8 +364,7 @@ describe("secret 预设参数", () => {
 			];
 			for (const res of responses) expect(await res.text()).not.toContain(SECRET);
 			const [listed] = await listPresets(api, id);
-			expect(listed?.params.map((p) => p.name)).toEqual(["host", "token"]);
-			expect(listed?.params[1]?.value).toBe(MASK);
+			expect(listed?.params.map((p) => p.name)).toEqual(["host"]);
 		});
 	});
 

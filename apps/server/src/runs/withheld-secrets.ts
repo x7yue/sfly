@@ -1,11 +1,12 @@
 // 会话令牌触发、会话没勾选「联调时可以使用项目密钥」的运行不解析 secret 参数（#497，ADR 0029「助手会话」）：场景版本里内嵌的值
-// （入口和子流程入口的默认值、异步任务节点传给子流程 secret 参数的常量）和运行预设里的值都当作没有提供，只用触发请求里给的值。
-import { referencesIn } from "@sfly/orchestration";
+// （入口和子流程入口的默认值、异步任务节点传给子流程 secret 参数的值里的常量部分）和运行预设里的值都当作没有提供，只用触发请求里给的值。
+// 「不解析」只在这里定义：触发准入、预检、加密副本和引擎都用 {@link planFor} 给出的计划。
+import { referencesIn, WHOLE_REFERENCE } from "@sfly/orchestration";
 import type { ParamDeclaration, StoredNode } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { sessions } from "../db/schema.js";
-import type { RunPlan } from "../engine/chain.js";
+import type { ChainPlan, RunPlan } from "../engine/chain.js";
 
 export const SECRETS_WITHHELD = "secret_params_withheld";
 
@@ -27,6 +28,66 @@ export async function withholdsSecrets(db: Db | Tx, sessionId: string | null): P
 	return session?.allowed !== true;
 }
 
+/**
+ * 这次运行用的计划：不解析 secret 参数时是 {@link withheldPlan}，否则就是 `plan`。
+ * 引擎、触发准入（参数检查、加密副本）和预检都经这里，不各自去掉默认值和常量。
+ */
+export function planFor(plan: RunPlan, withheld: boolean): RunPlan {
+	return withheld ? withheldPlan(plan) : plan;
+}
+
+/**
+ * 不解析 secret 参数的计划：每条链入口的 secret 参数去掉默认值，异步任务节点传给子流程 secret 参数的值只留引用的部分
+ * （{@link referencedPart}）。返回新的对象，按版本缓存的原计划不变；主链在 `chains` 里也是同一个对象。
+ */
+export function withheldPlan(plan: RunPlan): RunPlan {
+	const converted = new Map<ChainPlan, ChainPlan>();
+	const convert = (chain: ChainPlan): ChainPlan => {
+		const known = converted.get(chain);
+		if (known) return known;
+		const next: ChainPlan = {
+			entry: {
+				...chain.entry,
+				params: withoutSecretDefaults(chain.entry.params),
+			} as ChainPlan["entry"],
+			nodes: chain.nodes.map((node) => {
+				if (node.kind !== "async") return node;
+				const sub = plan.chains.get(plan.dispatch.get(node.id) ?? "");
+				return sub
+					? { ...node, params: withoutSecretConstants(node.params, sub.entry.params) }
+					: node;
+			}),
+		};
+		converted.set(chain, next);
+		return next;
+	};
+	return {
+		main: convert(plan.main),
+		chains: new Map([...plan.chains].map(([id, chain]) => [id, convert(chain)])),
+		dispatch: plan.dispatch,
+	};
+}
+
+/**
+ * 值里引用的部分：整值引用的字符串原样；对象只留含引用的字段，数组里不含引用的元素换成 null（位置不变）；
+ * 常量、引用和文字拼在一起的字符串、不含任何引用的对象和数组都是 undefined（当作没有提供）。
+ */
+export function referencedPart(value: unknown): unknown {
+	if (typeof value === "string") return WHOLE_REFERENCE.test(value) ? value : undefined;
+	if (Array.isArray(value)) {
+		const parts = value.map(referencedPart);
+		return parts.some((p) => p !== undefined) ? parts.map((p) => p ?? null) : undefined;
+	}
+	if (value !== null && typeof value === "object") {
+		const fields = Object.entries(value).flatMap(([key, field]) => {
+			const part = referencedPart(field);
+			return part === undefined ? [] : [[key, part] as const];
+		});
+		return fields.length > 0 ? Object.fromEntries(fields) : undefined;
+	}
+	return undefined;
+}
+
 /** 声明里去掉 secret 参数的默认值。 */
 export function withoutSecretDefaults(declarations: ParamDeclaration[]): ParamDeclaration[] {
 	return declarations.map((d) => {
@@ -45,16 +106,18 @@ export function withoutSecretValues(
 	return Object.fromEntries(Object.entries(values).filter(([name]) => !secrets.has(name)));
 }
 
-/** 异步任务节点传给子流程的值里，去掉传给 secret 参数的常量（不含引用的值）。 */
-export function withoutSecretConstants(
+/** 异步任务节点传给子流程的值里，传给 secret 参数的只留引用的部分（{@link referencedPart}），什么都不剩的去掉。 */
+function withoutSecretConstants(
 	mapping: Record<string, unknown>,
 	declarations: readonly ParamDeclaration[],
 ): Record<string, unknown> {
 	const secrets = new Set(declarations.filter((d) => d.secret).map((d) => d.name));
 	return Object.fromEntries(
-		Object.entries(mapping).filter(
-			([name, value]) => !secrets.has(name) || referencesIn(value).length > 0,
-		),
+		Object.entries(mapping).flatMap(([name, value]) => {
+			if (!secrets.has(name)) return [[name, value]];
+			const part = referencedPart(value);
+			return part === undefined ? [] : [[name, part]];
+		}),
 	);
 }
 
@@ -129,7 +192,7 @@ function fixedSource(
 ): string | undefined {
 	const mapped = node.params[d.name];
 	if (mapped === undefined) return d.default == null ? undefined : "它自己的默认值";
-	if (mapped === null || referencesIn(mapped).length > 0) return undefined;
+	if (mapped === null || referencedPart(mapped) !== undefined) return undefined;
 	return `异步任务节点 ${node.id} 传的常量`;
 }
 

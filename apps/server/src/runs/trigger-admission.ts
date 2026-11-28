@@ -12,9 +12,9 @@ import type { ProjectId } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import type { ParamsCheck, Preflight } from "./preflight.js";
 import {
+	planFor,
 	SECRETS_WITHHELD,
 	withheldProblems,
-	withoutSecretDefaults,
 	withoutSecretValues,
 } from "./withheld-secrets.js";
 
@@ -133,7 +133,11 @@ async function applyPreset(
 		? await findPreset(tx, orchestrationId, request.preset)
 		: undefined;
 	if (!preset) return { ok: false, ...PRESET_NOT_FOUND };
-	const invalid = presetProblems(preset.values, declarations);
+	// 不解析 secret 参数时预设里的 secret 值当作没有提供：先去掉再看预设还能不能用，旧的 secret 值类型不对不该挡住这次触发。
+	const values = request.withholdSecrets
+		? withoutSecretValues(preset.values, declarations)
+		: preset.values;
+	const invalid = presetProblems(values, declarations);
 	if (invalid.length > 0) {
 		return reject(
 			409,
@@ -142,9 +146,6 @@ async function applyPreset(
 			invalid,
 		);
 	}
-	const values = request.withholdSecrets
-		? withoutSecretValues(preset.values, declarations)
-		: preset.values;
 	const fixed = withPresetValues(request.params, values, declarations);
 	if ("locked" in fixed) {
 		return reject(
@@ -211,9 +212,9 @@ export function createTriggerAdmission(checks: {
 			);
 		}
 
-		const declarations = request.withholdSecrets
-			? withoutSecretDefaults(plan.main.entry.params)
-			: plan.main.entry.params;
+		// 这次运行用的计划（不解析 secret 参数时去掉了默认值和常量，`planFor`）：入口参数、参数检查都按它。
+		const effective = planFor(plan, request.withholdSecrets ?? false);
+		const declarations = effective.main.entry.params;
 		const applied = await applyPreset(tx, orchestrationId, request, declarations);
 		if (!applied.ok) return applied;
 		if (request.withholdSecrets) {
@@ -239,7 +240,7 @@ export function createTriggerAdmission(checks: {
 			orchestration.projectId,
 			version.document,
 			version.sessionId,
-			plan,
+			effective,
 			filled.params,
 			{
 				preset:

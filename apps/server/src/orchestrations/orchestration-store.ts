@@ -19,7 +19,8 @@ import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs } from "../db/schema.js";
 import type { FocusRejection } from "../focus/focus-list.js";
 import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-settings.js";
-import { copyPresets } from "../presets/preset-store.js";
+import { copyPresets, forgetDowngradedSecrets } from "../presets/preset-store.js";
+import { entryParams } from "../presets/preset-validity.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { sessionRefs, withSession } from "../sessions/session-ref.js";
 import type { SessionStore } from "../sessions/session-store.js";
@@ -681,6 +682,15 @@ export class OrchestrationStore {
 		pending: AfterCommit,
 	): Promise<OrchestrationVersionView> {
 		const number = orchestration.headVersion + 1;
+		const previous = await versionRow(tx, orchestration.id, orchestration.headVersion);
+		if (previous) {
+			await forgetDowngradedSecrets(
+				tx,
+				orchestration.id,
+				entryParams(previous.document),
+				entryParams(document),
+			);
+		}
 		const [row] = await tx
 			.insert(orchestrationVersions)
 			.values({

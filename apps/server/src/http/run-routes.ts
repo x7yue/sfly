@@ -94,11 +94,12 @@ export function registerRunRoutes(
 		}
 		// 默认值和运行预设的原始值，一次预检只读一次，传给要看它们的几项检查。
 		const raw = await rawScenario(deps.db, params.id);
-		const secretSize = raw ? await secretSizePreflight(raw) : { problems: [], warnings: [] };
-		// 会话（没勾选「联调时可以使用项目密钥」）读预检：它触发的运行不解析 secret 参数（#497），和触发时同一个判断。
-		const planned = (await withholdsSecrets(deps.db, sessionOf(request)))
-			? planRun(head.document)
-			: undefined;
+		// 会话（没勾选「联调时可以使用项目密钥」）读预检：它触发的运行不解析 secret 参数（#497），和触发时同一个判断；
+		// 默认值和预设里的 secret 值不用，按它们算的大小也就不适用。
+		const withholding = await withholdsSecrets(deps.db, sessionOf(request));
+		const secretSize =
+			raw && !withholding ? await secretSizePreflight(raw) : { problems: [], warnings: [] };
+		const planned = withholding ? planRun(head.document) : undefined;
 		const withheld = planned && !("errors" in planned) ? planned : undefined;
 		return {
 			version: head.number,
