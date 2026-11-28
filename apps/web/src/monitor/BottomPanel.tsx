@@ -5,6 +5,7 @@ import {
 	LOG_LEVELS,
 	type LogLineView,
 	type NodeRunView,
+	parseArtifactUrl,
 	type RunLogLine,
 	type RunView,
 	runsApi,
@@ -859,18 +860,10 @@ function AttemptsTab({
 	);
 }
 
-const ARTIFACT_REF =
-	/^https?:\/\/[^\s"]*\/tasks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifacts\/([^\s"?#]+)$/i;
-
-/** 产物引用（对 Agent 可见的完整地址，每个路径段已编码）对应的浏览器下载地址；不是产物引用时为 null。 */
+/** 产物引用（对 Agent 可见的完整地址，控制面用 `artifactUrl` 拼的）对应的浏览器下载地址；不是产物引用时为 null。 */
 const artifactRefPath = (value: string) => {
-	const m = ARTIFACT_REF.exec(value);
-	if (!m?.[1] || !m[2]) return null;
-	try {
-		return artifactDownloadPath(m[1], m[2].split("/").map(decodeURIComponent).join("/"));
-	} catch {
-		return null; // 不是合法的百分号编码
-	}
+	const ref = parseArtifactUrl(value);
+	return ref && artifactDownloadPath(ref.taskId, ref.name);
 };
 
 export const artifactDownloadPath = (taskId: string, name: string) =>
