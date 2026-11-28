@@ -414,15 +414,18 @@ export class AgentHub {
 
 	/** 连接结束：如果它仍是该名称的当前连接，记录为离线。 */
 	detach(conn: AgentConnection): Promise<void> {
-		return this.deps.mutex.run(async () => {
-			conn.close();
-			if (this.#connections.get(conn.name) !== conn) return;
-			this.#connections.delete(conn.name);
-			await this.deps.db
-				.update(agents)
-				.set({ status: "offline", lastSeenAt: this.deps.clock.now() })
-				.where(eq(agents.name, conn.name));
-		});
+		return this.deps.mutex.run(() => this.#drop(conn));
+	}
+
+	/** 断开并记为离线（调用方持有锁）：之后流结束时的 detach 看到它已不是当前连接，不再重复写。 */
+	async #drop(conn: AgentConnection): Promise<void> {
+		conn.close();
+		if (this.#connections.get(conn.name) !== conn) return;
+		this.#connections.delete(conn.name);
+		await this.deps.db
+			.update(agents)
+			.set({ status: "offline", lastSeenAt: this.deps.clock.now() })
+			.where(eq(agents.name, conn.name));
 	}
 
 	/** 这个项目里注册过的 Agent（不论是否在线）。 */
@@ -510,20 +513,22 @@ export class AgentHub {
 	}
 
 	/**
-	 * 凭据被吊销（或所属用户被停用）：断开用它连着的 Agent 连接（Agent 手上的任务走失联处理：租约到期后 `agent_lost`）。
+	 * 凭据被吊销（或所属用户被停用）：断开用它连着的 Agent 连接并记为离线，吊销的响应返回时 Agent 列表已经是离线
+	 * （Agent 手上的任务走失联处理：租约到期后 `agent_lost`）。
 	 * 在引擎的锁里做，和 {@link attach} 的再确认（`verify`）互斥：吊销的写库在先，所以要么新连接的再确认看到已吊销，
 	 * 要么它已经登记、这里把它断开。
 	 */
 	closeByCredentials(credentialIds: readonly string[]): Promise<void> {
 		return this.deps.mutex.run(async () => {
-			for (const conn of this.#connections.values()) {
-				if (conn.credentialId !== null && credentialIds.includes(conn.credentialId)) conn.close();
-			}
+			const revoked = [...this.#connections.values()].filter(
+				(conn) => conn.credentialId !== null && credentialIds.includes(conn.credentialId),
+			);
+			for (const conn of revoked) await this.#drop(conn);
 		});
 	}
 
 	/**
-	 * 停用或恢复一台 Agent（ADR 0029「迁移与过渡」）：停用的立即断开连接，不能连接、不参与派发；恢复清空时间。
+	 * 停用或恢复一台 Agent（ADR 0029「迁移与过渡」）：停用的立即断开连接、记为离线，不能连接、不参与派发；恢复清空时间。
 	 * 返回：`not_found` 没有这台 Agent，`unchanged` 已经是这个状态，`ok` 改了。
 	 */
 	setDisabled(
@@ -542,7 +547,8 @@ export class AgentHub {
 				.update(agents)
 				.set({ disabledAt: disabled ? this.deps.clock.now() : null })
 				.where(eq(agents.name, name));
-			if (disabled) this.#connections.get(name)?.close();
+			const conn = this.#connections.get(name);
+			if (disabled && conn) await this.#drop(conn);
 			return "ok";
 		});
 	}
