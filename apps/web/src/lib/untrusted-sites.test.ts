@@ -146,7 +146,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				wrapped: [
 					"logs.error",
 					'a.agent ?? "控制面"',
-					"ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind",
+					"ERROR_KIND_LABEL[a.error.kind as ErrorKind] ?? a.error.kind",
 					"a.error.kind",
 					'error.message || "（没有错误信息）"',
 					"a.error.location",

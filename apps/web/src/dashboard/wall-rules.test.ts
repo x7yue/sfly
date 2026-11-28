@@ -46,6 +46,8 @@ function agent(name: string, overrides: Partial<AgentView> = {}): AgentView {
 		dev_packages: [],
 		running_tasks: [],
 		queued_tasks: [],
+		other_project_running: 0,
+		other_project_queued: 0,
 		version_mismatch: false,
 		update: { state: "none", remaining_tasks: 0, reason: "" },
 		clock_offset: null,

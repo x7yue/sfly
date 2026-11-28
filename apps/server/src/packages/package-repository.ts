@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { newestVersion } from "@sfly/orchestration";
 import { PackageMetadata } from "@sfly/schema";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
@@ -52,8 +53,21 @@ export interface PackageSummary {
 	name: string;
 	/** 在公共项目里（#501）。 */
 	public: boolean;
+	/** 最新版本：按版本号比较，不是发布时间（@sfly/orchestration 的 `newestVersion`，#434）。 */
+	latest_version: string;
 	/** 按发布时间从新到旧。 */
 	versions: PackageVersionSummary[];
+}
+
+/** 一个节点包的摘要：各版本按发布时间从新到旧（调用方排好），最新版本按版本号。 */
+function summaryOf(name: string, rows: readonly Row[]): PackageSummary {
+	const versions = rows.map(toSummary);
+	return {
+		name,
+		public: rows.some((r) => r.projectId === PUBLIC_PROJECT),
+		latest_version: newestVersion(versions.map((v) => v.version)) ?? "",
+		versions,
+	};
 }
 
 /** 发布人（ADR 0029）：显示名、用户 ID、经哪个令牌（令牌的名称）；没有带凭据的发布没有（升级之前发布不要任何身份）。 */
@@ -199,13 +213,6 @@ async function existingMessage(
 	return `${base}，不能覆盖已发布的版本`;
 }
 
-/** 一个节点包的摘要：版本按查询的顺序（发布时间从新到旧）；有版本在公共项目里时 `public` 为 true。 */
-const summaryOf = (name: string, rows: (typeof nodePackages.$inferSelect)[]): PackageSummary => ({
-	name,
-	public: rows.some((r) => r.projectId === PUBLIC_PROJECT),
-	versions: rows.map(toSummary),
-});
-
 /**
  * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
  * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
@@ -274,7 +281,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				.from(nodePackages)
 				.where(inArray(nodePackages.projectId, readableProjects(project)))
 				.orderBy(asc(nodePackages.name), desc(nodePackages.publishedAt));
-			const byName = new Map<string, (typeof rows)[number][]>();
+			const byName = new Map<string, Row[]>();
 			for (const row of rows) byName.set(row.name, [...(byName.get(row.name) ?? []), row]);
 			return [...byName].map(([name, versions]) => summaryOf(name, versions));
 		},

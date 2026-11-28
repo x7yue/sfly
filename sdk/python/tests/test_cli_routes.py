@@ -183,6 +183,10 @@ def test_the_old_project_query_picks_the_project_of_the_new_path(
         _moved(capsys, "GET", "/runs?limit=5")["next"]
         == "sfly api GET '/projects/team-a/runs?limit=5'"
     )
+    assert (
+        _moved(capsys, "DELETE", "/feishu-bots/群")["next"]
+        == "sfly api DELETE '/projects/team-a/feishu-bots/群'"
+    )
     # 别的查询参数留在新写法里（项目只从发布接口的旧参数里取）。
     error = _moved(capsys, "GET", "/agents?project=public&x=1")
     assert error["next"] == "sfly api GET '/projects/team-a/agents?project=public&x=1'"

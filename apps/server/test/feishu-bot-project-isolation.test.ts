@@ -7,7 +7,7 @@
 // - 发送队列（别的项目的消息先于退避和限速的判断被丢弃；机器人换项目、删了又在别的项目登记、请求在途时被删，
 //   都不会发给别的项目的地址、不会回写到别的机器人上）；
 // - 管理接口按名字操作别的项目的机器人，和不存在的整份响应相同。
-// 真实控制面和数据库，假的飞书 Webhook 服务；HTTP 接口现在还只认默认项目（#488），别的项目的资源用库里的一条 `update` 造出来。
+// 真实控制面和数据库，假的飞书 Webhook 服务；请求都发在默认项目的路径下，别的项目的资源用库里的一条 `update` 造出来。
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ProjectId } from "../src/projects/project-id.js";
@@ -325,7 +325,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 
 	it("机器人删除后同名的在别的项目重新登记，原项目的运行留下的消息（并发入队漏掉的）：只丢弃它，新机器人自己的消息照常发，原地址和新地址都收不到它", async () => {
 		await api.createFeishuBot("ops-re", feishu.webhookUrl(RE_OLD));
-		expect((await api.delete("/feishu-bots/ops-re")).status).toBe(204);
+		expect((await api.delete("/projects/default/feishu-bots/ops-re")).status).toBe(204);
 		await api.createFeishuBot("ops-re", feishu.webhookUrl(RE_NEW));
 		await moveBot("ops-re", "alpha");
 		const defaultRun = await fakeRun("default");
@@ -340,13 +340,42 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 		]);
 	});
 
+	it("积压条数按消息所属的项目算：同名的旧机器人留在原项目的消息不算进新机器人的列表和单个响应；没有运行的消息照旧算在这个名字上", async () => {
+		await api.createFeishuBot("ops-count", feishu.webhookUrl("count-old"));
+		expect((await api.delete("/projects/default/feishu-bots/ops-count")).status).toBe(204);
+		await api.createFeishuBot("ops-count", feishu.webhookUrl("count-new"));
+		await moveBot("ops-count", "alpha");
+		// 消息都还在排队：下一次尝试排在 50 秒之后（控制面时钟是手动的，这个测试里不走），发送器不会动它们。
+		// 不能排得更远：超过最长的退避间隔（60 秒）会被当成时钟往回跳，马上重试（delivery-policy.ts 的 isRetryDue）。
+		const later = { nextAttemptAt: new Date(clock().now().getTime() + 50_000) };
+		await enqueue("ops-count", await fakeRun("default"), "原项目留下的", later);
+		await enqueue("ops-count", await fakeRun("alpha"), "新项目自己的", later);
+		const listed = async () =>
+			(
+				(await (await api.get("/projects/alpha/feishu-bots")).json()) as {
+					bots: { name: string; backlog: number }[];
+				}
+			).bots.find((b) => b.name === "ops-count")?.backlog;
+		expect(await listed()).toBe(1);
+		// 没有运行的消息是机器人自己的项目发的：算在这个名字上（和改之前一样）。
+		await enqueue("ops-count", null, "没有运行的", later);
+		expect(await listed()).toBe(2);
+		// 单个响应：换地址的响应里的条数同样只算这个项目的（换地址不动排队的消息）。
+		const replaced = await api.patch("/projects/alpha/feishu-bots/ops-count", {
+			webhook_url: feishu.webhookUrl("count-new"),
+		});
+		expect(replaced.status).toBe(200);
+		expect(((await replaced.json()) as { backlog: number }).backlog).toBe(2);
+		expect(await listed()).toBe(2);
+	});
+
 	it("请求在途时机器人被删除、同名的在别的项目重新登记：响应回来后不回写到新机器人的「最近一次投递」，消息仍是已丢弃", async () => {
 		await api.createFeishuBot("ops-race", feishu.webhookUrl(RACE_OLD));
 		feishu.replyTo(RACE_OLD, { delayMs: 2500 });
 		const defaultRun = await fakeRun("default");
 		const seq = await enqueue("ops-race", defaultRun, "在途的消息");
 		await eventually(async () => expect(requestsTo(RACE_OLD).length).toBe(1));
-		expect((await api.delete("/feishu-bots/ops-race")).status).toBe(204);
+		expect((await api.delete("/projects/default/feishu-bots/ops-race")).status).toBe(204);
 		await api.createFeishuBot("ops-race", feishu.webhookUrl(RACE_NEW));
 		await moveBot("ops-race", "alpha");
 		await new Promise((r) => setTimeout(r, 3500));
@@ -359,7 +388,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 	});
 
 	it("机器人管理接口（默认项目）：别的项目的机器人和不存在的整份响应相同；列表里没有它", async () => {
-		const list = await api.get("/feishu-bots");
+		const list = await api.get("/projects/default/feishu-bots");
 		const listText = await list.text();
 		noAlphaSecret("列表", listText);
 		expect(listText).not.toContain(FOREIGN_BOT);
@@ -370,7 +399,7 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 				noAlphaSecret(`${label}(${bot})`, text);
 				out[label] = `${res.status} ${norm(text, bot)}`;
 			};
-			const path = `/feishu-bots/${encodeURIComponent(bot)}`;
+			const path = `/projects/default/feishu-bots/${encodeURIComponent(bot)}`;
 			await keep("references", await api.get(`${path}/references`));
 			await keep(
 				"replace",

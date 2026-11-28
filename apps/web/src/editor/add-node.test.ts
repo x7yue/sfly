@@ -70,6 +70,7 @@ describe("添加节点菜单的分组与「最近使用」", () => {
 	const pkg = (name: string, version: string, nodes: string[]): PackageSummary => ({
 		name,
 		public: false,
+		latest_version: version,
 		versions: [
 			{
 				version,

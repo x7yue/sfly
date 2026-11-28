@@ -64,7 +64,7 @@ const client = createClient({
 | `dashboard`（控制台统计） | `get` |
 | `system` | `health` |
 
-调用的输入是一个对象：`params` 是路径参数，`query` 是查询参数，`body` 是请求体，和契约声明的一致。路径在项目下的接口（`agents`、`packages` 的方法，`orchestrations` 的 `list`、`create`，`runs.list`，`dashboard.get`，`sessions` 的 `list`、`create`）在 `params.project` 里写项目，默认项目是 `default`，例如 `client.agents.list({ params: { project: "default" } })`。返回值是契约的响应类型。下面的例子从上到下是一个连贯的脚本：真实页面里，把它们放进按钮的点击事件或定时刷新里。
+调用的输入是一个对象：`params` 是路径参数，`query` 是查询参数，`body` 是请求体，和契约声明的一致。路径在项目下的接口（`agents`、`packages`、`feishuBots` 的方法，`orchestrations` 的 `list`、`create`，`runs.list`，`dashboard.get`，`sessions` 的 `list`、`create`）在 `params.project` 里写项目，默认项目是 `default`，例如 `client.agents.list({ params: { project: "default" } })`。返回值是契约的响应类型。下面的例子从上到下是一个连贯的脚本：真实页面里，把它们放进按钮的点击事件或定时刷新里。
 
 ## 查询场景和运行
 

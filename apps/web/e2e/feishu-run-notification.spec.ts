@@ -92,10 +92,13 @@ test("在场景的更多菜单里配置运行通知：不产生新版本，复�
 	await dialog.getByRole("button", { name: "取消" }).click();
 
 	// 机器人被删除：设置原样保留，选择框标出未登记，并提示运行结束时不会发送。
-	const removed = await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
-		method: "DELETE",
-		headers: { ...actAs("tester") },
-	});
+	const removed = await controlPlane.fetch(
+		"/projects/default/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4",
+		{
+			method: "DELETE",
+			headers: { ...actAs("tester") },
+		},
+	);
 	expect(removed.status).toBe(204);
 	await more.click();
 	await page.getByRole("menuitem", { name: "运行通知…" }).click();
@@ -261,7 +264,7 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
 		const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
 		await setRunNotification(controlPlane, scenario, { bot: "压测群" });
-		await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
+		await controlPlane.fetch("/projects/default/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 			method: "DELETE",
 			headers: { ...actAs("tester") },
 		});

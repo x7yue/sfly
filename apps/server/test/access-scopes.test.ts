@@ -61,10 +61,10 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	// 我的开发 Agent 的注册、吊销（开发 Agent，写）→ 编辑（只认有用户的人的凭据）
 	"POST /projects/:project/dev-agents": "edit",
 	"DELETE /projects/:project/dev-agents/:name": "edit",
-	"POST /feishu-bots": "manage",
-	"PATCH /feishu-bots/:name": "manage",
-	"DELETE /feishu-bots/:name": "manage",
-	"POST /feishu-bots/:name/test": "manage",
+	"POST /projects/:project/feishu-bots": "manage",
+	"PATCH /projects/:project/feishu-bots/:name": "manage",
+	"DELETE /projects/:project/feishu-bots/:name": "manage",
+	"POST /projects/:project/feishu-bots/:name/test": "manage",
 	// 项目令牌的签发、吊销（项目，写）→ 管理
 	"POST /projects/:project/tokens": "manage",
 	// 登记项目的工作台（#549）：项目自己的设置（project × 写）→ 管理，只有人能做（项目令牌、会话令牌、Agent 凭据都不行）
@@ -290,8 +290,8 @@ describe("契约和访问检查的规则对得上", () => {
 				"POST /projects/:project/orchestrations",
 				"GET /projects/:project/packages",
 				"GET /projects/:project/packages/:name/versions/:version/archive",
-				"GET /feishu-bots",
-				"DELETE /feishu-bots/:name",
+				"GET /projects/:project/feishu-bots",
+				"DELETE /projects/:project/feishu-bots/:name",
 				// 会话的列表和新建：路径里的 :project 是项目（会话的集合属于项目）。
 				"GET /projects/:project/sessions",
 				"POST /projects/:project/sessions",

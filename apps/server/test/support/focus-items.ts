@@ -87,7 +87,10 @@ export async function putFocusItemsOk(
 ): Promise<OrchestrationView> {
 	const res = await putFocusItems(api, orchestrationId, items, nickname);
 	expect(res.status, await res.clone().text()).toBe(200);
-	return orchestrationsApi.update.response.parse(await res.json());
+	// 修改场景的响应多一个运行通知设置的 warnings（#501），这里只要场景视图，和读取的比较。
+	const { warnings, ...view } = orchestrationsApi.update.response.parse(await res.json());
+	expect(warnings).toEqual([]);
+	return view;
 }
 
 /** 读取场景视图（按 HTTP 契约解析）。 */

@@ -292,7 +292,9 @@ describe("sfly api → 控制面", () => {
 			);
 			expect(row("POST", "/orchestrations/:id/copy")).toMatch(/有副作用（新建场景）/);
 			expect(row("POST", "/orchestrations/:id/archive")).toMatch(/有副作用（删除或归档）/);
-			expect(row("DELETE", "/feishu-bots/:name")).toMatch(/有副作用（删除或归档）/);
+			expect(row("DELETE", "/projects/:project/feishu-bots/:name")).toMatch(
+				/有副作用（删除或归档）/,
+			);
 			expect(result.stdout).toContain("sfly api --describe <方法> <路径>");
 		});
 
@@ -441,7 +443,7 @@ describe("sfly api → 控制面", () => {
 			);
 			const upload = await cli("--describe", "POST", "/projects/default/packages");
 			expect(upload.stdout).toContain("sfly api 不能直接调用");
-			const empty = await cli("--describe", "DELETE", "/feishu-bots/:name");
+			const empty = await cli("--describe", "DELETE", "/projects/default/feishu-bots/:name");
 			expect(empty.stdout).toContain("响应：没有响应体（204）");
 		});
 

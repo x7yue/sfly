@@ -1,5 +1,6 @@
 import { UNNAMED_SUBFLOW_LABEL } from "@sfly/orchestration";
 import {
+	ACTIVE_STATUSES,
 	type AttemptView,
 	type ChainRunView,
 	errorHeadline,
@@ -183,9 +184,7 @@ function runFailures(run: RunView) {
 export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
 	return (
 		initialSelection(run, nodeId) ??
-		toRef(
-			nodeRefs(run).find((n) => ["running", "dispatched", "waiting", "queued"].includes(n.status)),
-		)
+		toRef(nodeRefs(run).find((n) => (ACTIVE_STATUSES as readonly string[]).includes(n.status)))
 	);
 }
 

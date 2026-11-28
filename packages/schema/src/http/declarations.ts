@@ -62,9 +62,9 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "dev_agent",
 		why: "我的开发 Agent（ADR 0029「凭据」）：在项目下新建和吊销，名字由控制面按「dev-登录名-主机」生成，只认有用户的人的凭据",
 	},
-	"/feishu-bots": {
+	"/projects/:project/feishu-bots": {
 		kind: "feishu_bot",
-		why: "飞书机器人的登记、改、删、引用、测试消息：路径里的 :name 是机器人名称",
+		why: "项目里的飞书机器人：登记、改、删、引用、测试消息，路径里的 :name 是机器人名称",
 	},
 	"/projects/:project/dashboard": {
 		kind: "run",
@@ -83,8 +83,8 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		why: "自己的账号：个人令牌的签发、列出、吊销；定位在发起请求的用户自己，不属于任何项目（ADR 0029「凭据」）",
 	},
 	// 路径里的项目一律写成 `/projects/:project/…`：前缀里的 `:project` 就是路径模板里的 `:project`，按字面匹配。
-	// 每一类属于项目的资源（项目令牌、以后的成员、项目密钥）各写一项，#488 把现有接口搬到项目下时照这个写
-	// （`/projects/:project/orchestrations` 等）：新增一类要改这张表，审查时看得见。
+	// 每一类属于项目的资源（项目令牌、场景、运行、Agent、节点包、飞书机器人，以后的成员、项目密钥）各写一项：
+	// 新增一类要改这张表，审查时看得见。
 	"/projects/:project/tokens": {
 		kind: "project",
 		why: "项目令牌的签发、列出、吊销：项目令牌是项目的一部分（服务账号），定位用路径里的 :project，要「管理」范围",
@@ -187,22 +187,7 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 export interface DeclarationRules {
 	pathKinds: Readonly<Record<string, PathKind>>;
 	nonGetReads: Readonly<Record<string, string>>;
-	/** 照约定路径要带 `:project`、还没有搬过去的接口（{@link PROJECT_PATH_PENDING}）。 */
-	projectPathPending?: Readonly<Record<string, string>>;
 }
-
-/**
- * 照「路径里带不带 `:project`」的约定（{@link checkProjectInPath}）该带、还没有搬到 `/projects/:project/…` 下的接口：#488 按领域
- * 分几个 PR 搬，每搬一个领域就从这里删掉它的接口。键是 `方法 路径`；契约测试检查表里的接口都在契约里（搬了就不在了）。
- */
-export const PROJECT_PATH_PENDING: Readonly<Record<string, string>> = {
-	"GET /feishu-bots": "#488 飞书机器人",
-	"POST /feishu-bots": "#488 飞书机器人",
-	"PATCH /feishu-bots/:name": "#488 飞书机器人",
-	"GET /feishu-bots/:name/references": "#488 飞书机器人",
-	"DELETE /feishu-bots/:name": "#488 飞书机器人",
-	"POST /feishu-bots/:name/test": "#488 飞书机器人",
-};
 
 /**
  * 方法不是 GET、声明为只读的接口：一眼看不出它只读，所以每一个都要在这里登记，写明为什么只读、调用后会留下什么
@@ -222,7 +207,6 @@ export const NON_GET_READS: Readonly<Record<string, string>> = {
 export const DECLARATION_RULES: DeclarationRules = {
 	pathKinds: PATH_KINDS,
 	nonGetReads: NON_GET_READS,
-	projectPathPending: PROJECT_PATH_PENDING,
 };
 
 /** 说明的长度上限：它是一句话，在 `sfly api --list` 的一行里显示。 */
@@ -463,12 +447,7 @@ function checkProjectPath(def: RouteDef): string[] {
  * 按 ID 定位的（{@link ID_LOCATED_KINDS}）路径里不能有 `:project`，项目从资源得出（这一半由 `checkTarget` 查）；
  * `system`、`account` 不属于项目，路径里都没有。这样「项目从哪来」不用另外声明。
  */
-function checkProjectInPath(
-	def: RouteDef,
-	kind: ResourceKind,
-	target: ResourceTarget,
-	rules: DeclarationRules,
-): string[] {
+function checkProjectInPath(def: RouteDef, kind: ResourceKind, target: ResourceTarget): string[] {
 	const scoped = isProjectScoped(def.path);
 	if (kind === "system" || kind === "account") {
 		return scoped ? [`${kind} 不属于项目，路径里不能有 /projects/:${PROJECT_PARAM}`] : [];
@@ -477,7 +456,7 @@ function checkProjectInPath(
 	const located = typeof target === "object";
 	const needs =
 		target === "collection" || target === "upload" || (located && !ID_LOCATED_KINDS.includes(kind));
-	if (!needs || scoped || label(def) in (rules.projectPathPending ?? {})) return [];
+	if (!needs || scoped) return [];
 	return [
 		`${target === "collection" ? "列表和新建" : target === "upload" ? "上传" : "按名字定位"}的接口，路径要写成 /projects/:${PROJECT_PARAM}/…：` +
 			"项目从路径里取（按 ID 定位的才从资源得出）",
@@ -536,13 +515,6 @@ export function checkDeclarationTables(
 		}
 	}
 	const known = new Map(contract.map((def) => [label(def), def]));
-	for (const key of Object.keys(rules.projectPathPending ?? {})) {
-		if (!known.has(key)) {
-			problems.push(
-				`PROJECT_PATH_PENDING 的 ${key} 不在契约里：搬到 /projects/:${PROJECT_PARAM}/… 之后把这一项删掉`,
-			);
-		}
-	}
 	for (const [key, what] of Object.entries(rules.nonGetReads)) {
 		const def = known.get(key);
 		if (def === undefined) problems.push(`NON_GET_READS 的 ${key} 不在契约里：接口改名或删掉了`);
@@ -606,7 +578,7 @@ export function checkRouteDeclarations(
 		}
 		for (const problem of checkTarget(def, kind, target)) add(def, problem);
 		for (const problem of checkProjectPath(def)) add(def, problem);
-		for (const problem of checkProjectInPath(def, kind, target, rules)) add(def, problem);
+		for (const problem of checkProjectInPath(def, kind, target)) add(def, problem);
 		for (const problem of checkPathKind(def, kind, rules)) add(def, problem);
 	}
 	return problems;

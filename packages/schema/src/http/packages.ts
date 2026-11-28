@@ -46,6 +46,11 @@ export const PackageSummary = z.object({
 	 * 公共项目和别的项目之间不能同名，所以一个包的版本都在同一边。
 	 */
 	public: z.boolean(),
+	/**
+	 * 最新版本（#434）：按版本号比较，不是发布时间（先发 1.10.0 再发 1.9.1，最新的是 1.10.0）；预发布版本排在同号正式版之前，
+	 * 版本号相等（`1.0` 和 `1.0.0`）时取字符串排在后面的。比较规则只在 `@sfly/orchestration` 的 `newestVersion`，画布和命令行读这个字段。
+	 */
+	latest_version: z.string(),
 	/** 按发布时间从新到旧。 */
 	versions: z.array(PackageVersionSummary),
 });

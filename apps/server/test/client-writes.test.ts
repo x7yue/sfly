@@ -206,12 +206,17 @@ describe("API 客户端的写操作", () => {
 			try {
 				const { client } = await through({ nickname: NICKNAME });
 				const created = await client.feishuBots.create({
+					params: { project: "default" },
 					body: { name: "看板群", webhook_url: feishu.webhookUrl("a") },
 				});
 				expect(created.name).toBe("看板群");
-				expect((await client.feishuBots.list()).bots.map((b) => b.name)).toEqual(["看板群"]);
+				expect(
+					(await client.feishuBots.list({ params: { project: "default" } })).bots.map(
+						(b) => b.name,
+					),
+				).toEqual(["看板群"]);
 
-				const params = { name: "看板群" };
+				const params = { project: "default", name: "看板群" };
 				const replaced = await client.feishuBots.replaceWebhook({
 					params,
 					body: { webhook_url: feishu.webhookUrl("b") },
@@ -224,7 +229,7 @@ describe("API 客户端的写操作", () => {
 				expect(await client.feishuBots.references({ params })).toEqual({ scenarios: [] });
 
 				expect(await client.feishuBots.remove({ params })).toBeUndefined();
-				expect((await client.feishuBots.list()).bots).toEqual([]);
+				expect((await client.feishuBots.list({ params: { project: "default" } })).bots).toEqual([]);
 				const gone = await rejection(client.feishuBots.remove({ params }));
 				expect(gone).toBeInstanceOf(ApiError);
 				expect(gone).toMatchObject({ status: 404, code: "not_found", method: "DELETE" });
@@ -281,7 +286,8 @@ describe("API 客户端的写操作", () => {
 					client.orchestrations.update({ params, body: { name: "不会改名" } }),
 				"POST /orchestrations/:id/runs": () => client.runs.trigger({ params }),
 				"POST /runs/:id/cancel": () => client.runs.cancel({ params: { id: seeded.runId } }),
-				"DELETE /feishu-bots/:name": () => client.feishuBots.remove({ params: { name: "群" } }),
+				"DELETE /projects/:project/feishu-bots/:name": () =>
+					client.feishuBots.remove({ params: { project: "default", name: "群" } }),
 				"POST /projects/:project/agents/:name/update-now": () =>
 					client.agents.updateNow({ params: { project: "default", name: "agent-a" } }),
 			};

@@ -100,7 +100,9 @@ describe("投递的可靠性", () => {
 	};
 	const warnOf = (text: string) => (l: LogLine) => l.level === "warn" && l.text.includes(text);
 	const botView = async (name = "ops"): Promise<FeishuBotView> => {
-		const { bots } = feishuBotsApi.list.response.parse(await api.getJson("/feishu-bots"));
+		const { bots } = feishuBotsApi.list.response.parse(
+			await api.getJson("/projects/default/feishu-bots"),
+		);
 		const bot = bots.find((b) => b.name === name);
 		expect(bot, `机器人「${name}」`).toBeDefined();
 		return bot as FeishuBotView;
@@ -108,7 +110,7 @@ describe("投递的可靠性", () => {
 	/** 等积压降到这个条数：最后一条请求到达假飞书之后，控制面还要记下它的结果。 */
 	const backlogReaches = (count: number, bot = "ops") =>
 		eventually(async () => expect((await botView(bot)).backlog).toBe(count));
-	const botUrl = (name: string) => `/feishu-bots/${encodeURIComponent(name)}`;
+	const botUrl = (name: string) => `/projects/default/feishu-bots/${encodeURIComponent(name)}`;
 	const removeBot = (name: string) =>
 		cp.fetch(botUrl(name), {
 			method: "DELETE",
