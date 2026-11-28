@@ -58,6 +58,7 @@ function ScenariosPage() {
 
 	const scenarios = useQuery({
 		...apiQuery(orchestrationsApi.list, {
+			params: { project: PROJECT },
 			query: {
 				q: search.q || undefined,
 				status: search.status,

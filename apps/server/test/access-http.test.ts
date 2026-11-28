@@ -75,9 +75,13 @@ describe("带凭据的请求", () => {
 	describe("身份来自凭据，不看昵称请求头", () => {
 		it("写操作带令牌不需要昵称；不带凭据照旧要昵称（400 nickname_required）", async () => {
 			const token = await accounts.personalToken(editor);
-			const res = await call(bearer(token), "POST", "/orchestrations", { name: "场景" });
+			const res = await call(bearer(token), "POST", "/projects/default/orchestrations", {
+				name: "场景",
+			});
 			expect(res.status).toBe(201);
-			const anonymous = await call({}, "POST", "/orchestrations", { name: "场景" });
+			const anonymous = await call({}, "POST", "/projects/default/orchestrations", {
+				name: "场景",
+			});
 			expect(anonymous.status).toBe(400);
 			expect(await anonymous.json()).toMatchObject({ error: { code: "nickname_required" } });
 		});
@@ -91,7 +95,9 @@ describe("带凭据的请求", () => {
 				"x-sfly-client": "sfly-cli/0.5.0 agent/codex",
 			};
 			const scenario = (
-				await created(await call(headers, "POST", "/orchestrations", { name: "场景" }))
+				await created(
+					await call(headers, "POST", "/projects/default/orchestrations", { name: "场景" }),
+				)
 			).id;
 
 			// 保存版本
@@ -144,7 +150,9 @@ describe("带凭据的请求", () => {
 
 			// 运行预设（要入口参数的场景）
 			const withParams = (
-				await created(await call(headers, "POST", "/orchestrations", { name: "有参数" }))
+				await created(
+					await call(headers, "POST", "/projects/default/orchestrations", { name: "有参数" }),
+				)
 			).id;
 			expect(
 				(
@@ -166,7 +174,7 @@ describe("带凭据的请求", () => {
 
 			// 关注项最后一次修改
 			const focus = await created(
-				await call(headers, "POST", "/orchestrations", { name: "关注项场景" }),
+				await call(headers, "POST", "/projects/default/orchestrations", { name: "关注项场景" }),
 			);
 			await call(headers, "POST", `/orchestrations/${focus.id}/versions`, {
 				base_version: 0,
@@ -186,7 +194,11 @@ describe("带凭据的请求", () => {
 		it("登录 Cookie：用户 ID 照记，令牌的名称为空；项目令牌：显示名是令牌的名称，没有用户", async () => {
 			const cookie = await accounts.login(editor);
 			const scenario = (
-				await created(await call(loginCookie(cookie), "POST", "/orchestrations", { name: "场景" }))
+				await created(
+					await call(loginCookie(cookie), "POST", "/projects/default/orchestrations", {
+						name: "场景",
+					}),
+				)
 			).id;
 			await call(loginCookie(cookie), "POST", `/orchestrations/${scenario}/versions`, {
 				base_version: 0,
@@ -217,9 +229,13 @@ describe("带凭据的请求", () => {
 			const token = await accounts.personalToken(editor, {
 				expiresAt: new Date("2026-01-02T00:00:00Z"),
 			});
-			expect((await call(bearer(token), "GET", "/orchestrations")).status).toBe(200);
+			expect((await call(bearer(token), "GET", "/projects/default/orchestrations")).status).toBe(
+				200,
+			);
 			(cp.clock as ManualClock).advance(2 * 86_400_000);
-			expect((await call(bearer(token), "GET", "/orchestrations")).status).toBe(401);
+			expect((await call(bearer(token), "GET", "/projects/default/orchestrations")).status).toBe(
+				401,
+			);
 		});
 
 		it("不带凭据：昵称请求头照旧，用户 ID 和令牌的名称为空", async () => {
@@ -510,11 +526,13 @@ describe("带凭据的请求", () => {
 
 	describe("拒绝的方式", () => {
 		it("失效的凭据 401 unauthorized，带什么凭据都一样；不带凭据照旧放行", async () => {
-			const res = await call(bearer("sfly_pat_unknown"), "GET", "/orchestrations");
+			const res = await call(bearer("sfly_pat_unknown"), "GET", "/projects/default/orchestrations");
 			expect(res.status).toBe(401);
 			expect(await res.json()).toMatchObject({ error: { code: "unauthorized" } });
-			expect((await call(loginCookie("nope"), "GET", "/orchestrations")).status).toBe(401);
-			expect((await call({}, "GET", "/orchestrations")).status).toBe(200);
+			expect(
+				(await call(loginCookie("nope"), "GET", "/projects/default/orchestrations")).status,
+			).toBe(401);
+			expect((await call({}, "GET", "/projects/default/orchestrations")).status).toBe(200);
 			// 不属于项目的接口不看凭据。
 			expect((await call(bearer("sfly_pat_unknown"), "GET", "/health")).status).toBe(200);
 		});
@@ -531,12 +549,20 @@ describe("带凭据的请求", () => {
 					.status,
 			).toBe(401);
 			// 失效的 JSON 请求也一样：401 先于 400。
-			const bad = await call(bearer("sfly_pat_unknown"), "POST", "/orchestrations", { wrong: 1 });
+			const bad = await call(
+				bearer("sfly_pat_unknown"),
+				"POST",
+				"/projects/default/orchestrations",
+				{ wrong: 1 },
+			);
 			expect(bad.status).toBe(401);
 			// 对照：有效的凭据，请求体不对才是 413（超过请求体上限）/ 400。
 			const token = await accounts.personalToken(editor);
 			expect((await post({ "content-type": "text/plain", ...bearer(token) })).status).toBe(413);
-			expect((await call(bearer(token), "POST", "/orchestrations", { wrong: 1 })).status).toBe(400);
+			expect(
+				(await call(bearer(token), "POST", "/projects/default/orchestrations", { wrong: 1 }))
+					.status,
+			).toBe(400);
 		});
 
 		it("没有这个范围 403，说明缺哪个范围；不是成员 404", async () => {
@@ -544,7 +570,12 @@ describe("带凭据的请求", () => {
 			await accounts.member("default", reader, "read_only");
 			const stranger = await accounts.user("stranger");
 			const readerToken = await accounts.personalToken(reader);
-			const forbidden = await call(bearer(readerToken), "POST", "/orchestrations", { name: "x" });
+			const forbidden = await call(
+				bearer(readerToken),
+				"POST",
+				"/projects/default/orchestrations",
+				{ name: "x" },
+			);
 			expect(forbidden.status).toBe(403);
 			expect(await forbidden.json()).toMatchObject({
 				error: { code: "forbidden", message: expect.stringContaining("编辑") },
@@ -552,7 +583,7 @@ describe("带凭据的请求", () => {
 			const hidden = await call(
 				bearer(await accounts.personalToken(stranger)),
 				"GET",
-				"/orchestrations",
+				"/projects/default/orchestrations",
 			);
 			expect(hidden.status).toBe(404);
 			expect(await hidden.json()).toMatchObject({
@@ -564,9 +595,14 @@ describe("带凭据的请求", () => {
 			const stranger = await accounts.user("stranger");
 			const scenario = (
 				await created(
-					await call(bearer(await accounts.personalToken(editor)), "POST", "/orchestrations", {
-						name: "场景",
-					}),
+					await call(
+						bearer(await accounts.personalToken(editor)),
+						"POST",
+						"/projects/default/orchestrations",
+						{
+							name: "场景",
+						},
+					),
 				)
 			).id;
 			const path = `/orchestrations/${scenario}`;
@@ -609,7 +645,9 @@ describe("带凭据的请求", () => {
 			const admin = await accounts.user("root", { admin: true, displayName: "管理员" });
 			const token = await accounts.personalToken(admin, { name: "运维" });
 			const scenario = (
-				await created(await call(bearer(token), "POST", "/orchestrations", { name: "场景" }))
+				await created(
+					await call(bearer(token), "POST", "/projects/default/orchestrations", { name: "场景" }),
+				)
 			).id;
 			expect((await call(bearer(token), "GET", `/orchestrations/${scenario}`)).status).toBe(200);
 			expect(
@@ -621,7 +659,8 @@ describe("带凭据的请求", () => {
 				).status,
 			).toBe(201);
 
-			const rows = (await db.query("select * from platform_admin_actions order by at, route")).rows;
+			// 两次写的时刻可能相同：按接口排，不按先后。
+			const rows = (await db.query("select * from platform_admin_actions order by route")).rows;
 			expect(
 				rows.map((r) => [
 					r.route,
@@ -632,8 +671,8 @@ describe("带凭据的请求", () => {
 					r.project_id,
 				]),
 			).toEqual([
-				["POST /orchestrations", "scenario", null, "运维", admin, "default"],
 				["POST /orchestrations/:id/versions", "scenario", scenario, "运维", admin, "default"],
+				["POST /projects/:project/orchestrations", "scenario", null, "运维", admin, "default"],
 			]);
 			expect(rows[0].at).toEqual(cp.clock.now());
 
@@ -652,12 +691,17 @@ describe("带凭据的请求", () => {
 
 			// 成为成员之后，他在这个项目里的写不再记。
 			await accounts.member("default", admin, "editor");
-			await call(bearer(token), "POST", "/orchestrations", { name: "又一个" });
+			await call(bearer(token), "POST", "/projects/default/orchestrations", { name: "又一个" });
 			expect((await db.query("select 1 from platform_admin_actions")).rowCount).toBe(2);
 			// 别的用户（编辑者）的写不记。
-			await call(bearer(await accounts.personalToken(editor)), "POST", "/orchestrations", {
-				name: "x",
-			});
+			await call(
+				bearer(await accounts.personalToken(editor)),
+				"POST",
+				"/projects/default/orchestrations",
+				{
+					name: "x",
+				},
+			);
 			expect((await db.query("select 1 from platform_admin_actions")).rowCount).toBe(2);
 		});
 	});
@@ -706,7 +750,11 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		}[];
 
 	it("路径参数含 NUL：和不带凭据一样是 404，不是 500，也不留记录（NUL 存不进 PostgreSQL 的文本）", async () => {
-		for (const path of ["/feishu-bots/%00x", "/feishu-bots/a%00", "/feishu-bots/%00"]) {
+		for (const path of [
+			"/projects/default/feishu-bots/%00x",
+			"/projects/default/feishu-bots/a%00",
+			"/projects/default/feishu-bots/%00",
+		]) {
 			const withToken = await call("DELETE", path);
 			const anonymous = await cp.fetch(path, { method: "DELETE" });
 			expect(withToken.status, path).toBe(404);
@@ -720,7 +768,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		// 再长的在进访问检查之前就被 Fastify 拒绝。
 		const names = ["a\u0001b", "机器人😀", "line\nbreak", "n".repeat(128)];
 		for (const name of names) {
-			const res = await call("DELETE", `/feishu-bots/${encodeURIComponent(name)}`);
+			const res = await call("DELETE", `/projects/default/feishu-bots/${encodeURIComponent(name)}`);
 			expect(res.status, JSON.stringify(name)).toBe(404);
 		}
 		await vi.waitFor(async () => {
@@ -730,7 +778,10 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("非法的 UTF-8（%FF）和超长的参数在进访问检查之前就被 Fastify 拒绝（400、414）：这条守的是「不会是 500」，测到的是框架", async () => {
-		for (const path of ["/feishu-bots/%FF", `/feishu-bots/${"n".repeat(129)}`]) {
+		for (const path of [
+			"/projects/default/feishu-bots/%FF",
+			`/projects/default/feishu-bots/${"n".repeat(129)}`,
+		]) {
 			const res = await call("DELETE", path);
 			expect(res.status, path).toBeGreaterThanOrEqual(400);
 			expect(res.status, path).toBeLessThan(500);
@@ -739,41 +790,44 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("记录带着响应的状态码：成功的、请求不合格的（400）、找不到的（404）各一条，先记后回填", async () => {
-		const ok = await call("POST", "/feishu-bots", {
+		const ok = await call("POST", "/projects/default/feishu-bots", {
 			name: "机器人",
 			webhook_url: "https://open.feishu.cn/hook/abc",
 		});
 		expect(ok.status).toBe(201);
 		// 记录按时间排序：每个请求之间推进一下手动时钟。
 		(cp.clock as ManualClock).advance(1000);
-		const invalid = await call("POST", "/feishu-bots", { name: "", webhook_url: "不是地址" });
+		const invalid = await call("POST", "/projects/default/feishu-bots", {
+			name: "",
+			webhook_url: "不是地址",
+		});
 		expect(invalid.status).toBe(400);
 		(cp.clock as ManualClock).advance(1000);
-		const missing = await call("DELETE", "/feishu-bots/不存在");
+		const missing = await call("DELETE", "/projects/default/feishu-bots/不存在");
 		expect(missing.status).toBe(404);
 		// onResponse 在响应发出之后才回填，等一下。
 		await vi.waitFor(async () => {
 			expect((await records()).map((r) => r.status)).toEqual([201, 400, 404]);
 		});
 		expect((await records()).map((r) => [r.route, r.resource_id])).toEqual([
-			["POST /feishu-bots", null],
-			["POST /feishu-bots", null],
-			["DELETE /feishu-bots/:name", "不存在"],
+			["POST /projects/:project/feishu-bots", null],
+			["POST /projects/:project/feishu-bots", null],
+			["DELETE /projects/:project/feishu-bots/:name", "不存在"],
 		]);
 	});
 
 	it("他是成员、但这次写靠的是管理员的权限：记录里有他当时的角色；不是成员为空", async () => {
-		await call("POST", "/feishu-bots", {
+		await call("POST", "/projects/default/feishu-bots", {
 			name: "甲",
 			webhook_url: "https://open.feishu.cn/hook/a",
 		});
 		(cp.clock as ManualClock).advance(1000);
 		await accounts.member("default", admin, "read_only");
-		await call("POST", "/orchestrations", { name: "场景" });
+		await call("POST", "/projects/default/orchestrations", { name: "场景" });
 		await vi.waitFor(async () => {
 			expect((await records()).map((r) => [r.route, r.member_role])).toEqual([
-				["POST /feishu-bots", null],
-				["POST /orchestrations", "read_only"],
+				["POST /projects/:project/feishu-bots", null],
+				["POST /projects/:project/orchestrations", "read_only"],
 			]);
 		});
 	});
@@ -912,12 +966,14 @@ describe("共享令牌", () => {
 
 	it("带共享令牌的 HTTP 请求和不带凭据的走同一套：照旧放行，不看昵称以外的身份（库里没有的 Bearer 才是 401）", async () => {
 		const api = new ApiClient(cp);
-		const withShared = await cp.fetch("/orchestrations", { headers: bearer("s3cret") });
+		const withShared = await cp.fetch("/projects/default/orchestrations", {
+			headers: bearer("s3cret"),
+		});
 		expect(withShared.status).toBe(200);
-		const wrong = await cp.fetch("/orchestrations", { headers: bearer("wrong") });
+		const wrong = await cp.fetch("/projects/default/orchestrations", { headers: bearer("wrong") });
 		expect(wrong.status).toBe(401);
 		// 写操作：没有昵称仍是 400，共享令牌不是身份。
-		const write = await cp.fetch("/orchestrations", {
+		const write = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: { "content-type": "application/json", ...bearer("s3cret") },
 			body: JSON.stringify({ name: "x" }),

@@ -17,7 +17,7 @@ describe("错误响应上的头", () => {
 
 	it("经过错误处理的错误（JSON 解析失败 400、未知路由 404）仍然带着跨域头和 vary，并且不缓存", async () => {
 		cp = await startTestControlPlane({ corsOrigins: [ORIGIN] });
-		const bad = await cp.fetch("/orchestrations", {
+		const bad = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: { "content-type": "application/json", origin: ORIGIN },
 			body: "{",
@@ -48,7 +48,7 @@ describe("错误响应上的头", () => {
 		const cookie = /sfly_login=([^;]*)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
 		// 过了续期间隔（60 秒）的请求会下发新的 Cookie；这一次请求的 JSON 解析失败（400，经过错误处理）。
 		(server.clock as ManualClock).advance(61_000);
-		const res = await server.fetch("/orchestrations", {
+		const res = await server.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",

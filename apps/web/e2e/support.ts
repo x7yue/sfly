@@ -37,7 +37,10 @@ export async function createScenario(
 		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify(body),
 	});
-	const res = await ok(await cp.fetch("/orchestrations", json({ name })), "新建场景");
+	const res = await ok(
+		await cp.fetch("/projects/default/orchestrations", json({ name })),
+		"新建场景",
+	);
 	const { id } = (await res.json()) as { id: string };
 	if (document) {
 		await ok(
@@ -96,7 +99,7 @@ export async function createFeishuBot(
 	webhookUrl: string,
 ): Promise<void> {
 	await ok(
-		await cp.fetch("/feishu-bots", {
+		await cp.fetch("/projects/default/feishu-bots", {
 			method: "POST",
 			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ name, webhook_url: webhookUrl }),

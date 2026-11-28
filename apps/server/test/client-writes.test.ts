@@ -119,6 +119,7 @@ describe("API 客户端的写操作", () => {
 		it("创建、改名、复制、归档和恢复场景", async () => {
 			const { client } = await through({ nickname: NICKNAME });
 			const created = await client.orchestrations.create({
+				params: { project: "default" },
 				body: { name: "看板场景", description: "自建页面用" },
 			});
 			expect(created).toMatchObject({
@@ -143,8 +144,12 @@ describe("API 客户端的写操作", () => {
 			const archived = await client.orchestrations.archive({ params });
 			expect(archived.archived_at).not.toBeNull();
 			const visible = async (archivedOnly: boolean) =>
-				(await client.orchestrations.list({ query: { archived: archivedOnly ? "true" : "false" } }))
-					.orchestrations;
+				(
+					await client.orchestrations.list({
+						params: { project: "default" },
+						query: { archived: archivedOnly ? "true" : "false" },
+					})
+				).orchestrations;
 			expect((await visible(false)).map((o) => o.id)).not.toContain(created.id);
 			expect((await visible(true)).map((o) => o.id)).toContain(created.id);
 
@@ -155,7 +160,10 @@ describe("API 客户端的写操作", () => {
 
 		it("保存场景版本，再恢复旧版本：恢复追加一个新版本，作者是配置的昵称", async () => {
 			const { client } = await through({ nickname: NICKNAME });
-			const { id } = await client.orchestrations.create({ body: { name: "版本场景" } });
+			const { id } = await client.orchestrations.create({
+				params: { project: "default" },
+				body: { name: "版本场景" },
+			});
 			const params = { id };
 
 			const first = await client.orchestrations.saveVersion({
@@ -198,12 +206,17 @@ describe("API 客户端的写操作", () => {
 			try {
 				const { client } = await through({ nickname: NICKNAME });
 				const created = await client.feishuBots.create({
+					params: { project: "default" },
 					body: { name: "看板群", webhook_url: feishu.webhookUrl("a") },
 				});
 				expect(created.name).toBe("看板群");
-				expect((await client.feishuBots.list()).bots.map((b) => b.name)).toEqual(["看板群"]);
+				expect(
+					(await client.feishuBots.list({ params: { project: "default" } })).bots.map(
+						(b) => b.name,
+					),
+				).toEqual(["看板群"]);
 
-				const params = { name: "看板群" };
+				const params = { project: "default", name: "看板群" };
 				const replaced = await client.feishuBots.replaceWebhook({
 					params,
 					body: { webhook_url: feishu.webhookUrl("b") },
@@ -216,7 +229,7 @@ describe("API 客户端的写操作", () => {
 				expect(await client.feishuBots.references({ params })).toEqual({ scenarios: [] });
 
 				expect(await client.feishuBots.remove({ params })).toBeUndefined();
-				expect((await client.feishuBots.list()).bots).toEqual([]);
+				expect((await client.feishuBots.list({ params: { project: "default" } })).bots).toEqual([]);
 				const gone = await rejection(client.feishuBots.remove({ params }));
 				expect(gone).toBeInstanceOf(ApiError);
 				expect(gone).toMatchObject({ status: 404, code: "not_found", method: "DELETE" });
@@ -264,12 +277,17 @@ describe("API 客户端的写操作", () => {
 			const { client, proxy } = await through({ nickname });
 			const params = { id: seeded.scenarioId };
 			const writes = {
-				"POST /orchestrations": () => client.orchestrations.create({ body: { name: "不会创建" } }),
+				"POST /projects/:project/orchestrations": () =>
+					client.orchestrations.create({
+						params: { project: "default" },
+						body: { name: "不会创建" },
+					}),
 				"PATCH /orchestrations/:id": () =>
 					client.orchestrations.update({ params, body: { name: "不会改名" } }),
 				"POST /orchestrations/:id/runs": () => client.runs.trigger({ params }),
 				"POST /runs/:id/cancel": () => client.runs.cancel({ params: { id: seeded.runId } }),
-				"DELETE /feishu-bots/:name": () => client.feishuBots.remove({ params: { name: "群" } }),
+				"DELETE /projects/:project/feishu-bots/:name": () =>
+					client.feishuBots.remove({ params: { project: "default", name: "群" } }),
 				"POST /projects/:project/agents/:name/update-now": () =>
 					client.agents.updateNow({ params: { project: "default", name: "agent-a" } }),
 			};
@@ -283,7 +301,9 @@ describe("API 客户端的写操作", () => {
 
 		it("没有昵称时读操作不受影响，请求里也没有昵称", async () => {
 			const { client, proxy } = await through();
-			const { orchestrations } = await client.orchestrations.list();
+			const { orchestrations } = await client.orchestrations.list({
+				params: { project: "default" },
+			});
 			expect(orchestrations.map((o) => o.id)).toContain(seeded.scenarioId);
 			expect(await client.runs.get({ params: { id: seeded.runId } })).toMatchObject({
 				id: seeded.runId,
@@ -309,7 +329,7 @@ describe("API 客户端的写操作", () => {
 				{ params: { id: seeded.runId } },
 			);
 			await rejection(withNickname.client.orchestrations.get({ params: { id: randomUUID() } }));
-			await without.client.orchestrations.list();
+			await without.client.orchestrations.list({ params: { project: "default" } });
 			await rejection(without.client.runs.cancel({ params: { id: seeded.runId } }));
 
 			expect(withNickname.proxy.requests).toHaveLength(4);
@@ -352,8 +372,14 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 		});
 
 		expect((await client.system.health()).status).toBe("ok");
-		await Promise.all([client.orchestrations.list(), client.orchestrations.list()]);
-		const created = await client.orchestrations.create({ body: { name: "照常写入" } });
+		await Promise.all([
+			client.orchestrations.list({ params: { project: "default" } }),
+			client.orchestrations.list({ params: { project: "default" } }),
+		]);
+		const created = await client.orchestrations.create({
+			params: { project: "default" },
+			body: { name: "照常写入" },
+		});
 		expect(created.name).toBe("照常写入");
 		const failure = await rejection(client.orchestrations.get({ params: { id: randomUUID() } }));
 		expect(failure).toBeInstanceOf(ApiError);
@@ -424,7 +450,7 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 		const cp = await controlPlane("9.9.9");
 		const client = createClient({ baseUrl: cp.httpUrl });
 		await client.system.health();
-		await client.orchestrations.list();
+		await client.orchestrations.list({ params: { project: "default" } });
 
 		expect(warn).toHaveBeenCalledTimes(1);
 		const [message] = warn.mock.calls[0] ?? [];
@@ -443,7 +469,10 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 			onVersionMismatch: (mismatch) => mismatches.push(mismatch),
 		});
 		await client.system.health();
-		await client.orchestrations.create({ body: { name: "版本一致" } });
+		await client.orchestrations.create({
+			params: { project: "default" },
+			body: { name: "版本一致" },
+		});
 		await rejection(client.orchestrations.get({ params: { id: randomUUID() } }));
 		const defaulted = createClient({ baseUrl: cp.httpUrl });
 		await defaulted.system.health();

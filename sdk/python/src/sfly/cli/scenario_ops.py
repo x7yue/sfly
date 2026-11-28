@@ -21,6 +21,7 @@ from typing import Any
 
 from sfly.cli import scenario_check
 from sfly.cli.client import ApiError, Client, segment
+from sfly.cli.dev_version import DEV_VERSION
 from sfly.cli.errors import EXIT_WARNINGS, CliError
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -230,8 +231,8 @@ def _node_inputs(
                 if e.status != 404:
                     raise
                 published = []
-            version = _newest_version([str(v["version"]) for v in published]) or "dev"
-        if version == "dev":
+            version = _newest_version([str(v["version"]) for v in published]) or DEV_VERSION
+        if version == DEV_VERSION:
             nodes = _dev_nodes(client, document, package, agent)
         else:
             detail = client.get(
@@ -258,7 +259,7 @@ def _dev_nodes(client: Client, document: dict[str, Any], package: str, agent: st
     否则当作不知道（None）。"""
     default = document.get("default_agent")
     targets = {agent or default}
-    if document.get("packages", {}).get(package) == "dev":
+    if document.get("packages", {}).get(package) == DEV_VERSION:
         for n in document.get("nodes") or []:
             if isinstance(n, dict) and n.get("kind") == "package" and n.get("package") == package:
                 targets.add(n.get("agent") or default)

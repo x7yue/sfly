@@ -431,7 +431,9 @@ def _create(session: Session, args: argparse.Namespace) -> None:
         check_document(document)
         _check_no_placeholders(document, content.get("scenario"))
     created = client.request(
-        "POST", "/orchestrations", body={"name": name, "description": args.description}
+        "POST",
+        client.in_project("/orchestrations"),
+        body={"name": name, "description": args.description},
     )
     saved = None
     if document is not None:

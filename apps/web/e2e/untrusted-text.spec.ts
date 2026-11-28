@@ -255,7 +255,7 @@ test("Agent 的名称、版本、系统：控制台的 Agent 列、Agent 管理�
 		}
 		return value;
 	};
-	for (const pattern of ["**/api/projects/default/agents", "**/api/dashboard*"]) {
+	for (const pattern of ["**/api/projects/default/agents", "**/api/projects/default/dashboard*"]) {
 		await page.route(pattern, async (route) => {
 			const response = await route.fetch();
 			await route.fulfill({ response, json: taint(await response.json()) });

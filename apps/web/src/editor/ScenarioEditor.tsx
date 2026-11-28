@@ -270,7 +270,10 @@ function Editor({
 		refetchInterval: BACKGROUND_POLL_MS,
 	});
 	const agentList = agents.data?.agents ?? [];
-	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), refetchInterval: BACKGROUND_POLL_MS });
+	const bots = useQuery({
+		...apiQuery(feishuBotsApi.list, { params: { project: PROJECT } }),
+		refetchInterval: BACKGROUND_POLL_MS,
+	});
 	const botList = bots.data?.bots ?? [];
 	const titleOf = usePackageTitles();
 

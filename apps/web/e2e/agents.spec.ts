@@ -466,7 +466,7 @@ test("对外地址与能力：显式配置的地址标明来源；端口被占�
 	await expect(header(page, "agent-busy-port").locator("[data-status]")).toHaveText("在线");
 });
 
-test("节点包安装：安装中的 Agent 状态写「安装中」和包名；安装失败在状态后面写哪个包失败，Agent 仍然在线", async ({
+test("节点包安装：安装中的 Agent 状态写「安装中」和包名；安装失败在状态后面写哪个包失败，Agent 仍然在线；为查不到的任务装的不写包名", async ({
 	page,
 	connectAgent,
 }) => {
@@ -477,7 +477,7 @@ test("节点包安装：安装中的 Agent 状态写「安装中」和包名；�
 			package: "demo-checks",
 			version: "1.2.0",
 			state: 1, // INSTALLING
-			taskId: "t-1",
+			taskId: "",
 			installedPackages: [],
 		},
 	});
@@ -488,7 +488,7 @@ test("节点包安装：安装中的 Agent 状态写「安装中」和包名；�
 			package: "demo-checks",
 			version: "1.3.0",
 			state: 3, // FAILED
-			taskId: "t-2",
+			taskId: "",
 			output: "依赖冲突",
 			installedPackages: [],
 		},
@@ -501,6 +501,24 @@ test("节点包安装：安装中的 Agent 状态写「安装中」和包名；�
 	await expect(header(page, "agent-installing")).toContainText("demo-checks@1.2.0");
 	await expect(header(page, "agent-failed-install").locator("[data-status]")).toHaveText("在线");
 	await expect(header(page, "agent-failed-install")).toContainText("安装 demo-checks@1.3.0 失败");
+
+	// 为库里没有的任务装的（确认不了是本项目的任务，#500）：只给状态，不写包名。
+	const other = await connectAgent({ name: "agent-other-install" });
+	other.send({
+		case: "install",
+		value: {
+			package: "alpha-private",
+			version: "9.9.9",
+			state: 3, // FAILED
+			taskId: crypto.randomUUID(),
+			output: "依赖冲突",
+			installedPackages: [],
+		},
+	});
+	await other.sync();
+	await page.reload();
+	await expect(header(page, "agent-other-install")).toContainText("安装节点包失败");
+	await expect(header(page, "agent-other-install")).not.toContainText("alpha-private");
 });
 
 test("状态后面的告警按固定顺序排：时钟偏差、能力不可调用、节点包安装失败", async ({
@@ -520,7 +538,7 @@ test("状态后面的告警按固定顺序排：时钟偏差、能力不可调�
 			package: "demo-checks",
 			version: "1.3.0",
 			state: 3, // FAILED
-			taskId: "t-3",
+			taskId: "",
 			output: "依赖冲突",
 			installedPackages: [],
 		},

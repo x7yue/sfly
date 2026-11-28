@@ -76,7 +76,7 @@ agent-browser $S screenshot "$RUN/evidence/<序号>-<步骤>.png"
 - 有些状态只出现在抽屉或弹出层里，`snapshot -c` 的文字里不一定有。等运行结束时轮询 API，再截图作为界面证据：
 
 ```sh
-curl -s "$HTTP_URL/api/runs" | python3 -c 'import json,sys; print([(r["id"],r["status"]) for r in json.load(sys.stdin)["runs"]])'
+curl -s "$HTTP_URL/api/projects/default/runs" | python3 -c 'import json,sys; print([(r["id"],r["status"]) for r in json.load(sys.stdin)["runs"]])'
 curl -s "$HTTP_URL/api/runs/<运行ID>"   # 各链、各节点的 status 和 outputs
 curl -s "$HTTP_URL/api/projects/default/agents"  # 在线状态、agent_version、installed_packages
 ```
