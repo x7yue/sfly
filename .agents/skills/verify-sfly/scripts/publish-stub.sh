@@ -6,7 +6,7 @@ set -euo pipefail
 
 VERIFY_ROOT=${SFLY_VERIFY_ROOT:-$HOME/.local/state/sfly-verify}
 RUN=${1:-$VERIFY_ROOT/current}
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091 # state.env 是 up.sh 运行时写的，检查时不存在
 source "$RUN/state.env"
 PROJECT=${2:-$REPO/testdata/stub-package}
 export TMPDIR=${TMPDIR:-$HOME/.t}

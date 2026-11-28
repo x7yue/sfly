@@ -7,7 +7,7 @@ set -euo pipefail
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 VERIFY_ROOT=${SFLY_VERIFY_ROOT:-$HOME/.local/state/sfly-verify}
 ADMIN_URL=${DATABASE_URL:-postgres://sfly:sfly@127.0.0.1:5432/sfly}
-# 本机 /tmp 是小 tmpfs，uv / vite / cargo 的临时文件放到家目录。
+# uv、vite、cargo 的临时文件很大，/tmp 在不少机器上是容量很小的 tmpfs：临时目录默认放到家目录下。
 export TMPDIR=${TMPDIR:-$HOME/.t}
 mkdir -p "$TMPDIR"
 
@@ -23,7 +23,7 @@ if ((build)); then
 	cargo build -p sfly-agent --locked --quiet
 fi
 for f in apps/web/dist/index.html target/debug/sfly-agent; do
-	[[ -e $f ]] || { echo "[up] 缺少 $f，去掉 --no-build 重新运行" >&2; exit 1; }
+	[[ -e $f ]] || { echo "[up] 缺少 ${f}，去掉 --no-build 重新运行" >&2; exit 1; }
 done
 ls apps/server/dist/sdk/*.whl >/dev/null 2>&1 || { echo "[up] 缺少 SDK wheel" >&2; exit 1; }
 

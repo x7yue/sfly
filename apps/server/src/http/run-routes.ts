@@ -4,6 +4,7 @@ import type { AgentHub } from "../agents/agent-hub.js";
 import { agentWaits } from "../agents/queue-wait.js";
 import type { Db } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
+import { runNotificationBotWarnings } from "../feishu/bot-checks.js";
 import type { ProgressEvent } from "../logs/task-logs.js";
 import { referencedAgentStatus } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
@@ -100,6 +101,9 @@ export function registerRunRoutes(
 			],
 			warnings: [
 				...preflightWarnings(head.document),
+				...(orchestration
+					? await runNotificationBotWarnings(deps.db, project, orchestration.run_notification.bot)
+					: []),
 				...(raw ? secretLeafWarnings(raw) : []),
 				...secretSize.warnings,
 			],

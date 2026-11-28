@@ -273,6 +273,8 @@ export const RunReport = RunState.extend({
 	 * 旧版本的控制面没有这个字段，读不到时当作 false。
 	 */
 	secrets_oversize: z.boolean().optional(),
+	/** 运行清理之后到达、被丢弃的上报条数（#505）。和运行视图（`RunView`）的同名字段一样；读不到时当作 0。 */
+	late_reports_dropped: z.number().int().nonnegative().optional(),
 });
 
 export const runSummaryApi = {

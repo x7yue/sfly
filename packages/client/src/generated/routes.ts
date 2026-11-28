@@ -22,7 +22,9 @@ import type {
 	FeishuBotView,
 	FeishuTestResult,
 	FeishuWebhookUrl,
+	FocusEditView,
 	FocusItemInput,
+	FocusItemView,
 	ListOrchestrationsQuery,
 	LogChunk,
 	LogPage,
@@ -66,6 +68,7 @@ import type {
 	RunMetricCatalog,
 	RunMetricSummary,
 	RunNotificationChanges,
+	RunNotificationSettings,
 	RunReport,
 	RunSummary,
 	RunView,
@@ -813,7 +816,30 @@ export interface Api {
 					focus_items?: FocusItemInput[];
 				};
 			},
-			OrchestrationView
+			{
+				id: string;
+				name: string;
+				description: string;
+				/** 最新版本号；0 表示还没有保存过版本。 */
+				head_version: number;
+				created_at: Timestamp;
+				/** 归档时间；没有归档时为 null。 */
+				archived_at: Timestamp | null;
+				/** 运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。 */
+				run_notification: RunNotificationSettings;
+				/** 关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。 */
+				focus_items: FocusItemView[];
+				/** 关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。 */
+				focus_edit: FocusEditView | null;
+				/**
+				 * 修改以后的运行通知设置的问题，只提示、不阻止保存（#501）：要发给的机器人不是这个项目里登记的时，
+				 * 一条 `run_notification_bot_not_registered`。触发前的预检在 `warnings` 里给同一条，不阻断触发。
+				 */
+				warnings: {
+					code: string;
+					message: string;
+				}[];
+			}
 		>;
 		/**
 		 * `POST /orchestrations/:id/copy`

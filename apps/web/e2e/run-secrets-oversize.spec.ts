@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { asLegacyRun } from "../../server/test/support/legacy-run.js";
 import { withSecretLimits } from "../../server/test/support/secret-limits.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
@@ -45,6 +46,8 @@ test("secret 参数的值太多：运行抽屉的摘要和运行监控页都写�
 	connectAgent,
 }) => {
 	const { summary, agent, assign } = await triggerWithSecret({ page, controlPlane, connectAgent });
+	// 写入时打码的运行（#505）在写入时就定下了太不太大：这里看的是读取时按此刻的值集合算的，改成之前的运行。
+	await asLegacyRun(controlPlane, assign.runId);
 	await withSecretLimits(TINY, async () => {
 		// 任务结束：抽屉收到事件，重新读一份运行视图，这时的值集合已经太大
 		await agent.succeed(assign, {});

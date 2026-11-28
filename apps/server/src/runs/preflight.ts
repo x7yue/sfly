@@ -2,7 +2,6 @@ import {
 	agentInputs,
 	blocksTrigger,
 	feishuBotInputs,
-	nodeAgentNotRegistered,
 	nodeNameWithId,
 	referencedAgents,
 	referencesIn,
@@ -10,8 +9,9 @@ import {
 import type { PackageMetadata, StoredOrchestrationDocument } from "@sfly/schema";
 import { agentsInProject } from "../agents/project-agents.js";
 import type { Db, Tx } from "../db/database.js";
-import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
+import { agentFor, type PackageNode, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
+import { otherVersionsInUse, versionInUseMessage } from "../engine/version-conflict.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
 import { devNodeTypes } from "../orchestrations/dev-node-types.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
@@ -31,7 +31,7 @@ import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
  * `agent_input_not_registered`，「飞书机器人」类型的输入选的机器人没有登记的
  * `feishu_bot_not_registered`，场景里还有已移除种类的节点的 `node_kind_removed`），另有 `agent_not_registered`、节点派发到的 Agent 已被停用的 `agent_disabled`、`not_supported`、`sdk_version_unsatisfied`、
  * `agent_version_unsatisfied`、开发版本没有在节点派发到的在线 Agent 上加载的 `dev_package_not_loaded`
- * （dev-package-loaded.ts），以及触发时入口参数的值接到类型不符的输入的 `param_input_type_mismatch`（param-input-type.ts）。
+ * （dev-package-loaded.ts）、节点派发到的 Agent 上同一个节点包的另一个版本正在执行的 `package_version_in_use`（{@link versionsInUseProblems}），以及触发时入口参数的值接到类型不符的输入的 `param_input_type_mismatch`（param-input-type.ts）。
  * 预检的警告（不阻断触发，{@link preflightWarnings}）也是这个结构。
  */
 export interface PreflightProblem {
@@ -96,7 +96,13 @@ async function withDevNodeTypes(
  * 比较的是控制面版本 `version` 而不是 Agent 记录里的版本：只给与控制面版本一致的 Agent 派任务（ADR 0014），
  * 记录里版本不同的 Agent 会先自更新到这个版本，所以 Agent 执行任务时的 SDK 版本就是控制面版本；提示也如实这样写。
  */
-export function createPreflight(deps: { version: string }): Preflight {
+export function createPreflight(deps: {
+	version: string;
+	/** 现在的控制面时间：说明里写正在执行的运行已经跑了多久。 */
+	now: () => Date;
+	/** 运行的链接（控制台里的运行页）。 */
+	runLink: (runId: string) => string;
+}): Preflight {
 	return async (db, project, doc, session) => {
 		// 注释框的警告只提示，不阻断触发（docs/SEMANTICS.md §1.6）。
 		const problems: PreflightProblem[] = (await checkDocument(db, project, doc, session))
@@ -121,25 +127,19 @@ export function createPreflight(deps: { version: string }): Preflight {
 		const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
 		for (const [nodeId, agent] of wanted) {
 			const disabled = known.get(agent);
-			if (disabled === false) continue;
+			// 没有注册过的由文档的静态检查（`agent_not_registered`，上面的 checkDocument）指出，这里只补停用的。
+			if (disabled !== true) continue;
 			const node = nodeById.get(nodeId);
 			const shown = node ? nodeNameWithId(node) : nodeId;
 			// 停用的 Agent 连不上、不参与派发（ADR 0029「迁移与过渡」）：触发了任务也只会排到超时，不如在这里说清楚。
-			problems.push(
-				disabled === undefined
-					? {
-							code: "agent_not_registered",
-							message: nodeAgentNotRegistered(shown, agent),
-							node_id: nodeId,
-						}
-					: {
-							code: "agent_disabled",
-							message: `节点 ${shown} 派发到的 Agent ${agent} 已被停用：让项目管理员恢复它，或把节点换到别的 Agent`,
-							node_id: nodeId,
-						},
-			);
+			problems.push({
+				code: "agent_disabled",
+				message: `节点 ${shown} 派发到的 Agent ${agent} 已被停用：让项目管理员恢复它，或把节点换到别的 Agent`,
+				node_id: nodeId,
+			});
 		}
 		problems.push(...(await checkDevPackagesLoaded(db, project, doc)));
+		problems.push(...(await versionsInUseProblems(db, project, doc, wanted, deps)));
 
 		const locked = await lockedPackages(db, project, doc, session);
 		// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。
@@ -191,6 +191,44 @@ export function createPreflight(deps: { version: string }): Preflight {
 		}
 		return problems;
 	};
+}
+
+/**
+ * 包节点派发到的 Agent 上，同一个节点包的另一个版本正在执行（准备中、执行中的任务，`engine/version-conflict.ts`）：装上这个版本
+ * 会换掉正在执行的代码，阻断触发（#449）。每台 Agent 上的每个节点包一条，指到用它的第一个节点；不看 Agent 在不在线，
+ * 只看控制面的任务记录。
+ */
+async function versionsInUseProblems(
+	db: Db | Tx,
+	project: ProjectId,
+	doc: StoredOrchestrationDocument,
+	wanted: ReadonlyMap<string, string>,
+	deps: { now: () => Date; runLink: (runId: string) => string },
+): Promise<PreflightProblem[]> {
+	const first = new Map<string, { node: PackageNode; agent: string }>();
+	for (const node of doc.nodes) {
+		const agent = wanted.get(node.id);
+		if (node.kind !== "package" || agent === undefined) continue;
+		const key = JSON.stringify([agent, node.package]);
+		if (!first.has(key)) first.set(key, { node, agent });
+	}
+	const problems: PreflightProblem[] = [];
+	for (const { node, agent } of first.values()) {
+		const version = doc.packages[node.package];
+		if (version === undefined) continue;
+		const inUse = await otherVersionsInUse(db, agent, node.package, version);
+		if (inUse.length === 0) continue;
+		problems.push({
+			code: "package_version_in_use",
+			message: versionInUseMessage(node, version, agent, inUse, {
+				project,
+				now: deps.now(),
+				runLink: deps.runLink,
+			}),
+			node_id: node.id,
+		});
+	}
+	return problems;
 }
 
 /**

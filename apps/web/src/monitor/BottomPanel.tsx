@@ -1,10 +1,11 @@
-import { nameBeforeId } from "@sfly/orchestration";
+import { type ErrorKind, nameBeforeId } from "@sfly/orchestration";
 import {
 	type AttemptView,
 	artifactsApi,
 	LOG_LEVELS,
 	type LogLineView,
 	type NodeRunView,
+	parseArtifactUrl,
 	type RunLogLine,
 	type RunView,
 	runsApi,
@@ -112,7 +113,8 @@ const levelsFrom = (min: MinLevel): LogLineView["level"][] =>
 const DEFAULT_HEIGHT = `clamp(${PANEL_FLOOR}px, calc((100dvh - ${MONITOR_TOPBAR_HEIGHT}px) * 0.28), 320px)`;
 const COLLAPSED_HEIGHT = 37;
 
-const ERROR_KIND_LABEL: Record<string, string> = {
+// 控制面可能报出这里还不认识的种类（接口里是字符串），没有标签时照写种类。
+const ERROR_KIND_LABEL: Record<ErrorKind, string> = {
 	node_error: "节点错误",
 	timeout: "超时",
 	agent_lost: "Agent 断线",
@@ -825,7 +827,9 @@ function AttemptsTab({
 							<div className="mt-2">
 								<div className="flex items-center gap-2">
 									<Badge variant="danger" title={untrustedPlain(a.error.kind)}>
-										<UntrustedText text={ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind} />
+										<UntrustedText
+											text={ERROR_KIND_LABEL[a.error.kind as ErrorKind] ?? a.error.kind}
+										/>
 										<code className="font-mono">
 											<UntrustedText text={a.error.kind} />
 										</code>
@@ -856,18 +860,10 @@ function AttemptsTab({
 	);
 }
 
-const ARTIFACT_REF =
-	/^https?:\/\/[^\s"]*\/tasks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifacts\/([^\s"?#]+)$/i;
-
-/** 产物引用（对 Agent 可见的完整地址，每个路径段已编码）对应的浏览器下载地址；不是产物引用时为 null。 */
+/** 产物引用（对 Agent 可见的完整地址，控制面用 `artifactUrl` 拼的）对应的浏览器下载地址；不是产物引用时为 null。 */
 const artifactRefPath = (value: string) => {
-	const m = ARTIFACT_REF.exec(value);
-	if (!m?.[1] || !m[2]) return null;
-	try {
-		return artifactDownloadPath(m[1], m[2].split("/").map(decodeURIComponent).join("/"));
-	} catch {
-		return null; // 不是合法的百分号编码
-	}
+	const ref = parseArtifactUrl(value);
+	return ref && artifactDownloadPath(ref.taskId, ref.name);
 };
 
 export const artifactDownloadPath = (taskId: string, name: string) =>

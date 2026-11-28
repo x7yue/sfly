@@ -2,7 +2,6 @@
 // 保存时不把占位符当成新的默认值，引擎派发时仍然拿到原值。HTTP API + 假 Agent + 真实 PostgreSQL。
 //
 // 测试里的 secret 值都是明显的假值；断言「没有泄露」都是看响应的文本里没有它，不只看某个字段。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import {
 	ACTION_LIMITS,
 	httpContract,

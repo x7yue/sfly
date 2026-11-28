@@ -97,6 +97,10 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot) -> dict:
 | `ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))` | 一张 Markdown 卡片：标题加颜色（`blue`（默认）、`green`、`orange`、`red`、`grey`），正文是 Markdown。不用手写卡片 JSON |
 | `ctx.notify(bot, message={...})` | 原始消息：完整的飞书请求体，原样发出，不改写、不补字段。富文本、自己设计的卡片、模板卡片都走这一种 |
 
+### secret 参数的值是掩码
+
+消息里出现这次运行的 secret 参数的值（节点把它写进了文字或卡片），存下和发到群里的都是掩码 `******`：控制面先打码、再按下面的大小上限组装。运行通知卡片里的失败原因同样是打码后的。
+
 ### 消息大小
 
 飞书的请求体不能超过 20 KB（紧凑 JSON 按 UTF-8 编码的字节数，一个汉字 3 字节）：

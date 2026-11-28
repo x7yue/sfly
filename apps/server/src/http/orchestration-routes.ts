@@ -2,6 +2,7 @@ import { isEmptyDiff } from "@sfly/orchestration";
 import { orchestrationsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Db } from "../db/database.js";
+import { runNotificationBotWarnings } from "../feishu/bot-checks.js";
 import { listOrchestrationSummaries } from "../orchestrations/orchestration-list.js";
 import type {
 	CheckVersionResult,
@@ -120,7 +121,12 @@ export function registerOrchestrationRoutes(
 			const { code, message, details } = result.rejection;
 			return sendError(reply, 400, code, message, details);
 		}
-		return result.orchestration;
+		const project = (await orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT;
+		const bot = result.orchestration.run_notification.bot;
+		return {
+			...result.orchestration,
+			warnings: await runNotificationBotWarnings(db, project, bot),
+		};
 	});
 
 	contractRoute(app, orchestrationsApi.archive, async ({ params }, reply, raw) => {

@@ -83,7 +83,7 @@ unset SFLY_WORKBENCH_TOKEN
 [ -n "$control_plane" ] || fail "没有设置 SFLY_WORKBENCH_URL（控制面的地址，容器里连得到的，例如 http://sfly:8080）"
 [ -n "$name" ] || fail "没有设置 SFLY_WORKBENCH_NAME（这台 Agent 的名字，compose 里在 .env 设置）"
 [ -n "$public_address" ] || fail "没有设置 SFLY_WORKBENCH_PUBLIC_ADDRESS（控制面和助手服务连这台 Agent 用的地址，例如 compose 的服务名）"
-[ -n "$token" ] || fail "没有设置 SFLY_WORKBENCH_TOKEN（这台 Agent 的 Agent 凭据）：管理员给「$name」签发：sfly api POST /projects/default/agents/$name/credentials，填进 .env 的 SFLY_WORKBENCH_TOKEN"
+[ -n "$token" ] || fail "没有设置 SFLY_WORKBENCH_TOKEN（这台 Agent 的 Agent 凭据）：管理员给「${name}」签发：sfly api POST /projects/default/agents/$name/credentials，填进 .env 的 SFLY_WORKBENCH_TOKEN"
 
 # 两个卷要归当前用户。命名卷首次挂载时沿用镜像里的属主；挂宿主机目录或别人建的卷时可能是 root 的：写不了就说清楚怎么改。
 for dir in "$home" "$work"; do
@@ -129,7 +129,7 @@ fetch_script() {
 # 由调用的一方决定是挡住启动，还是照常启动已有的 Agent）。
 run_install() {
 	sum=$(sha256_of "$script")
-	say "安装 Agent「$name」（--dev：Agent、uv、sfly 命令行，版本和控制面一致）"
+	say "安装 Agent「${name}」（--dev：Agent、uv、sfly 命令行，版本和控制面一致）"
 	# 凭据经环境变量交给安装脚本，不在命令行参数里。脚本来自控制面，信任控制面（ADR 0011）。
 	if ! SFLY_TOKEN=$token sh "$script" --dev --name "$name" --public-address "$public_address" --no-service; then
 		rm -f "$script"
@@ -140,7 +140,7 @@ run_install() {
 	rm -f "$script"
 	script=
 	if ! { [ -x "$agent" ] && [ -f "$SFLY_HOME/agent.env" ] && [ -x "$home/.local/bin/sfly" ]; }; then
-		warn "安装脚本正常结束，但 $agent、$SFLY_HOME/agent.env 或 ~/.local/bin/sfly 不在：没有装好"
+		warn "安装脚本正常结束，但 ${agent}、$SFLY_HOME/agent.env 或 ~/.local/bin/sfly 不在：没有装好"
 		return 1
 	fi
 	printf 'name=%s\ninstall_sh_sha256=%s\n' "$name" "$sum" >"$marker"
@@ -176,13 +176,13 @@ if installed; then
 	if fetch_script once; then
 		if [ "$(sha256_of "$script")" = "$(marker_value install_sh_sha256)" ]; then
 			rm -f "$script"
-			say "Agent「$name」已经装好，直接启动（控制面的 install.sh 没变）"
+			say "Agent「${name}」已经装好，直接启动（控制面的 install.sh 没变）"
 		else
 			say "控制面的 install.sh 变了（升级了控制面，或改了 SFLY_PUBLIC_URL、镜像），重新安装"
 			reinstall_agent
 		fi
 	else
-		say "Agent「$name」已经装好，直接启动（取不到 $control_plane/install.sh，没有对版本）"
+		say "Agent「${name}」已经装好，直接启动（取不到 $control_plane/install.sh，没有对版本）"
 	fi
 else
 	say "从 $control_plane/install.sh 下载安装脚本"
@@ -190,7 +190,7 @@ else
 	install_agent
 fi
 
-say "前台启动 Agent「$name」"
+say "前台启动 Agent「${name}」"
 # sfly、uv 在 ~/.local/bin：放在 PATH 最后，系统目录里有的命令不会被家目录里的盖掉。
 PATH=$PATH:$home/.local/bin
 export PATH
