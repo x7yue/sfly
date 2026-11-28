@@ -196,13 +196,18 @@ echo "出网名单：名单外被拒，加进名单之后连得上"
 # 走同一条路：工作台的入口脚本要等本次的规则写好（本网络命名空间的 127.0.0.1:47123 应答）才启动 Agent。
 firewall=$(compose --profile assistant ps -q sfly-workbench-firewall)
 docker stop "$workbench" "$firewall" >/dev/null || fail "停工作台和出网名单"
-since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+restarted=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker start "$firewall" >/dev/null || fail "docker start 出网名单"
 docker start "$workbench" >/dev/null || fail "docker start 工作台"
-client ready 300 || fail "docker start 之后助手没有就绪"
-log=$(docker logs --since "$since" "$workbench" 2>&1)
+# 等工作台起到 Agent（就绪状态可能还停在停之前的连接上），再看它之前的几行是不是先等了规则。
+for _ in $(seq 300); do
+	log=$(docker logs --since "$restarted" "$workbench" 2>&1)
+	[[ $log != *前台启动\ Agent* ]] || break
+	sleep 1
+done
 [[ $log == *等出网名单的规则写好*出网名单的规则已写好*前台启动\ Agent* ]] ||
 	fail "docker start 之后工作台没有先等出网名单的规则：$log"
+client ready 300 || fail "docker start 之后助手没有就绪"
 [[ $(from_workbench sfly-assistant 8090) == ConnectionRefusedError ]] || fail "docker start 之后名单之外的地址不再被拒"
 [[ $(from_workbench other-agent 50052) == ok ]] || fail "docker start 之后名单里的地址连不上"
 echo "出网名单：docker start 恢复时工作台等规则写好才启动 Agent"
