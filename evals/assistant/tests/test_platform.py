@@ -266,7 +266,7 @@ def test_read_driver_stops_the_driver_when_the_total_time_is_up() -> None:
         yield "starting\n"
         give_up = time.monotonic() + 3
         while not stopped and time.monotonic() < give_up:
-            time.sleep(0.02)
+            time.sleep(0.02)  # noqa: TID251 假的会话流：等被停下，最多 3 秒
         yield json.dumps({"event": "done", "session": "s1"}) + "\n"
 
     started = time.monotonic()
@@ -441,7 +441,7 @@ def test_the_sampler_script_reads_only_processes_named_pi(tmp_path: Path) -> Non
     run = subprocess.Popen(
         ["sh", "-c", PeakSampler.SCRIPT], env=env, stdout=subprocess.PIPE, text=True
     )
-    time.sleep(1.5)
+    time.sleep(1.5)  # noqa: TID251 让采样脚本跑上几轮再叫它停
     stop.touch()
     output, _ = run.communicate(timeout=5)
     sampler = _bare_sampler()

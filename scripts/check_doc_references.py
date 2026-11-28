@@ -51,8 +51,8 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import doc_commands  # noqa: E402
-import doc_routes  # noqa: E402
+import doc_commands
+import doc_routes
 
 ROOT = Path(__file__).resolve().parent.parent
 ALLOW_FILE = "scripts/doc-references.allow"

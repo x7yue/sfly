@@ -679,7 +679,7 @@ def test_version_mismatch_warning_is_filtered() -> None:
     headers = Message()
     headers["x-sfly-version"] = "9.9.9"  # 请求头只能是 latin-1：8 位的控制字符能到这里
     headers.replace_header("x-sfly-version", "9.9.9" + chr(0x85) + chr(0xAD))
-    client._observe(headers)  # noqa: SLF001
+    client._observe(headers)
     text = err.getvalue()
     assert "警告：sfly 命令行" in text
     assert _unsafe_in(text) == [] and ESC not in text

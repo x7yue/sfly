@@ -44,7 +44,7 @@ def test_keeps_trying_until_the_port_starts_listening(tmp_path: Path) -> None:
     server = socket.socket()
 
     def listen_later() -> None:
-        time.sleep(0.5)
+        time.sleep(0.5)  # noqa: TID251 造场景：被测的等待已经开始之后端口才打开
         server.bind(("127.0.0.1", port))
         server.listen()
 

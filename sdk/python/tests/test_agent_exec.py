@@ -17,12 +17,11 @@ import signal
 import subprocess
 import sys
 import threading
-import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
+from polling import wait_for
 
 import sfly
 from sfly import Context, TaskInfo
@@ -39,13 +38,6 @@ TREE = 'sleep 300 & echo $! >> "$PIDS"; echo $$ >> "$PIDS"; echo started; wait'
 @pytest.fixture(autouse=True)
 def package_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.syspath_prepend(str(PACKAGE / "src"))
-
-
-def wait_for(check: Callable[[], bool], timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < deadline, "timed out"
-        time.sleep(0.02)
 
 
 def alive(pid: int) -> bool:

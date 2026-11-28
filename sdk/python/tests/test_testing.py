@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
+from polling import wait_for
 
 from sfly.testing import run_node
 
@@ -462,10 +463,7 @@ def test_alive_treats_a_process_that_vanishes_before_proc_is_read_as_exited(
 def _assert_all_exited(pids: list[int]) -> None:
     # SIGKILL 的投递是异步的：执行器只等得到组长，孙进程在高负载下可能稍后才真正退出。
     # 与 Agent 的同类测试（agent/tests/timeout.rs 的 assert_all_gone）一样限时轮询。
-    deadline = time.monotonic() + 5
-    while any(_alive(pid) for pid in pids):
-        assert time.monotonic() < deadline, f"进程仍在运行：{[p for p in pids if _alive(p)]}"
-        time.sleep(0.02)
+    wait_for(lambda: not any(_alive(pid) for pid in pids), 5, what="进程都退出")
 
 
 def _alive(pid: int) -> bool:

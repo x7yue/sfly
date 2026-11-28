@@ -87,7 +87,7 @@ def wait_for_text(path: Path, text: str, seconds: float = 20) -> None:
     while time.monotonic() < deadline:
         if path.exists() and text in path.read_text(errors="replace"):
             return
-        time.sleep(0.05)
+        time.sleep(0.05)  # noqa: TID251 生成夹具时作为脚本单独运行，用不了 sdk/python/tests 的等待辅助
     raise TimeoutError(f"{path} 里 {seconds} 秒内没有出现 {text!r}")
 
 
@@ -322,7 +322,7 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
         )
     parent = subprocess.Popen(["sh", "-c", "sleep 28.3 & wait"])
     try:
-        time.sleep(0.5)  # 子进程起来
+        time.sleep(0.5)  # noqa: TID251 等 sh 起好子进程；生成夹具时作为脚本单独运行，用不了等待辅助
         for children in (True, False):
             case(
                 f"procmon_children_{str(children).lower()}",

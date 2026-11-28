@@ -36,7 +36,7 @@ def outcomes(ctx: Context) -> None:
 def wait_in_action(ctx: Context) -> None:
     """在一个动作里等着，直到被取消。"""
     with ctx.action("等待回报"):
-        time.sleep(60)
+        time.sleep(60)  # noqa: TID251 被测的节点：在动作里一直等到被取消
 
 
 @node(outputs=[])
@@ -44,7 +44,7 @@ def fail_then_wait(ctx: Context) -> None:
     """已经 `fail()` 的动作之后被取消，仍然是失败。"""
     with ctx.action("先失败再取消") as a:
         a.fail("已经拒单")
-        time.sleep(60)
+        time.sleep(60)  # noqa: TID251 被测的节点：在动作里一直等到被取消
 
 
 @node(outputs=[])
@@ -190,7 +190,7 @@ def summary_while_running(ctx: Context) -> None:
         ctx.mark("进入保持")
         handle = ctx.action.start("等回报", parent=hold, 订单=4)
         hold.note(阶段="加压")
-        time.sleep(60)
+        time.sleep(60)  # noqa: TID251 被测的节点：在动作里一直等到被取消
         handle.end()
 
 

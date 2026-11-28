@@ -676,7 +676,7 @@ class _SseServer:
                 self.wfile.write(payload)
                 self.wfile.flush()
                 if then == "silent":
-                    time.sleep(3)
+                    time.sleep(3)  # noqa: TID251 假的模型端点：回完这一段就不说话
 
             def log_message(self, *args: Any) -> None:
                 pass

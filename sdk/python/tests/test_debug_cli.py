@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
+from polling import wait_for
 
 from sfly.cli.debug import format_action
 from sfly.context import ACTION_RESULTS
@@ -426,11 +427,8 @@ def test_ctrl_c_cancels_like_the_platform(project: Path, tmp_path: Path) -> None
         stderr=subprocess.PIPE,
         text=True,
     )
-    deadline = time.monotonic() + 30
-    while not ready.exists():
-        assert proc.poll() is None, proc.communicate()
-        assert time.monotonic() < deadline, "节点没有启动"
-        time.sleep(0.05)
+    wait_for(lambda: ready.exists() or proc.poll() is not None, 30, what="节点启动")
+    assert proc.poll() is None, proc.communicate()
 
     proc.send_signal(signal.SIGINT)
     _, stderr = proc.communicate(timeout=30)
@@ -457,7 +455,7 @@ def test_ctrl_c_while_printing_logs_still_cancels(project: Path) -> None:
     assert proc.stderr is not None
     for _ in range(5):
         assert proc.stderr.readline(), "没有日志输出"
-    time.sleep(1)  # 每秒上万行日志，远超管道容量（64 KiB）
+    time.sleep(1)  # noqa: TID251 不读管道、让日志堆起来：每秒上万行，远超管道容量（64 KiB）
 
     proc.send_signal(signal.SIGINT)
     _, rest = proc.communicate(timeout=60)
@@ -499,11 +497,8 @@ def test_ctrl_c_while_printing_a_cancelled_result_is_ignored(project: Path, tmp_
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    deadline = time.monotonic() + 30
-    while not ready.exists():
-        assert proc.poll() is None, proc.communicate()
-        assert time.monotonic() < deadline, "节点没有启动"
-        time.sleep(0.05)
+    wait_for(lambda: ready.exists() or proc.poll() is not None, 30, what="节点启动")
+    assert proc.poll() is None, proc.communicate()
     proc.send_signal(signal.SIGINT)
 
     stdout, stderr = interrupt_while_printing(proc)

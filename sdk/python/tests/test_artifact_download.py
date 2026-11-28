@@ -10,7 +10,6 @@ from __future__ import annotations
 import http.server
 import socket
 import threading
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -23,6 +22,7 @@ import threading
 import tracemalloc
 
 from sfly import Cancelled, Context, node
+from polling import wait_for
 
 
 @node
@@ -190,13 +190,6 @@ def server() -> Iterator[ArtifactServer]:
     srv = ArtifactServer()
     yield srv
     srv.close()
-
-
-def wait_for(condition: Callable[[], bool], timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not condition():
-        assert time.monotonic() < deadline, "等待条件超时"
-        time.sleep(0.02)
 
 
 BODY = bytes(range(256)) * 1024  # 256 KiB，含全部字节值

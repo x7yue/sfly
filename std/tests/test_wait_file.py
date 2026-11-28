@@ -20,7 +20,7 @@ def later() -> Iterator[Callable[[float, Callable[[], object]], None]]:
 
     def schedule(delay: float, action: Callable[[], object]) -> None:
         def run() -> None:
-            time.sleep(delay)
+            time.sleep(delay)  # noqa: TID251 造场景：按时间表写文件，被测的等待要看到写到一半的状态
             action()
 
         thread = threading.Thread(target=run)
@@ -85,7 +85,7 @@ def append_for(target: Path, seconds: float) -> Callable[[], float]:
                 f.write("还在写\n")
                 f.flush()
                 last_write = time.monotonic()
-                time.sleep(0.1)
+                time.sleep(0.1)  # noqa: TID251 造场景：按时间表写文件，被测的等待要看到写到一半的状态
         return last_write
 
     return run
