@@ -60,7 +60,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:
-    packages = session.client.get("/packages")["packages"]
+    packages = session.client.get(session.client.in_project("/packages"))["packages"]
     shown, hidden = apply_limit(packages, args.limit)
     rows = [
         {
@@ -126,7 +126,7 @@ def _show(session: Session, args: argparse.Namespace) -> None:
         )
     client = session.client
     try:
-        summary = client.get(f"/packages/{segment(name)}")
+        summary = client.get(client.in_project(f"/packages/{segment(name)}"))
     except ApiError as error:
         if error.status != 404:
             raise
@@ -147,7 +147,7 @@ def _show(session: Session, args: argparse.Namespace) -> None:
             f"节点包 {name} 没有版本 {version}，已有的版本（新到旧）：\n{listed}",
             next=f"sfly package show {name}@{latest}",
         )
-    detail = client.get(f"/packages/{segment(name)}/versions/{segment(version)}")
+    detail = client.get(client.in_project(f"/packages/{segment(name)}/versions/{segment(version)}"))
     view = describe(detail, latest=latest)
     session.out.emit(view, render(view))
 
@@ -160,7 +160,7 @@ def _show_dev(session: Session, name: str, agent: str | None) -> None:
     运行准入不算它（apps/server/src/runs/dev-package-loaded.ts），这里和准入一致。"""
     loaders = [
         (a["name"], a["status"] == "online", d)
-        for a in session.client.get("/agents")["agents"]
+        for a in session.client.get(session.client.in_project("/agents"))["agents"]
         for d in a["dev_packages"]
         if d["name"] == name
     ]

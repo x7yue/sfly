@@ -311,7 +311,9 @@ def versions(stack: Stack) -> dict[str, str]:
 
 
 def _runs(stack: Stack) -> list[dict[str, Any]]:
-    out = stack.sfly("api", "GET", "/runs", "--query", "limit=200", "--json", check=False)
+    out = stack.sfly(
+        "api", "GET", "/projects/default/runs", "--query", "limit=200", "--json", check=False
+    )
     try:
         data = json.loads(out.stdout)
     except ValueError:

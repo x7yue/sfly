@@ -25,7 +25,7 @@ describe("节点包仓库", () => {
 		cp = await startTestControlPlane();
 		const archive = packageArchive();
 
-		const res = await cp.fetch("/packages", publishInit(archive));
+		const res = await cp.fetch("/projects/default/packages", publishInit(archive));
 		expect(res.status).toBe(201);
 		const published = await res.json();
 		expect(published).toEqual({
@@ -37,7 +37,9 @@ describe("节点包仓库", () => {
 			metadata: packageMetadata(),
 		});
 
-		const list = (await (await cp.fetch("/packages")).json()) as { packages: unknown[] };
+		const list = (await (await cp.fetch("/projects/default/packages")).json()) as {
+			packages: unknown[];
+		};
 		expect(list).toEqual({
 			packages: [
 				{
@@ -60,19 +62,23 @@ describe("节点包仓库", () => {
 			],
 		});
 
-		const pkg = await cp.fetch("/packages/demo-checks");
+		const pkg = await cp.fetch("/projects/default/packages/demo-checks");
 		expect(pkg.status).toBe(200);
 		expect(await pkg.json()).toEqual(list.packages[0]);
 
-		const version = await cp.fetch("/packages/demo-checks/versions/1.2.0");
+		const version = await cp.fetch("/projects/default/packages/demo-checks/versions/1.2.0");
 		expect(version.status).toBe(200);
 		expect(await version.json()).toEqual(published);
 
-		const nodeType = await cp.fetch("/packages/demo-checks/versions/1.2.0/nodes/http_check");
+		const nodeType = await cp.fetch(
+			"/projects/default/packages/demo-checks/versions/1.2.0/nodes/http_check",
+		);
 		expect(nodeType.status).toBe(200);
 		expect(await nodeType.json()).toEqual((packageMetadata().nodes as unknown[])[0]);
 
-		const download = await cp.fetch("/packages/demo-checks/versions/1.2.0/archive");
+		const download = await cp.fetch(
+			"/projects/default/packages/demo-checks/versions/1.2.0/archive",
+		);
 		expect(download.status).toBe(200);
 		expect(download.headers.get("x-sfly-sha256")).toBe(sha256(archive));
 		expect(new Uint8Array(await download.arrayBuffer())).toEqual(archive);
@@ -87,14 +93,14 @@ describe("节点包仓库", () => {
 			["alpha", "0.2.0"],
 		] as const) {
 			const res = await cp.fetch(
-				"/packages",
+				"/projects/default/packages",
 				publishInit(packageArchive(packageMetadata({ name, version }))),
 			);
 			expect(res.status).toBe(201);
 			clock.advance(1000);
 		}
 
-		const { packages } = (await (await cp.fetch("/packages")).json()) as {
+		const { packages } = (await (await cp.fetch("/projects/default/packages")).json()) as {
 			packages: { name: string; versions: { version: string; published_at: string }[] }[];
 		};
 		expect(packages.map((p) => p.name)).toEqual(["alpha", "zeta"]);
@@ -108,10 +114,10 @@ describe("节点包仓库", () => {
 		const clock = new ManualClock();
 		cp = await startTestControlPlane({ clock });
 		const latest = async () => {
-			const { packages } = (await (await cp?.fetch("/packages"))?.json()) as {
+			const { packages } = (await (await cp?.fetch("/projects/default/packages"))?.json()) as {
 				packages: { name: string; latest_version: string }[];
 			};
-			const one = (await (await cp?.fetch("/packages/bench"))?.json()) as {
+			const one = (await (await cp?.fetch("/projects/default/packages/bench"))?.json()) as {
 				latest_version: string;
 			};
 			expect(packages.find((p) => p.name === "bench")?.latest_version).toBe(one.latest_version);
@@ -119,7 +125,7 @@ describe("节点包仓库", () => {
 		};
 		const publish = async (version: string) => {
 			const res = await cp?.fetch(
-				"/packages",
+				"/projects/default/packages",
 				publishInit(packageArchive(packageMetadata({ name: "bench", version }))),
 			);
 			expect(res?.status).toBe(201);
@@ -143,7 +149,7 @@ describe("节点包仓库", () => {
 		const api = new ApiClient(cp);
 		for (const version of ["1.2.0", "1.3.0", "1.4.0"]) {
 			const res = await cp.fetch(
-				"/packages",
+				"/projects/default/packages",
 				publishInit(packageArchive(packageMetadata({ version }))),
 			);
 			expect(res.status).toBe(201);
@@ -164,20 +170,22 @@ describe("节点包仓库", () => {
 		await api.orchestrationWith(locking("1.2.0"), "third");
 		await api.createOrchestration("no-version");
 
-		const list = packagesApi.list.response.parse(await api.getJson("/packages"));
+		const list = packagesApi.list.response.parse(await api.getJson("/projects/default/packages"));
 		const locked = list.packages[0]?.versions.map((v) => [v.version, v.locked_orchestrations]);
 		expect(locked).toEqual([
 			["1.4.0", 0],
 			["1.3.0", 2],
 			["1.2.0", 1],
 		]);
-		const pkg = packagesApi.get.response.parse(await api.getJson("/packages/demo-checks"));
+		const pkg = packagesApi.get.response.parse(
+			await api.getJson("/projects/default/packages/demo-checks"),
+		);
 		expect(pkg).toEqual(list.packages[0]);
 	});
 
 	it("路径参数不符合契约时返回 400", async () => {
 		cp = await startTestControlPlane();
-		const res = await cp.fetch("/packages/Not%20A%20Name/versions/1.0.0");
+		const res = await cp.fetch("/projects/default/packages/Not%20A%20Name/versions/1.0.0");
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({
 			error: {
@@ -191,18 +199,22 @@ describe("节点包仓库", () => {
 	it("同名同版本已存在时拒绝发布，已发布的文件不被覆盖", async () => {
 		cp = await startTestControlPlane();
 		const first = packageArchive();
-		expect((await cp.fetch("/packages", publishInit(first))).status).toBe(201);
+		expect((await cp.fetch("/projects/default/packages", publishInit(first))).status).toBe(201);
 
 		const second = packageArchive(packageMetadata({ requires_python: ">=3.12" }));
-		const res = await cp.fetch("/packages", publishInit(second));
+		const res = await cp.fetch("/projects/default/packages", publishInit(second));
 		expect(res.status).toBe(409);
 		expect(await res.json()).toEqual({
 			error: { code: "conflict", message: expect.stringContaining("demo-checks@1.2.0") },
 		});
 
-		const download = await cp.fetch("/packages/demo-checks/versions/1.2.0/archive");
+		const download = await cp.fetch(
+			"/projects/default/packages/demo-checks/versions/1.2.0/archive",
+		);
 		expect(new Uint8Array(await download.arrayBuffer())).toEqual(first);
-		const version = (await (await cp.fetch("/packages/demo-checks/versions/1.2.0")).json()) as {
+		const version = (await (
+			await cp.fetch("/projects/default/packages/demo-checks/versions/1.2.0")
+		).json()) as {
 			metadata: { requires_python: string };
 		};
 		expect(version.metadata.requires_python).toBe(">=3.10");
@@ -239,56 +251,64 @@ describe("节点包仓库", () => {
 		],
 	])("拒绝无效的节点包：%s", async (_label, archive) => {
 		cp = await startTestControlPlane();
-		const res = await cp.fetch("/packages", publishInit(archive));
+		const res = await cp.fetch("/projects/default/packages", publishInit(archive));
 		expect(res.status).toBe(400);
 		expect(await res.json()).toMatchObject({
 			error: { code: "invalid_package", message: expect.any(String) },
 		});
-		expect(await (await cp.fetch("/packages")).json()).toEqual({ packages: [] });
+		expect(await (await cp.fetch("/projects/default/packages")).json()).toEqual({ packages: [] });
 	});
 
 	it("节点类型的说明最长 4000 个 Unicode 字符：4000 个 emoji 可以发布，原样查询到", async () => {
 		cp = await startTestControlPlane();
 		const description = "😀".repeat(4000);
 		const res = await cp.fetch(
-			"/packages",
+			"/projects/default/packages",
 			publishInit(packageArchive(withDescription(description))),
 		);
 		expect(res.status).toBe(201);
 
-		const node = await cp.fetch("/packages/demo-checks/versions/1.2.0/nodes/http_check");
+		const node = await cp.fetch(
+			"/projects/default/packages/demo-checks/versions/1.2.0/nodes/http_check",
+		);
 		expect(await node.json()).toMatchObject({ name: "http_check", description });
 	});
 
 	it("元信息里的最低 SDK 版本原样保存，查询版本时返回", async () => {
 		cp = await startTestControlPlane();
 		const metadata = packageMetadata({ requires_sdk: ">=0.0.4, <1" });
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
-		const version = await cp.fetch("/packages/demo-checks/versions/1.2.0");
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
+		const version = await cp.fetch("/projects/default/packages/demo-checks/versions/1.2.0");
 		expect(await version.json()).toMatchObject({ metadata: { requires_sdk: ">=0.0.4, <1" } });
 	});
 
 	it("控制面重启后节点包和文件仍然可用", async () => {
 		cp = await startTestControlPlane();
 		const archive = packageArchive();
-		expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(201);
+		expect((await cp.fetch("/projects/default/packages", publishInit(archive))).status).toBe(201);
 
 		await cp.restart();
 
-		const download = await cp.fetch("/packages/demo-checks/versions/1.2.0/archive");
+		const download = await cp.fetch(
+			"/projects/default/packages/demo-checks/versions/1.2.0/archive",
+		);
 		expect(new Uint8Array(await download.arrayBuffer())).toEqual(archive);
-		expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(409);
+		expect((await cp.fetch("/projects/default/packages", publishInit(archive))).status).toBe(409);
 	});
 
 	it("查询不存在的包、版本、节点类型时返回 404", async () => {
 		cp = await startTestControlPlane();
-		expect((await cp.fetch("/packages", publishInit(packageArchive()))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive()))).status,
+		).toBe(201);
 
 		for (const path of [
-			"/packages/missing",
-			"/packages/demo-checks/versions/9.9.9",
-			"/packages/demo-checks/versions/9.9.9/archive",
-			"/packages/demo-checks/versions/1.2.0/nodes/missing",
+			"/projects/default/packages/missing",
+			"/projects/default/packages/demo-checks/versions/9.9.9",
+			"/projects/default/packages/demo-checks/versions/9.9.9/archive",
+			"/projects/default/packages/demo-checks/versions/1.2.0/nodes/missing",
 		]) {
 			const res = await cp.fetch(path);
 			expect(res.status, path).toBe(404);
@@ -303,7 +323,7 @@ describe("节点包仓库", () => {
 		["text/plain", "not a package"],
 	])("请求体是 %s 时返回 415", async (contentType, body) => {
 		cp = await startTestControlPlane();
-		const res = await cp.fetch("/packages", {
+		const res = await cp.fetch("/projects/default/packages", {
 			method: "POST",
 			headers: { "content-type": contentType },
 			body,
@@ -316,7 +336,7 @@ describe("节点包仓库", () => {
 
 	it("未知路由也返回统一的错误格式", async () => {
 		cp = await startTestControlPlane();
-		const res = await cp.fetch("/packages/demo/unknown/path");
+		const res = await cp.fetch("/projects/default/packages/demo/unknown/path");
 		expect(res.status).toBe(404);
 		expect(await res.json()).toEqual({
 			error: { code: "not_found", message: expect.any(String) },

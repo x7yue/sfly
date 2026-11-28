@@ -74,7 +74,10 @@ describe("最低 Agent 版本", () => {
 		api = new ApiClient(cp);
 	};
 	const publish = async () => {
-		const res = await cp.fetch("/packages", publishInit(packageArchive(metadata())));
+		const res = await cp.fetch(
+			"/projects/default/packages",
+			publishInit(packageArchive(metadata())),
+		);
 		expect(res.status).toBe(201);
 	};
 	const connect = async (hello: HelloInit) => {

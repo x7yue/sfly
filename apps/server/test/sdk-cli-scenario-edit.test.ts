@@ -8,6 +8,7 @@ import { addDocumentFields } from "./support/legacy-document.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { sfly } from "./support/sfly-cli.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { storeNodeField } from "./support/stored-over-limit.js";
@@ -66,7 +67,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		writeFile(file, JSON.stringify(content, null, 2));
 
 	const createScenario = async (name: string, document?: unknown): Promise<string> => {
-		const res = await api.post("/orchestrations", { name });
+		const res = await api.post("/projects/default/orchestrations", { name });
 		const { id } = (await res.json()) as { id: string };
 		if (document) await api.saveVersion(id, document);
 		clock.advance(1000);
@@ -99,8 +100,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ clock, version: cliVersion });
 		api = new ApiClient(cp);
-		// 文档里的包节点锁定的版本已发布：保存时没有警告。
+		// 文档里的包节点锁定的版本已发布、派发到的 Agent 注册过：保存时没有警告。
 		await publishPackage(cp, "demo", "1.0.0", { echo: ["v"] });
+		await registerAgents(cp.database.url, ["agent-a", "agent-b", "agent-c"]);
 		dir = await mkdtemp(join(tmpdir(), "sfly-scenario-edit-"));
 	}, 120_000);
 
@@ -256,6 +258,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			);
 			expect(save).toHaveLength(1);
 			expect(save[0]?.headers["x-sfly-client"]).toBe(`sfly-cli/${cliVersion} agent/claude-code`);
+			// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 			expect(save[0]?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("阿杰"));
 			expect((await versions(id))[0]).toMatchObject({
 				number: 2,
@@ -771,8 +774,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("--from 的文档没有通过校验时报错，也不会新建场景", async () => {
-			const before = (await api.getJson<{ orchestrations: unknown[] }>("/orchestrations"))
-				.orchestrations.length;
+			const before = (
+				await api.getJson<{ orchestrations: unknown[] }>("/projects/default/orchestrations")
+			).orchestrations.length;
 			const file = newFile();
 			await writeScenarioFile(file, {
 				document: {
@@ -785,8 +789,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			const result = await cli("scenario", "create", "--name", "新建-不会出现", "--from", file);
 			expect(result.code).toBe(2);
 			expect(result.stderr).toContain("nodes/1/kind");
-			const after = (await api.getJson<{ orchestrations: unknown[] }>("/orchestrations"))
-				.orchestrations.length;
+			const after = (
+				await api.getJson<{ orchestrations: unknown[] }>("/projects/default/orchestrations")
+			).orchestrations.length;
 			expect(after).toBe(before);
 		});
 	});

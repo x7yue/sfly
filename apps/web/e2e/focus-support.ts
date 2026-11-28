@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { OrchestrationView } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { inspector, nodeCard, openEditor } from "./editor-support";
 import { metricPackage } from "./monitor-scenario";
@@ -43,7 +44,7 @@ export async function createFocusScenario(cp: TestControlPlane): Promise<string>
 
 const json = (method: string, body: unknown, nickname: string): RequestInit => ({
 	method,
-	headers: { "content-type": "application/json", "x-sfly-nickname": nickname },
+	headers: { "content-type": "application/json", ...actAs(nickname) },
 	body: JSON.stringify(body),
 });
 

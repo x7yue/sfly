@@ -60,6 +60,8 @@ LOGIN_HINT = "sfly login"
 SESSION_TOKEN_PREFIX = "sfly_ses_"
 """会话令牌（平台的工作台上助手用的，控制面按会话签发）的前缀。"""
 SESSION_ID_ENV = "SFLY_SESSION_ID"
+PROJECT_ENV = "SFLY_PROJECT"
+DEFAULT_PROJECT = "default"
 UNAUTHORIZED_TIP = (
     "没有登录，或者令牌已失效、已被吊销：运行 sfly login 登录"
     "（脚本、CI 里设置环境变量 SFLY_API_TOKEN）"
@@ -235,6 +237,7 @@ class Client:
         sends_password: bool = False,
         nickname_ignored: bool = False,
         session_id: str | None = None,
+        project: str = DEFAULT_PROJECT,
         ai_agent: str | None = None,
         stderr: IO[str] | None = None,
         timeout: float = 30.0,
@@ -245,6 +248,8 @@ class Client:
         """有令牌时身份由它决定：请求带 `Authorization: Bearer`，不再带昵称。"""
         self.session_id = session_id
         """令牌所属的会话（`SFLY_SESSION_ID`，工作台上控制面设好）：会话令牌的 `latest` 按它找。"""
+        self.project = project
+        """路径里的项目（`/projects/<项目>/…`）：默认 `default`，`SFLY_PROJECT` 可以改。"""
         self.sends_password = sends_password
         """要把账号密码发给控制面（`sfly login` 换令牌，不带令牌）：往明文地址发之前也提示。"""
         self.ai_agent = ai_agent
@@ -286,6 +291,7 @@ class Client:
             token=resolved.token if resolved else None,
             nickname_ignored=given_nickname,
             session_id=environ.get(SESSION_ID_ENV, "").strip() or None,
+            project=environ.get(PROJECT_ENV, "").strip() or DEFAULT_PROJECT,
             ai_agent=detect_ai_agent(environ),
         )
 
@@ -298,6 +304,10 @@ class Client:
         else:
             headers[NICKNAME_HEADER] = urllib.parse.quote(self.nickname, safe="")
         return headers
+
+    def in_project(self, path: str, project: str | None = None) -> str:
+        """项目下的路径：`/agents` → `/projects/<项目>/agents`；`project` 不写用 `self.project`。"""
+        return f"/projects/{segment(project or self.project)}{path}"
 
     @property
     def session_token(self) -> bool:

@@ -16,7 +16,7 @@ describe("sfly package：最新版本按版本号（#434）", () => {
 		for (const version of ["1.10.0", "1.9.1"]) {
 			const metadata = packageMetadata({ name: "bench", version });
 			const res = await cp.fetch(
-				"/packages",
+				"/projects/default/packages",
 				publishInit(
 					packageArchive(metadata, { [`bench-${version}-py3-none-any.whl`]: strToU8("w") }),
 				),

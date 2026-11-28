@@ -70,16 +70,16 @@ describe("路由清单里每个接口的声明和响应", () => {
 		);
 		expect(noBody.map((e) => `${e.method} ${e.path}`).sort()).toEqual([
 			"DELETE /account/tokens/:id",
-			"DELETE /agents/:name/credentials/:id",
-			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
+			"DELETE /projects/:project/agents/:name/credentials/:id",
 			"DELETE /projects/:project/dev-agents/:name",
+			"DELETE /projects/:project/feishu-bots/:name",
 			"DELETE /projects/:project/tokens/:id",
-			"POST /agents/:name/disable",
-			"POST /agents/:name/enable",
 			"POST /auth/logout",
 			"POST /auth/logout-all",
 			"POST /auth/password",
+			"POST /projects/:project/agents/:name/disable",
+			"POST /projects/:project/agents/:name/enable",
 			"POST /users/:id/password",
 		]);
 	});
@@ -219,9 +219,10 @@ describe("导出响应的规则", () => {
 			endpoint({
 				...common,
 				method: "GET",
-				path: "/a",
+				path: "/projects/:project/a",
 				key: ["a", "list"],
 				resource: { kind: "scenario", target: "collection" },
+				params: z.object({ project: z.string() }),
 				response: z.object({}),
 			}),
 		);

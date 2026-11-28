@@ -1,9 +1,8 @@
 // 测试基建默认带凭据（#493）：控制面测试的请求默认带个人令牌，按昵称请求头换人；`credentials: "omit"` 不带。
 // 另外演示用辅助造另一个项目的凭据，写「另一个项目读不到、改不了」的隔离测试。
-import { NICKNAME_HEADER } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
-import { bearer, DEFAULT_TESTER, loginNameOf, TestAccounts } from "./support/credentials.js";
+import { actAs, bearer, DEFAULT_TESTER, loginNameOf, TestAccounts } from "./support/credentials.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describe("测试基建默认带凭据", () => {
@@ -26,7 +25,7 @@ describe("测试基建默认带凭据", () => {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				...(nickname ? { [NICKNAME_HEADER]: encodeURIComponent(nickname) } : {}),
+				...(nickname ? actAs(nickname) : {}),
 			},
 			body: JSON.stringify({ base_version: 0, document: { nodes: [], edges: [] } }),
 		});

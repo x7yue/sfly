@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AccessGuard } from "../src/auth/access-guard.js";
 import { installAccessGuard } from "../src/http/access.js";
 import { contractRoute, guardHttpContract } from "../src/http/contract-route.js";
+import { actAs } from "./support/credentials.js";
 import { FakeAccessStore } from "./support/fake-access-store.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -190,8 +191,8 @@ describe("请求里的 NUL 字符（#212）", () => {
 
 	it("路径参数含 NUL 的标识不指向任何东西，返回 404 not_found", async () => {
 		for (const [method, path] of [
-			["POST", "/agents/%00/update-now"],
-			["GET", "/packages/stub/versions/%00"],
+			["POST", "/projects/default/agents/%00/update-now"],
+			["GET", "/projects/default/packages/stub/versions/%00"],
 		] as const) {
 			const res = await cp.fetch(path, { method });
 			expect(res.status, `${method} ${path}`).toBe(404);
@@ -200,16 +201,16 @@ describe("请求里的 NUL 字符（#212）", () => {
 	});
 
 	it("查询参数与 JSON 请求体里含 NUL 的字符串返回 400 invalid_request", async () => {
-		const create = await cp.fetch("/orchestrations", {
+		const create = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+			headers: { "content-type": "application/json", ...actAs("alice") },
 			body: JSON.stringify({ name: "a\u0000b" }),
 		});
 		expect(create.status).toBe(400);
 		expect(await create.json()).toMatchObject({ error: { code: "invalid_request" } });
 
-		const list = await cp.fetch("/orchestrations?q=%00", {
-			headers: { "x-sfly-nickname": "alice" },
+		const list = await cp.fetch("/projects/default/orchestrations?q=%00", {
+			headers: { ...actAs("alice") },
 		});
 		expect(list.status).toBe(400);
 		expect(await list.json()).toMatchObject({ error: { code: "invalid_request" } });

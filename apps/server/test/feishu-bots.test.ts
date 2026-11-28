@@ -1,7 +1,8 @@
 // 切入点 A：飞书机器人的登记和测试消息（#228，ADR 0020）。真实控制面 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
-import { type FeishuBotView, feishuBotsApi, NICKNAME_HEADER } from "@sfly/schema";
+import { type FeishuBotView, feishuBotsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -21,22 +22,22 @@ describe("飞书机器人的登记和测试消息", () => {
 		await cp.close();
 	});
 
-	const botUrl = (name: string) => `/feishu-bots/${encodeURIComponent(name)}`;
+	const botUrl = (name: string) => `/projects/default/feishu-bots/${encodeURIComponent(name)}`;
 	const list = async () =>
-		feishuBotsApi.list.response.parse(await api.getJson("/feishu-bots")).bots;
+		feishuBotsApi.list.response.parse(await api.getJson("/projects/default/feishu-bots")).bots;
 	const patch = (name: string, body: unknown, nickname = "tester") =>
 		cp.fetch(botUrl(name), {
 			method: "PATCH",
 			headers: {
 				"content-type": "application/json",
-				[NICKNAME_HEADER]: encodeURIComponent(nickname),
+				...actAs(nickname),
 			},
 			body: JSON.stringify(body),
 		});
 	const remove = (name: string, nickname = "tester") =>
 		cp.fetch(botUrl(name), {
 			method: "DELETE",
-			headers: { [NICKNAME_HEADER]: encodeURIComponent(nickname) },
+			headers: actAs(nickname),
 		});
 	const test = (name: string) => api.postEmpty(`${botUrl(name)}/test`);
 	const testResult = async (name: string) => {
@@ -63,7 +64,7 @@ describe("飞书机器人的登记和测试消息", () => {
 
 		it("名称重复时拒绝，409 name_taken，错误信息是中文", async () => {
 			await api.createFeishuBot("压测群", feishu.webhookUrl("a"));
-			const res = await api.post("/feishu-bots", {
+			const res = await api.post("/projects/default/feishu-bots", {
 				name: "压测群",
 				webhook_url: feishu.webhookUrl("b"),
 			});
@@ -77,7 +78,10 @@ describe("飞书机器人的登记和测试消息", () => {
 		it("同时登记同一个名称：只有一个成功", async () => {
 			const results = await Promise.all(
 				[1, 2, 3].map((i) =>
-					api.post("/feishu-bots", { name: "压测群", webhook_url: feishu.webhookUrl(`t${i}`) }),
+					api.post("/projects/default/feishu-bots", {
+						name: "压测群",
+						webhook_url: feishu.webhookUrl(`t${i}`),
+					}),
 				),
 			);
 			expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409]);
@@ -85,7 +89,7 @@ describe("飞书机器人的登记和测试消息", () => {
 
 		it("名称或 Webhook 地址不合法时 400，信息是中文", async () => {
 			const bad = async (body: unknown) => {
-				const res = await api.post("/feishu-bots", body);
+				const res = await api.post("/projects/default/feishu-bots", body);
 				expect(res.status, JSON.stringify(body)).toBe(400);
 				const { error } = (await res.json()) as { error: { code: string; message: string } };
 				expect(error.code).toBe("invalid_request");
@@ -125,7 +129,10 @@ describe("飞书机器人的登记和测试消息", () => {
 					body: body === undefined ? undefined : JSON.stringify(body),
 				});
 			for (const res of [
-				await noNickname("POST", "/feishu-bots", { name: "新", webhook_url: feishu.webhookUrl() }),
+				await noNickname("POST", "/projects/default/feishu-bots", {
+					name: "新",
+					webhook_url: feishu.webhookUrl(),
+				}),
 				await noNickname("PATCH", botUrl("群"), { webhook_url: feishu.webhookUrl("n") }),
 				await noNickname("DELETE", botUrl("群")),
 				await noNickname("POST", `${botUrl("群")}/test`),
@@ -206,14 +213,17 @@ describe("飞书机器人的登记和测试消息", () => {
 				responses.push(body);
 				return body;
 			};
-			await text(await cp.fetch("/feishu-bots"));
+			await text(await cp.fetch("/projects/default/feishu-bots"));
 			await text(await patch("群", { webhook_url: url() }));
 			await text(await test("群"));
 			return responses;
 		};
 
 		it("新增、列表、替换的返回里只有开头和结尾，没有完整地址和令牌", async () => {
-			const created = await api.post("/feishu-bots", { name: "群", webhook_url: url() });
+			const created = await api.post("/projects/default/feishu-bots", {
+				name: "群",
+				webhook_url: url(),
+			});
 			const createdBody = await created.text();
 			const bots = await list();
 			const masked = bots[0]?.webhook_url ?? "";

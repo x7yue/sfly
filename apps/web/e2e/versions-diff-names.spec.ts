@@ -1,3 +1,4 @@
+import { actAs } from "../../server/test/support/credentials.js";
 import { editorDocument } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage } from "./support";
@@ -53,7 +54,7 @@ test("版本对比：新增、删除、改动的节点写显示名称和节点 I
 	const id = await createScenario(controlPlane, "日终数据处理", first);
 	const res = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({ base_version: 1, document: second }),
 	});
 	expect(res.status).toBe(201);

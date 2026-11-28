@@ -6,13 +6,13 @@ import type { AccountService } from "../auth/accounts.js";
 import type { Engine } from "../engine/engine.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import { agentReferences } from "../orchestrations/usage.js";
-import { DEFAULT_PROJECT, parseProjectId } from "../projects/project-id.js";
+import { parseProjectId, pathProject } from "../projects/project-id.js";
 import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
 /**
- * Agent API（契约见 @sfly/schema 的 agentsApi）：GET /agents 全部注册过的 Agent；
- * POST /agents/:name/update-now 立即更新。路径还不带项目（#488）：Agent 都在默认项目里。
+ * Agent API（契约见 @sfly/schema 的 agentsApi）：`/projects/:project/agents` 项目里全部注册过的 Agent，立即更新、凭据、停用和恢复；
+ * 项目从路径里取（#488）。
  */
 export function registerAgentRoutes(
 	app: FastifyInstance,
@@ -31,19 +31,19 @@ export function registerAgentRoutes(
 	},
 ): void {
 	contractRoute(app, agentsApi.updateNow, async ({ params }, reply) => {
-		const outcome = await engine.updateNow(DEFAULT_PROJECT, params.name);
+		const outcome = await engine.updateNow(pathProject(params), params.name);
 		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);
 		return { terminated_tasks: outcome.terminated };
 	});
 	// ---- Agent 凭据：项目管理员（「管理」范围）签发、吊销；原值只在签发的响应里出现一次 ----
 	contractRoute(app, agentsApi.listCredentials, async ({ params }) => ({
-		credentials: await credentials.list(DEFAULT_PROJECT, params.name),
+		credentials: await credentials.list(pathProject(params), params.name),
 	}));
 	contractRoute(app, agentsApi.issueCredential, async ({ params }, reply) =>
-		reply.code(201).send(await credentials.issue(DEFAULT_PROJECT, params.name)),
+		reply.code(201).send(await credentials.issue(pathProject(params), params.name)),
 	);
 	contractRoute(app, agentsApi.revokeCredential, async ({ params }, reply) => {
-		const result = await credentials.revoke(DEFAULT_PROJECT, params.name, params.id);
+		const result = await credentials.revoke(pathProject(params), params.name, params.id);
 		if (result === "not_found") {
 			return sendError(reply, 404, "not_found", "这台 Agent 没有这个凭据");
 		}
@@ -51,12 +51,12 @@ export function registerAgentRoutes(
 	});
 	// ---- 停用、恢复 ----
 	contractRoute(app, agentsApi.disable, async ({ params }, reply) => {
-		const result = await hub.setDisabled(DEFAULT_PROJECT, params.name, true);
+		const result = await hub.setDisabled(pathProject(params), params.name, true);
 		if (result === "not_found") return sendError(reply, 404, "not_found", "没有这台 Agent");
 		return reply.code(204).send();
 	});
 	contractRoute(app, agentsApi.enable, async ({ params }, reply) => {
-		const result = await hub.setDisabled(DEFAULT_PROJECT, params.name, false);
+		const result = await hub.setDisabled(pathProject(params), params.name, false);
 		if (result === "not_found") return sendError(reply, 404, "not_found", "没有这台 Agent");
 		return reply.code(204).send();
 	});
@@ -110,10 +110,11 @@ export function registerAgentRoutes(
 		}
 		return reply.code(204).send();
 	});
-	contractRoute(app, agentsApi.list, async () => {
+	contractRoute(app, agentsApi.list, async ({ params }) => {
+		const project = pathProject(params);
 		const [agents, documents] = await Promise.all([
-			hub.list(DEFAULT_PROJECT),
-			orchestrations.rawHeadDocuments(DEFAULT_PROJECT),
+			hub.list(project),
+			orchestrations.rawHeadDocuments(project),
 		]);
 		// 引用数随各场景的最新版本变化，查询时现算。
 		const references = agentReferences(documents);

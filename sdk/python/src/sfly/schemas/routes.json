@@ -1633,17 +1633,29 @@
     },
     {
       "method": "GET",
-      "path": "/agents",
+      "path": "/projects/:project/agents",
       "key": [
         "agents",
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出全部 Agent：在线还是离线、槽位、正在执行和排队的任务、已装的节点包",
+      "summary": "列出项目里的全部 Agent：在线还是离线、槽位、正在执行和排队的任务、已装的节点包",
       "effect": "read",
       "resource": {
         "kind": "agent",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -2039,6 +2051,16 @@
                     ]
                   }
                 },
+                "other_project_running": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "other_project_queued": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
                 "version_mismatch": {
                   "type": "boolean"
                 },
@@ -2204,6 +2226,8 @@
                 "dev_packages",
                 "running_tasks",
                 "queued_tasks",
+                "other_project_running",
+                "other_project_queued",
                 "version_mismatch",
                 "update",
                 "clock_offset",
@@ -2229,7 +2253,7 @@
     },
     {
       "method": "POST",
-      "path": "/agents/:name/update-now",
+      "path": "/projects/:project/agents/:name/update-now",
       "key": [
         "agents",
         "update-now"
@@ -2246,6 +2270,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -2253,6 +2281,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -2425,7 +2454,7 @@
     },
     {
       "method": "GET",
-      "path": "/agents/:name/credentials",
+      "path": "/projects/:project/agents/:name/credentials",
       "key": [
         "agents",
         "credentials"
@@ -2442,6 +2471,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -2449,6 +2482,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -2523,7 +2557,7 @@
     },
     {
       "method": "POST",
-      "path": "/agents/:name/credentials",
+      "path": "/projects/:project/agents/:name/credentials",
       "key": [
         "agents",
         "issue-credential"
@@ -2540,6 +2574,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -2547,6 +2585,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -2633,7 +2672,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/agents/:name/credentials/:id",
+      "path": "/projects/:project/agents/:name/credentials/:id",
       "key": [
         "agents",
         "revoke-credential"
@@ -2651,6 +2690,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -2663,6 +2706,7 @@
           }
         },
         "required": [
+          "project",
           "name",
           "id"
         ]
@@ -2671,7 +2715,7 @@
     },
     {
       "method": "POST",
-      "path": "/agents/:name/disable",
+      "path": "/projects/:project/agents/:name/disable",
       "key": [
         "agents",
         "disable"
@@ -2688,6 +2732,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -2695,6 +2743,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -2702,7 +2751,7 @@
     },
     {
       "method": "POST",
-      "path": "/agents/:name/enable",
+      "path": "/projects/:project/agents/:name/enable",
       "key": [
         "agents",
         "enable"
@@ -2719,6 +2768,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -2726,6 +2779,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -3352,7 +3406,7 @@
     },
     {
       "method": "GET",
-      "path": "/dashboard",
+      "path": "/projects/:project/dashboard",
       "key": [
         "dashboard",
         "get"
@@ -3363,6 +3417,18 @@
       "resource": {
         "kind": "run",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -4745,17 +4811,29 @@
     },
     {
       "method": "GET",
-      "path": "/feishu-bots",
+      "path": "/projects/:project/feishu-bots",
       "key": [
         "feishu-bots",
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出全部飞书机器人（Webhook 地址已打码）",
+      "summary": "列出项目里的飞书机器人（Webhook 地址已打码）",
       "effect": "read",
       "resource": {
         "kind": "feishu_bot",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -4831,7 +4909,7 @@
     },
     {
       "method": "POST",
-      "path": "/feishu-bots",
+      "path": "/projects/:project/feishu-bots",
       "key": [
         "feishu-bots",
         "create"
@@ -4842,6 +4920,18 @@
       "resource": {
         "kind": "feishu_bot",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "body": {
         "type": "object",
@@ -4941,7 +5031,7 @@
     },
     {
       "method": "PATCH",
-      "path": "/feishu-bots/:name",
+      "path": "/projects/:project/feishu-bots/:name",
       "key": [
         "feishu-bots",
         "replace-webhook"
@@ -4958,6 +5048,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -4965,6 +5059,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5060,7 +5155,7 @@
     },
     {
       "method": "GET",
-      "path": "/feishu-bots/:name/references",
+      "path": "/projects/:project/feishu-bots/:name/references",
       "key": [
         "feishu-bots",
         "references"
@@ -5077,6 +5172,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5084,6 +5183,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5159,7 +5259,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/feishu-bots/:name",
+      "path": "/projects/:project/feishu-bots/:name",
       "key": [
         "feishu-bots",
         "remove"
@@ -5177,6 +5277,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5184,6 +5288,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5191,7 +5296,7 @@
     },
     {
       "method": "POST",
-      "path": "/feishu-bots/:name/test",
+      "path": "/projects/:project/feishu-bots/:name/test",
       "key": [
         "feishu-bots",
         "test"
@@ -5208,6 +5313,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5215,6 +5324,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -7295,7 +7405,7 @@
     },
     {
       "method": "GET",
-      "path": "/orchestrations",
+      "path": "/projects/:project/orchestrations",
       "key": [
         "orchestrations",
         "list"
@@ -7306,6 +7416,18 @@
       "resource": {
         "kind": "scenario",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "query": {
         "type": "object",
@@ -13766,7 +13888,7 @@
     },
     {
       "method": "POST",
-      "path": "/orchestrations",
+      "path": "/projects/:project/orchestrations",
       "key": [
         "orchestrations",
         "create"
@@ -13777,6 +13899,18 @@
       "resource": {
         "kind": "scenario",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "body": {
         "type": "object",
@@ -15111,7 +15245,7 @@
     },
     {
       "method": "GET",
-      "path": "/packages",
+      "path": "/projects/:project/packages",
       "key": [
         "packages",
         "list"
@@ -15122,6 +15256,18 @@
       "resource": {
         "kind": "package",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -15212,7 +15358,7 @@
     },
     {
       "method": "GET",
-      "path": "/packages/:name",
+      "path": "/projects/:project/packages/:name",
       "key": [
         "packages",
         "detail"
@@ -15229,13 +15375,17 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9_-]*$",
-            "description": "节点包名。"
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -15319,7 +15469,7 @@
     },
     {
       "method": "GET",
-      "path": "/packages/:name/versions/:version",
+      "path": "/projects/:project/packages/:name/versions/:version",
       "key": [
         "packages",
         "version"
@@ -15336,6 +15486,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9_-]*$",
@@ -15348,6 +15502,7 @@
           }
         },
         "required": [
+          "project",
           "name",
           "version"
         ]
@@ -15615,7 +15770,7 @@
     },
     {
       "method": "GET",
-      "path": "/packages/:name/versions/:version/nodes/:node",
+      "path": "/projects/:project/packages/:name/versions/:version/nodes/:node",
       "key": [
         "packages",
         "node-type"
@@ -15632,6 +15787,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9_-]*$",
@@ -15649,6 +15808,7 @@
           }
         },
         "required": [
+          "project",
           "name",
           "version",
           "node"
@@ -15856,7 +16016,7 @@
     },
     {
       "method": "POST",
-      "path": "/packages",
+      "path": "/projects/:project/packages",
       "key": [
         "packages",
         "publish"
@@ -15868,15 +16028,17 @@
         "kind": "package",
         "target": "upload"
       },
-      "query": {
+      "params": {
         "type": "object",
         "properties": {
           "project": {
             "type": "string",
-            "const": "public",
-            "description": "过渡参数（#565）：发布到公共项目写 `public`，只有平台管理员能这样做（别的凭据 403、不带凭据 401）；\n写别的项目名 400；不写发布到默认项目。路径带项目（#488）之后由路径里的项目替代，这个参数随之去掉。"
+            "minLength": 1
           }
-        }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -16141,7 +16303,7 @@
     },
     {
       "method": "GET",
-      "path": "/packages/:name/versions/:version/archive",
+      "path": "/projects/:project/packages/:name/versions/:version/archive",
       "key": null,
       "kind": "download",
       "summary": "下载节点包一个版本的归档（Agent 安装用）",
@@ -16156,6 +16318,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "description": "节点包名。"
@@ -16166,6 +16332,7 @@
           }
         },
         "required": [
+          "project",
           "name",
           "version"
         ]
@@ -16920,7 +17087,7 @@
     },
     {
       "method": "GET",
-      "path": "/runs",
+      "path": "/projects/:project/runs",
       "key": [
         "runs",
         "list"
@@ -16931,6 +17098,18 @@
       "resource": {
         "kind": "run",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "query": {
         "type": "object",

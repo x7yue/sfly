@@ -95,7 +95,9 @@ describeWithAgent("全栈：Agent 能力 exec", () => {
 	};
 
 	const sourceSlots = async () => {
-		const listed = agentsApi.list.response.parse(await api.getJson("/agents")).agents;
+		const listed = agentsApi.list.response.parse(
+			await api.getJson("/projects/default/agents"),
+		).agents;
 		return listed.find((a) => a.name === "ex-source")?.running_tasks;
 	};
 

@@ -42,7 +42,7 @@ describe("最低 SDK 版本", () => {
 	};
 	const publish = async (requires_sdk: string) => {
 		const archive = packageArchive(packageMetadata({ requires_sdk }));
-		expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(201);
+		expect((await cp.fetch("/projects/default/packages", publishInit(archive))).status).toBe(201);
 	};
 
 	afterEach(async () => {

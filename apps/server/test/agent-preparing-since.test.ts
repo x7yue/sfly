@@ -1,4 +1,4 @@
-// #296：GET /agents 的 preparing_since 是这次连接发出 Welcome 的控制面时间；准备好（Welcome 之后的第一次心跳）和离线时为 null。
+// #296：GET /projects/:project/agents 的 preparing_since 是这次连接发出 Welcome 的控制面时间；准备好（Welcome 之后的第一次心跳）和离线时为 null。
 import { agentsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eventually } from "./support/eventually.js";
@@ -8,7 +8,7 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 const SECOND = 1000;
 
-describe("GET /agents 的 preparing_since", () => {
+describe("GET /projects/:project/agents 的 preparing_since", () => {
 	let clock: ManualClock;
 	let cp: TestControlPlane;
 	const agents: FakeAgent[] = [];
@@ -23,7 +23,9 @@ describe("GET /agents 的 preparing_since", () => {
 	});
 
 	const listed = async (name: string) => {
-		const body = agentsApi.list.response.parse(await (await cp.fetch("/agents")).json());
+		const body = agentsApi.list.response.parse(
+			await (await cp.fetch("/projects/default/agents")).json(),
+		);
 		const agent = body.agents.find((a) => a.name === name);
 		if (!agent) throw new Error(`列表里没有 ${name}`);
 		return agent;

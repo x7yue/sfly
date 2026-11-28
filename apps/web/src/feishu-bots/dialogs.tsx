@@ -16,6 +16,7 @@ import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery, callApi } from "#/lib/api";
 import { FEISHU_BOT_SETUP, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -111,7 +112,7 @@ export function RegisterBotDialog({
 	const invalidate = useInvalidateBots();
 	const register = useMutation({
 		mutationFn: (body: { name: string; webhook_url: string }) =>
-			callApi(feishuBotsApi.create, { body }),
+			callApi(feishuBotsApi.create, { params: { project: PROJECT }, body }),
 		onSuccess: async (created) => {
 			registered.current = created.name;
 			await invalidate();
@@ -204,7 +205,10 @@ export function ReplaceWebhookDialog({
 	const invalidate = useInvalidateBots();
 	const replace = useMutation({
 		mutationFn: (webhook_url: string) =>
-			callApi(feishuBotsApi.replaceWebhook, { params: { name: bot.name }, body: { webhook_url } }),
+			callApi(feishuBotsApi.replaceWebhook, {
+				params: { project: PROJECT, name: bot.name },
+				body: { webhook_url },
+			}),
 		onSuccess: async () => {
 			onOpenChange(false);
 			onReplaced();
@@ -280,7 +284,7 @@ function ReferenceText({ reference }: { reference: FeishuBotReference }) {
 /** 引用这个机器人的场景：删除之前列出，让人知道删除会影响哪些场景。 */
 function BotReferences({ bot, enabled }: { bot: FeishuBotView; enabled: boolean }) {
 	const references = useQuery({
-		...apiQuery(feishuBotsApi.references, { params: { name: bot.name } }),
+		...apiQuery(feishuBotsApi.references, { params: { project: PROJECT, name: bot.name } }),
 		enabled,
 	});
 	if (references.isPending)
@@ -346,7 +350,8 @@ export function DeleteBotDialog({
 }) {
 	const invalidate = useInvalidateBots();
 	const remove = useMutation({
-		mutationFn: () => callApi(feishuBotsApi.remove, { params: { name: bot.name } }),
+		mutationFn: () =>
+			callApi(feishuBotsApi.remove, { params: { project: PROJECT, name: bot.name } }),
 		onSuccess: async () => {
 			onOpenChange(false);
 			notify.success(`已删除飞书机器人「${bot.name}」`);
