@@ -227,7 +227,7 @@ def test_the_workbench_keeps_its_home_and_its_workspace_on_volumes(tmp_path: Pat
 
 
 def readme_override_examples() -> dict[str, str]:
-    """README 那一节里的三段 yaml，按它们各自要做的事命名。"""
+    """README 那一节里的四段 yaml，按它们各自要做的事命名。"""
     readme = (DEPLOY.parent / "README.md").read_text(encoding="utf-8")
     section = readme[readme.index("### 助手和工作台") : readme.index("### 助手的模型")]
     blocks = re.findall(r"```yaml\n(.*?)```", section, flags=re.DOTALL)
@@ -239,7 +239,11 @@ def readme_override_examples() -> dict[str, str]:
             named["extra_hosts"] = block
         elif ".netrc" in block:
             named["netrc"] = block
-    assert set(named) == {"alias", "extra_hosts", "netrc"}, f"README 里的 yaml 示例变了：{blocks}"
+        elif "mem_limit:" in block:
+            named["limits"] = block
+    assert set(named) == {"alias", "extra_hosts", "netrc", "limits"}, (
+        f"README 里的 yaml 示例变了：{blocks}"
+    )
     return named
 
 
@@ -334,3 +338,27 @@ def test_the_firewall_reads_the_control_plane_mirrors_and_the_extra_entries(tmp_
     # 独立的 Python 下载镜像：安装脚本和出网名单拿同一个值（不是工作台卷里 agent.env 的）。
     python_mirror = environment(services["sfly-workbench"])["SFLY_PYTHON_INSTALL_MIRROR"]
     assert python_mirror == environment(firewall)["SFLY_PYTHON_INSTALL_MIRROR"]
+
+
+def test_the_workbench_has_memory_and_process_limits_and_cannot_gain_privileges(
+    tmp_path: Path,
+) -> None:
+    # #763：上限在 compose 里，README「工作台容器的资源」写的是同样的数；override 的示例调得动。
+    workbench = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"][
+        "sfly-workbench"
+    ]
+    assert int(workbench["mem_limit"]) == 4 * 1024**3
+    assert workbench["pids_limit"] == 4096
+    assert workbench["security_opt"] == ["no-new-privileges:true"]
+    assert workbench["cap_drop"] == ["ALL"]
+    readme = (DEPLOY.parent / "README.md").read_text(encoding="utf-8")
+    assert (
+        "内存上限 **4 GiB**（`mem_limit: 4g`），进程数上限 **4096**（`pids_limit: 4096`" in readme
+    )
+
+    override = readme_override_examples()["limits"]
+    tuned = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=override)
+    tuned_workbench = tuned["services"]["sfly-workbench"]
+    assert int(tuned_workbench["mem_limit"]) == 8 * 1024**3
+    assert tuned_workbench["pids_limit"] == 8192
+    assert tuned_workbench["security_opt"] == ["no-new-privileges:true"]
