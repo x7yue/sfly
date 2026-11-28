@@ -192,6 +192,20 @@ compose --profile assistant up -d --wait --wait-timeout 300 sfly-workbench-firew
 client ready 300 || fail "改了名单之后助手没有就绪"
 workbench=$(compose --profile assistant ps -q sfly-workbench) # 共用的网络命名空间换了，工作台容器可能重建过
 echo "出网名单：名单外被拒，加进名单之后连得上"
+# 宿主机重启时 Docker 按 restart 策略直接恢复这两个容器，不经过 compose 的健康等待。这里用 docker stop、docker start
+# 走同一条路：工作台的入口脚本要等本次的规则写好（本网络命名空间的 127.0.0.1:47123 应答）才启动 Agent。
+firewall=$(compose --profile assistant ps -q sfly-workbench-firewall)
+docker stop "$workbench" "$firewall" >/dev/null || fail "停工作台和出网名单"
+since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+docker start "$firewall" >/dev/null || fail "docker start 出网名单"
+docker start "$workbench" >/dev/null || fail "docker start 工作台"
+client ready 300 || fail "docker start 之后助手没有就绪"
+log=$(docker logs --since "$since" "$workbench" 2>&1)
+[[ $log == *等出网名单的规则写好*出网名单的规则已写好*前台启动\ Agent* ]] ||
+	fail "docker start 之后工作台没有先等出网名单的规则：$log"
+[[ $(from_workbench sfly-assistant 8090) == ConnectionRefusedError ]] || fail "docker start 之后名单之外的地址不再被拒"
+[[ $(from_workbench other-agent 50052) == ok ]] || fail "docker start 之后名单里的地址连不上"
+echo "出网名单：docker start 恢复时工作台等规则写好才启动 Agent"
 
 # ---- 删掉工作台容器再建：工作区和环境都在，Agent 不重装 ----
 fingerprint() { docker exec "$1" sh -c 'stat -c "%i %Y" ~/.sfly/bin/sfly-agent; sha256sum ~/.sfly/bin/sfly-agent'; }

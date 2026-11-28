@@ -102,10 +102,12 @@ services:
       SFLY_PUBLIC_GRPC_URL: ${SFLY_PUBLIC_GRPC_URL:-}
       SFLY_PYPI_MIRROR: ${SFLY_PYPI_MIRROR:-}
       SFLY_GITHUB_RELEASE_MIRROR: ${SFLY_GITHUB_RELEASE_MIRROR:-}
+      SFLY_PYTHON_INSTALL_MIRROR: ${SFLY_PYTHON_INSTALL_MIRROR:-}
       # 部署者另外放行的地址：「主机:端口」（TCP），空格分隔；写法和默认放行的见 .env.example。
       SFLY_WORKBENCH_EGRESS: ${SFLY_WORKBENCH_EGRESS:-}
+    # 本次的 IPv4、IPv6 规则写好之后才在本网络命名空间的 127.0.0.1:47123 上应答（工作台的入口脚本也等它）。
     healthcheck:
-      test: [CMD, test, -f, /run/sfly-workbench-egress.ready]
+      test: [CMD, curl, -q, -fsS, --max-time, "2", -o, /dev/null, "http://127.0.0.1:47123/"]
       interval: 5s
       start_period: 60s
       start_interval: 1s
@@ -121,7 +123,8 @@ services:
     image: ghcr.io/x7yue/sfly-workbench:${SFLY_VERSION:-latest}
     restart: unless-stopped
     init: true
-    # 网络命名空间是出网名单那个服务的：规则写好之后才起；它重建时工作台跟着重启（共用的网络命名空间随它换）。
+    # 网络命名空间是出网名单那个服务的：compose 等它健康才起，入口脚本自己也等它的规则写好；它重建时工作台跟着重启
+    # （共用的网络命名空间随它换）。
     network_mode: service:sfly-workbench-firewall
     depends_on:
       sfly:
@@ -139,6 +142,10 @@ services:
       SFLY_WORKBENCH_PUBLIC_ADDRESS: sfly-workbench
       # 这台 Agent 自己的 Agent 凭据（只给这个服务，不是共享令牌）：管理员按上面的名字签发，步骤见 README「助手和工作台」。
       SFLY_WORKBENCH_TOKEN: ${SFLY_WORKBENCH_TOKEN:-}
+      # 独立的 Python 下载镜像（install.sh 和 Agent 用）：出网名单放行的是同一个地址。只认这里的，不认家目录卷里 agent.env 的。
+      SFLY_PYTHON_INSTALL_MIRROR: ${SFLY_PYTHON_INSTALL_MIRROR:-}
+      # 出网名单的规则写好之前不下载、不安装、不启动 Agent（宿主机重启时 Docker 恢复容器，不等上面的健康检查）。
+      SFLY_WORKBENCH_REQUIRE_FIREWALL: "1"
     volumes:
       - sfly-workbench-home:/home/workbench # 家目录：~/.sfly（Agent、共享 venv、任务目录）、~/.local 和 ~/.cache（uv、sfly 命令行）
       - sfly-workbench-work:/work # 工作区

@@ -137,7 +137,7 @@ def test_the_shared_agent_token_never_reaches_the_workbench(tmp_path: Path) -> N
 
 def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> None:
     # 工作台上的模型读得到工作台的环境：助手的共享密钥只给控制面和助手服务，模型的密钥只给助手服务，
-    # 工作台只拿它自己要的四个变量（加一个别的变量，这里就红）。
+    # 工作台只拿它自己要的这几个变量（加一个别的变量，这里就红）。
     services = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"]
     workbench = services["sfly-workbench"]
 
@@ -146,6 +146,8 @@ def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> Non
         "SFLY_WORKBENCH_NAME",
         "SFLY_WORKBENCH_PUBLIC_ADDRESS",
         "SFLY_WORKBENCH_TOKEN",
+        "SFLY_PYTHON_INSTALL_MIRROR",
+        "SFLY_WORKBENCH_REQUIRE_FIREWALL",
     }
     for secret in (ASSISTANT["SFLY_ASSISTANT_SECRET"], ASSISTANT["MODEL_API_KEY"]):
         assert secret not in json.dumps(workbench)
@@ -302,7 +304,9 @@ def test_the_workbench_shares_the_firewall_network_namespace_and_has_no_extra_ca
     assert firewall["entrypoint"] == ["/usr/local/bin/sfly-workbench-firewall"]
     assert firewall["networks"]["default"]["aliases"] == ["sfly-workbench"]
     assert firewall["image"] == workbench["image"]
-    assert "test" in firewall["healthcheck"]
+    # 健康检查和工作台的入口脚本看同一样东西：本网络命名空间里规则写好之后才应答的端口。
+    assert "http://127.0.0.1:47123/" in firewall["healthcheck"]["test"]
+    assert environment(workbench)["SFLY_WORKBENCH_REQUIRE_FIREWALL"] == "1"
 
 
 def test_the_firewall_reads_the_control_plane_mirrors_and_the_extra_entries(tmp_path: Path) -> None:
@@ -310,9 +314,11 @@ def test_the_firewall_reads_the_control_plane_mirrors_and_the_extra_entries(tmp_
         **REQUIRED,
         **ASSISTANT,
         "SFLY_PYPI_MIRROR": "https://mirrors.example.com/pypi/simple",
+        "SFLY_PYTHON_INSTALL_MIRROR": "https://python.example.net/standalone/",
         "SFLY_WORKBENCH_EGRESS": "db.internal:5432 sut.internal:9000",
     }
-    firewall = render(tmp_path, variables, "assistant")["services"]["sfly-workbench-firewall"]
+    services = render(tmp_path, variables, "assistant")["services"]
+    firewall = services["sfly-workbench-firewall"]
 
     assert environment(firewall) == {
         "SFLY_WORKBENCH_URL": "http://sfly:8080",
@@ -320,5 +326,9 @@ def test_the_firewall_reads_the_control_plane_mirrors_and_the_extra_entries(tmp_
         "SFLY_PUBLIC_GRPC_URL": "",
         "SFLY_PYPI_MIRROR": "https://mirrors.example.com/pypi/simple",
         "SFLY_GITHUB_RELEASE_MIRROR": "",
+        "SFLY_PYTHON_INSTALL_MIRROR": "https://python.example.net/standalone/",
         "SFLY_WORKBENCH_EGRESS": "db.internal:5432 sut.internal:9000",
     }
+    # 独立的 Python 下载镜像：安装脚本和出网名单拿同一个值（不是工作台卷里 agent.env 的）。
+    python_mirror = environment(services["sfly-workbench"])["SFLY_PYTHON_INSTALL_MIRROR"]
+    assert python_mirror == environment(firewall)["SFLY_PYTHON_INSTALL_MIRROR"]

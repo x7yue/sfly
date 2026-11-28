@@ -9,6 +9,7 @@
 #   SFLY_WORKBENCH_PUBLIC_ADDRESS  控制面和助手服务连这台 Agent 的能力端口用的地址（compose 里是服务名 sfly-workbench）
 #   SFLY_WORKBENCH_TOKEN           这台 Agent 的 Agent 凭据（sfly_agt_ 开头，只对上面的名字有效，管理员按名字签发）
 #   SFLY_WORKBENCH_WORK            工作区目录，默认 /work（只检查它写得了，不在这里建 git 仓库：那是助手服务的事）
+#   SFLY_WORKBENCH_REQUIRE_FIREWALL  1：先等出网名单的规则写好（compose 里设，见下面「出网名单」）
 #   SFLY_WORKBENCH_BASE_PATH       只给测试用，部署不要设：入口脚本自己运行命令时的 PATH，默认是下面的系统目录；
 #                                  设了它就等于把「只在系统目录里找」换成别的目录
 # 家目录 $HOME 是卷，里面的 $SFLY_HOME（默认 ~/.sfly）放 Agent、共享 venv、任务目录；--dev 装的 uv 和 sfly 在 ~/.local。
@@ -90,6 +91,17 @@ for dir in "$home" "$work"; do
 	[ -d "$dir" ] && [ -w "$dir" ] ||
 		fail "$dir 不存在或当前用户（$(id -un)，uid $(id -u)）写不了它。它必须归 uid $(id -u) 所有：挂的是宿主机目录或别人建的卷时，先 chown -R $(id -u):$(id -g) 它"
 done
+
+# 出网名单（#498）：compose 里工作台和 sfly-workbench-firewall 共用网络命名空间，那个服务写好本次的 IPv4、IPv6 规则之后
+# 才在本命名空间的 127.0.0.1:47123 上应答（deploy/workbench/firewall.py）。应答之前不下载、不安装、不启动 Agent：
+# compose 起、Docker 按 restart 策略恢复（宿主机重启）、手工 docker start 都一样。名单写错时那个服务起不来，这里一直等。
+if [ "${SFLY_WORKBENCH_REQUIRE_FIREWALL:-}" = 1 ]; then
+	say "等出网名单的规则写好"
+	until curl -q -fsS --max-time 2 -o /dev/null http://127.0.0.1:47123/ 2>/dev/null; do
+		sleep 1
+	done
+	say "出网名单的规则已写好"
+fi
 
 marker=$SFLY_HOME/.workbench-installed
 agent=$SFLY_HOME/bin/sfly-agent
