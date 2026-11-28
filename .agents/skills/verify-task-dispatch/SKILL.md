@@ -118,6 +118,7 @@ git diff --stat 879c61104a1a2821eee26732081c74031745b610 -- \
 - #492、#638、#719（Agent 凭据、停用 Agent、任务凭据、连接的项目、被拒绝之后不退出）：没有改模型，结论并进上面「范围」里认身份、任务凭据两条。
 - #723、#728（结果有上界、超限的结果换成失败）：加了 `AgentReplaceResult` 和变异体 `replace-fail-to-success`。
 - #738（同步提交移到 `879c6110`）：逐个读了 `f44b09d8` 到 `879c6110` 之间上面清单里的文件。模型只改了一处：`AgentFinish` 不再要求「没有被告知停止」才能报成功（代码里取消在执行器退出之后、开始上传之前到时照样报成功；同步提交时就是这样，#673 只把上传期间到的取消改成了 cancelled）。状态数从 365,921 / 5,602,537 / 6,842,713 变成 564,460 / 10,194,904 / 12,069,478（都无违例），加了变异体 `result-accepts-lost`（九个变异体都被抓到）。覆盖表补上 `artifacts.rs`、`step.ts`、断开连接的新来源，`foreign-agent-tasks.ts`、`ledger.rs` 里两处说错了协议行为的注释改正，`git diff` 的清单补上 `step.ts`、`foreign-agent-tasks.ts`、`dispatch-gate.ts`、`artifacts.rs`；「范围」补上 `failForeignAgentTasks`、`wind_down`、跨连接迟到的消息。
+- #449（同一台 Agent 上同一个节点包的另一个版本正在执行时，派发时任务以 `env_error` 失败）：没有改模型，没有移动同步提交。`#prepareAssign` 在核对连接的项目之后多了一次只读的查询（这台 Agent 上准备中、执行中的任务各用哪个版本，`version-conflict.ts`），冲突时任务在同一个事务里失败、不发给 Agent，和已有的「项目不符、派发内容准备不好时失败」是同一种路径：没有新的消息、状态转移和同步点，派发的条件（`AssignOnlyWhenReady`、槽位）没有动。冲突要有两个节点包或两个运行在同一台 Agent 上，在模型的范围之外；`env_error` 不重试也不在模型里（「范围」第 4 条）。`check.sh` 三个配置的状态数和上一条一样（都无违例），九个变异体都被抓到。
 
 ## 读结果
 

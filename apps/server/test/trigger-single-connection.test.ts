@@ -74,7 +74,11 @@ describe("触发准入的读库", () => {
 	/** 在只有一个连接的连接池的事务里准入，准入的依赖按控制面的接法。 */
 	function admit(request: TriggerRequest) {
 		const admission = createTriggerAdmission({
-			preflight: createPreflight({ version: VERSION }),
+			preflight: createPreflight({
+				version: VERSION,
+				now: () => new Date(),
+				runLink: (runId) => `/runs/${runId}`,
+			}),
 			paramsCheck: createParamsCheck(),
 		});
 		return single.db.transaction((tx) => admission(tx, id, request));

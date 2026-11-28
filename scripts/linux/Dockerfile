@@ -25,7 +25,8 @@ RUN if [ -n "$NPM_REGISTRY" ]; then echo "registry=$NPM_REGISTRY" >/root/.npmrc;
 
 # 装 uv 用的 PyPI 源。uv sync 用项目自己声明的源（pyproject.toml），与这里无关。
 ARG PIP_INDEX_URL=
-ARG UV_VERSION=0.13.7
+# 版本取自 .tool-versions（scripts/linux/run.sh 传进来），和 CI 的 setup-uv 一样。
+ARG UV_VERSION
 RUN pip3 install --break-system-packages ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} "uv==$UV_VERSION"
 
 # rustup 与工具链的下载地址；crates.io 的镜像（例如 sparse+https://rsproxy.cn/index/）写进 cargo 的配置。
@@ -33,10 +34,12 @@ RUN pip3 install --break-system-packages ${PIP_INDEX_URL:+--index-url "$PIP_INDE
 ARG RUSTUP_DIST_SERVER=https://static.rust-lang.org
 ARG RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
 ARG CARGO_MIRROR=
+# 版本取自 rust-toolchain.toml（scripts/linux/run.sh 传进来），和 CI 一样。
+ARG RUST_TOOLCHAIN
 ENV RUSTUP_DIST_SERVER=$RUSTUP_DIST_SERVER RUSTUP_UPDATE_ROOT=$RUSTUP_UPDATE_ROOT PATH=/root/.cargo/bin:$PATH
 RUN curl -fsSL "$RUSTUP_UPDATE_ROOT/dist/$(uname -m)-unknown-linux-gnu/rustup-init" -o /tmp/rustup-init \
 	&& chmod +x /tmp/rustup-init \
-	&& /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain stable -c clippy -c rustfmt \
+	&& /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN" -c clippy -c rustfmt \
 		-t x86_64-unknown-linux-musl -t aarch64-unknown-linux-musl \
 	&& rm /tmp/rustup-init \
 	&& if [ -n "$CARGO_MIRROR" ]; then \
