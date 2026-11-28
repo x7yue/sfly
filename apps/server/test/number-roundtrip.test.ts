@@ -5,7 +5,6 @@
 //
 // 控制面保存的是 JSON 里的数，不区分整数和小数，和 JavaScript 一样按双精度数处理，有三处和执行器写出的文本不同：
 // 超过 2^53 的整数按最接近的双精度数保存、负零的符号丢掉、整数值的小数（3.0）下游收到的写法是 3。下面各有断言。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
