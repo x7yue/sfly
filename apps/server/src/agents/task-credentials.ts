@@ -15,6 +15,7 @@
 // 这些查询是管理面上很少用的，多扫一些索引项可以接受；每个请求认凭据用的是哈希上的唯一索引，不受影响。
 // 没有改这个索引：要收紧就是把它改成 `where kind = 'project'` 的部分索引，是一条迁移，和这个 PR 的主题无关，单独做。
 import { randomBytes, randomUUID } from "node:crypto";
+import { shortId } from "@sfly/orchestration";
 import { TOKEN_PREFIXES } from "@sfly/schema";
 import { hashCredential } from "../auth/credential-hash.js";
 import type { Tx } from "../db/database.js";
@@ -53,7 +54,7 @@ export async function mintTaskCredential(
 	await tx.insert(apiTokens).values({
 		id: randomUUID(),
 		kind: "task",
-		name: `任务 ${task.id.slice(0, 8)}`,
+		name: `任务 ${shortId(task.id)}`,
 		prefix: token.slice(0, 13),
 		tokenHash: hashCredential(token),
 		projectId: task.projectId,

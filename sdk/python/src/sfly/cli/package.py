@@ -6,6 +6,7 @@ import argparse
 from typing import Any
 
 from sfly.cli.client import ApiError, segment
+from sfly.cli.dev_version import DEV_VERSION
 from sfly.cli.errors import CliError
 from sfly.cli.output import add_limit_option, apply_limit, dump_json, format_table, more_note
 from sfly.cli.session import Session, command, common_options
@@ -16,7 +17,6 @@ _VERSIONS_SHOWN = 5
 _EXTENDED_TYPES = {"agent": "Agent 名称", "feishu_bot": "飞书机器人", "run_state": "运行状态"}
 
 # sfly dev 加载的开发版本的版本号（Agent 上登记为 包名@dev）。
-DEV_VERSION = "dev"
 
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -65,7 +65,8 @@ def _list(session: Session, args: argparse.Namespace) -> None:
     rows = [
         {
             "name": p["name"],
-            "latest_version": p["versions"][0]["version"] if p["versions"] else None,
+            # 最新版本由控制面标出（按版本号，#434），不取「最近发布的」。
+            "latest_version": p["latest_version"],
             "versions": [
                 {
                     "version": v["version"],
@@ -85,7 +86,7 @@ def _list(session: Session, args: argparse.Namespace) -> None:
                 [
                     r["name"],
                     _versions_text([v["version"] for v in r["versions"]]),
-                    ", ".join(r["versions"][0]["nodes"]) if r["versions"] else "-",
+                    ", ".join(_latest(r)["nodes"]) if r["versions"] else "-",
                 ]
                 for r in rows
             ],
@@ -93,6 +94,11 @@ def _list(session: Session, args: argparse.Namespace) -> None:
     else:
         text = "还没有发布过节点包"
     session.out.emit(rows, text, note=more_note(hidden, len(packages), "个节点包"))
+
+
+def _latest(row: dict[str, Any]) -> dict[str, Any]:
+    """一行里最新版本（`latest_version`）的那个版本。"""
+    return next(v for v in row["versions"] if v["version"] == row["latest_version"])
 
 
 def _versions_text(versions: list[str]) -> str:
@@ -132,16 +138,17 @@ def _show(session: Session, args: argparse.Namespace) -> None:
         raise CliError(
             "package_not_found", f"节点包 {name} 没有已发布的版本", next="sfly package list"
         )
-    version = wanted or published[0]
+    latest = summary["latest_version"]
+    version = wanted or latest
     if version not in published:
         listed = "\n".join(f"  {v}" for v in published)
         raise CliError(
             "package_version_not_found",
             f"节点包 {name} 没有版本 {version}，已有的版本（新到旧）：\n{listed}",
-            next=f"sfly package show {name}@{published[0]}",
+            next=f"sfly package show {name}@{latest}",
         )
     detail = client.get(client.in_project(f"/packages/{segment(name)}/versions/{segment(version)}"))
-    view = describe(detail, latest=published[0])
+    view = describe(detail, latest=latest)
     session.out.emit(view, render(view))
 
 

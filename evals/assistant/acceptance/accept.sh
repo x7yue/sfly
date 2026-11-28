@@ -62,7 +62,7 @@ log() { printf '验收：%s\n' "$*"; }
 
 for image in sfly-server sfly-assistant sfly-workbench; do
 	docker image inspect "$image:$images" >/dev/null 2>&1 || {
-		echo "没有镜像 $image:$images：先照 evals/assistant/README.md「骨架验收」构建" >&2
+		echo "没有镜像 $image:${images}：先照 evals/assistant/README.md「骨架验收」构建" >&2
 		exit 2
 	}
 	docker tag "$image:$images" "ghcr.io/x7yue/$image:$tag"
@@ -128,7 +128,7 @@ cleanup() {
 	[[ -n $watcher ]] && kill "$watcher" 2>/dev/null || true
 	[[ -e $out/compose.log ]] || compose --profile assistant logs --no-color >"$out/compose.log" 2>&1 || true
 	if [[ $keep == true ]]; then
-		log "留着环境：docker compose -p $project …（控制面 http://127.0.0.1:$http_port）"
+		log "留着环境：docker compose -p $project …（控制面 http://127.0.0.1:${http_port}）"
 	else
 		compose --profile assistant down -v --remove-orphans >/dev/null 2>&1 || true
 		for image in sfly-server sfly-assistant sfly-workbench; do docker rmi "ghcr.io/x7yue/$image:$tag" >/dev/null 2>&1 || true; done
@@ -153,7 +153,7 @@ client() {
 }
 
 # ---- 环境 ----
-log "起控制面（$project）"
+log "起控制面（${project}）"
 compose up -d --wait --wait-timeout 180 >/dev/null || fail "控制面没有起来"
 token=$(client stack_e2e.py credential "$agent") || fail "给工作台签发 Agent 凭据"
 sut_token=$(client stack_e2e.py credential sut-01) || fail "给被测机签发 Agent 凭据"
@@ -261,6 +261,6 @@ if [[ -n $leaked ]]; then
 fi
 
 failed=$(grep -c '"ok": false\|"ok":false' "$out/results.jsonl" 2>/dev/null || true)
-log "结果：$out/summary.md（浏览器退出码 $browser_code，没过的行 ${failed:-0}，总用时 $((finished - started)) 秒）"
+log "结果：$out/summary.md（浏览器退出码 ${browser_code}，没过的行 ${failed:-0}，总用时 $((finished - started)) 秒）"
 cat "$out/summary.md"
 [[ $browser_code -eq 0 && ${failed:-0} -eq 0 ]] || exit 1
