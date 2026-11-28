@@ -88,6 +88,7 @@ import {
 	renewHeld,
 } from "./leases.js";
 import { fillParams } from "./params.js";
+import type { Releases } from "./released.js";
 import { failRemovedWaits, removedNodeFailure } from "./removed-nodes.js";
 import {
 	type CancelOrder,
@@ -105,6 +106,7 @@ import {
 	recordVersionConflicts,
 	versionInUseMessage,
 } from "./version-conflict.js";
+import type { WriteMasking } from "./write-masking.js";
 
 export { DEFAULT_LEASE_MS } from "./leases.js";
 
@@ -240,6 +242,10 @@ export class Engine implements AgentSessionHandler {
 			leaseMs?: number;
 			/** Welcome 里和调度无关的部分：目标版本、SDK wheel、镜像、Agent 二进制（src/agents/agent-environment.ts）。 */
 			agentEnvironment: AgentEnvironmentFor;
+			/** 写入时打码（write-masking.ts）。 */
+			masking: WriteMasking;
+			/** 尝试离开 Agent 之手、删除运行的加密副本（released.ts）。 */
+			releases: Releases;
 			/** 运行的链接（控制台里的运行页），派发时版本冲突的说明里用（version-conflict.ts）。 */
 			runLink: (runId: string) => string;
 		},
@@ -288,6 +294,13 @@ export class Engine implements AgentSessionHandler {
 			this.#documents.set(version.id, version.document);
 			this.#plans.set(version.id, plan);
 			const runId = randomUUID();
+			const mainId = chainInstanceId(runId);
+			const masked = this.deps.masking.firstVault({
+				document: version.document,
+				plan,
+				chainInstanceId: mainId,
+				params,
+			});
 			const [run] = await step.tx
 				.insert(runs)
 				.values({
@@ -302,20 +315,23 @@ export class Engine implements AgentSessionHandler {
 					triggeredToken: actor.token,
 					// 经哪个会话触发：依据是请求带的会话令牌（访问检查给出），不是模型在对话里怎么说。
 					sessionId: actor.sessionId,
-					params,
+					params: masked.params,
 					...runPreset,
 					status: "running",
 					startedAt: step.now,
+					maskedOnWrite: true,
+					secretsOversize: masked.oversize,
 				})
 				.returning();
+			await this.deps.masking.saveVault(step, runId, masked.vault);
 			const [chain] = await step.tx
 				.insert(chainInstances)
 				.values({
-					id: chainInstanceId(runId),
+					id: mainId,
 					runId,
 					chainId: plan.main.entry.id,
 					depth: 0,
-					params,
+					params: masked.params,
 					status: "running",
 					startedAt: step.now,
 				})
@@ -520,6 +536,12 @@ export class Engine implements AgentSessionHandler {
 					lease: this.#leaseFrom(step.now),
 					missing: "重新连接时没有上报这个任务",
 				});
+				await this.deps.releases.hello(
+					step,
+					conn.name,
+					held,
+					out.filter((d) => d.action === TaskAction.ABANDON),
+				);
 				// TaskStarted 可能随断开的连接丢失：Hello 里标记已启动的任务补记为 running。
 				for (const t of held) if (t.started) await this.#started(step, conn.name, t);
 				return out;
@@ -588,19 +610,23 @@ export class Engine implements AgentSessionHandler {
 			const result = message.body.value;
 			const offset = conn.clock.offsetAt(result);
 			try {
-				await this.#event((step) => this.#applyResult(step, conn.name, result, offset));
+				await this.#event(async (step) => {
+					await this.#applyResult(step, conn.name, result, offset);
+					await this.deps.releases.acked(step, conn.name, result);
+				});
 			} catch (error) {
 				// 结果写不进数据库（例如数据库拒绝其中的内容）：这次尝试以 node_error 结束（#207）。否则 Agent 收不到 Ack，
 				// 重连后重发同一条结果，任务一直停在运行中。连这一步也失败时（数据库不可用）照常抛出，由 Agent 重连后重发。
-				await this.#event((step) =>
-					this.#rejectResult(
+				await this.#event(async (step) => {
+					await this.#rejectResult(
 						step,
 						conn.name,
 						result,
 						`控制面无法保存任务结果：${rootMessage(error)}`,
 						offset,
-					),
-				);
+					);
+					await this.deps.releases.acked(step, conn.name, result);
+				});
 			}
 			conn.send(
 				create(ServerMessageSchema, {
@@ -616,6 +642,10 @@ export class Engine implements AgentSessionHandler {
 			const held = runningTasks.map(runningTaskRef);
 			await this.#event(async (step) => {
 				await this.#heartbeat(step, conn.name, held);
+				// 被放弃的尝试只看收到那次 Welcome 的连接的心跳（released.ts）。
+				if (this.deps.hub.connection(conn.name) === conn) {
+					await this.deps.releases.heartbeat(step, conn.name, held);
+				}
 				// Welcome 之后的第一次心跳：Agent 已准备好环境，提交后立即派发排队中的任务（#219）。
 				if (conn.heartbeat()) step.touchedAgents.add(conn.name);
 			});
@@ -849,7 +879,7 @@ export class Engine implements AgentSessionHandler {
 		let problem: string | undefined;
 		let params: Record<string, unknown> = {};
 		try {
-			const mapped = resolveInputs(node.params, await this.#scope(step.tx, chain, plan, index));
+			const mapped = resolveInputs(node.params, await this.#scope(step, run, chain, plan, index));
 			const filled = fillParams(subflow.entry.params, mapped);
 			if ("errors" in filled) problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}`;
 			else params = filled.params;
@@ -868,6 +898,13 @@ export class Engine implements AgentSessionHandler {
 		}
 
 		const childId = chainInstanceId(run.id, chain.id, node.id);
+		params = await this.deps.masking.chainParams(step, run, {
+			document: await this.#document(step.tx, run.orchestrationVersionId),
+			chainId: subflow.entry.id,
+			chainInstanceId: childId,
+			declarations: subflow.entry.params,
+			params,
+		});
 		const [child] = await step.tx
 			.insert(chainInstances)
 			.values({
@@ -1053,11 +1090,17 @@ export class Engine implements AgentSessionHandler {
 	 * 本链的入口参数和前面已成功节点的输出。always 节点前面的节点可能失败或被跳过，
 	 * 引用缺失的输出得到 null（docs/SEMANTICS.md §2.4）。
 	 */
-	async #scope(tx: Tx, chain: ChainRow, plan: ChainPlan, index: number): Promise<ResolveScope> {
+	async #scope(
+		step: Step,
+		run: RunRow,
+		chain: ChainRow,
+		plan: ChainPlan,
+		index: number,
+	): Promise<ResolveScope> {
 		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
 		const done = earlierIds.length
-			? await tx
-					.select({ nodeId: tasks.nodeId, outputs: tasks.outputs })
+			? await step.tx
+					.select({ id: tasks.id, nodeId: tasks.nodeId, outputs: tasks.outputs })
 					.from(tasks)
 					.where(
 						and(
@@ -1073,7 +1116,9 @@ export class Engine implements AgentSessionHandler {
 		if (missingAsNull) {
 			for (const id of earlierIds) if (!earlierOutputs.has(id)) earlierOutputs.set(id, {});
 		}
-		return { params: chain.params, earlierOutputs, missingAsNull };
+		const taskIds = new Map(done.map((d) => [d.nodeId, d.id]));
+		const scope = { params: chain.params, earlierOutputs, missingAsNull };
+		return this.deps.masking.rawScope(step, run, chain.id, scope, taskIds);
 	}
 
 	/** 链上是否已有节点最终失败（含 always 节点）。 */
@@ -1121,6 +1166,7 @@ export class Engine implements AgentSessionHandler {
 		if (!finished) return;
 		// 运行通知和运行的最终状态在同一个事务里（#232）。
 		await this.deps.notifications.runFinished(step, { run, status: runStatus });
+		await this.deps.releases.runEnded(step, run.id);
 	}
 
 	/**
@@ -1143,6 +1189,8 @@ export class Engine implements AgentSessionHandler {
 	): Promise<void> {
 		const ended = { endedAt: step.now, ...endClockOffset(endOffset) };
 		const { run, chain, index, node } = await this.#locate(step.tx, task);
+		message = await this.deps.masking.text(step, run, message);
+		location = await this.deps.masking.text(step, run, location);
 		step.touchedRuns.add(run.id);
 		if (cancelledFor(run, node)) {
 			await step.tx
@@ -1243,16 +1291,21 @@ export class Engine implements AgentSessionHandler {
 			});
 			return;
 		}
+		const { run, chain, index } = await this.#locate(step.tx, task);
 		await step.tx
 			.update(tasks)
 			.set({
 				status: "success",
-				outputs: outputs as Record<string, unknown>,
+				outputs: await this.deps.masking.outputs(
+					step,
+					run,
+					task.id,
+					outputs as Record<string, unknown>,
+				),
 				endedAt: step.now,
 				...endClockOffset(endOffset),
 			})
 			.where(eq(tasks.id, task.id));
-		const { run, chain, index } = await this.#locate(step.tx, task);
 		await this.#advance(step, run, chain, index + 1);
 	}
 
@@ -1462,7 +1515,8 @@ export class Engine implements AgentSessionHandler {
 		});
 		if (!content.ok) {
 			if (content.inputs) {
-				await step.tx.update(tasks).set({ inputs: content.inputs }).where(eq(tasks.id, task.id));
+				const inputs = await this.deps.masking.record(step, run, content.inputs);
+				await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
 			}
 			await this.#failTask(step, task, content.kind, content.message);
 			return undefined;
@@ -1473,7 +1527,7 @@ export class Engine implements AgentSessionHandler {
 			.update(tasks)
 			.set({
 				status: "dispatched",
-				inputs: content.inputs,
+				inputs: await this.deps.masking.record(step, run, content.inputs),
 				referencedFeishuBots: content.referencedFeishuBots,
 				leaseExpiresAt: this.#leaseFrom(step.now),
 			})
@@ -1515,7 +1569,7 @@ export class Engine implements AgentSessionHandler {
 		},
 	): Promise<AssignContent> {
 		try {
-			const scope = await this.#scope(step.tx, at.chain, at.plan, at.index);
+			const scope = await this.#scope(step, at.run, at.chain, at.plan, at.index);
 			if (referencesRunState(at.node.inputs)) {
 				scope.runState = await this.#runState(step.tx, at.run.id, {
 					chain_instance_id: at.chain.id,

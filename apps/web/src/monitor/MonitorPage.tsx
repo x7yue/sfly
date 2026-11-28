@@ -176,6 +176,15 @@ function LoadedMonitor({ run, address }: { run: RunView; address: MonitorSearch 
 						/>
 					</div>
 				)}
+				{(run.late_reports_dropped ?? 0) > 0 && (
+					<div data-testid="late-reports-dropped" className="flex-none">
+						<Banner
+							tone="info"
+							title={MESSAGE.lateReportsDropped(run.late_reports_dropped ?? 0)}
+							className="rounded-none border-x-0 border-t-0 py-2"
+						/>
+					</div>
+				)}
 				<main className="flex min-h-0 flex-1 flex-col">
 					<div
 						role="tabpanel"

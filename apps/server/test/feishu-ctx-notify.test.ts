@@ -372,7 +372,12 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		await logLine(task.taskId, (l) => l.text === "a5");
 
 		await cp.restart();
-		runner = await connect("runner");
+		// Hello 里列出手上的任务：不列出就是离开了 Agent 之手，之后的上报丢弃（#505）。
+		runner = await FakeAgent.connect(cp.grpcUrl, {
+			name: "runner",
+			runningTasks: [{ taskId: task.taskId, attempt: task.attempt, started: true }],
+		});
+		agents.push(runner);
 		runner.logs(task, [
 			[5, "重复"],
 			[6, "a6"],

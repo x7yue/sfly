@@ -973,10 +973,9 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 						expect(run.params, name).toEqual({ big: MASK });
 						const probe = typeof value === "string" ? value.slice(0, 200) : "kkkkkkkkkkkkkkkkkkkk";
 						expect(text, name).not.toContain(probe);
-						// 输出很大（存着的超过 16 KiB）：运行视图只给大小（#633），全文用 /tasks/:id/io 取，读到的是打码之后的。
+						// 输出在写入时就打了码（#505），存着的很小：运行视图直接给出，/tasks/:id/io 读到的是同一份。
 						const node = run.chains[0]?.nodes[1];
-						expect(node?.outputs, name).toBeNull();
-						expect(node?.outputs_omitted_bytes ?? 0, name).toBeGreaterThan(16 * 1024);
+						expect(node?.outputs, name).toEqual({ echoed: MASK, text: `x ${MASK} y` });
 						const io = await api.get(`/tasks/${a.taskId}/io`);
 						expect(io.status, name).toBe(200);
 						const full = (await io.json()) as { outputs: unknown };

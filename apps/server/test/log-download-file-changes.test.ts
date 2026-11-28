@@ -60,6 +60,7 @@ const { ApiClient } = await import("./support/api-client.js");
 const { eventually } = await import("./support/eventually.js");
 const { FakeAgent } = await import("./support/fake-agent.js");
 const { publishPackage } = await import("./support/package-archive.js");
+const { writeRecordedLogs } = await import("./support/recorded-logs.js");
 const { startTestControlPlane } = await import("./support/test-control-plane.js");
 
 const DOC = {
@@ -109,16 +110,7 @@ describe("下载日志时日志文件变了", () => {
 	const newTask = async (lines: number) => {
 		const runId = await api.triggerOk(scenario);
 		const task = await agent.nextAssign();
-		if (lines > 0) {
-			agent.logs(
-				task,
-				Array.from({ length: lines }, (_, i): [number, string] => [i + 1, `第 ${i + 1} 行`]),
-			);
-			await eventually(async () => {
-				const page = await (await cp.fetch(`/tasks/${task.taskId}/logs?limit=1`)).json();
-				expect(logsApi.page.response.parse(page).last_seq).toBe(lines);
-			}, 30_000);
-		}
+		await writeRecordedLogs(cp, agent, task, lines);
 		return { runId, task, file: join(cp.dataDir, "logs", runId, `${task.taskId}.jsonl`) };
 	};
 

@@ -77,4 +77,16 @@ mutant replace-fail-to-success Safe SuccessWasRun \
 mutant result-accepts-lost Safe AtMostOneSuccess \
 	'                    /\ cp'"'"' = IF cp[m.a] \notin OnAgent THEN cp' \
 	'                    /\ cp'"'"' = IF cp[m.a] \in {"none", "queued", "success"} THEN cp'
+# released.ts（#505）：租约过期就算离手。Agent 断线时还在执行，之后重连补报，副本却已经删了。
+mutant release-on-lease-expiry Safe ReleasedLeftHand \
+	'    /\ rel'"'"' = rel  \* 租约过期不算离手：Agent 之后可能重连补报' \
+	'    /\ rel'"'"' = [rel EXCEPT !.released = @ \cup {a}]'
+# released.ts hello：Welcome 一给放弃就算离手，不等心跳不再列出它。被放弃时还在执行的尝试要等它结束。
+mutant release-on-welcome Safe ReleasedLeftHand \
+	'                                 !.released = @ \cup (rel.leased \ hello.held)]' \
+	'                                 !.released = @ \cup (rel.leased \ hello.held) \cup abandon]'
+# released.ts heartbeat：心跳里没列出的都算离手，不只是放弃过的。派发消息还在路上的尝试，Agent 收到之后才开始执行。
+mutant heartbeat-releases-unlisted Safe ReleasedLeftHand \
+	'                       /\ rel'"'"' = [rel EXCEPT !.released = @ \cup (rel.told \ m.held)]' \
+	'                       /\ rel'"'"' = [rel EXCEPT !.released = @ \cup (rel.leased \ m.held)]'
 exit $status
