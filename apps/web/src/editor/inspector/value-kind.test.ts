@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { describe, expect, it } from "vitest";
 import type { ReferenceChoice } from "./reference-completion";
 import { choicesFor, isNullableString, runStateShown, TYPE_NAMES, valueKind } from "./value-kind";

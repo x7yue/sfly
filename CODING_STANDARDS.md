@@ -15,10 +15,10 @@
 ## 测试
 
 - **异步结果在等待条件里断言。** 触发异步动作（发消息、派发、取消、杀进程、写库）之后，要断言的状态放进等待条件，
-  等它落定再继续：TS 用 `test/support/eventually.ts`，Agent 测试用 `wait_until`/`wait_for`，Python 用文件里的 `wait_for`。
+  等它落定再继续：TS 用 `test/support/eventually.ts`，Agent 测试用 `agent/tests/support` 的 `wait_until`、`wait_until_within`、`wait_for_file`、`wait_for_path`（等消息用 `FakeControlPlane::wait_for`），Python 用文件里的 `wait_for`。
   - 不在动作之后立即断言。靠判断：静态看不出前一个调用是不是异步动作。
   - 不先 sleep 固定时长再断言。e2e 里的 `waitForTimeout` 由 `biome-plugins/e2e-fixed-wait.grit` 拦下；确实只能等一段时间、确认某件事没有发生时，
-    在它上一行写 `// biome-ignore lint/plugin/e2e-fixed-wait: <原因>`。
+    在它上一行写 `// biome-ignore lint/plugin/e2e-fixed-wait: <原因>`。Agent 测试里的 `std::thread::sleep`、`tokio::time::sleep` 由 clippy 的 `disallowed_methods`（`clippy.toml`）拦下，确实要 sleep 的在那一处写 `#[allow(clippy::disallowed_methods)] // <原因>`；macOS 的推送前钩子不查测试代码，以 CI（或 `pnpm linux pnpm lint:rust`）为准。
   - 耗时只作超时上限，不作断言区间（例如 `0.45 <= elapsed < 2`）。靠判断：耗时的写法不固定（`elapsed`、两次取时间相减……），lint 查不全。
 
   这类写法在 CI 的 2 核 runner 和本机高负载时会偶发失败（#108、#129、#136）。
@@ -71,6 +71,6 @@
 
 - **已接受的 ADR 是当时的决定记录，改名或换做法时不回头改它的正文。** 命令、接口、术语改名后，ADR 里的旧名照旧保留：读者要能看到当时决定的是什么。
   决定被推翻时写一份新的 ADR，在旧 ADR 末尾加一行指向它（例如「已被 ADR 0021 取代」；部分取代的写清是哪一部分）。新 ADR 写了「取代 / 推翻 / 修订 ADR 00NN」，而 ADR 00NN 末尾没有指向它的一行时，`pnpm lint:docs` 报错。现行的说明写在 `docs/ARCHITECTURE.md`、`docs/guide/` 和 GLOSSARY 里，这些随改名一起改。
-- **文档里的路径、章节号和链接有 `pnpm lint:docs` 守着**（`scripts/check_doc_references.py`，报错写明位置和改法；查什么、不查什么见脚本开头的说明）。动笔前要知道的是章节引用的写法：文档的仓库路径、空格、`§`、章节号，`docs/SEMANTICS.md §3.4`；一组沿用前面的文档（`docs/SEMANTICS.md §1.2、§2.4`），章节里的第几条写在后面（`docs/SEMANTICS.md §4 第 6 条`）；`docs/SEMANTICS.md`、`docs/ARCHITECTURE.md`、`docs/DESIGN-SYSTEM.md` 自己里面只写 `§` 加章节号。
+- **文档里的路径、章节号、链接、`pnpm <名字>` 命令和手写的 HTTP 接口有 `pnpm lint:docs` 守着**（`scripts/check_doc_references.py`，命令那一类的规则在 `scripts/doc_commands.py`，接口那一类对照契约和助手服务的路由表，规则在 `scripts/doc_routes.py`，报错写明位置和改法；查什么、不查什么见脚本开头的说明）。动笔前要知道的是章节引用的写法：文档的仓库路径、空格、`§`、章节号，`docs/SEMANTICS.md §3.4`；一组沿用前面的文档（`docs/SEMANTICS.md §1.2、§2.4`），章节里的第几条写在后面（`docs/SEMANTICS.md §4 第 6 条`）；`docs/SEMANTICS.md`、`docs/ARCHITECTURE.md`、`docs/DESIGN-SYSTEM.md` 自己里面只写 `§` 加章节号。
   检查做不了、要人判断的：它只确认章节有标题，指没指对要人核对，改动、合并、拆分章节时用 `git grep -n 'docs/SEMANTICS.md §'` 找出引用它的注释一起改；顶层目录整个改名后，旧名开头的路径查不出。
 - **secret 参数的旧说法（敏感、保密、机密）有 `pnpm lint:docs` 守着**（`scripts/check_terms.py`，只查这一个概念，词表写在脚本里，不读 GLOSSARY.md：GLOSSARY.md 里别的 `_Avoid_` 不查；要再守一个概念，在脚本的 `DEPRECATED` 里加一项并在 `scripts/tests/test_check_terms.py` 里加用例）。这个概念写 secret；`大小写不敏感` 这类固定搭配不算（列在脚本的 `INSENSITIVE_PHRASES`）；历史材料 `docs/adr/`、`docs/research/`、`docs/prototype/`、`docs/perf/` 不查；确实要写这几个词的（别的意思），在 `scripts/terms.allow` 加一行 `文件 | 原文 | 原因`，只放过原文里的那一处。其余的词按 GLOSSARY.md 写：界面文案、日志和错误信息、文档、注释和测试名都一样。

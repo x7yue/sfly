@@ -48,8 +48,10 @@ async fn high_frequency_metrics_go_through_a_fifo_without_growing_the_work_dir()
     );
 
     // 执行期间采样两次：事件不落盘，工作目录里只有 task.json 这类小文件。
+    #[allow(clippy::disallowed_methods)] // 造场景：在执行期间的两个时刻看工作目录
     tokio::time::sleep(Duration::from_millis(800)).await;
     let early = file_bytes(&dir);
+    #[allow(clippy::disallowed_methods)] // 造场景：在执行期间的两个时刻看工作目录
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let late = file_bytes(&dir);
     assert!(

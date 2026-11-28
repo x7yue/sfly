@@ -395,6 +395,34 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 		});
 	});
 
+	it("预检：引用别的项目私有的节点包，和没有发布过一样阻断，触发被拒绝；同一个包挪进公共项目后不拦（#501）", async () => {
+		const using = (pkg: string) => chain("runner", [node("a", pkg, "scan")], { [pkg]: "1.0.0" });
+		const ghost = await scenario(using("never-published"));
+		const ghostProblems = (await preflight(ghost.id)).problems;
+		expect(ghostProblems.length).toBeGreaterThan(0);
+
+		await publishPackage(cp, "alpha-private", "1.0.0", { scan: ["found"] });
+		await movePackage("alpha-private", "alpha");
+		const { id, warnings } = await scenario(using("alpha-private"));
+		const sameAsGhost = ghostProblems.map((p) => ({
+			...p,
+			message: p.message.replaceAll("never-published", "alpha-private"),
+		}));
+		expect(warnings).toEqual(sameAsGhost);
+		expect((await preflight(id)).problems).toEqual(sameAsGhost);
+		const refused = await api.trigger(id);
+		expect(refused.status).toBe(400);
+		expect(((await refused.json()) as { error: { code: string } }).error.code).toBe(
+			"invalid_orchestration",
+		);
+		const { runs } = await api.getJson<{ runs: unknown[] }>(`/orchestrations/${id}/runs`);
+		expect(runs).toEqual([]);
+
+		// 对照：同一个包、同一份场景，包在公共项目里时预检不拦。
+		await movePackage("alpha-private", "public");
+		expect((await preflight(id)).problems).toEqual([]);
+	});
+
 	it("预检和保存：开发版本的节点类型只取本项目的 Agent 上报的元信息，别的项目的 Agent 上报的当作不知道", async () => {
 		await connect({
 			name: "dev-own",

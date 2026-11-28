@@ -11,6 +11,9 @@
 //!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
+// 产品代码可以 sleep（重连退避、轮询）；clippy.toml 里禁 sleep 是给测试 crate 的（#432）。
+#![allow(clippy::disallowed_methods)]
+
 pub mod artifacts;
 pub mod calls;
 pub mod capabilities;

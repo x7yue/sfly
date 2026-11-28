@@ -4,6 +4,7 @@ import {
 	NODE_DEFAULTS,
 	type NodeTypeIo,
 	orderedInputs,
+	RETRYABLE_ERROR_KINDS,
 	schemaDescription,
 	stopCandidates,
 } from "@sfly/orchestration";
@@ -209,7 +210,7 @@ const SETTINGS = [
 		label: "重试次数",
 		min: 0,
 		placeholder: `${NODE_DEFAULTS.retries}（默认）`,
-		help: "只对 node_error / timeout / agent_lost 重试",
+		help: `只对 ${RETRYABLE_ERROR_KINDS.join(" / ")} 重试`,
 	},
 	{
 		key: "queue_timeout",

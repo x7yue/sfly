@@ -299,6 +299,7 @@ async fn points_queued_while_disconnected_are_capped_by_dropping_the_oldest() {
     .await;
     // 控制面下线约 3 秒（每秒合并成一个点）：Agent 只在内存里保留最新的 1 个点。
     drop(cp);
+    #[allow(clippy::disallowed_methods)] // 造场景：控制面下线约 3 秒
     tokio::time::sleep(Duration::from_millis(3000)).await;
     let cp = FakeControlPlane::start_on(port).await;
 
@@ -370,6 +371,7 @@ async fn labels_survive_queueing(name: &str, interval: f64, reports: usize) {
     drop(cp);
     let down_at = unix_now();
     while unix_now() < down_at + DOWNTIME_S {
+        #[allow(clippy::disallowed_methods)] // 造场景：控制面下线到指定的整数秒
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let up_at = unix_now();

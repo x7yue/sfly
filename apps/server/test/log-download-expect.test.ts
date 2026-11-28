@@ -39,9 +39,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const { LOG_EXPECT_HEADER } = await import("@sfly/schema");
 const { ApiClient } = await import("./support/api-client.js");
-const { eventually } = await import("./support/eventually.js");
 const { FakeAgent } = await import("./support/fake-agent.js");
 const { publishPackage } = await import("./support/package-archive.js");
+const { writeRecordedLogs } = await import("./support/recorded-logs.js");
 const { sfly } = await import("./support/sfly-cli.js");
 const { startTestControlPlane } = await import("./support/test-control-plane.js");
 
@@ -136,21 +136,9 @@ describe("下载带上可以核对的结尾信息，命令行读完核对（#721
 
 	const fileOf = (runId: string, taskId: string) =>
 		join(cp.dataDir, "logs", runId, `${taskId}.jsonl`);
-	/** 写这些行（序号可以有缺口）并等数据库记到最后一个序号。 */
-	const write = async (task: Parameters<typeof agent.logs>[0], seqs: number[]) => {
-		if (seqs.length === 0) return;
-		agent.logs(
-			task,
-			seqs.map((seq): [number, string] => [seq, `第 ${seq} 行`]),
-		);
-		const last = seqs.at(-1) as number;
-		await eventually(async () => {
-			const page = (await (await cp.fetch(`/tasks/${task.taskId}/logs?limit=1`)).json()) as {
-				last_seq: number;
-			};
-			expect(page.last_seq).toBe(last);
-		}, 30_000);
-	};
+	/** 写这些行（序号可以有缺口），等数据库记下字节数（#790：不能等分页里的 last_seq）。 */
+	const write = (task: Parameters<typeof agent.logs>[0], seqs: number[]) =>
+		writeRecordedLogs(cp, agent, task, seqs);
 	const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 	/** 一个运行里的一个任务（一直不结束）。 */
 	const newTask = async (seqs: number[]) => {

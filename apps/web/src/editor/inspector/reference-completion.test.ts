@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { type PackageCatalog, packageKey } from "@sfly/orchestration";
 import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";

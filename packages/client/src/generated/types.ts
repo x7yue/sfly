@@ -1725,6 +1725,16 @@ export interface PackageNodeInput {
 
 export interface PackageSummary {
 	name: string;
+	/**
+	 * 在公共项目里（平台维护的标准节点包，任何项目都能用，只有平台管理员能发布，#501）；false 是本项目发布的。
+	 * 公共项目和别的项目之间不能同名，所以一个包的版本都在同一边。
+	 */
+	public: boolean;
+	/**
+	 * 最新版本（#434）：按版本号比较，不是发布时间（先发 1.10.0 再发 1.9.1，最新的是 1.10.0）；预发布版本排在同号正式版之前，
+	 * 版本号相等（`1.0` 和 `1.0.0`）时取字符串排在后面的。比较规则只在 `@sfly/orchestration` 的 `newestVersion`，画布和命令行读这个字段。
+	 */
+	latest_version: string;
 	/** 按发布时间从新到旧。 */
 	versions: PackageVersionSummary[];
 }
@@ -2679,6 +2689,8 @@ export interface RunReport {
 	 * 旧版本的控制面没有这个字段，读不到时当作 false。
 	 */
 	secrets_oversize?: boolean;
+	/** 运行清理之后到达、被丢弃的上报条数（#505）。和运行视图（`RunView`）的同名字段一样；读不到时当作 0。 */
+	late_reports_dropped?: number;
 }
 
 /** 有异常的关注项：关注项读数（`GET /runs/:id/focus`）里的一项，只留下认出它是哪一项、最新值和异常的字段。 */
@@ -2906,6 +2918,11 @@ export interface RunView {
 	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
 	 */
 	secrets_oversize?: boolean;
+	/**
+	 * 运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，
+	 * 每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。
+	 */
+	late_reports_dropped?: number;
 	/** 按深度、开始时间排序。 */
 	chains: ChainRunView[];
 }

@@ -16,7 +16,7 @@ use sfly_agent::proto::{CancelTask, agent_message, server_message};
 use support::calls::{
     AgentPair, Reply, call, hold_task, open_call, read_reply, referenced, socket_of,
 };
-use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task, wait_until};
+use support::{AgentOptions, FakeControlPlane, alive, spawn_agent, stub_task, wait_until};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
@@ -42,17 +42,6 @@ fn lines(reply: &Reply, stream: &str) -> Vec<String> {
         .iter()
         .filter_map(|item| item.get(stream)?.as_str().map(str::to_string))
         .collect()
-}
-
-/// 进程是否还活着（僵尸进程算已经结束）。
-fn alive(pid: u32) -> bool {
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        // 第三个字段是状态；命令名在括号里，可能有空格，从最后一个 ')' 之后取。
-        Ok(stat) => !stat
-            .rsplit_once(')')
-            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
-        Err(_) => false,
-    }
 }
 
 /// 等 [`TREE`] 写好两个 PID，读出来。

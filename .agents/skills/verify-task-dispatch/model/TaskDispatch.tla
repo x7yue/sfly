@@ -34,10 +34,12 @@ VARIABLES
     abandoned,   \* 控制面在 Welcome 中放弃、还在执行的尝试：结束时结果直接丢弃
     hello,       \* 最近一次 Hello 的 running_tasks
     welcome,     \* 最近一次 Welcome 里放弃（ABANDON）的尝试
-    okFinished   \* 真的在 Agent 上成功执行完的尝试（只用于检查）
+    okFinished,  \* 真的在 Agent 上成功执行完的尝试（只用于检查）
+    rel          \* engine/released.ts（#505）：leased 派发过的（tasks.lease_expires_at 不为空）、told 在 Welcome 里放弃过的（abandoned_at）、
+                 \* released 已离开 Agent 之手的（released_at）
 
 vars == <<cp, suspects, conn, ready, toCP, toAgent, ag, stopSig, chan, unacked,
-          abandoned, hello, welcome, okFinished>>
+          abandoned, hello, welcome, okFinished, rel>>
 
 AttemptsOf(R) == {r[1] : r \in R}
 Holding == {b \in Attempts : ag[b] \in {"held", "started"}}
@@ -83,6 +85,7 @@ Init ==
     /\ hello = [held |-> {}, started |-> {}]
     /\ welcome = {}
     /\ okFinished = {}
+    /\ rel = [leased |-> {}, told |-> {}, released |-> {}]
 
 CPConnected == conn \in {"welcome", "up"}
 
@@ -96,6 +99,7 @@ Dispatch(a) ==
     /\ Cardinality({b \in Attempts : cp[b] \in OnAgent}) < Slots
     /\ cp' = [cp EXCEPT ![a] = "dispatched"]
     /\ toAgent' = Append(toAgent, [type |-> "assign", a |-> a])
+    /\ rel' = [rel EXCEPT !.leased = @ \cup {a}]
     /\ UNCHANGED <<suspects, conn, ready, toCP, ag, stopSig, chan, unacked, abandoned,
                    hello, welcome, okFinished>>
 
@@ -110,13 +114,15 @@ CPRecv ==
         /\ toCP' = Tail(toCP)
         /\ CASE m.type = "started" ->
                     /\ cp' = MarkStarted(cp, {m.a})
-                    /\ UNCHANGED <<suspects, ready, toAgent>>
+                    /\ UNCHANGED <<suspects, ready, toAgent, rel>>
              [] m.type = "result" ->
                     \* #applyResult：只接受 attempt 一致、状态在 ON_AGENT、派给这个 Agent 的那次尝试。
                     /\ cp' = IF cp[m.a] \notin OnAgent THEN cp
                              ELSE IF m.ok THEN [cp EXCEPT ![m.a] = "success"]
                              ELSE FailAll(cp, {m.a})
                     /\ toAgent' = Append(toAgent, [type |-> "ack", a |-> m.a])
+                    \* released.ts acked：Ack 了的尝试离手（被接受的和被忽略的都算）。
+                    /\ rel' = [rel EXCEPT !.released = @ \cup {m.a}]
                     /\ UNCHANGED <<suspects, ready>>
              [] m.type = "hb" ->
                     LET mine    == {b \in Attempts : cp[b] \in OnAgent}
@@ -127,6 +133,8 @@ CPRecv ==
                        /\ cp' = MarkStarted(FailAll(cp, lost), m.started)
                        /\ toAgent' = IF lost = {} THEN toAgent
                                      ELSE Append(toAgent, [type |-> "cancel", as |-> lost])
+                       \* released.ts heartbeat：放弃过、这次心跳里没有列出的尝试离手。
+                       /\ rel' = [rel EXCEPT !.released = @ \cup (rel.told \ m.held)]
     /\ UNCHANGED <<conn, ag, stopSig, chan, unacked, abandoned, hello, welcome, okFinished>>
 
 \* leases.ts expireTasks：租约过期的 ON_AGENT 任务以 agent_lost 失败（按 retries 派回同一个 Agent）。
@@ -138,6 +146,7 @@ LeaseExpire(a) ==
     /\ conn \in {"down", "hello"} \/ LateHeartbeats
     /\ cp' = FailAll(cp, {a})
     /\ toAgent' = IF CPConnected THEN Append(toAgent, [type |-> "cancel", as |-> {a}]) ELSE toAgent
+    /\ rel' = rel  \* 租约过期不算离手：Agent 之后可能重连补报
     /\ UNCHANGED <<suspects, conn, ready, toCP, ag, stopSig, chan, unacked, abandoned,
                    hello, welcome, okFinished>>
 
@@ -149,8 +158,12 @@ CPOnline ==
     /\ conn = "hello"
     /\ LET mine == {b \in Attempts : cp[b] \in OnAgent}
            lost == mine \ hello.held
-       IN /\ welcome' = {b \in hello.held : cp[b] \notin OnAgent}
+           abandon == {b \in hello.held : cp[b] \notin OnAgent}
+       IN /\ welcome' = abandon
           /\ cp' = MarkStarted(FailAll(cp, lost), hello.started)
+          \* released.ts hello：放弃的记下 told；派发过、Hello 里没有列出的离手（Agent 手上没有它）。
+          /\ rel' = [rel EXCEPT !.told = @ \cup abandon,
+                                 !.released = @ \cup (rel.leased \ hello.held)]
     /\ suspects' = {}
     /\ conn' = "welcome"
     /\ UNCHANGED <<ready, toCP, toAgent, ag, stopSig, chan, unacked, abandoned, hello, okFinished>>
@@ -165,7 +178,7 @@ Disconnect ==
     /\ ready' = FALSE
     /\ toCP' = <<>>
     /\ toAgent' = <<>>
-    /\ UNCHANGED <<cp, suspects, ag, stopSig, chan, unacked, abandoned, hello, welcome, okFinished>>
+    /\ UNCHANGED <<cp, suspects, ag, stopSig, chan, unacked, abandoned, hello, welcome, okFinished, rel>>
 
 (* ------------------------------- Agent --------------------------------- *)
 
@@ -178,7 +191,7 @@ AgentConnect ==
     /\ hello' = [held    |-> Hand,
                  started |-> HandStarted]
     /\ conn' = "hello"
-    /\ UNCHANGED <<cp, suspects, ready, toCP, toAgent, ag, stopSig, abandoned, welcome, okFinished>>
+    /\ UNCHANGED <<cp, suspects, ready, toCP, toAgent, ag, stopSig, abandoned, welcome, okFinished, rel>>
 
 \* lib.rs run()：准备好环境后处理 Welcome 的 ABANDON（Ledger::abandon：结果没 Ack 的直接删掉；还在执行的 force
 \* 取消并记入 abandoned；结果已交出还没发出的不动，照常发出），然后进入 serve()：先重发全部 unacked 结果
@@ -196,7 +209,7 @@ AgentWelcome ==
                            held    |-> Holding \cup AttemptsOf(chan) \cup AttemptsOf(rest),
                            started |-> StartedHand(AttemptsOf(chan) \cup AttemptsOf(rest))]>>
     /\ conn' = "up"
-    /\ UNCHANGED <<cp, suspects, ready, toAgent, ag, chan, hello, welcome, okFinished>>
+    /\ UNCHANGED <<cp, suspects, ready, toAgent, ag, chan, hello, welcome, okFinished, rel>>
 
 \* lib.rs serve()：Assign -> Ledger::accept（进台账成为执行中，不检查槽位）并 spawn run_task；
 \* Cancel -> Ledger::cancel（不在执行中的忽略；被杀的尝试照常上报结果）；Ack -> Ledger::ack（只对待 Ack 的结果生效，从台账删除）。
@@ -214,7 +227,7 @@ AgentRecv ==
              [] m.type = "ack" ->
                     /\ unacked' = {r \in unacked : r[1] # m.a}
                     /\ UNCHANGED <<ag, stopSig>>
-    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, chan, abandoned, hello, welcome, okFinished>>
+    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, chan, abandoned, hello, welcome, okFinished, rel>>
 
 \* lib.rs run_task -> start_task 成功、executor.rs 发出 TaskStarted（断线时丢失，靠心跳的 started 补记）。
 AgentStart(a) ==
@@ -222,7 +235,7 @@ AgentStart(a) ==
     /\ ag' = [ag EXCEPT ![a] = "started"]
     /\ toCP' = IF conn = "up" THEN Append(toCP, [type |-> "started", a |-> a]) ELSE toCP
     /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, stopSig, chan, unacked, abandoned,
-                   hello, welcome, okFinished>>
+                   hello, welcome, okFinished, rel>>
 
 \* lib.rs run_task 结束：Ledger::finish 在一次持锁里把执行中换成结果待发，并带上结束时执行器启动过没有（Finished::started）；
 \* 被放弃的尝试的结果直接丢弃，它也不再在手上（Ledger::discarded 叫醒 serve，只影响自更新的排空，模型里没有）。
@@ -238,7 +251,7 @@ AgentFinish(a, ok) ==
     /\ chan' = IF a \in abandoned THEN chan ELSE chan \cup {<<a, ok>>}
     /\ abandoned' = abandoned \ {a}
     /\ okFinished' = IF ok THEN okFinished \cup {a} ELSE okFinished
-    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, toAgent, stopSig, unacked, hello, welcome>>
+    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, toAgent, stopSig, unacked, hello, welcome, rel>>
 
 \* lib.rs serve() 的 next_result 分支（Ledger::next_result）：结果待发的结果记为待 Ack 并上报。
 AgentSendResult ==
@@ -247,7 +260,7 @@ AgentSendResult ==
         /\ chan' = chan \ {r}
         /\ unacked' = unacked \cup {r}
         /\ toCP' = Append(toCP, [type |-> "result", a |-> r[1], ok |-> r[2]])
-    /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, ag, stopSig, abandoned, hello, welcome, okFinished>>
+    /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, ag, stopSig, abandoned, hello, welcome, okFinished, rel>>
 
 \* lib.rs run()：serve() 以「消息超过上限」（resource_exhausted）结束之后、重连之前，调用 Ledger::replace_results_over：结果待发（Handed）
 \* 或待 Ack（Unacked）里整条消息超过控制面一条消息上限的结果，换成 node_error 失败（#723）。台账里同一次尝试的结果因此可以和
@@ -262,7 +275,7 @@ AgentReplaceResult ==
         /\ LET new == <<r[1], FALSE>>
            IN /\ chan' = IF r \in chan THEN (chan \ {r}) \cup {new} ELSE chan
               /\ unacked' = IF r \in unacked THEN (unacked \ {r}) \cup {new} ELSE unacked
-    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, toAgent, ag, stopSig, abandoned, hello, welcome, okFinished>>
+    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, toAgent, ag, stopSig, abandoned, hello, welcome, okFinished, rel>>
 
 \* lib.rs serve() 的 heartbeat.tick 分支：running_tasks = Ledger::held，即 Hand：台账里的全部，
 \* 包括结果已交出、还没发出的。进入 serve() 时立即发的那一次在 AgentWelcome 里。
@@ -274,7 +287,7 @@ AgentHeartbeat ==
                              held    |-> Hand,
                              started |-> HandStarted])
     /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, ag, stopSig, chan, unacked, abandoned,
-                   hello, welcome, okFinished>>
+                   hello, welcome, okFinished, rel>>
 
 Next ==
     \/ \E a \in Attempts : Dispatch(a) \/ LeaseExpire(a) \/ AgentStart(a)
@@ -296,6 +309,7 @@ TypeOK ==
     /\ ready \in BOOLEAN
     /\ suspects \subseteq Attempts
     /\ stopSig \subseteq Attempts
+    /\ rel.leased \cup rel.told \cup rel.released \subseteq Attempts
 
 \* 承诺 1：同一个节点的较新尝试在 Agent 上执行时，较早的尝试要么已经结束，要么已经被告知停止。
 NoUnstoppedDuplicate ==
@@ -313,4 +327,8 @@ AssignOnlyWhenReady ==
 \* 承诺 4：一个节点最多接受一次成功，而且成功来自真正执行成功的那次尝试。
 AtMostOneSuccess == Cardinality({b \in Attempts : cp[b] = "success"}) <= 1
 SuccessWasRun == \A b \in Attempts : cp[b] = "success" => b \in okFinished
+
+\* 承诺 5（#505）：控制面认为已离开 Agent 之手的尝试，不在 Agent 上执行（安装中或执行器已启动）：它之后不会再产生上报，
+\* 运行的加密副本可以删。租约过期不算离手，Welcome 一放弃也不算（被放弃的还在执行、结束前一直在心跳里）。
+ReleasedLeftHand == \A b \in rel.released : b \notin Holding
 =============================================================================

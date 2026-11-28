@@ -14448,6 +14448,25 @@
               }
             ],
             "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            "description": "修改以后的运行通知设置的问题，只提示、不阻止保存（#501）：要发给的机器人不是这个项目里登记的时，\n一条 `run_notification_bot_not_registered`。触发前的预检在 `warnings` 里给同一条，不阻断触发。"
           }
         },
         "required": [
@@ -14459,7 +14478,8 @@
           "archived_at",
           "run_notification",
           "focus_items",
-          "focus_edit"
+          "focus_edit",
+          "warnings"
         ]
       },
       "notes": [
@@ -15280,6 +15300,12 @@
                 "name": {
                   "type": "string"
                 },
+                "public": {
+                  "type": "boolean"
+                },
+                "latest_version": {
+                  "type": "string"
+                },
                 "versions": {
                   "type": "array",
                   "items": {
@@ -15341,6 +15367,8 @@
               },
               "required": [
                 "name",
+                "public",
+                "latest_version",
                 "versions"
               ]
             }
@@ -15390,6 +15418,14 @@
         "properties": {
           "name": {
             "type": "string"
+          },
+          "public": {
+            "type": "boolean",
+            "description": "在公共项目里（平台维护的标准节点包，任何项目都能用，只有平台管理员能发布，#501）；false 是本项目发布的。\n公共项目和别的项目之间不能同名，所以一个包的版本都在同一边。"
+          },
+          "latest_version": {
+            "type": "string",
+            "description": "最新版本（#434）：按版本号比较，不是发布时间（先发 1.10.0 再发 1.9.1，最新的是 1.10.0）；预发布版本排在同号正式版之前，\n版本号相等（`1.0` 和 `1.0.0`）时取字符串排在后面的。比较规则只在 `@sfly/orchestration` 的 `newestVersion`，画布和命令行读这个字段。"
           },
           "versions": {
             "type": "array",
@@ -15453,6 +15489,8 @@
         },
         "required": [
           "name",
+          "public",
+          "latest_version",
           "versions"
         ]
       },
@@ -18831,6 +18869,12 @@
           "secrets_oversize": {
             "type": "boolean",
             "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，\n所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；\n旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
+          "late_reports_dropped": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "运行清理之后到达、被丢弃的上报条数（#505）。和运行视图（`RunView`）的同名字段一样；读不到时当作 0。"
           }
         },
         "required": [
@@ -19583,6 +19627,12 @@
           "secrets_oversize": {
             "type": "boolean",
             "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
+          "late_reports_dropped": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，\n每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。"
           },
           "chains": {
             "type": "array",
@@ -20536,6 +20586,12 @@
             "type": "boolean",
             "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
           },
+          "late_reports_dropped": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，\n每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。"
+          },
           "chains": {
             "type": "array",
             "items": {
@@ -21418,6 +21474,12 @@
             "type": "boolean",
             "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
           },
+          "late_reports_dropped": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，\n每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。"
+          },
           "chains": {
             "type": "array",
             "items": {
@@ -22297,6 +22359,12 @@
             "secrets_oversize": {
               "type": "boolean",
               "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+            },
+            "late_reports_dropped": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，\n每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。"
             },
             "chains": {
               "type": "array",
