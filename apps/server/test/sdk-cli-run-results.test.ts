@@ -1,7 +1,6 @@
 // sfly run show --outputs / --state、run actions、run metrics，运行编号写前缀或 latest，摘要里的「失败的动作」
 // 「有异常的关注项」两段（#423）。真实的 sfly 进程对着测试控制面，运行的成功、失败、动作、指标由假 Agent 产生。
-import { cp as copy, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp as copy, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { RunState } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +12,7 @@ import { type OldControlPlane, startOldControlPlane } from "./support/old-contro
 import { publishPackage } from "./support/package-archive.js";
 import { repoRoot, sfly } from "./support/sfly-cli.js";
 import { spawnSfly } from "./support/sfly-process.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
@@ -463,7 +463,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			);
 
 			const state = JSON.parse((await cli("run", "show", runId, "--state")).stdout) as unknown;
-			const dir = await mkdtemp(join(tmpdir(), "sfly-state-debug-"));
+			const dir = await makeTempDir("sfly-state-debug-");
 			try {
 				// 桩节点包复制到临时目录：本地调试在项目下写运行目录，不碰仓库里的。
 				const project = join(dir, "stub");

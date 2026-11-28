@@ -1,8 +1,8 @@
-import { cp as copy, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp as copy, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { defaultMigrationsDir, openDatabase } from "../../src/db/database.js";
+import { makeTempDir } from "./temp-dir.js";
 
 /** drizzle 迁移文件里语句之间的分隔。 */
 export const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
@@ -14,7 +14,7 @@ export const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
 export async function migrationsCopy(
 	options: { upTo?: number; edit?: Record<string, (sql: string) => string> } = {},
 ): Promise<string> {
-	const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
+	const dir = await makeTempDir("sfly-migrations-");
 	await copy(defaultMigrationsDir, dir, { recursive: true });
 	if (options.upTo !== undefined) {
 		const journalPath = join(dir, "meta", "_journal.json");

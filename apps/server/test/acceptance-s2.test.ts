@@ -2,8 +2,7 @@
 // 异步任务节点触发子流程，主链不等待；子流程嵌套 2 层；子流程失败不影响主链；运行等待所有链结束；
 // 停止子流程节点停止嵌套子流程（被停止的节点收到 Cancelled、finally 照常执行，always 清理照常执行，运行记为成功）。
 // 「让子流程停在某处」靠桩节点包的闸门节点：测试写放行文件才让它结束，不依赖真实等待。
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -14,6 +13,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describeWithAgent("验收 S2：并行", () => {
@@ -23,7 +23,7 @@ describeWithAgent("验收 S2：并行", () => {
 	let dir: string;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-s2-"));
+		dir = await makeTempDir("sfly-s2-");
 		const bin = agentBinary();
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv()]);
 		await publishStubPackage(cp);

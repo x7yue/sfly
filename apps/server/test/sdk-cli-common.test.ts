@@ -1,13 +1,13 @@
 // sfly 命令行访问控制面的公共部分（地址、昵称、x-sfly-client、版本告警、错误格式），
 // 以真实的 sfly 进程加测试控制面验证；用 `scenario list` 作为载体。
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const CLIENT = "x-sfly-client";
@@ -40,7 +40,7 @@ describe("sfly 命令行的公共部分 → 控制面", () => {
 
 	it("控制面地址按 --server、SFLY_SERVER、agent.env 的顺序取值", async () => {
 		const [viaFlag, viaEnv, viaFile] = [await proxy(), await proxy(), await proxy()] as const;
-		const home = await mkdtemp(join(tmpdir(), "sfly-home-"));
+		const home = await makeTempDir("sfly-home-");
 		dirs.push(home);
 		await writeFile(join(home, "agent.env"), `SFLY_CONTROL_PLANE_URL=${viaFile.url}\n`);
 		const hits = () => [viaFlag, viaEnv, viaFile].map((p) => p.requests.length > 0);

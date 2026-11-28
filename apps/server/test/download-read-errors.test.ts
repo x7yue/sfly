@@ -4,8 +4,7 @@
 // 真正让控制面进程退出的复现见 `process-stream-errors.test.ts`。
 // 造「读不了」：stat 能过、打开能过、读时出错（文件被换成同名的目录，EISDIR），和权限、被清理到一半一样是读的时候才出错，
 // 不依赖测试是不是以 root 运行；Agent 二进制的下载在响应之前会检查它是不是普通文件，所以那一条用没有读权限（EACCES）。
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { logsApi } from "@sfly/schema";
@@ -16,6 +15,7 @@ import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const DOC = {
@@ -46,7 +46,7 @@ describe("下载文件时文件读不了", () => {
 	const tarball = `sfly-client-${version}.tgz`;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-dl-err-"));
+		dir = await makeTempDir("sfly-dl-err-");
 		await mkdir(join(dir, "wheels"));
 		await mkdir(join(dir, "client"));
 		await writeFile(join(dir, "wheels", wheel), "wheel 的字节");
@@ -190,7 +190,7 @@ describe("关闭控制面", () => {
 
 describe("前端静态文件读不了", () => {
 	it("500 和统一的错误体；不带一年的 immutable 缓存头（浏览器和代理不能把一次 500 当成那个文件缓存下来），也不留文件的内容类型", async () => {
-		const webDir = await mkdtemp(join(tmpdir(), "sfly-web-err-"));
+		const webDir = await makeTempDir("sfly-web-err-");
 		await mkdir(join(webDir, "assets"));
 		await writeFile(join(webDir, "index.html"), "<!doctype html><html></html>");
 		await writeFile(join(webDir, "assets", "app-abc123.js"), "console.log('sfly');");

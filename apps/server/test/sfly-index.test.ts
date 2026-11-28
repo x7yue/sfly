@@ -2,10 +2,10 @@
 // 开发机用 `uv tool install` / 项目的显式索引从这里装 `sfly`，不会从 PyPI 镜像装到同名的其他包。
 // 索引里的另一个包 sfly-std 见 std-index.test.ts。
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -15,7 +15,7 @@ describe("sfly 在控制面的包索引里", () => {
 	let dir: string;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-index-"));
+		dir = await makeTempDir("sfly-index-");
 		// 控制面只看文件名识别 wheel，内容不必是真的 wheel。
 		await writeFile(join(dir, "sfly-1.2.3-py3-none-any.whl"), "wheel 1.2.3");
 		await writeFile(join(dir, "sfly-1.2.2-py3-none-any.whl"), "wheel 1.2.2");

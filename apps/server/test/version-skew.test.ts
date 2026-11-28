@@ -1,8 +1,7 @@
 // 切入点 A：Agent 与控制面版本不一致（ADR 0014 前半部分）。控制面照常接受连接、续约和接收结果，
 // 但不给它派新任务；Welcome 告诉 Agent 目标版本和对应架构的二进制；Heartbeat 上报的更新状态出现在 Agents 接口。
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AgentUpdateState } from "@sfly/proto";
 import { type AgentView, agentsApi } from "@sfly/schema";
@@ -12,6 +11,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const SECOND = 1000;
@@ -59,7 +59,7 @@ describe("版本不一致", () => {
 	};
 
 	it("Welcome 给出目标版本（控制面版本）和 Agent 架构对应的二进制下载地址与 sha256", async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-skew-"));
+		dir = await makeTempDir("sfly-skew-");
 		await writeFile(join(dir, "x86"), "x86_64 的 Agent 二进制");
 		await writeFile(join(dir, "arm"), "aarch64 的 Agent 二进制");
 		cp = await startTestControlPlane({

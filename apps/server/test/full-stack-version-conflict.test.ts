@@ -2,8 +2,7 @@
 // 后到的版本装上时会换掉正在执行的那个任务的代码。经真实控制面和真实 Agent：先到的任务等着、之后才导入模块，
 // 另一个版本被拒（触发时预检阻断；绕过预检时派发失败），先到的任务导入到的还是自己的代码。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -11,6 +10,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "conflict-demo";
@@ -105,7 +105,7 @@ describeWithAgent("同一台 Agent 上同一个节点包的另一个版本正在
 	let quick11: string;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-version-conflict-"));
+		dir = await makeTempDir("sfly-version-conflict-");
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv({ sdkOnly: true })]);
 		api = new ApiClient(cp);
 		await publish("1.0");

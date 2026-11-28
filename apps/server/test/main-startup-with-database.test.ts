@@ -7,12 +7,12 @@
 // 数据目录权限拦不住 root，那几条跳过。
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 import {
 	createMigratedTemplate,
 	createTestDatabase,
@@ -85,7 +85,7 @@ describe("数据目录写不了时先查再清：失败的启动不碰上次留�
 	let database: TestDatabase;
 
 	beforeEach(async () => {
-		root = await mkdtemp(join(tmpdir(), "sfly-startup-uploading-"));
+		root = await makeTempDir("sfly-startup-uploading-");
 		database = await createTestDatabase("sfly_startup");
 	});
 	afterEach(async () => {
@@ -204,7 +204,7 @@ describe("监听失败的说明：只有变量名、端口、错误码和一句�
 		await template.drop();
 	});
 	beforeEach(async () => {
-		root = await mkdtemp(join(tmpdir(), "sfly-startup-listen-"));
+		root = await makeTempDir("sfly-startup-listen-");
 		database = await createTestDatabase("sfly_listen", { template: template.name });
 	});
 	afterEach(async () => {

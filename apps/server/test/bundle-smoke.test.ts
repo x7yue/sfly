@@ -5,8 +5,8 @@
 // gRPC（HTTP/2）、SDK 与节点包下载、API 客户端安装包。
 // 只在设置 SFLY_BUNDLE_DIR 时运行：根目录 `pnpm bundle:server && pnpm test:bundle`。
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { arch, tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { arch } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import { shellBlocks } from "./support/doc-commands.js";
 import { typecheckPageExamples } from "./support/doc-examples.js";
 import { eventually } from "./support/eventually.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const bundleDir = process.env.SFLY_BUNDLE_DIR;
@@ -36,8 +37,8 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 	beforeAll(async () => {
 		[database, dataDir, sflyHome] = await Promise.all([
 			createTestDatabase(),
-			mkdtemp(join(tmpdir(), "sfly-bundle-data-")),
-			mkdtemp(join(tmpdir(), "sfly-bundle-home-")),
+			makeTempDir("sfly-bundle-data-"),
+			makeTempDir("sfly-bundle-home-"),
 		]);
 		server = await startBundledServer({
 			dir: bundleDir as string,
@@ -86,7 +87,7 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 			const url = command?.split(" ").at(-1) ?? "";
 			expect(url).toBe(tarballs[0]?.url);
 
-			const project = await mkdtemp(join(tmpdir(), "sfly-client-project-"));
+			const project = await makeTempDir("sfly-client-project-");
 			const run = (command: string, args: string[]) =>
 				promisify(execFile)(command, args, {
 					cwd: project,
@@ -167,7 +168,7 @@ console.log(JSON.stringify(await client.system.health()));
 
 	it("install.sh 装好的 Agent 从全新 venv 开始安装 SDK 和节点包，跑通一条链", async () => {
 		// 发布桩节点包（经 HTTP 上传，控制面解压校验）。
-		const out = await mkdtemp(join(tmpdir(), "sfly-bundle-pkg-"));
+		const out = await makeTempDir("sfly-bundle-pkg-");
 		try {
 			await promisify(execFile)(
 				"uv",

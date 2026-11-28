@@ -3,7 +3,7 @@
 // 依赖（jsonschema 的桩）从控制面配置的 PyPI 镜像桩安装，不访问外网。重新运行即升级到控制面的版本。
 // 环境变量覆盖镜像时（单台机器的本地覆盖），uv 和 sfly CLI 的依赖从覆盖的地址安装，覆盖值写进 agent.env。
 import { execFile } from "node:child_process";
-import { cp as copy, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp as copy, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { arch, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -14,6 +14,7 @@ import { TestAccounts } from "./support/credentials.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { dependencyWheel, type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const run = promisify(execFile);
@@ -52,7 +53,7 @@ describeWithAgent("全栈：install.sh --dev", () => {
 
 	beforeAll(async () => {
 		const bin = agentBinary();
-		dir = await mkdtemp(join(tmpdir(), "sfly-full-dev-install-"));
+		dir = await makeTempDir("sfly-full-dev-install-");
 
 		// SDK wheel：仓库里的版本，以及只改了版本号的「新版本」。
 		const sdkDir = join(dir, "sdk");

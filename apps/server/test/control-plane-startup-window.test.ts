@@ -2,16 +2,15 @@
 // 这段时间里进来的请求（列出会话的就绪状态、建会话）会问「事件流连着没有」：连接对象还没建好时当作没连上，回 503，
 // 不能是「引用还没初始化」的 ReferenceError → 500（#764 复审）。
 // 用现有的入口造这个窗口：把 `startAgentGateway` 换成一个等放行才继续的版本（产品代码不为测试改任何接口），HTTP 已经监听上、网关还没起来时发请求。
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { SessionListResponse } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { TestUsers } from "./support/credentials.js";
 import { FakeAssistant } from "./support/fake-assistant.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 import { asUsers } from "./support/user-api.js";
 
@@ -53,7 +52,7 @@ describe("启动时 HTTP 已经监听、助手服务的事件连接还没建好�
 
 	beforeEach(async () => {
 		database = await createTestDatabase("sfly_startup", { dropWaitMs: 200 });
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-startup-window-"));
+		dataDir = await makeTempDir("sfly-startup-window-");
 		assistant = await FakeAssistant.start();
 	});
 	afterEach(async () => {

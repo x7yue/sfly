@@ -5,11 +5,10 @@
 // 这里用现有的入口造一个登记阶段出错的控制面：把 `contractRoute` 换成会重复登记某个契约的版本（节点包的发布路由在 `app.register`
 // 的作用域里登记，所以重复的路由在 `ready` 时才被发现，Fastify 报 FST_ERR_DUPLICATED_ROUTE）；产品代码不为测试改任何接口。
 // 对照：端口被占用时仍是「监听失败」（监听失败的说明不变）。
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 /** 重复登记的契约（`undefined` 是照常）。 */
@@ -34,7 +33,7 @@ describe("启动时登记路由出错：原来的错误照原样出来，不说�
 
 	beforeEach(async () => {
 		database = await createTestDatabase("sfly_register", { dropWaitMs: 200 });
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-register-error-"));
+		dataDir = await makeTempDir("sfly-register-error-");
 	});
 	afterEach(async () => {
 		hooks.duplicate = undefined;

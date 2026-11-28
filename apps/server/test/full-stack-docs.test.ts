@@ -7,7 +7,7 @@
 // 环境：PATH 上只有基本命令（没有 uv、sfly、systemctl），uv 从 GitHub Release 镜像桩安装，
 // PyPI 镜像桩里是测试环境里已安装的 pytest、ruff、jsonschema 和 sfly-std 的依赖重新打成的 wheel，不访问外网。
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { arch, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -24,6 +24,7 @@ import { eventually } from "./support/eventually.js";
 import { type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
 import { buildStdPackage, type StdPackage, wheelhouse } from "./support/std-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane } from "./support/test-control-plane.js";
 
 const run = promisify(execFile);
@@ -139,7 +140,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 	const skipped = new Set<string>();
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-full-docs-"));
+		dir = await makeTempDir("sfly-full-docs-");
 		sdkDir = join(dir, "sdk");
 		await run("uv", ["build", "--wheel", "--quiet", "--out-dir", sdkDir, "sdk/python"], {
 			cwd: repoRoot,

@@ -1,0 +1,15 @@
+language js
+
+// CODING_STANDARDS.md「测试」：断言路径时用真实路径。控制面的测试建临时目录统一经
+// apps/server/test/support/temp-dir.ts 的 makeTempDir / makeTempDirSync，它们建好后 realpath 一次。
+// 范围：apps/server/test 下的文件；temp-dir.ts 自己除外。
+or {
+	`mkdtemp($...)`,
+	`mkdtempSync($...)`,
+	`$_.mkdtemp($...)`,
+	`$_.mkdtempSync($...)`
+} as $call where {
+	$filename <: r".*/apps/server/test/.*",
+	$filename <: not r".*/apps/server/test/support/temp-dir\.ts",
+	register_diagnostic(span=$call, message="控制面的测试不直接调 mkdtemp（CODING_STANDARDS.md「测试」：断言路径时用真实路径）：用 apps/server/test/support/temp-dir.ts 的 makeTempDir(\"前缀-\") 或 makeTempDirSync(\"前缀-\")，它们在系统临时目录下建目录并返回 realpath 之后的路径（macOS 的 /tmp、/var 是符号链接）。")
+}

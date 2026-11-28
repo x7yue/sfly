@@ -1,9 +1,8 @@
 // sfly scenario check / push --strict / diff（#424）：真实的 sfly 进程检查、对比测试控制面里的场景。
 // 检查和保存走同一段校验（控制面的 POST /orchestrations/:id/check），对比用控制面的 diffDocuments。
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -12,6 +11,7 @@ import { createPresetOk } from "./support/presets.js";
 import { startRecordingProxy } from "./support/recording-proxy.js";
 import { registerAgents } from "./support/registered-agents.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 检查只有警告时的退出码：不是 0（成功）、1（运行失败）、2（命令出错）、3（运行被取消）、124、130。 */
@@ -94,7 +94,7 @@ describe("sfly scenario check / push --strict / diff → 控制面", () => {
 		await registerAgents(cp.database.url, ["agent-a"]);
 		await publishPackage(cp, "demo", "1.0.0", { echo: ["v"] });
 		await publishPackage(cp, "demo", "1.1.0", { echo: ["v"] });
-		dir = await mkdtemp(join(tmpdir(), "sfly-scenario-check-"));
+		dir = await makeTempDir("sfly-scenario-check-");
 	}, 120_000);
 
 	afterAll(async () => {

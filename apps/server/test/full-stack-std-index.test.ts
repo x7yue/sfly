@@ -2,8 +2,7 @@
 // 真实的 Agent（共享 venv 里只有 SDK，没有 sfly-std）从控制面下载这个节点包，装它的依赖时 sfly-std 来自控制面的包索引
 // （`Welcome.package_index_url`，公共项目里已发布的 sfly-std），psutil 这个依赖来自 PyPI 镜像桩。
 // PyPI 镜像桩里没有 sfly-std（它不在 PyPI 上），另一台 Agent 的镜像里放一个同名、版本更高的假包：装上的仍是控制面的那个。
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { systemClock } from "../src/clock.js";
@@ -20,6 +19,7 @@ import {
 	wheelhouse,
 } from "./support/std-package.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** PyPI 镜像上同名假包的版本：比控制面里的 sfly-std 高得多。 */
@@ -35,7 +35,7 @@ describeWithAgent("全栈：节点包依赖 sfly-std，sfly-std 来自控制面�
 	const agents: RealAgent[] = [];
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-full-std-index-"));
+		dir = await makeTempDir("sfly-full-std-index-");
 		let wheels: Awaited<ReturnType<typeof wheelhouse>>;
 		[cp, std, wheels] = await Promise.all([
 			startTestControlPlane({ clock: systemClock }),

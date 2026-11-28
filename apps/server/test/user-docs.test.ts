@@ -1,11 +1,11 @@
 // 切入点 A：控制面提供用户文档原文 `/docs/<页>.md` 与索引 `/llms.txt`（ADR 0013，#60），
 // 返回时把占位符替换成控制面地址和版本号。
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { docsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describe("用户文档", () => {
@@ -13,7 +13,7 @@ describe("用户文档", () => {
 	let cp: TestControlPlane;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-docs-"));
+		dir = await makeTempDir("sfly-docs-");
 		await writeFile(
 			join(dir, "pages.json"),
 			JSON.stringify({
@@ -83,7 +83,7 @@ describe("给 AI 编程助手的 skill 的原文", () => {
 	let cp: TestControlPlane;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-docs-skill-"));
+		dir = await makeTempDir("sfly-docs-skill-");
 		await writeFile(
 			join(dir, "pages.json"),
 			JSON.stringify({
@@ -215,7 +215,7 @@ describe("仓库里的用户文档", () => {
 	});
 
 	it("文档里出现未知的占位符时控制面启动失败", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-docs-bad-"));
+		const dir = await makeTempDir("sfly-docs-bad-");
 		try {
 			await writeFile(
 				join(dir, "pages.json"),

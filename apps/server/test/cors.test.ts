@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { parseCorsOrigins } from "../src/http/cors.js";
 import { createQueuedRun } from "./support/queued-run.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PAGE = "https://dash.example.com";
@@ -139,7 +139,7 @@ describe("跨域：控制台的静态文件不带跨域头", () => {
 	let webDir: string;
 	let cp: TestControlPlane | undefined;
 	beforeAll(async () => {
-		webDir = await mkdtemp(join(tmpdir(), "sfly-cors-web-"));
+		webDir = await makeTempDir("sfly-cors-web-");
 		await mkdir(join(webDir, "assets"));
 		await writeFile(join(webDir, "index.html"), "<!doctype html><div id=app></div>");
 		await writeFile(join(webDir, "assets", "app-abc123.js"), "console.log('sfly');");

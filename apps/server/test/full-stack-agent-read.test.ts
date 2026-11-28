@@ -3,8 +3,7 @@
 // 下载的数据由 rd-runner 直接写到本地路径，不经过节点进程和控制面。ctx.agent() 对 rd-runner 自己有相同的结果；
 // 运行被取消时下载立即结束。节点包是 testdata/agent-files-package（sfly_agent_files.read）。
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -18,6 +17,7 @@ import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "sfly-agent-files";
@@ -52,7 +52,7 @@ describeWithAgent("全栈：Agent 能力 files.read", () => {
 		pair = await startAgentPair({ grpcUrl: cp.grpcUrl, runner: "rd-runner", source: "rd-source" });
 		broken = await registerBrokenPeers(cp.grpcUrl, { gone: "rd-gone", silent: "rd-silent" });
 		// rd-source 上的日志（两台 Agent 在同一台机器上，绝对路径相同）：开头是一行文本，之后是几 MB 的任意字节。
-		dir = await mkdtemp(join(tmpdir(), "sfly-agent-read-"));
+		dir = await makeTempDir("sfly-agent-read-");
 		log = join(dir, "app.log.1");
 		// 没有 0 字节：读到的第一行会进节点输出，输出里的 NUL 字符目前会让控制面存不下任务结果。
 		const noise = Buffer.alloc(5 * 1024 * 1024 + 11);
@@ -110,7 +110,7 @@ describeWithAgent("全栈：Agent 能力 files.read", () => {
 	}, 180_000);
 
 	it("rd-runner 上的节点把 rd-source 上的文件下载到本地路径，内容一致；ctx.agent() 是本机上的复制", async () => {
-		const local = await mkdtemp(join(tmpdir(), "sfly-agent-read-local-"));
+		const local = await makeTempDir("sfly-agent-read-local-");
 		try {
 			const target = join(local, "pulled", "app.log.1");
 			expect(
@@ -131,7 +131,7 @@ describeWithAgent("全栈：Agent 能力 files.read", () => {
 	}, 180_000);
 
 	it("运行被取消时，等着另一台 Agent 回应的下载立即结束并抛出取消", async () => {
-		const local = await mkdtemp(join(tmpdir(), "sfly-agent-read-cancel-"));
+		const local = await makeTempDir("sfly-agent-read-cancel-");
 		try {
 			const id = await api.orchestrationWith({
 				default_agent: "rd-runner",

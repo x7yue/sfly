@@ -8,9 +8,7 @@
 //   （假哈希不缓存被闸拒绝的结果，不然不存在的登录名永远是 503，能用来分辨登录名有没有这个人）；
 // - 排队中的请求，客户端断开（中止信号）之后不再占着闸，也把限速里的在途占位还回去。
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DbAccessStore } from "../src/auth/access-store.js";
 import { AccountService } from "../src/auth/accounts.js";
@@ -21,6 +19,7 @@ import { PasswordGate, PasswordGateAborted, PasswordGateBusy } from "../src/auth
 import { SetupCode } from "../src/auth/setup-code.js";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const SMALL = { logN: 10, r: 8, p: 1 } as const;
@@ -49,7 +48,7 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 		clock = new ManualClock();
 		throttle = new LoginThrottle(clock);
 		verifyCalls = 0;
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-throttle-"));
+		dataDir = await makeTempDir("sfly-throttle-");
 	});
 	afterEach(async () => {
 		await database?.close();

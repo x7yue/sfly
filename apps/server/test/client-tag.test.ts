@@ -1,7 +1,6 @@
 // 记录「经哪个 AI 编程助手」（规格 #238、ADR 0020）：控制面从 `x-sfly-client` 请求头里的 `agent/<名称>`
 // 记在触发的运行、取消请求和保存的场景版本上，接口返回；只是标注，不影响昵称。
-import { cp as copy, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp as copy, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { orchestrationsApi, runListApi, runsApi } from "@sfly/schema";
 import pg from "pg";
@@ -12,6 +11,7 @@ import { actAs } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { appendStartupStubs, dropStartupStubs } from "./support/migrations.js";
 import { publishPackage } from "./support/package-archive.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const DOCUMENT = {
@@ -240,7 +240,7 @@ describe("升级前已有的运行和版本", () => {
 
 	/** 只含升级前（0000–0022）的迁移的目录，模拟旧版控制面的数据库。 */
 	const migrationsBefore = async (next: number) => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
+		const dir = await makeTempDir("sfly-migrations-");
 		await copy(defaultMigrationsDir, dir, { recursive: true });
 		const journalPath = join(dir, "meta", "_journal.json");
 		const journal = JSON.parse(await readFile(journalPath, "utf8")) as {

@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +8,7 @@ import { vaultKey } from "../src/db/vault-schema.js";
 import { RunVaults } from "../src/secrets/run-vault.js";
 import { openVaultKey, VAULT_KEY_FILE, VaultKeyError } from "../src/secrets/vault-key.js";
 import { seedTask } from "./support/seed-task.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
@@ -27,7 +27,7 @@ describe("钥匙文件（#505）：首次启动时生成，之后和库里记的
 		await database.drop();
 	});
 	beforeEach(async () => {
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-vault-key-"));
+		dataDir = await makeTempDir("sfly-vault-key-");
 		await opened.db.delete(vaultKey);
 	});
 	afterEach(async () => {

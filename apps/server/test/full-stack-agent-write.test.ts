@@ -2,8 +2,7 @@
 // fw-runner 上的节点用 ctx.agent(source) 往 fw-source 上写入（流式）、上传（fw-runner 本地的文件，由 fw-runner 直接传给
 // fw-source，不经过节点进程）、删除文件；ctx.agent() 对 fw-runner 自己同样可用。另外覆盖：写到一半出错或运行被取消时
 // 目标路径上不留下半截文件，文件不存在、没有权限时的错误。节点包是 testdata/agent-files-package（write.py）。
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -12,6 +11,7 @@ import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "sfly-agent-files";
@@ -40,7 +40,7 @@ describeWithAgent("全栈：Agent 能力 files.write", () => {
 		await publishTestPackage(cp, "testdata/agent-files-package", `${PACKAGE}-0.1.0.sflypkg`);
 		pair = await startAgentPair({ grpcUrl: cp.grpcUrl, runner: "fw-runner", source: "fw-source" });
 		// fw-source 上的目录（两台 Agent 在同一台机器上，绝对路径相同）。
-		dir = await mkdtemp(join(tmpdir(), "sfly-agent-write-"));
+		dir = await makeTempDir("sfly-agent-write-");
 	}, 600_000);
 
 	afterAll(async () => {

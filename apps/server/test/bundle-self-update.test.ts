@@ -13,8 +13,8 @@
 // 本地验证「支持自更新」的路径：`pnpm bundle:server && pnpm fetch:previous-agent --simulate`
 // 用当前构建的 Agent 扮演上一版本（隐藏的版本覆盖参数），再 `pnpm test:bundle`。
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { arch, tmpdir } from "node:os";
+import { access, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { arch } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { AgentView } from "@sfly/schema";
@@ -27,6 +27,7 @@ import { ApiClient } from "./support/api-client.js";
 import { type BundledServer, startBundledServer } from "./support/bundled-server.js";
 import { eventually } from "./support/eventually.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const run = promisify(execFile);
@@ -84,7 +85,7 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 		const database: TestDatabase = await createTestDatabase();
 		cleanups.push(() => database.drop());
 		const [dataDir, sflyHome, scratch] = await Promise.all(
-			["data", "home", "scratch"].map((n) => mkdtemp(join(tmpdir(), `sfly-skew-${n}-`))),
+			["data", "home", "scratch"].map((n) => makeTempDir(`sfly-skew-${n}-`)),
 		);
 		cleanups.push(() =>
 			Promise.all(

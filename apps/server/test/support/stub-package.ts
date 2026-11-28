@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect } from "vitest";
 import { repoRoot } from "./agent-binary.js";
+import { makeTempDir } from "./temp-dir.js";
 import type { TestControlPlane } from "./test-control-plane.js";
 
 const run = promisify(execFile);
@@ -20,7 +20,7 @@ export async function publishTestPackage(
 	project: string,
 	file: string,
 ): Promise<void> {
-	const out = await mkdtemp(join(tmpdir(), "sfly-test-pkg-"));
+	const out = await makeTempDir("sfly-test-pkg-");
 	try {
 		await run("uv", ["run", "--locked", "--quiet", "sfly", "build", project, "--out", out], {
 			cwd: repoRoot,
@@ -40,7 +40,7 @@ export async function buildStubPackage(
 	version: string,
 	dependencies: string[] = [],
 ): Promise<Uint8Array> {
-	const dir = await mkdtemp(join(tmpdir(), "sfly-stub-build-"));
+	const dir = await makeTempDir("sfly-stub-build-");
 	try {
 		const src = join(dir, "project", "src", name.replace(/-/g, "_"));
 		await mkdir(src, { recursive: true });

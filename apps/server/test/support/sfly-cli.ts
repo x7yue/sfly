@@ -1,9 +1,8 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { DISPLAY_NAME_MAX_LENGTH, nameProblem } from "@sfly/schema";
+import { makeTempDirSync } from "./temp-dir.js";
 
 export const repoRoot = resolve(import.meta.dirname, "../../../..");
 const execFileAsync = promisify(execFile);
@@ -21,7 +20,7 @@ export interface SflyOptions {
 }
 
 /** 没有 agent.env 的空 SFLY_HOME：测试里的命令不读开发机上真实的 ~/.sfly。 */
-const emptyHome = mkdtempSync(join(tmpdir(), "sfly-home-"));
+const emptyHome = makeTempDirSync("sfly-home-");
 
 /**
  * 继承的环境变量里，会影响命令行取值的都去掉：SFLY_*（地址、昵称、SFLY_HOME）、

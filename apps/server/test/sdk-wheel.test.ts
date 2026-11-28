@@ -1,12 +1,12 @@
 // 切入点 A：控制面提供 SDK 运行时 wheel（#1 评审：Agent 只依赖 uv，共享 venv 里的 SDK 由 Agent 从控制面下载安装）。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
 import { FakeAgent } from "./support/fake-agent.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describe("SDK 运行时 wheel", () => {
@@ -16,7 +16,7 @@ describe("SDK 运行时 wheel", () => {
 	const agents: FakeAgent[] = [];
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-sdk-"));
+		dir = await makeTempDir("sfly-sdk-");
 		execFileSync("uv", ["build", "--wheel", "--quiet", "--out-dir", dir, "sdk/python"], {
 			cwd: repoRoot,
 		});

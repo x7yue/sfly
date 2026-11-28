@@ -14,8 +14,7 @@
 // 也没法区分是哪个请求出的错；请求前后比较的办法不改控制面，还看得见「写回同样的值」「取了序列号」和「写了文件」。
 // 覆盖范围和做不到的见 PR 说明。
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { httpContract, NON_GET_READS, type RouteDef, sessionBuildTag } from "@sfly/schema";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -36,6 +35,7 @@ import { createPresetOk } from "./support/presets.js";
 import { persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient, type SseEvent } from "./support/sse-client.js";
 import { publishIntoPublicProject } from "./support/std-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import {
 	diffFootprints,
@@ -164,7 +164,7 @@ describe("声明为只读的接口真的不写库", () => {
 	const arrays = new ArrayCoverage();
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-readonly-"));
+		dir = await makeTempDir("sfly-readonly-");
 		await writeFile(join(dir, WHEEL), "wheel");
 		await writeFile(join(dir, TARBALL), "tarball");
 		await writeFile(join(dir, "agent-x86"), "x86");

@@ -1,11 +1,11 @@
 // 切入点 A：控制面提供 Agent 二进制下载与一键安装脚本 install.sh（ADR 0011）。
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const sha256 = (bytes: string) => createHash("sha256").update(bytes).digest("hex");
@@ -17,7 +17,7 @@ describe("Agent 下载与 install.sh", () => {
 	const arm = "aarch64 的 Agent 二进制";
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-agent-bin-"));
+		dir = await makeTempDir("sfly-agent-bin-");
 		await writeFile(join(dir, "x86"), x86);
 		await writeFile(join(dir, "arm"), arm);
 		cp = await startTestControlPlane({
