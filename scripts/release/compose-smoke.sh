@@ -163,6 +163,9 @@ workbench=$(compose --profile assistant ps -q sfly-workbench)
 docker exec "$workbench" sh -c 'test -x ~/.local/bin/uv && test -f ~/.sfly/.workbench-installed' || fail "uv 或安装标记不在"
 [[ $(docker exec "$workbench" git -C /work rev-list --count HEAD) -ge 1 ]] || fail "工作区没有被提交"
 
+# 工作台到这里的峰值（装 Agent、做完会话）：README「工作台容器的资源」按它定上限（#763）。
+echo "工作台的峰值：内存 $(docker exec "$workbench" cat /sys/fs/cgroup/memory.peak) 字节，进程数 $(docker exec "$workbench" cat /sys/fs/cgroup/pids.peak)"
+
 # ---- 出网名单（#498）----
 # 连 主机:端口，打印 ok 或失败的种类（被拒是 ConnectionRefusedError，不是超时）。
 dial='import socket, sys
@@ -223,5 +226,11 @@ new=$(compose --profile assistant ps -q sfly-workbench)
 [[ $(docker exec "$new" cat /work/probe.txt) == kept ]] || fail "重建之后工作区里的文件不见了"
 [[ $(fingerprint "$new") == "$before" ]] || fail "重建之后 Agent 二进制变了：重装了"
 client ready 300 || fail "重建工作台之后助手没有就绪"
+
+# ---- 工作台的资源上限和不能提权（#763）：起来的容器上真的有，峰值打印出来（README「工作台容器的资源」）----
+limits=$(docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.PidsLimit}} {{json .HostConfig.SecurityOpt}} {{json .HostConfig.CapDrop}}' "$new")
+echo "工作台的上限：$limits"
+[[ $limits == *'"no-new-privileges:true"'* && $limits == *'["ALL"]'* ]] || fail "工作台没有 no-new-privileges 或没有去掉全部能力：$limits"
+[[ $(docker exec "$new" sh -c 'grep NoNewPrivs /proc/self/status') == *1 ]] || fail "工作台里的进程没有 NoNewPrivs"
 
 echo "compose 冒烟通过：docker compose --profile assistant up（sfly ${version}）"

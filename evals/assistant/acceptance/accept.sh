@@ -248,6 +248,9 @@ EOF
 kill "$watcher" 2>/dev/null || true
 watcher=
 compose --profile assistant logs --no-color >"$out/compose.log" 2>&1 || true
+# 工作台这一趟的峰值（README「工作台容器的资源」按它定上限，#763；容器重启过的从重启算起）。
+peak=$(compose --profile assistant ps -q sfly-workbench)
+log "工作台的峰值：内存 $(docker exec "$peak" cat /sys/fs/cgroup/memory.peak) 字节，进程数 $(docker exec "$peak" cat /sys/fs/cgroup/pids.peak)"
 
 # 凭据不能出现在结果里：按值搜密码和 Agent 凭据，按格式搜令牌和登录 Cookie。
 leaked=$(

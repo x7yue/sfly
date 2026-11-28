@@ -123,6 +123,11 @@ services:
     image: ghcr.io/x7yue/sfly-workbench:${SFLY_VERSION:-latest}
     restart: unless-stopped
     init: true
+    # 内存、进程数的上限和不能提权（#763）：数字怎么定见 README「工作台容器的资源」，数字只写在那里。
+    mem_limit: 4g
+    pids_limit: 4096
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
     # 网络命名空间是出网名单那个服务的：compose 等它健康才起，入口脚本自己也等它的规则写好；它重建时工作台跟着重启
     # （共用的网络命名空间随它换）。
     network_mode: service:sfly-workbench-firewall
