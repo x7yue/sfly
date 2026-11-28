@@ -122,7 +122,7 @@ describe("删除副本和迟到的上报", () => {
 		).toBe(2);
 	});
 
-	it("正常结束之后迟到的动作：明细不存、计数；摘要不存（任务已经结束，在准入之前就丢弃，不计数）", async () => {
+	it("正常结束之后迟到的动作：明细不存、计一条；摘要不存、不计数（任务已经结束，在准入之前就丢弃）", async () => {
 		const agent = await connect();
 		const runId = await start();
 		const a = await agent.nextAssign();
@@ -146,16 +146,24 @@ describe("删除副本和迟到的上报", () => {
 			);
 			return { names: details.map((d) => d.name), total: summary?.summary.total };
 		};
+		const dropped = async () => (await runRow(runId)).late_reports_dropped;
 		expect(await stored()).toEqual({ names: ["early call"], total: 1 });
+		expect(await dropped()).toBe(0);
 
+		// 先只发一批迟到的明细（入站消息按顺序处理，sync 之后它已经处理完）：不存，计一条。
 		agent.actions(a, [
 			agent.actionStart(2, `late ${TOKEN}`, now + 2, { fields: { key: TOKEN } }),
 			agent.actionEnd(2, "failed", now + 3, { reason: `late ${TOKEN}` }),
 		]);
+		await agent.sync();
+		expect(await stored()).toEqual({ names: ["early call"], total: 1 });
+		expect(await dropped()).toBe(1);
+
+		// 再发一份迟到的摘要：不存，计数不变（已知边界：摘要是明细的汇总，明细已经计过）。
 		agent.actionSummary(a, { total: 2, reported: 2 });
 		await agent.sync();
-		await eventually(async () => expect((await runRow(runId)).late_reports_dropped).toBe(1));
 		expect(await stored()).toEqual({ names: ["early call"], total: 1 });
+		expect(await dropped()).toBe(1);
 		expect((await api.run(runId)).late_reports_dropped).toBe(1);
 	});
 

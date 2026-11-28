@@ -233,46 +233,6 @@ describe("写入时打码：写进库和日志文件的是掩码，Agent 收到�
 		expect((await api.run(runId)).params).toEqual({ token: MASK, host: "h-1" });
 	});
 
-	it("没有标记的运行中途创建的子流程：参数从库里的列解析，子流程的节点收到原值", async () => {
-		const legacy = orchestration(
-			[
-				[
-					{ id: "entry", kind: "entry", params: [param("token", { secret: true })] },
-					echo("a", { text: "${{ params.token }}" }),
-					spawn("x", { k: "${{ params.token }}", c: "${{ nodes.a.outputs.code }}" }),
-				],
-				[
-					{
-						id: "sub",
-						kind: "subflow_entry",
-						name: "S",
-						params: [param("k", { secret: true }), param("c", { secret: true })],
-					},
-					echo("s1", { text: "got ${{ params.k }} ${{ params.c }}" }),
-				],
-			],
-			[["x", "sub"]],
-		);
-		const runId = await api.triggerOk(await api.orchestrationWith(legacy), { token: TOKEN });
-		const a = await agent.nextAssign();
-		await asLegacyRun(cp, runId);
-		await agent.succeed(a, { url: "u", code: LATE });
-		const s1 = await agent.nextAssign();
-		expect(s1.inputs.text).toBe(`got ${TOKEN} ${LATE}`);
-		const [sub] = await query<{ params: Record<string, unknown> }>(
-			cp,
-			"select params from chain_instances where run_id = $1 and chain_id = 'sub'",
-			[runId],
-		);
-		expect(sub?.params).toEqual({ k: TOKEN, c: LATE });
-		const [run] = await query<{ masked_on_write: boolean; vaults: number }>(
-			cp,
-			"select masked_on_write, (select count(*)::int from run_vaults where run_id = runs.id) as vaults from runs where id = $1",
-			[runId],
-		);
-		expect(run).toEqual({ masked_on_write: false, vaults: 0 });
-	});
-
 	/** 主链 a → b（失败重试一次）→ x 创建子流程（k 取 a 的输出 url，sub 里声明成 secret）→ s1。 */
 	const RESTARTING = orchestration(
 		[
@@ -304,6 +264,48 @@ describe("写入时打码：写进库和日志文件的是掩码，Agent 收到�
 			{ clock: cp.clock },
 		);
 	};
+
+	it("没有标记的运行中途创建的子流程：参数从库里的列解析（重启之后内存和库里都没有副本），子流程的节点收到原值", async () => {
+		const legacy = orchestration(
+			[
+				[
+					{ id: "entry", kind: "entry", params: [param("token", { secret: true })] },
+					echo("a", { text: "${{ params.token }}" }),
+					spawn("x", { k: "${{ params.token }}", c: "${{ nodes.a.outputs.code }}" }),
+				],
+				[
+					{
+						id: "sub",
+						kind: "subflow_entry",
+						name: "S",
+						params: [param("k", { secret: true }), param("c", { secret: true })],
+					},
+					echo("s1", { text: "got ${{ params.k }} ${{ params.c }}" }),
+				],
+			],
+			[["x", "sub"]],
+		);
+		const runId = await api.triggerOk(await api.orchestrationWith(legacy), { token: TOKEN });
+		const a = await agent.nextAssign();
+		await asLegacyRun(cp, runId);
+		// 刚触发时写下的副本还在控制面的内存里：重启之后内存里也没有了，解析只能从库里的列取。
+		await restartWith([a]);
+		await agent.succeed(a, { url: "u", code: LATE });
+		const s1 = await agent.nextAssign();
+		expect(s1.inputs.text).toBe(`got ${TOKEN} ${LATE}`);
+		const [sub] = await query<{ params: Record<string, unknown> }>(
+			cp,
+			"select params from chain_instances where run_id = $1 and chain_id = 'sub'",
+			[runId],
+		);
+		expect(sub?.params).toEqual({ k: TOKEN, c: LATE });
+		const [run] = await query<{ masked_on_write: boolean; vaults: number }>(
+			cp,
+			"select masked_on_write, (select count(*)::int from run_vaults where run_id = runs.id) as vaults from runs where id = $1",
+			[runId],
+		);
+		expect(run).toEqual({ masked_on_write: false, vaults: 0 });
+	});
 
 	it("控制面重启之后重新解析的输入：Agent 收到原值，库里是掩码", async () => {
 		const runId = await api.triggerOk(await api.orchestrationWith(RESTARTING), { token: TOKEN });
