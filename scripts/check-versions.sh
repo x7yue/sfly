@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 手工抄在几处、要保持一致的版本号：每个值只有一处是准的，其余处由这个脚本检查和它一样
-# （`pnpm lint:node`；名字是从只管 Node 主版本时留下的，现在管下面全部）。不一致时报出是哪两处，改哪一处。
+# （`pnpm lint:versions`）。不一致时报出是哪两处，改哪一处。
 #   - Node 主版本只写在 .node-version：其他地方读取它（CI 的 node-version-file、镜像的 NODE_MAJOR、
 #     打包的 esbuild target），package.json 的 engines 与它一致，其他文件里不写死。
 #   - Playwright：以 apps/web/package.json 的 @playwright/test 为准，CI e2e 的镜像标签（vX.Y.Z）与它一致；
@@ -37,7 +37,7 @@ expect_same() {
 		file=$1 regex=$2
 		shift 2
 		if [[ ! -f $file ]]; then
-			echo "${name}：${file} 不存在（文件被删除或改名了？）：改 scripts/check-node-version.sh 里这一处的路径，指向它现在的位置。" >&2
+			echo "${name}：${file} 不存在（文件被删除或改名了？）：改 scripts/check-versions.sh 里这一处的路径，指向它现在的位置。" >&2
 			failed=1
 			continue
 		fi
@@ -47,7 +47,7 @@ expect_same() {
 			if [[ $excused == 1 ]]; then
 				continue
 			elif [[ -z $value ]]; then
-				echo "${name}：读不出 ${where} 里的版本号（正则 ${regex}）：改 scripts/check-node-version.sh 里的正则。" >&2
+				echo "${name}：读不出 ${where} 里的版本号（正则 ${regex}）：改 scripts/check-versions.sh 里的正则。" >&2
 				failed=1
 			elif [[ -z $ref_where ]]; then
 				ref_where=$where ref_value=$value
@@ -57,7 +57,7 @@ expect_same() {
 			fi
 		done < <(places "$file" "$regex")
 		if ((!found)); then
-			echo "${name}：在 ${file} 里找不到匹配 ${regex} 的行：文件里的写法变了，改 scripts/check-node-version.sh 里的正则。" >&2
+			echo "${name}：在 ${file} 里找不到匹配 ${regex} 的行：文件里的写法变了，改 scripts/check-versions.sh 里的正则。" >&2
 			failed=1
 		fi
 	done

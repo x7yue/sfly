@@ -1,7 +1,6 @@
 // 对象和数组类型的 secret 参数，以及字符串、数字、布尔类型的 secret 参数（#479）：按 docs/SEMANTICS.md §2.1 的六条规则，
 // 运行视图、列表、事件流、日志、动作里不出现它们的值（对象里不少于 4 个字符的叶子按值打码，更短的叶子只在整个对象被原样写出时
 // 随整段盖住），secret 参数本身整个换成掩码；节点收到的输入仍是原值；打码不改变没有被打码的值的类型。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // HTTP API + SSE + 假 Agent + 真实 PostgreSQL。值都是明显的假值。
 import { runsApi } from "@sfly/schema";
 import { describe, expect, it, vi } from "vitest";

@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from sfly.cli.build import METADATA_FILE, load_project, package_metadata, validate_metadata
+from sfly.cli.dev_version import DEV_VERSION
 from sfly.cli.wheel import build_wheel
 
-DEV_VERSION = "dev"
 SOCKET_FILE = "agent.sock"
 
 

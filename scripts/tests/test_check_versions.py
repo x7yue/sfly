@@ -1,4 +1,4 @@
-"""手工保持一致的版本号检查（scripts/check-node-version.sh，`pnpm lint:node`）。
+"""手工保持一致的版本号检查（scripts/check-versions.sh，`pnpm lint:versions`）。
 
 脚本最初只管 Node 主版本，现在管所有「手工抄在几处、要保持一致」的版本号：Node 主版本、
 Playwright 版本（CI 的镜像标签与 @playwright/test）、Python 版本（三处）、PostgreSQL 镜像（多处）。
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = "scripts/check-node-version.sh"
+SCRIPT = "scripts/check-versions.sh"
 FILES = [
     SCRIPT,
     ".node-version",

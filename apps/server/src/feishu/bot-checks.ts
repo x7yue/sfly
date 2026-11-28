@@ -71,3 +71,26 @@ export async function checkFeishuBots(
 			node_id: nodeId,
 		}));
 }
+
+export interface RunNotificationBotWarning {
+	code: "run_notification_bot_not_registered";
+	message: string;
+}
+
+/**
+ * 运行通知设置的机器人（`bot`，null 是关闭）不是这个项目里登记的时的警告：保存设置和触发前的预检里给，不阻断触发（#501）。
+ * 通知不会拦住运行：运行结束时机器人还不在，照旧记「未发送」（ADR 0020）。
+ */
+export async function runNotificationBotWarnings(
+	db: Db | Tx,
+	project: ProjectId,
+	bot: string | null,
+): Promise<RunNotificationBotWarning[]> {
+	if (bot === null || (await registeredBots(db, project, [bot])).has(bot)) return [];
+	return [
+		{
+			code: "run_notification_bot_not_registered",
+			message: `运行通知要发给的${feishuBotGone(bot)}：运行结束时不会发送，运行照常`,
+		},
+	];
+}
