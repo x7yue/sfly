@@ -294,6 +294,19 @@ import {
  */
 
 /**
+ * 助手服务的全部路由（上表的「命令」一列，`:id` 是会话 ID）：`apps/assistant/src/server.ts` 只认这些，别的是 404；
+ * 文档里手写的接口按它对照（`scripts/doc_routes.py`，#802）。
+ */
+export const ASSISTANT_ROUTES = [
+	"POST /sessions/:id/prompt",
+	"POST /sessions/:id/steer",
+	"POST /sessions/:id/abort",
+	"POST /sessions/:id/end",
+	"GET /events",
+	"GET /health",
+] as const;
+
+/**
  * 助手服务结束 pi 进程时的宽限（毫秒）：先关 pi 的输入、发 SIGTERM，等进程自己退出，**宽限到了还没退出才 SIGKILL**；
  * 这一轮的 `turn_end` 在进程退出**之后**才发。#544 之前停止一轮就是直接走这一步，收到 `abort` 之后结局最晚在这么久
  * （外加命令往返）之后带回；#544 起停止先用 pi 的 `abort`，等 {@link ASSISTANT_ABORT_SETTLE_MS} 没有结果才走这一步

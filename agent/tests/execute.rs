@@ -280,6 +280,7 @@ async fn connects_once_the_control_plane_becomes_reachable() {
         &format!("http://127.0.0.1:{port}"),
         "agent-late",
     ));
+    #[allow(clippy::disallowed_methods)] // 造场景：Agent 先启动、控制面过一会儿才起来
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
     let cp = FakeControlPlane::start_on(port).await;
@@ -294,6 +295,7 @@ async fn result_of_a_task_finishing_while_disconnected_is_reported_after_reconne
 
     cp.assign(stub_task("task-slow", "sleep", json!({ "seconds": 1.0 })))
         .await;
+    #[allow(clippy::disallowed_methods)] // 造场景：任务执行到一半时断开
     tokio::time::sleep(Duration::from_millis(300)).await;
     cp.end_session();
 
@@ -474,6 +476,8 @@ async fn the_task_token_reaches_the_executor_only_as_an_environment_variable() {
         "{logs:?}"
     );
     // Agent 自己的标准错误里没有。
+    #[allow(clippy::disallowed_methods)]
+    // 确认某件事没有发生：给 Agent 一点时间写标准错误，再看里面没有凭据
     tokio::time::sleep(Duration::from_millis(200)).await;
     let everything = stderr.lock().unwrap().join("\n");
     assert!(!everything.contains("sfly_tsk_"), "{everything}");

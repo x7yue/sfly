@@ -117,15 +117,16 @@ describe("Agent 连接时的身份", () => {
 			expect(await registered()).toEqual([]);
 		});
 
-		it("吊销凭据：用它连着的连接立即断开；别的凭据的连接不受影响", async () => {
+		it("吊销凭据：用它连着的连接立即断开，吊销返回时已是离线；别的凭据的连接不受影响", async () => {
 			await start();
 			const first = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "worker-1");
 			const other = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "worker-2");
 			const a = await connect("worker-1", first.token);
 			const b = await connect("worker-2", other.token);
 			await cp.current.agentCredentials.revoke(DEFAULT_PROJECT, "worker-1", first.credential.id);
+			// 吊销返回时已经记为离线：控制台吊销之后马上重读 Agent 列表，不等连接的流结束。
+			expect((await row("worker-1")).status).toBe("offline");
 			await eventually(async () => expect(a.ended).toBe(true));
-			await eventually(async () => expect((await row("worker-1")).status).toBe("offline"));
 			expect(b.ended).toBe(false);
 			expect((await row("worker-2")).status).toBe("online");
 		});
@@ -227,12 +228,12 @@ describe("Agent 连接时的身份", () => {
 			expect((await row("worker-1")).status).toBe("online");
 		});
 
-		it("停用一台正连着的 Agent：立即断开连接", async () => {
+		it("停用一台正连着的 Agent：立即断开连接，停用返回时已是离线", async () => {
 			await start();
 			const agent = await connect("worker-1", await issue("worker-1"));
 			expect(await toggle("worker-1", "disable")).toBe(204);
+			expect((await row("worker-1")).status).toBe("offline");
 			await eventually(async () => expect(agent.ended).toBe(true));
-			await eventually(async () => expect((await row("worker-1")).status).toBe("offline"));
 			expect((await row("worker-1")).disabled_at).not.toBeNull();
 		});
 	});

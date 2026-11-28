@@ -22,7 +22,7 @@ use sfly_agent::proto::{
     server_message,
 };
 use support::packages::{HttpFixture, fresh_venv, sha256_hex, venv_of};
-use support::{FakeControlPlane, Received, repo_root, stub_task, stub_venv};
+use support::{FakeControlPlane, Received, repo_root, stub_task, stub_venv, wait_for_path};
 
 /// 以 `program`（真实 Agent 二进制或它的副本）启动 Agent，SFLY_HOME 为 `home`，上报版本 1.0.0。
 fn agent(program: &Path, home: &Path, cp: &FakeControlPlane) -> tokio::process::Command {
@@ -86,6 +86,8 @@ impl Start for tokio::process::Command {
         for _ in 0..50 {
             match self.spawn() {
                 Err(error) if error.raw_os_error() == Some(26) => {
+                    #[allow(clippy::disallowed_methods)]
+                    // 可执行文件刚写完时 spawn 可能 ETXTBSY：隔一会儿再试
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 spawned => return spawned.unwrap(),
@@ -185,19 +187,6 @@ fn bin_entries(home: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
-}
-
-/// 等文件出现。
-async fn wait_for_file(path: &Path) {
-    let deadline = tokio::time::Instant::now() + support::WAIT;
-    while !path.exists() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "{} 没有出现",
-            path.display()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 #[tokio::test]
@@ -346,7 +335,7 @@ async fn self_update_downloads_first_then_drains_until_results_are_acked_then_re
         json!({ "ready_file": ready, "release_file": release }),
     ))
     .await;
-    wait_for_file(&ready).await;
+    wait_for_path(&ready).await;
 
     // 控制面升级：重连后 Welcome 给出新的目标版本；下载先慢一点，能看到「下载中」。
     let new = new_binary();
@@ -482,7 +471,7 @@ async fn holding_a_task_when_the_control_plane_upgrades(
         json!({ "ready_file": dir.join("ready"), "report_file": dir.join("report") }),
     ))
     .await;
-    wait_for_file(&dir.join("ready")).await;
+    wait_for_path(&dir.join("ready")).await;
 
     let new = new_binary();
     offer_binary(&cp, &http, new.clone(), &sha256_hex(&new), delay);
@@ -1118,7 +1107,7 @@ async fn when_execve_fails_the_old_version_is_restored_and_the_agent_exits_with_
         json!({ "ready_file": ready, "release_file": release }),
     ))
     .await;
-    wait_for_file(&ready).await;
+    wait_for_path(&ready).await;
 
     // 「新版本」是一个脚本：试运行时解释器还在，等任务期间被删掉，于是 execve 失败（ENOENT）。
     let interpreter = dir.path().join("interpreter");
