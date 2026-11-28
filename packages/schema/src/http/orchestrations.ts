@@ -12,7 +12,7 @@ import { removedFieldsMessage, removedFieldsWithContent } from "../removed-docum
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
 import { EditOperations } from "../scenario-edits.js";
 import { SessionRef } from "../sessions.js";
-import { endpoint, Timestamp } from "./contract.js";
+import { endpoint, ProjectParams, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
 /**
@@ -479,12 +479,13 @@ export const orchestrationsApi = {
 	/** 场景列表，按新建时间从新到旧；archived_count 是已归档场景的总数（不受其他筛选影响）。 */
 	list: endpoint({
 		method: "GET",
-		path: "/orchestrations",
+		path: "/projects/:project/orchestrations",
 		summary: "列出场景，可按名称、状态、Agent 筛选",
 		effect: "read",
 		resource: { kind: "scenario", target: "collection" },
 		client: true,
 		key: ["orchestrations", "list"],
+		params: ProjectParams,
 		query: ListOrchestrationsQuery,
 		response: z.object({
 			orchestrations: z.array(OrchestrationSummary),
@@ -741,12 +742,13 @@ export const orchestrationsApi = {
 	/** 新建场景（自带入口节点：还没有版本时编辑起点是只含入口节点的初始文档）。 */
 	create: endpoint({
 		method: "POST",
-		path: "/orchestrations",
+		path: "/projects/:project/orchestrations",
 		summary: "新建一个场景",
 		effect: "write",
 		resource: { kind: "scenario", target: "collection" },
 		client: true,
 		key: ["orchestrations", "create"],
+		params: ProjectParams,
 		body: z.strictObject({
 			/** 场景名称。 */
 			name: Name,
@@ -804,7 +806,13 @@ export const orchestrationsApi = {
 				? { code: "invalid_request", message: runNotificationTriggerRemovedMessage }
 				: undefined;
 		},
-		response: OrchestrationView,
+		response: OrchestrationView.extend({
+			/**
+			 * 修改以后的运行通知设置的问题，只提示、不阻止保存（#501）：要发给的机器人不是这个项目里登记的时，
+			 * 一条 `run_notification_bot_not_registered`。触发前的预检在 `warnings` 里给同一条，不阻断触发。
+			 */
+			warnings: z.array(z.object({ code: z.string(), message: z.string() })),
+		}),
 	}),
 	/**
 	 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，

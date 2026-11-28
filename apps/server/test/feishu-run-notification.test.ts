@@ -979,7 +979,7 @@ describe("运行通知", () => {
 			const id = await scenario(single());
 			const runId = await runEnding(id, "failed");
 			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const removed = await cp.fetch("/feishu-bots/ops", {
+			const removed = await cp.fetch("/projects/default/feishu-bots/ops", {
 				method: "DELETE",
 				headers: { ...actAs("tester") },
 			});
@@ -1005,7 +1005,7 @@ describe("运行通知", () => {
 		it("机器人在运行结束时已经不存在：触发不被拦截，运行详情里是「未发送：机器人已删除」", async () => {
 			await api.createFeishuBot("gone", feishu.webhookUrl("gone-token"));
 			const id = await scenario(single(), { bot: "gone", trigger: "failed_or_cancelled" });
-			const removed = await cp.fetch("/feishu-bots/gone", {
+			const removed = await cp.fetch("/projects/default/feishu-bots/gone", {
 				method: "DELETE",
 				headers: { ...actAs("tester") },
 			});
@@ -1020,6 +1020,56 @@ describe("运行通知", () => {
 			});
 			expect((await api.run(runId)).status).toBe("failed");
 			expect(feishu.requests).toHaveLength(0);
+		});
+	});
+
+	describe("设置里的机器人不是本项目登记的：保存和预检时提醒，不阻断触发（#501）", () => {
+		const warn = (bot: string) => [
+			{
+				code: "run_notification_bot_not_registered",
+				message: `运行通知要发给的飞书机器人「${bot}」还没有登记或已被删除：运行结束时不会发送，运行照常`,
+			},
+		];
+		const save = async (id: string, settings: Record<string, unknown>) => {
+			const res = await api.patch(`/orchestrations/${id}`, { run_notification: settings });
+			expect(res.status).toBe(200);
+			return ((await res.json()) as { warnings: unknown[] }).warnings;
+		};
+
+		it("保存设置的响应带警告：没登记过的、别的项目的机器人一样写；本项目的、关闭通知、只改别的项时没有", async () => {
+			const id = await api.orchestrationWith(single(), "订单压测");
+			expect(await save(id, { bot: "ghost" })).toEqual(warn("ghost"));
+			expect(await save(id, { title: "夜间" })).toEqual(warn("ghost"));
+
+			await api.createFeishuBot("ops-alpha", feishu.webhookUrl("tok-alpha"));
+			const sql = new pg.Client({ connectionString: cp.database.url });
+			await sql.connect();
+			await sql.query(
+				"insert into projects (id, display_name, created_at) values ('alpha', '项目乙', now())",
+			);
+			await sql.query("update feishu_bots set project_id = 'alpha' where name = 'ops-alpha'");
+			await sql.end();
+			expect(await save(id, { bot: "ops-alpha" })).toEqual(warn("ops-alpha"));
+
+			expect(await save(id, { bot: "ops" })).toEqual([]);
+			expect(await save(id, { bot: null })).toEqual([]);
+		});
+
+		it("预检里是警告，不在不能触发的原因里；触发照常，运行结束时记「未发送」", async () => {
+			const id = await scenario(single(), { bot: "ghost", trigger: "failed_or_cancelled" });
+			const preflight = (await (await api.get(`/orchestrations/${id}/preflight`)).json()) as {
+				problems: unknown[];
+				warnings: unknown[];
+			};
+			expect(preflight.problems).toEqual([]);
+			expect(preflight.warnings).toEqual(warn("ghost"));
+
+			const runId = await runEnding(id, "failed");
+			expect((await api.run(runId)).run_notification).toEqual({
+				status: "not_sent",
+				bot: "ghost",
+				reason: "机器人已删除",
+			});
 		});
 	});
 

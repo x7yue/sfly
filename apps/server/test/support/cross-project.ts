@@ -110,7 +110,7 @@ function paramValue(def: RouteDef, name: string, victim: Victim): string {
 
 /** 请求体样本：每个有请求体的写接口一个，写成能通过契约校验的样子（测试检查）。上传是原始字节。 */
 const JSON_BODIES: Record<string, unknown> = {
-	"POST /orchestrations": { name: "新场景" },
+	"POST /projects/:project/orchestrations": { name: "新场景" },
 	"POST /orchestrations/:id/versions": {
 		base_version: 1,
 		document: { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },
@@ -133,8 +133,8 @@ const JSON_BODIES: Record<string, unknown> = {
 	"POST /orchestrations/:id/edits/check": {
 		operations: [{ op: "set", node: "entry", field: "display_name", value: "开始" }],
 	},
-	"POST /feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
-	"PATCH /feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
+	"POST /projects/:project/feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
+	"PATCH /projects/:project/feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
 	"POST /projects/:project/tokens": { name: "新令牌", scopes: ["read"] },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },
 	"POST /orchestrations/:id/presence/leave": { session_id: "s1" },
@@ -153,8 +153,8 @@ const NO_BODY = new Set([
 	"DELETE /orchestrations/:id/presets/:presetId",
 	"POST /runs/:id/cancel",
 	"POST /projects/:project/agents/:name/update-now",
-	"DELETE /feishu-bots/:name",
-	"POST /feishu-bots/:name/test",
+	"DELETE /projects/:project/feishu-bots/:name",
+	"POST /projects/:project/feishu-bots/:name/test",
 	"DELETE /projects/:project/tokens/:id",
 	"POST /projects/:project/agents/:name/credentials",
 	"DELETE /projects/:project/agents/:name/credentials/:id",

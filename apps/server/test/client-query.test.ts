@@ -72,15 +72,24 @@ describe("API 客户端查询测试控制面", () => {
 	});
 
 	it("列出场景，并按名称、最近运行的状态、引用的 Agent 筛选", async () => {
-		const all = await client.orchestrations.list();
+		const all = await client.orchestrations.list({ params: { project: "default" } });
 		expect(all.orchestrations.map((o) => o.name).sort()).toEqual(["回归", "巡检"]);
 		expect(all.archived_count).toBe(0);
 
-		const byName = await client.orchestrations.list({ query: { q: "巡" } });
+		const byName = await client.orchestrations.list({
+			params: { project: "default" },
+			query: { q: "巡" },
+		});
 		expect(byName.orchestrations.map((o) => o.id)).toEqual([seeded.scenarioId]);
-		const byStatus = await client.orchestrations.list({ query: { status: "success" } });
+		const byStatus = await client.orchestrations.list({
+			params: { project: "default" },
+			query: { status: "success" },
+		});
 		expect(byStatus.orchestrations.map((o) => o.id)).toEqual([seeded.scenarioId]);
-		const byAgent = await client.orchestrations.list({ query: { agent: "agent-b" } });
+		const byAgent = await client.orchestrations.list({
+			params: { project: "default" },
+			query: { agent: "agent-b" },
+		});
 		expect(byAgent.orchestrations.map((o) => o.id)).toEqual([idle]);
 	});
 
@@ -104,11 +113,17 @@ describe("API 客户端查询测试控制面", () => {
 	});
 
 	it("列出运行并按场景、状态筛选，读运行详情", async () => {
-		const { runs } = await client.runs.list();
+		const { runs } = await client.runs.list({ params: { project: "default" } });
 		expect(runs.map((r) => r.id)).toEqual([seeded.runId]);
-		const byScenario = await client.runs.list({ query: { orchestration_id: idle } });
+		const byScenario = await client.runs.list({
+			params: { project: "default" },
+			query: { orchestration_id: idle },
+		});
 		expect(byScenario.runs).toEqual([]);
-		const failed = await client.runs.list({ query: { status: "failed" } });
+		const failed = await client.runs.list({
+			params: { project: "default" },
+			query: { status: "failed" },
+		});
 		expect(failed.runs).toEqual([]);
 		const forScenario = await client.runs.listForOrchestration({
 			params: { id: seeded.scenarioId },
@@ -203,12 +218,12 @@ describe("API 客户端查询测试控制面", () => {
 	});
 
 	it("读控制台统计、健康检查和飞书机器人", async () => {
-		const dashboard = await client.dashboard.get();
+		const dashboard = await client.dashboard.get({ params: { project: "default" } });
 		expect(dashboard.runs).toMatchObject({ success: 1, failed: 0 });
 		expect(dashboard.agents).toMatchObject({ online: 0, offline: 2 });
 
 		expect(await client.system.health()).toMatchObject({ status: "ok", database: "ok" });
-		expect((await client.feishuBots.list()).bots).toEqual([]);
+		expect((await client.feishuBots.list({ params: { project: "default" } })).bots).toEqual([]);
 	});
 
 	it("必填的输入不能省略：类型检查报错，运行时抛出 TypeError 而不发请求", async () => {

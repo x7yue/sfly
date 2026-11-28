@@ -114,7 +114,10 @@ export async function dashboardView(
 			online: online.length,
 			offline: agents.length - online.length,
 			slots: online.reduce((sum, a) => sum + a.info.slots, 0),
-			used_slots: online.reduce((sum, a) => sum + a.running_tasks.length, 0),
+			used_slots: online.reduce(
+				(sum, a) => sum + a.running_tasks.length + a.other_project_running,
+				0,
+			),
 		},
 		setup: await setupSummary(db, project),
 	};

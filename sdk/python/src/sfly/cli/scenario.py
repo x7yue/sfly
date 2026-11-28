@@ -71,7 +71,9 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:
-    listing = session.client.get("/orchestrations", {"q": args.search, "agent": args.agent})
+    listing = session.client.get(
+        session.client.in_project("/orchestrations"), {"q": args.search, "agent": args.agent}
+    )
     summaries = listing["orchestrations"]
     shown, hidden = apply_limit(summaries, args.limit)
     rows = [

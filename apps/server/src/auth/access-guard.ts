@@ -9,7 +9,6 @@ import { type RouteDef, TOKEN_PREFIXES } from "@sfly/schema";
 import type { Clock } from "../clock.js";
 import type { ProjectRole } from "../db/schema.js";
 import {
-	DEFAULT_PROJECT,
 	type ProjectId,
 	PUBLIC_PROJECT,
 	parseProjectId,
@@ -287,9 +286,7 @@ export class AccessGuard {
 		// 这次写的是公共项目吗：只看路径里的项目，不读库。按 ID 定位的资源（场景、运行、会话…）要读库才知道它在哪个项目里：
 		// 带了凭据的在 `#checkScoped` 里判，不带凭据和共享令牌的这里没有判（到 #494 强制登录之后它们都带凭据）。
 		const named =
-			locator.from === "path" && locator.param !== null
-				? parseProjectId(request.params[locator.param] ?? "")
-				: undefined;
+			locator.from === "path" ? parseProjectId(request.params[locator.param] ?? "") : undefined;
 		const publicWrite = writesPublicProject(named, request.route);
 		if (presented === undefined) {
 			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
@@ -500,7 +497,7 @@ export class AccessGuard {
 		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
 		named: ProjectId | undefined,
 	): Promise<AccessResult> {
-		if (locator.from !== "path" || locator.param === null) return { ok: true, access: null };
+		if (locator.from !== "path") return { ok: true, access: null };
 		if (named === undefined || !(await this.deps.store.projectExists(named))) return notFound();
 		return { ok: true, access: null };
 	}
@@ -514,7 +511,6 @@ export class AccessGuard {
 		memo: Memo = {},
 	): Promise<ProjectId | undefined> {
 		if (locator.from === "path") {
-			if (locator.param === null) return DEFAULT_PROJECT;
 			const value = params[locator.param];
 			return value === undefined ? undefined : parseProjectId(value);
 		}
