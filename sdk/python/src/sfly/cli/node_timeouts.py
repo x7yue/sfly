@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from sfly.cli.client import ApiError, Client, segment
+from sfly.cli.dev_version import DEV_VERSION
 from sfly.cli.value_text import value_text
 
 #: 平台默认的超时（秒）。
@@ -138,7 +139,7 @@ def declared_timeouts(client: Client, document: dict[str, Any]) -> dict[str, int
             continue
         nodes = (
             dev_nodes(node["package"], node.get("agent") or default_agent)
-            if version == "dev"
+            if version == DEV_VERSION
             else published_nodes(node["package"], version)
         )
         found = next(

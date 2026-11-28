@@ -1,4 +1,4 @@
-import { nameBeforeId } from "@sfly/orchestration";
+import { type ErrorKind, nameBeforeId } from "@sfly/orchestration";
 import {
 	type AttemptView,
 	artifactsApi,
@@ -113,7 +113,8 @@ const levelsFrom = (min: MinLevel): LogLineView["level"][] =>
 const DEFAULT_HEIGHT = `clamp(${PANEL_FLOOR}px, calc((100dvh - ${MONITOR_TOPBAR_HEIGHT}px) * 0.28), 320px)`;
 const COLLAPSED_HEIGHT = 37;
 
-const ERROR_KIND_LABEL: Record<string, string> = {
+// 控制面可能报出这里还不认识的种类（接口里是字符串），没有标签时照写种类。
+const ERROR_KIND_LABEL: Record<ErrorKind, string> = {
 	node_error: "节点错误",
 	timeout: "超时",
 	agent_lost: "Agent 断线",
@@ -826,7 +827,9 @@ function AttemptsTab({
 							<div className="mt-2">
 								<div className="flex items-center gap-2">
 									<Badge variant="danger" title={untrustedPlain(a.error.kind)}>
-										<UntrustedText text={ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind} />
+										<UntrustedText
+											text={ERROR_KIND_LABEL[a.error.kind as ErrorKind] ?? a.error.kind}
+										/>
 										<code className="font-mono">
 											<UntrustedText text={a.error.kind} />
 										</code>
