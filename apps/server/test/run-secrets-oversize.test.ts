@@ -1,10 +1,12 @@
 // secret 值太多的运行，整个运行看得到原因（#657）：运行视图（`GET /runs/:id`）和运行摘要（`GET /runs/:id/summary`）有 `secrets_oversize`：
 // 为 true 时这次运行里要打码的内容整段盖住，使用者据此知道为什么看到的全是 `******`；不含任何值。真实的控制面和假 Agent；值都是假值。
+// 这里的运行都改成写入时打码（#505）之前的样子（`LegacyRunsApi`）：测的是没有标记的运行在读取时打码；带标记的见 write-masking.test.ts。
 import { SECRET_MASK as MASK } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApiClient } from "./support/api-client.js";
+import type { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishBench } from "./support/focus-items.js";
+import { LegacyRunsApi } from "./support/legacy-run.js";
 import { withSecretLimits } from "./support/secret-limits.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -15,7 +17,7 @@ describe("运行视图和运行摘要里的 secrets_oversize", () => {
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
-		api = new ApiClient(cp);
+		api = new LegacyRunsApi(cp);
 		await publishBench(cp);
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
 	});

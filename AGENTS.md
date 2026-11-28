@@ -16,7 +16,7 @@ Issues are tracked in GitHub Issues for `x7yue/sfly`. See `docs/agents/issue-tra
 
 ### Triage labels
 
-Five triage labels plus the roadmap labels `roadmap`, `merged-to-dev` and `needs-decision`. See `docs/agents/triage-labels.md`.
+Five triage labels, the roadmap labels `roadmap`, `merged-to-dev` and `needs-decision`, and `later` for deferred work (it replaces the status label). See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 

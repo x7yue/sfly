@@ -7,13 +7,13 @@ set -uo pipefail
 VERIFY_ROOT=${SFLY_VERIFY_ROOT:-$HOME/.local/state/sfly-verify}
 RUN=$(readlink -f "${1:-$VERIFY_ROOT/current}")
 [[ -f $RUN/state.env ]] || { echo "[down] 没有 $RUN/state.env" >&2; exit 1; }
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091 # state.env 是 up.sh 运行时写的，检查时不存在
 source "$RUN/state.env"
 
 agent-browser --session "$BROWSER_SESSION" close >/dev/null 2>&1 || true
 
 for pgid in $AGENT_PGID $SERVER_PGID; do
-	[[ -n $pgid ]] && kill -0 "$pgid" 2>/dev/null || continue
+	if [[ -z $pgid ]] || ! kill -0 "$pgid" 2>/dev/null; then continue; fi
 	kill -TERM -- "-$pgid" 2>/dev/null
 	for _ in $(seq 20); do kill -0 "$pgid" 2>/dev/null || break; sleep 0.5; done
 	kill -KILL -- "-$pgid" 2>/dev/null || true

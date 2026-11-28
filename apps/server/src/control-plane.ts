@@ -38,6 +38,8 @@ import { loadClientTarballs } from "./downloads/client-tarballs.js";
 import { createAssignContent } from "./engine/assign-content.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
+import { Releases } from "./engine/released.js";
+import { WriteMasking } from "./engine/write-masking.js";
 import { EngineNotifications } from "./feishu/engine-notifications.js";
 import { FeishuBots } from "./feishu/feishu-bots.js";
 import { FeishuClient } from "./feishu/feishu-client.js";
@@ -61,6 +63,9 @@ import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
+import { RunSecrets } from "./secrets/run-secrets.js";
+import { RunVaults } from "./secrets/run-vault.js";
+import { openVaultKey } from "./secrets/vault-key.js";
 import { AssistantClient } from "./sessions/assistant-client.js";
 import { assistantSetup } from "./sessions/assistant-config.js";
 import { AssistantConnection } from "./sessions/assistant-connection.js";
@@ -289,8 +294,12 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		},
 	);
 
+	let runSecrets: RunSecrets;
 	try {
 		await database.migrate();
+		// 钥匙文件对不上就拒绝启动：放在迁移之后、任何别的写库（共享令牌、引擎恢复）之前，失败的启动不改动运行和任务。
+		await mkdir(options.dataDir, { recursive: true });
+		runSecrets = new RunSecrets(new RunVaults(await openVaultKey(options.dataDir, database.db)));
 		// 共享令牌登记成默认项目的旧式 Agent 凭据（ADR 0029）。
 		await registerSharedAgentToken(database.db, clock, options.agentToken);
 	} catch (error) {
@@ -362,11 +371,15 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	}
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
-	const preflight = createPreflight({ version });
+	// 控制台里运行页的链接：配置了对外地址时是完整的地址，否则是路径（#449 的说明里用）。
+	const runLink = (runId: string) =>
+		`${options.publicHttpUrl?.replace(/\/+$/, "") ?? ""}/runs/${runId}`;
+	const preflight = createPreflight({ version, now: () => clock.now(), runLink });
 	const logs = new TaskLogs({
 		db: database.db,
 		clock,
 		dataDir: options.dataDir,
+		runSecrets,
 		limitBytes: options.logLimitBytes,
 	});
 	// 控制面直接向飞书机器人的 Webhook 地址发请求（ADR 0020），不经代理。
@@ -396,13 +409,23 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		retentionDays: options.metricRetentionDays,
 	});
 	const metrics = new TaskMetrics({
+		secrets: (runId, work) => logs.withRunSecrets(runId, work),
 		db: database.db,
 		clock,
 		retention: metricRetention,
 		limitBytes: options.metricLimitBytes,
 	});
 	const metricQueries = new MetricQueries({ db: database.db, clock, metrics });
+	const releases = new Releases({
+		db: database.db,
+		clock,
+		secrets: runSecrets,
+		onError: logError,
+	});
 	const engine = new Engine({
+		masking: new WriteMasking(runSecrets),
+		releases,
+		runLink,
 		db: database.db,
 		clock,
 		mutex,
@@ -471,6 +494,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 		purgeWaitMs: options.purgeWaitMs,
+		deletingVault: (runId, work) => runSecrets.deleting(runId, work),
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);
@@ -503,7 +527,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			.catch((error) => logError("sfly: 用户停用时断开他的开发 Agent 失败", error));
 	});
 	try {
-		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({
 			accounts,
 			setupCode,
@@ -762,6 +785,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		// 还是在做的：中止已经发出，助手服务带回结局就照常收下，带不回来由兜底结束（#545）。
 		await sessionService.close();
 		await retention.idle();
+		await releases.idle();
 		await metricRetention.idle();
 		hub.closeAll();
 		await gateway.close();

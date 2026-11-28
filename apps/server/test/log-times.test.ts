@@ -44,10 +44,12 @@ describe("日志和进度的两种时间", () => {
 	const streams: SseClient[] = [];
 
 	/** 新版本 Agent：Hello 带 Agent 时间和单调时钟读数。 */
-	const connect = async (agentTime = AGENT_T0, monotonicMs = M0) => {
+	/** `holding`：重连时 Hello 里列出的、手上还在执行的任务。 */
+	const connect = async (agentTime = AGENT_T0, monotonicMs = M0, holding: AssignedTask[] = []) => {
 		const agent = await FakeAgent.connect(cp.grpcUrl, {
 			name: "agent-a",
 			...agentClock(agentTime, monotonicMs),
+			runningTasks: holding.map((t) => ({ taskId: t.taskId, attempt: t.attempt, started: true })),
 		});
 		agents.push(agent);
 		return agent;
@@ -86,7 +88,8 @@ describe("日志和进度的两种时间", () => {
 
 	beforeEach(async () => {
 		clock = new ManualClock(iso(T0));
-		cp = await startTestControlPlane({ clock });
+		// 租约放长：断线的那一分钟里任务不判 agent_lost（判了之后重连时被放弃，排队的日志晚到就丢弃，#505）。
+		cp = await startTestControlPlane({ clock, leaseMs: 600_000 });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 	});
@@ -177,7 +180,7 @@ describe("日志和进度的两种时间", () => {
 			// 断线 60 秒；期间 Agent 在第 20、40 秒各读到一行，Agent 时间在中途被往回改了一天。
 			await agent.disconnect();
 			clock.advance(60_000);
-			agent = await connect(AGENT_T0 - 86_400_000 + 60_000, M0 + 60_000);
+			agent = await connect(AGENT_T0 - 86_400_000 + 60_000, M0 + 60_000, [task]);
 			agent.logs(task, [
 				line(2, AGENT_T0 + 20_000, M0 + 20_000),
 				line(3, AGENT_T0 - 86_400_000 + 40_000, M0 + 40_000),

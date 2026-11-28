@@ -2,7 +2,7 @@ import { cp as copy, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import { defaultMigrationsDir } from "../../src/db/database.js";
+import { defaultMigrationsDir, openDatabase } from "../../src/db/database.js";
 
 /** drizzle 迁移文件里语句之间的分隔。 */
 export const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
@@ -98,6 +98,43 @@ export async function dropStartupStubs(databaseUrl: string): Promise<void> {
 		await client.query('drop table "agent_credentials"');
 		await client.query('drop table "users"');
 		await client.query('drop table "projects"');
+	} finally {
+		await client.end();
+	}
+}
+
+const VAULT_MIGRATION = "0044_run_vaults";
+const VAULT_STUB = "sfly-test-stub";
+
+/**
+ * 当前的控制面启动时要读加密副本的两张表（`secrets/vault-key.ts`）。在没有这条迁移的旧迁移目录上启动时，先按这个目录迁移，
+ * 再补两张带标记的占位表；换回有这条迁移的目录之前删掉占位，由真正的迁移来建。
+ */
+export async function prepareVaultTables(
+	databaseUrl: string,
+	dir: string | undefined,
+): Promise<void> {
+	const journal = JSON.parse(
+		await readFile(join(dir ?? defaultMigrationsDir, "meta", "_journal.json"), "utf8"),
+	) as { entries: { tag: string }[] };
+	const client = new pg.Client({ connectionString: databaseUrl });
+	await client.connect();
+	try {
+		const { rows } = await client.query<{ stub: boolean }>(
+			"select coalesce(obj_description(to_regclass('public.vault_key'), 'pg_class') = $1, false) as stub",
+			[VAULT_STUB],
+		);
+		if (rows[0]?.stub) await client.query('drop table "run_vaults"; drop table "vault_key"');
+		if (journal.entries.some((e) => e.tag === VAULT_MIGRATION) || dir === undefined) return;
+		const opened = openDatabase(databaseUrl, () => {}, dir);
+		try {
+			await opened.migrate();
+		} finally {
+			await opened.close();
+		}
+		await client.query(`CREATE TABLE "vault_key" ("id" smallint PRIMARY KEY DEFAULT 1, "fingerprint" text NOT NULL);
+			CREATE TABLE "run_vaults" ("run_id" uuid PRIMARY KEY, "sealed" bytea NOT NULL);
+			COMMENT ON TABLE "vault_key" IS '${VAULT_STUB}'`);
 	} finally {
 		await client.end();
 	}

@@ -4,14 +4,16 @@
 // 一个运行的值集合大到建不了自动机，它的文字整段盖住，也只影响它自己。
 // 真实的上限（2^20 段、100 多万个字符）要很大的文字才碰得到：这里把上限调小（`secretLimits`，只给测试用，控制面和测试在同一个进程里），
 // 用真实的控制面和假 Agent 验证每个读取出口都取了预算：读一页动作、读摘要、读控制台、读 Agent 列表。值都是明显的假值。
+// 这里的运行都改成写入时打码（#505）之前的样子（`LegacyRunsApi`）：测的是没有标记的运行在读取时打码；带标记的见 write-masking.test.ts。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { ACTION_LIMITS, SECRET_MASK as MASK } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MAX_AUTOMATON_CHARS } from "../src/logs/aho-corasick.js";
-import { ApiClient } from "./support/api-client.js";
+import type { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { publishBench } from "./support/focus-items.js";
+import { LegacyRunsApi } from "./support/legacy-run.js";
 import { withSecretLimits } from "./support/secret-limits.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -22,7 +24,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
-		api = new ApiClient(cp);
+		api = new LegacyRunsApi(cp);
 		await publishBench(cp);
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 8 }, { clock: cp.clock });
 	});

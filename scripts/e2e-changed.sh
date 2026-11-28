@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # 把这个分支相比基准新增或改动的端到端 spec 重复运行几次，让不稳定的用例在合入前暴露，而不是之后在 CI 或 main 上随机失败。
 # CI 的 e2e job 在 pull_request 上、完整的一遍测试之后运行它；本地同样可用。
-#   pnpm test:e2e:changed [基准，默认 origin/main [Playwright 参数...]]
+#   pnpm test:e2e:changed [基准 [Playwright 参数...]]
+#   基准默认取 origin/dev 和 origin/main 里离提交更近的那个（提交上不在它里面的提交更少）：
+#   目标是 dev 的分支和 CI 一样和 dev 比（CI 里基准取自 PR 的目标分支）。
 #   bash scripts/e2e-changed.sh --list [基准 [提交]]    只打印选出的 spec（相对 apps/web，一行一个），不运行
 # 基准后面的参数原样交给 Playwright：CI 分片时传 `--shard=i/N`，每片跑重复后的用例里属于自己的那一份。
 # 选法：基准与提交（默认 HEAD）的共同祖先到提交之间新增、修改、改名的 apps/web/e2e/**/*.spec.ts（删掉的不算）。
@@ -21,13 +23,25 @@ if [[ ${1:-} == --list ]]; then
 	list_only=1
 	shift
 fi
-base=${1:-origin/main}
+base=${1:-}
 head=HEAD
 playwright_args=()
 if ((list_only)); then
 	head=${2:-HEAD}
 elif (($# > 1)); then
 	playwright_args=("${@:2}")
+fi
+if [[ -z $base ]]; then
+	base=origin/main
+	nearest=
+	for candidate in origin/dev origin/main; do
+		git -C "$root" rev-parse -q --verify "${candidate}^{commit}" >/dev/null || continue
+		count=$(git -C "$root" rev-list --count "${candidate}..${head}")
+		if [[ -z $nearest ]] || ((count < nearest)); then
+			base=$candidate nearest=$count
+		fi
+	done
+	((list_only)) || echo "基准：${base}（origin/dev 和 origin/main 里离 ${head} 更近的那个）"
 fi
 
 # 三个点：与共同祖先比较，基准上后来的提交不算这个分支的改动。

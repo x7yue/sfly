@@ -141,7 +141,7 @@ checked=$(client session workbench-check --results) || fail "workbench-check 会
 for expected in user=workbench home=/home/workbench pwd=/work token-env=unset workbench-token-env=unset \
 	/home/workbench/.local/bin/sfly /home/workbench/.local/bin/uv /usr/bin/git /usr/bin/rg /usr/local/bin/fd /usr/bin/jq \
 	'Python 3.'; do
-	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「$expected」：$(grep '^结果' <<<"$checked" | head -c 600)"
+	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「${expected}」：$(grep '^结果' <<<"$checked" | head -c 600)"
 done
 # 凭据经进程替换给 grep（不进它的命令行参数，ps 看不到）。
 if grep -qF -f <(printf '%s\n' "$token") <<<"$checked"; then fail "凭据出现在会话的工具结果里"; fi
@@ -165,4 +165,4 @@ new=$(compose --profile assistant ps -q sfly-workbench)
 [[ $(fingerprint "$new") == "$before" ]] || fail "重建之后 Agent 二进制变了：重装了"
 client ready 300 || fail "重建工作台之后助手没有就绪"
 
-echo "compose 冒烟通过：docker compose --profile assistant up（sfly $version）"
+echo "compose 冒烟通过：docker compose --profile assistant up（sfly ${version}）"

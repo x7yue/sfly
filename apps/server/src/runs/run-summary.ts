@@ -56,7 +56,8 @@ export async function buildRunReport(
 		failed_tasks_total: failed.length,
 		failed_actions: await failedActionsOf(deps.db, read),
 		attention_items: await attentionItemsOf(deps, read),
-		secrets_oversize: read.secrets.oversize,
+		secrets_oversize: read.secretsOversize,
+		late_reports_dropped: read.run.lateReportsDropped,
 	};
 }
 
