@@ -20,7 +20,7 @@ bash /src/scripts/linux/sync-copy.sh /src /sync/files "$work"
 cp /sync/files "$base/files"
 cd "$work"
 
-# 生成物检查（pnpm gen:check）和 lint:node 要用 git：把副本提交成一个快照，未提交的改动也在里面。
+# 生成物检查（pnpm gen:check）和 lint:versions 要用 git：把副本提交成一个快照，未提交的改动也在里面。
 export GIT_AUTHOR_NAME=pnpm-linux GIT_AUTHOR_EMAIL=pnpm-linux@localhost
 export GIT_COMMITTER_NAME=pnpm-linux GIT_COMMITTER_EMAIL=pnpm-linux@localhost
 [[ -d .git ]] || git init -q
