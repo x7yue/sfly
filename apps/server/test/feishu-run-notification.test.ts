@@ -11,6 +11,7 @@ import { resolveRunFocus } from "../src/focus/run-focus.js";
 import { readNodeError } from "../src/runs/run-read.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { ErrorKind, FakeAgent, TaskStatus } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
@@ -744,7 +745,7 @@ describe("运行通知", () => {
 		async function expectRunEndedAndNothingSent(runId: string, reason: RegExp) {
 			expect((await api.run(runId)).run_notification).toBeNull();
 			expect(agent.ended).toBe(false);
-			const online = await api.get("/agents");
+			const online = await api.get("/projects/default/agents");
 			expect(await online.text()).toContain('"status":"online"');
 			expect(feishu.requests).toHaveLength(0);
 			const logged = errors.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
@@ -978,9 +979,9 @@ describe("运行通知", () => {
 			const id = await scenario(single());
 			const runId = await runEnding(id, "failed");
 			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const removed = await cp.fetch("/feishu-bots/ops", {
+			const removed = await cp.fetch("/projects/default/feishu-bots/ops", {
 				method: "DELETE",
-				headers: { "x-sfly-nickname": "tester" },
+				headers: { ...actAs("tester") },
 			});
 			expect(removed.status).toBe(204);
 
@@ -1004,9 +1005,9 @@ describe("运行通知", () => {
 		it("机器人在运行结束时已经不存在：触发不被拦截，运行详情里是「未发送：机器人已删除」", async () => {
 			await api.createFeishuBot("gone", feishu.webhookUrl("gone-token"));
 			const id = await scenario(single(), { bot: "gone", trigger: "failed_or_cancelled" });
-			const removed = await cp.fetch("/feishu-bots/gone", {
+			const removed = await cp.fetch("/projects/default/feishu-bots/gone", {
 				method: "DELETE",
-				headers: { "x-sfly-nickname": "tester" },
+				headers: { ...actAs("tester") },
 			});
 			expect(removed.status).toBe(204);
 

@@ -1,4 +1,5 @@
 import type { AgentView } from "@sfly/schema";
+import { usedSlots } from "#/agents/agent-status";
 import { AGENT_STATUS_LABEL } from "#/lib/copy";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -37,7 +38,7 @@ export function AgentSelect({
 			{agents.map((a) => (
 				<NativeSelectOption key={a.name} value={a.name}>
 					{untrustedPlain(a.name)} · {AGENT_STATUS_LABEL[a.status]}
-					{slots && ` · ${a.running_tasks.length}/${a.info.slots} 槽位`}
+					{slots && ` · ${usedSlots(a)}/${a.info.slots} 槽位`}
 				</NativeSelectOption>
 			))}
 			{value && !names.includes(value) && (

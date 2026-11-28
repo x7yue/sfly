@@ -18,6 +18,7 @@ import { apiQuery, callApi } from "#/lib/api";
 import { DELIVERY, FEISHU_BOT_SETUP, PAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import {
 	Table,
@@ -41,7 +42,10 @@ const botRowPrimary = (name: string) =>
  * 每个机器人显示最近一次投递的时间和结果，以及积压（还在排队的消息）的条数，定时重新查询。
  */
 function FeishuBotsPage() {
-	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), refetchInterval: STATUS_POLL_MS });
+	const bots = useQuery({
+		...apiQuery(feishuBotsApi.list, { params: { project: PROJECT } }),
+		refetchInterval: STATUS_POLL_MS,
+	});
 	const [registering, setRegistering] = useState(false);
 	return (
 		<Page>
@@ -117,7 +121,7 @@ function BotRow({ bot }: { bot: FeishuBotView }) {
 	const [deleting, setDeleting] = useState(false);
 	// 测试结果只在这个页面里显示：不经过发送队列，也不保存。
 	const test = useMutation({
-		mutationFn: () => callApi(feishuBotsApi.test, { params: { name: bot.name } }),
+		mutationFn: () => callApi(feishuBotsApi.test, { params: { project: PROJECT, name: bot.name } }),
 		onError: (error) => notify.error("发送测试消息失败", { description: error.message }),
 	});
 	return (

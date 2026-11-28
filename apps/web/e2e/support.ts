@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { RunNotificationTrigger } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import {
@@ -22,7 +23,7 @@ export async function publishPackage(
 	overrides: Record<string, unknown> = {},
 ): Promise<void> {
 	const archive = packageArchive(packageMetadata(overrides));
-	await ok(await cp.fetch("/packages", publishInit(archive)), "发布节点包");
+	await ok(await cp.fetch("/projects/default/packages", publishInit(archive)), "发布节点包");
 }
 
 /** 新建场景，给了文档时保存为第 1 版；返回场景 ID。 */
@@ -33,10 +34,13 @@ export async function createScenario(
 ): Promise<string> {
 	const json = (body: unknown): RequestInit => ({
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify(body),
 	});
-	const res = await ok(await cp.fetch("/orchestrations", json({ name })), "新建场景");
+	const res = await ok(
+		await cp.fetch("/projects/default/orchestrations", json({ name })),
+		"新建场景",
+	);
 	const { id } = (await res.json()) as { id: string };
 	if (document) {
 		await ok(
@@ -52,7 +56,7 @@ export async function triggerRun(cp: TestControlPlane, scenarioId: string): Prom
 	const res = await ok(
 		await cp.fetch(`/orchestrations/${scenarioId}/runs`, {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ params: {} }),
 		}),
 		"触发运行",
@@ -95,9 +99,9 @@ export async function createFeishuBot(
 	webhookUrl: string,
 ): Promise<void> {
 	await ok(
-		await cp.fetch("/feishu-bots", {
+		await cp.fetch("/projects/default/feishu-bots", {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ name, webhook_url: webhookUrl }),
 		}),
 		"登记飞书机器人",
@@ -118,7 +122,7 @@ export async function setRunNotification(
 	await ok(
 		await cp.fetch(`/orchestrations/${scenarioId}`, {
 			method: "PATCH",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ run_notification: settings }),
 		}),
 		"配置运行通知",

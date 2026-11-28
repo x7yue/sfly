@@ -111,7 +111,7 @@ export class PerfApi {
 
 	/** 发布一个已经构建好的节点包（`.sflypkg` 的内容）。 */
 	async publishArchive(body: Uint8Array): Promise<void> {
-		await this.request("/packages", {
+		await this.request("/projects/default/packages", {
 			method: "POST",
 			headers: { "content-type": "application/octet-stream" },
 			body,
@@ -120,7 +120,9 @@ export class PerfApi {
 
 	/** 新建场景并保存第一个版本，返回场景 ID。 */
 	async createOrchestration(document: unknown, name = "perf"): Promise<string> {
-		const { id } = (await this.postJson("/orchestrations", { name })) as { id: string };
+		const { id } = (await this.postJson("/projects/default/orchestrations", { name })) as {
+			id: string;
+		};
 		await this.postJson(`/orchestrations/${id}/versions`, { base_version: 0, document });
 		return id;
 	}

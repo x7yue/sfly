@@ -13,6 +13,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { ErrorMessage } from "#/components/feedback/error-message";
 import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -87,7 +88,10 @@ export function ConflictDialog({
 
 	const saveAsNew = useMutation({
 		mutationFn: async (name: string) => {
-			const created = await callApi(orchestrationsApi.create, { body: { name } });
+			const created = await callApi(orchestrationsApi.create, {
+				params: { project: PROJECT },
+				body: { name },
+			});
 			await callApi(orchestrationsApi.saveVersion, {
 				params: { id: created.id },
 				// secret 默认值读不回来，带不到另一个场景：去掉，下面的提示说明。

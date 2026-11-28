@@ -32,7 +32,7 @@ describeWithAgent("Rust Agent 与控制面互通", () => {
 	}, 30_000);
 
 	it("Agent 上报它监听的端口，对外地址是控制面看到的连接来源地址，端口能连上", async () => {
-		const res = await cp.fetch("/agents");
+		const res = await cp.fetch("/projects/default/agents");
 		const [listed] = agentsApi.list.response.parse(await res.json()).agents;
 		expect(listed?.name).toBe("interop-agent");
 		expect(listed?.capabilities).toContainEqual({ name: "files", version: 1 });

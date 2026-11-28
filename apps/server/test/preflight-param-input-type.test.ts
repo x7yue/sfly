@@ -2,13 +2,14 @@
 // 比如小数接到 integer 输入，派发到那个节点才会以 config_error 失败（「输入 x 应为 integer，实际是 8.5」），触发前就拒绝。
 // 取值有三个来源：触发时给的值、运行预设里的值、默认值；子流程里取自异步任务节点传入的值。判断和派发时是同一个（typeProblem）。
 import { inputProblems } from "@sfly/orchestration";
-import { NICKNAME_HEADER, type OrchestrationDocument } from "@sfly/schema";
+import type { OrchestrationDocument } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { planRun } from "../src/engine/chain.js";
 import { knownParams } from "../src/runs/known-params.js";
 import { type ParamOrigins, paramInputTypeProblems } from "../src/runs/param-input-type.js";
 import { ApiClient } from "./support/api-client.js";
 import { orchestration, param, spawn } from "./support/chains.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { type InputsSchema, publishPackage } from "./support/package-archive.js";
@@ -75,7 +76,7 @@ describe("触发前检查：入口参数的值接到类型不符的输入", () =
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				[NICKNAME_HEADER]: encodeURIComponent("tester"),
+				...actAs("tester"),
 			},
 			body,
 		});

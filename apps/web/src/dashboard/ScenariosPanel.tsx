@@ -7,6 +7,7 @@ import { apiQuery } from "#/lib/api";
 import { MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
 import { DashboardPanel } from "./DashboardPanel";
@@ -29,7 +30,7 @@ export function byLastRun(scenarios: readonly OrchestrationSummary[]): Orchestra
  */
 export function ScenariosPanel() {
 	const scenarios = useQuery({
-		...apiQuery(orchestrationsApi.list, { query: {} }),
+		...apiQuery(orchestrationsApi.list, { params: { project: PROJECT }, query: {} }),
 		refetchInterval: STATUS_POLL_MS,
 	});
 	const all = scenarios.data?.orchestrations ?? [];

@@ -50,11 +50,11 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		why: "运行，以及运行的日志、指标、关注项、事件流：路径里的 :id 是运行 id",
 	},
 	"/tasks": { kind: "task", why: "任务的日志、动作、产物：路径里的 :id 是任务 id，不是运行 id" },
-	"/packages": {
+	"/projects/:project/packages": {
 		kind: "package",
 		why: "节点包，以及它的版本、节点类型、归档下载、发布：路径里的 :name 是包名",
 	},
-	"/agents": {
+	"/projects/:project/agents": {
 		kind: "agent",
 		why: "Agent 列表、立即更新、凭据的签发和吊销、停用和恢复：路径里的 :name 是 Agent 名称",
 	},
@@ -62,13 +62,13 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "dev_agent",
 		why: "我的开发 Agent（ADR 0029「凭据」）：在项目下新建和吊销，名字由控制面按「dev-登录名-主机」生成，只认有用户的人的凭据",
 	},
-	"/feishu-bots": {
+	"/projects/:project/feishu-bots": {
 		kind: "feishu_bot",
-		why: "飞书机器人的登记、改、删、引用、测试消息：路径里的 :name 是机器人名称",
+		why: "项目里的飞书机器人：登记、改、删、引用、测试消息，路径里的 :name 是机器人名称",
 	},
-	"/dashboard": {
+	"/projects/:project/dashboard": {
 		kind: "run",
-		why: "控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；以后按项目隔离时，它的运行部分要按项目过滤",
+		why: "项目的控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；都只算路径里这个项目的",
 	},
 	"/auth": {
 		kind: "account",
@@ -83,8 +83,8 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		why: "自己的账号：个人令牌的签发、列出、吊销；定位在发起请求的用户自己，不属于任何项目（ADR 0029「凭据」）",
 	},
 	// 路径里的项目一律写成 `/projects/:project/…`：前缀里的 `:project` 就是路径模板里的 `:project`，按字面匹配。
-	// 每一类属于项目的资源（项目令牌、以后的成员、项目密钥）各写一项，#488 把现有接口搬到项目下时照这个写
-	// （`/projects/:project/orchestrations` 等）：新增一类要改这张表，审查时看得见。
+	// 每一类属于项目的资源（项目令牌、场景、运行、Agent、节点包、飞书机器人，以后的成员、项目密钥）各写一项：
+	// 新增一类要改这张表，审查时看得见。
 	"/projects/:project/tokens": {
 		kind: "project",
 		why: "项目令牌的签发、列出、吊销：项目令牌是项目的一部分（服务账号），定位用路径里的 :project，要「管理」范围",
@@ -92,6 +92,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/projects/:project/workbench": {
 		kind: "project",
 		why: "项目的工作台（助手的会话在哪台 Agent 上做事）：登记属于项目自己的设置，定位用路径里的 :project，要「管理」范围",
+	},
+	"/projects/:project/orchestrations": {
+		kind: "scenario",
+		why: "项目里的场景：列出和新建，路径里的 :project 是项目标识（场景的集合属于项目）",
+	},
+	"/projects/:project/runs": {
+		kind: "run",
+		why: "项目里的运行记录：跨场景的运行列表，路径里的 :project 是项目标识",
 	},
 	"/projects/:project/sessions": {
 		kind: "session",
@@ -433,6 +441,28 @@ function checkProjectPath(def: RouteDef): string[] {
 	return problems;
 }
 
+/**
+ * 路径里带不带 `:project`，由声明定（ADR 0029「项目从请求的哪里来」）：`target` 是 `collection`、`upload`，或者按名字定位
+ * （Agent、节点包、飞书机器人、开发 Agent；项目本身写 `{ params: "project" }`），路径要写成 `/projects/:project/…`，项目从路径取；
+ * 按 ID 定位的（{@link ID_LOCATED_KINDS}）路径里不能有 `:project`，项目从资源得出（这一半由 `checkTarget` 查）；
+ * `system`、`account` 不属于项目，路径里都没有。这样「项目从哪来」不用另外声明。
+ */
+function checkProjectInPath(def: RouteDef, kind: ResourceKind, target: ResourceTarget): string[] {
+	const scoped = isProjectScoped(def.path);
+	if (kind === "system" || kind === "account") {
+		return scoped ? [`${kind} 不属于项目，路径里不能有 /projects/:${PROJECT_PARAM}`] : [];
+	}
+	// 按名字定位不管名字写在路径参数、查询参数还是请求体里，项目都要在路径里。
+	const located = typeof target === "object";
+	const needs =
+		target === "collection" || target === "upload" || (located && !ID_LOCATED_KINDS.includes(kind));
+	if (!needs || scoped) return [];
+	return [
+		`${target === "collection" ? "列表和新建" : target === "upload" ? "上传" : "按名字定位"}的接口，路径要写成 /projects/:${PROJECT_PARAM}/…：` +
+			"项目从路径里取（按 ID 定位的才从资源得出）",
+	];
+}
+
 /** 接口的路径前缀和声明的资源类别要对得上 {@link PATH_KINDS}。 */
 function checkPathKind(def: RouteDef, kind: ResourceKind, rules: DeclarationRules): string[] {
 	const found = pathKindFor(def.path, rules.pathKinds);
@@ -548,6 +578,7 @@ export function checkRouteDeclarations(
 		}
 		for (const problem of checkTarget(def, kind, target)) add(def, problem);
 		for (const problem of checkProjectPath(def)) add(def, problem);
+		for (const problem of checkProjectInPath(def, kind, target)) add(def, problem);
 		for (const problem of checkPathKind(def, kind, rules)) add(def, problem);
 	}
 	return problems;

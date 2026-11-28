@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { createEditorScenario } from "./editor-support";
 import { expect, test } from "./fixtures";
@@ -33,7 +34,7 @@ test("版本差异里的文字在空格处折行，不在单词中间断开", as
 	};
 	const saved = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({ base_version: 1, document: longVersion }),
 	});
 	expect(saved.status).toBe(201);

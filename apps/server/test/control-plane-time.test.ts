@@ -18,13 +18,13 @@ describe("控制面把自己的当前时间告诉页面", () => {
 		const clock = new ManualClock("2025-03-07T01:02:03.000Z");
 		cp = await startTestControlPlane({ clock });
 
-		const agents = await cp.fetch("/agents");
+		const agents = await cp.fetch("/projects/default/agents");
 		expect(agents.status).toBe(200);
 		expect(agents.headers.get(CONTROL_PLANE_TIME_HEADER)).toBe("2025-03-07T01:02:03.000Z");
 
 		clock.advance(90_000);
 		// 浏览器经同源的 /api/* 访问。
-		const viaApi = await cp.fetch("/api/runs");
+		const viaApi = await cp.fetch("/api/projects/default/runs");
 		expect(viaApi.headers.get(CONTROL_PLANE_TIME_HEADER)).toBe("2025-03-07T01:03:33.000Z");
 
 		const missing = await cp.fetch("/runs/00000000-0000-0000-0000-000000000000");

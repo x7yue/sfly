@@ -6,7 +6,7 @@
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
-import { bearer, TestAccounts } from "./support/credentials.js";
+import { actAs, bearer, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
@@ -239,7 +239,7 @@ describe("会话令牌的写和助手事件：事务里不等进程里的锁", (
 				scopes: ["read", "run", "edit"],
 			});
 			const id = await scenario("巡检");
-			const credentials = [bearer(token), bearer(otherToken), { "x-sfly-nickname": "ren" }];
+			const credentials = [bearer(token), bearer(otherToken), { ...actAs("ren") }];
 			const jobs: Promise<number | string>[] = [];
 			for (let i = 0; i < 60; i++) {
 				const credential = credentials[i % 3] ?? {};
@@ -276,7 +276,7 @@ describe("会话令牌的写和助手事件：事务里不等进程里的锁", (
 			const copies = Array.from({ length: 15 }, () => status(writes.复制(id)));
 			await sleep(800);
 			await locker.query("commit");
-			const read = await within(status(send("GET", "/orchestrations", {})), 3000);
+			const read = await within(status(send("GET", "/projects/default/orchestrations", {})), 3000);
 			expect(read, "池满时别的读请求拿不到连接").toEqual({ ok: true, value: 200 });
 			const done = await within(Promise.all([appended, ...copies]), 15_000);
 			expect(done.ok, "15 个复制和助手事件 15 秒内没有都完成").toBe(true);

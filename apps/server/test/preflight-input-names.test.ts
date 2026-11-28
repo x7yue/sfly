@@ -162,6 +162,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 		});
 
 		it("节点类型没有声明任何输入：写「不接收任何输入」", async () => {
+			await connect("agent-a");
 			const { warnings } = await save(
 				document([{ id: "b", kind: "package", package: "bare", node: "noop", inputs: { x: 1 } }], {
 					bare: "1.0.0",
@@ -274,7 +275,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await off.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-b")?.status).toBe("offline");
 			});
@@ -320,7 +321,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await b.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-b")?.status).toBe("offline");
 			});
@@ -354,7 +355,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await off.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-c")?.status).toBe("offline");
 			});
@@ -413,7 +414,14 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 					"tuner-dev": "dev",
 				}),
 			);
-			expect(warnings).toEqual([]);
+			// 输入名不检查（没有写错输入名的警告）；只有派发目标没有注册过这一条（#500）。
+			expect(warnings).toEqual([
+				{
+					code: "agent_not_registered",
+					message: "节点 t 派发到的 Agent agent-nobody 还没有注册过",
+					node_id: "t",
+				},
+			]);
 		});
 
 		it("没有节点用这个开发包：不读 Agent，没有警告", async () => {
@@ -427,7 +435,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			await off.close();
 			await eventually(async () => {
 				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-					"/agents",
+					"/projects/default/agents",
 				);
 				expect(list.find((a) => a.name === "agent-off")?.status).toBe("offline");
 			});

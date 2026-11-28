@@ -22,7 +22,7 @@ const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "�
 const NEW_PASSWORD = "brand-new-password-1";
 
 /** 没有预先写昵称：登录之后昵称弹窗不该出现，没登录时才弹。 */
-test.use({ nickname: null });
+test.use({ loginAs: null });
 
 async function login(page: import("@playwright/test").Page, password = ADMIN.password) {
 	await page.getByLabel("登录名").fill(ADMIN.loginName);
@@ -345,7 +345,7 @@ test.describe("登录失效之后回到登录页", () => {
 
 		// 运行列表的轮询请求一律拿到 401，而 GET /auth/me 仍然说登录有效：和「登录真的失效」的区别只在后一个问题的回答。
 		const events: string[] = [];
-		await page.route(/\/api\/runs(\?|$)/, (route) => {
+		await page.route(/\/api\/projects\/default\/runs(\?|$)/, (route) => {
 			events.push("401");
 			return route.fulfill({
 				status: 401,

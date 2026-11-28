@@ -12,7 +12,7 @@ const OLD_AGENT_REASON = "Agent 版本过旧，不监听供其它 Agent 连接�
 
 /** Agent 列表；响应按契约解析（不符合契约时测试失败）。 */
 async function listAgents(cp: TestControlPlane): Promise<AgentView[]> {
-	const res = await cp.fetch("/agents");
+	const res = await cp.fetch("/projects/default/agents");
 	expect(res.status).toBe(200);
 	return agentsApi.list.response.parse(await res.json()).agents;
 }
@@ -58,6 +58,8 @@ describe("Agent 注册", () => {
 				dev_packages: [],
 				running_tasks: [],
 				queued_tasks: [],
+				other_project_running: 0,
+				other_project_queued: 0,
 				// 控制面是 package.json 的版本，与 1.2.3 不一致。
 				version_mismatch: true,
 				update: { state: "none", remaining_tasks: 0, reason: "" },

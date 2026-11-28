@@ -1,0 +1,17 @@
+{
+	"说明": "骨架验收（#553）：两个账号交替说话时各自的会话：一条 20 秒的命令再说一句。",
+	"steps": [
+		{
+			"id": "long",
+			"tool": "bash",
+			"args": {
+				"command": "for i in $(seq 1 20); do echo \"第 $i 行\"; sleep 1; done",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "done",
+			"text": "这件事做完了（{last_user}）。"
+		}
+	]
+}

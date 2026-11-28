@@ -406,7 +406,7 @@ describe("位置规则的对照用例", () => {
 
 describe("签发 Agent 凭据的名称（agentsApi.issueCredential 的路径参数，#670）", () => {
 	const params = agentsApi.issueCredential.params;
-	const parse = (name: string) => params?.safeParse({ name });
+	const parse = (name: string) => params?.safeParse({ project: "default", name });
 	const messageOf = (name: string): string =>
 		parse(name)
 			?.error?.issues.map((issue) => issue.message)

@@ -1,5 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { addMenu, headOf, inspector, nodeCard, nodeMenu, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage } from "./support";
@@ -115,7 +116,7 @@ test("「运行状态」输入没接：字段下和保存的警告写明该填�
 	// 这份文档触发时被预检拦下，警告里写着该填什么。
 	const trigger = await controlPlane.fetch(`/orchestrations/${id}/runs`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify({ params: {} }),
 	});
 	expect(trigger.status).toBe(400);

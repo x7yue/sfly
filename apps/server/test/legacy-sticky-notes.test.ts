@@ -126,7 +126,7 @@ describe("便签留在历史数据里", () => {
 				expect(await version(id, run.orchestration_version)).toMatchObject({ document });
 			}
 			const list = await api.getJson<{ runs: Array<{ id: string; status: string }> }>(
-				`/runs?orchestration_id=${id}`,
+				`/projects/default/runs?orchestration_id=${id}`,
 			);
 			expect(list.runs.map((r) => r.id).sort()).toEqual([...runs].sort());
 			const own = await api.getJson<{ runs: Array<{ id: string }> }>(`/orchestrations/${id}/runs`);

@@ -1,0 +1,92 @@
+{
+	"说明": "骨架验收（#553）的主流程：提示里写 AEVAL-SCRIPT:accept-main。先「思考」，再读 skill、写代码、跑测试（输出一秒一行），复制场景、改一版、触发一次失败的运行、读日志、再触发一次成功的运行，最后逐字出一段总结。",
+	"steps": [
+		{
+			"id": "init",
+			"thinking": "先看看节点包怎么写，再动手。",
+			"thinking_delay": 3,
+			"tool": "bash",
+			"args": {
+				"command": "sfly init probe-pkg >/dev/null 2>&1; ls probe-pkg",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "read_skill",
+			"tool": "read",
+			"args": {
+				"path": "probe-pkg/.agents/skills/sfly-node-dev/SKILL.md"
+			}
+		},
+		{
+			"id": "write_probe",
+			"tool": "write",
+			"args": {
+				"path": "probe-pkg/probe.py",
+				"content": "\"\"\"探测 http://sut:9000/health。\"\"\"\n\nHEALTH_URL = \"http://sut:9000/health\"\n\n\ndef healthy(status: int) -> bool:\n    return status == 200\n"
+			}
+		},
+		{
+			"id": "write_test",
+			"tool": "write",
+			"args": {
+				"path": "probe-pkg/tests/test_probe_health.py",
+				"content": "import importlib.util\nfrom pathlib import Path\n\nspec = importlib.util.spec_from_file_location(\"probe\", Path(__file__).parent.parent / \"probe.py\")\nprobe = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(probe)\n\n\ndef test_healthy() -> None:\n    assert probe.healthy(200)\n    assert not probe.healthy(503)\n"
+			}
+		},
+		{
+			"id": "pytest",
+			"tool": "bash",
+			"args": {
+				"command": "cd probe-pkg && for i in $(seq 1 40); do echo \"准备测试 $i/40\"; sleep 1; done; uv run pytest -q tests/test_probe_health.py",
+				"timeout": 600
+			}
+		},
+		{
+			"id": "copy",
+			"tool": "bash",
+			"args": {
+				"command": "sfly scenario copy 'demo 巡检' --name 'demo 巡检-联调-验收'",
+				"timeout": 120
+			}
+		},
+		{
+			"id": "edit",
+			"tool": "bash",
+			"args": {
+				"command": "sfly scenario edit 'demo 巡检-联调-验收' set inspect_items note '验收：联调副本'",
+				"timeout": 120
+			}
+		},
+		{
+			"id": "run_fail",
+			"tool": "bash",
+			"args": {
+				"command": "sfly run start 'demo 巡检-联调-验收' --param base_url=http://sut:9001 --wait --timeout 180s",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "read_logs",
+			"tool": "bash",
+			"args": {
+				"command": "sfly run show latest; sfly run logs latest 2>&1 | tail -20",
+				"timeout": 120
+			}
+		},
+		{
+			"id": "run_ok",
+			"tool": "bash",
+			"args": {
+				"command": "sfly run start 'demo 巡检-联调-验收' --wait --timeout 180s",
+				"timeout": 300
+			}
+		},
+		{
+			"id": "summary",
+			"text": "做完了。这一轮：\n\n1. 用 `sfly init` 建了节点包 `probe-pkg`，读了 skill；\n2. 写了 `probe.py` 和它的测试，测试通过；\n3. 复制了「demo 巡检」做联调副本，改了一版；\n4. 第一次运行用错了地址（9001），失败；读了日志，改回 9000 再跑，成功。",
+			"pieces": 24,
+			"interval": 0.3
+		}
+	]
+}
