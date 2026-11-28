@@ -252,7 +252,8 @@ export class AgentCredentialService {
 			.update(agentCredentials)
 			.set({ revokedAt: this.deps.clock.now() })
 			.where(and(inArray(agentCredentials.id, ids), isNull(agentCredentials.revokedAt)));
-		await this.deps.onRevoked?.(ids);
+		// 本次查到的全部凭据都交给断开：之前吊销了、离线还没记上的同名连接一并处理。
+		await this.deps.onRevoked?.(rows.map((row) => row.id));
 		return { kind: "revoked" };
 	}
 }

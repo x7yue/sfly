@@ -221,9 +221,12 @@ export interface AgentView {
  * 并把注册信息、在线状态写入 agents 表。
  */
 export class AgentHub {
+	/**
+	 * 每个名字的当前连接。表项只在对应的写库成功之后才删除或替换：写离线失败时，已关闭的连接留在表里，
+	 * 表示还欠一次离线（下一次碰到这个名字的 detach、吊销、停用重试，同名新连接登记成功时替换它）。
+	 * 在线的判断看 {@link connection}，它不认已关闭的。
+	 */
 	#connections = new Map<string, AgentConnection>();
-	/** 断开了、离线还没写进库的连接（写库失败时留着，下一次 detach、吊销、停用补记）；同名的新连接登记时清掉。 */
-	#offlinePending = new Map<string, AgentConnection>();
 
 	constructor(
 		private readonly deps: {
@@ -307,9 +310,6 @@ export class AgentHub {
 					`Agent「${name}」已经带着 Agent 凭据连着：以旧方式连接（共享令牌或没有凭据）的不能顶掉它`,
 				);
 			}
-			this.#connections.set(name, conn);
-			this.#offlinePending.delete(name);
-			old?.close();
 			const now = this.deps.clock.now();
 			const offset = helloClock && measureClockOffset(helloClock, receivedAt);
 			const clockOffset = {
@@ -338,6 +338,9 @@ export class AgentHub {
 						...clockOffset,
 					},
 				});
+			// 上线写进库之后才登记、顶掉旧连接：写库失败时表不变，旧表项（活着的或欠着离线的）原样留着。
+			this.#connections.set(name, conn);
+			old?.close();
 			return conn;
 		});
 	}
@@ -417,29 +420,21 @@ export class AgentHub {
 
 	/** 连接结束：如果它仍是该名称的当前连接，记录为离线。 */
 	detach(conn: AgentConnection): Promise<void> {
-		return this.deps.mutex.run(async () => {
-			this.#disconnect(conn);
-			await this.#recordOffline(conn.name, conn);
-		});
+		return this.deps.mutex.run(() => this.#drop(conn));
 	}
 
-	/** 断开（调用方持有锁）：不再是当前连接，等着记为离线。 */
-	#disconnect(conn: AgentConnection): void {
+	/**
+	 * 断开并记为离线（调用方持有锁）：先关连接，写库成功才从表里删。写库失败照样抛出，已关闭的连接留在表里，
+	 * 之后碰到这个名字的操作再走这里就是重试；它已经不是当前连接（被同名新连接替换）时什么也不写。
+	 */
+	async #drop(conn: AgentConnection): Promise<void> {
 		conn.close();
 		if (this.#connections.get(conn.name) !== conn) return;
-		this.#connections.delete(conn.name);
-		this.#offlinePending.set(conn.name, conn);
-	}
-
-	/** 把这个名字断开了的连接记为离线（调用方持有锁）；给了 `conn` 时只记这一条。写库失败时留着，之后再补。 */
-	async #recordOffline(name: string, conn?: AgentConnection): Promise<void> {
-		const pending = this.#offlinePending.get(name);
-		if (pending === undefined || (conn !== undefined && pending !== conn)) return;
 		await this.deps.db
 			.update(agents)
 			.set({ status: "offline", lastSeenAt: this.deps.clock.now() })
-			.where(eq(agents.name, name));
-		this.#offlinePending.delete(name);
+			.where(eq(agents.name, conn.name));
+		this.#connections.delete(conn.name);
 	}
 
 	/** 这个项目里注册过的 Agent（不论是否在线）。 */
@@ -536,11 +531,12 @@ export class AgentHub {
 		return this.deps.mutex.run(async () => {
 			const uses = (conn: AgentConnection) =>
 				conn.credentialId !== null && credentialIds.includes(conn.credentialId);
-			// 先全部断开，再逐台记离线：一台写库失败不挡住别的连接断开；之前没记上的（重复吊销）一并补记。
-			for (const conn of [...this.#connections.values()].filter(uses)) this.#disconnect(conn);
+			// 先全部关掉，再逐台记离线：一台写库失败不挡住别的连接断开。表里已关闭的（上次没记上）一并重试。
+			const targets = [...this.#connections.values()].filter(uses);
+			for (const conn of targets) conn.close();
 			const errors: unknown[] = [];
-			for (const conn of [...this.#offlinePending.values()].filter(uses)) {
-				await this.#recordOffline(conn.name, conn).catch((error: unknown) => errors.push(error));
+			for (const conn of targets) {
+				await this.#drop(conn).catch((error: unknown) => errors.push(error));
 			}
 			if (errors.length === 1) throw errors[0];
 			if (errors.length > 1)
@@ -570,12 +566,9 @@ export class AgentHub {
 					.set({ disabledAt: disabled ? this.deps.clock.now() : null })
 					.where(eq(agents.name, name));
 			}
-			if (disabled) {
-				const conn = this.#connections.get(name);
-				if (conn) this.#disconnect(conn);
-				// 重复停用也补记上一次没写进库的离线。
-				await this.#recordOffline(name);
-			}
+			// 表里有这个名字就断开、记离线；重复停用碰到上次没记上的（已关闭的表项）就是重试。
+			const conn = this.#connections.get(name);
+			if (disabled && conn) await this.#drop(conn);
 			return unchanged ? "unchanged" : "ok";
 		});
 	}
