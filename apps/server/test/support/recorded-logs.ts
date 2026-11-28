@@ -4,7 +4,7 @@ import { SseClient } from "./sse-client.js";
 import type { TestControlPlane } from "./test-control-plane.js";
 
 /**
- * Agent 上报 `count` 行日志（序号从 1 起），等到控制面写进文件、数据库也记下了字节数（`tasks.log_bytes`）。
+ * Agent 上报这些序号的日志（数字 `n` 是 1 到 n；序号可以有缺口），等到控制面写进文件、数据库也记下了字节数（`tasks.log_bytes`）。
  *
  * 不能等分页里的 `last_seq`（#790）：控制面先追加文件、更新内存里的序号，再写数据库，数据库写完才把「记下的字节数」改成新的；
  * 中间读到的页 `last_seq` 已经是新的，判断文件变短用的字节数还是旧的。这时截短文件，页里不会说 `short`。
@@ -14,24 +14,26 @@ export async function writeRecordedLogs(
 	cp: TestControlPlane,
 	agent: FakeAgent,
 	task: TaskRef,
-	count: number,
+	lines: number | readonly number[],
 ): Promise<void> {
-	if (count === 0) return;
+	const seqs = typeof lines === "number" ? Array.from({ length: lines }, (_, i) => i + 1) : lines;
+	const last = seqs.at(-1);
+	if (last === undefined) return;
 	const stream = await SseClient.open(cp, `/tasks/${task.taskId}/logs/events`);
 	try {
 		await stream.next("logs");
 		agent.logs(
 			task,
-			Array.from({ length: count }, (_, i): [number, string] => [i + 1, `第 ${i + 1} 行`]),
+			seqs.map((seq): [number, string] => [seq, `第 ${seq} 行`]),
 		);
-		let last = 0;
-		while (last < count) {
+		let seen = 0;
+		while (seen < last) {
 			const { data } = await stream.next<{ lines: { seq: number }[] }>("logs", {
 				timeoutMs: 30_000,
 			});
-			last = data.lines.at(-1)?.seq ?? last;
+			seen = data.lines.at(-1)?.seq ?? seen;
 		}
-		expect(last).toBe(count);
+		expect(seen).toBe(last);
 	} finally {
 		stream.close();
 	}
