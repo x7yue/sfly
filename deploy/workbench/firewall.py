@@ -73,6 +73,7 @@ OFFICIAL_GITHUB_RELEASE = (
 )
 LABEL = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?")
 PORT = re.compile(r"[0-9]{1,5}")
+LENGTH = re.compile(r"[0-9]{1,18}")
 NOT_FOUND = {getattr(socket, n) for n in ("EAI_NONAME", "EAI_NODATA") if hasattr(socket, n)}
 
 
@@ -300,8 +301,9 @@ class Probe(BaseHTTPRequestHandler):
     timeout = 10
 
     def do_POST(self) -> None:
-        length = self.headers.get("content-length") or ""
-        size = int(length) if length.isascii() and length.isdigit() else -1
+        # #880 的规则：去掉空白后只认 1 到 18 位的 ASCII 数字，校验和转换是同一条，再比大小上限。
+        length = (self.headers.get("content-length") or "").strip()
+        size = int(length) if LENGTH.fullmatch(length) else -1
         body = None
         if 0 < size <= 1 << 20:
             try:

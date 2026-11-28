@@ -1,11 +1,14 @@
 // 工作台够得着的项目外 Agent（#498）：控制面定期请部署者为工作台配置的探测服务（出网名单容器上的，SFLY_FIREWALL_PROBES）只试连接
 // 别的项目里在线 Agent 的能力端口，结果带进就绪状态（助手页、会话页告警）。真实控制面和数据库，进程内的假助手服务，假 Agent 当工作台和
 // 别的项目的 Agent，探测换成假的（真的探测服务在 deploy/workbench/firewall.py，scripts/tests 和 compose 冒烟里测）。
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { sessionsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { probeConfig } from "../src/sessions/probe-config.js";
 import {
 	EXPOSURE_RECHECK_MS,
+	httpProbe,
 	PROBE_BATCH,
 	type ProbeResult,
 	probeAll,
@@ -61,7 +64,7 @@ describe("工作台探测项目外 Agent 的能力端口", () => {
 		expect(res.status).toBe(200);
 	};
 
-	const start = async (probes = `wb-1=${PROBE_ADDRESS}`) => {
+	const start = async (probes = `wb-1=${PROBE_ADDRESS}`, withTargets = true) => {
 		const probe: WorkbenchProbe = async (address, targets) => {
 			calls.push({ address, targets });
 			return reply(targets);
@@ -84,7 +87,7 @@ describe("工作台探测项目外 Agent 的能力端口", () => {
 		await connect("wb-1", 7001, "evil.example");
 		await connect("wb-2", 7003, "10.0.0.7");
 		await accounts.project("alpha");
-		await connect("alpha-agent", 50052, "10.0.0.9", "alpha");
+		if (withTargets) await connect("alpha-agent", 50052, "10.0.0.9", "alpha");
 		await assistant.connected();
 		await register("wb-1");
 	};
@@ -123,6 +126,32 @@ describe("工作台探测项目外 Agent 的能力端口", () => {
 			}),
 		);
 		expect(calls).toEqual([]);
+	});
+
+	it("没有项目外的目标时也请求一次探测服务（空批）：连得上才算测成，连不上就是没测成", async () => {
+		reply = () => {
+			throw new Error("探测容器没在运行");
+		};
+		await start(undefined, false);
+		await eventually(async () =>
+			expect((await readiness()).exposure).toMatchObject({
+				checked_at: null,
+				failure: "probe_failed",
+			}),
+		);
+		expect(calls[0]).toEqual({ address: PROBE_ADDRESS, targets: [] });
+
+		reply = () => [];
+		clock().advance(EXPOSURE_RECHECK_MS);
+		await eventually(async () =>
+			expect((await readiness()).exposure).toEqual({
+				checked_at: clock().now().toISOString(),
+				agents: [],
+				unmeasured: 0,
+				failed_at: null,
+				failure: null,
+			}),
+		);
 	});
 
 	it("没测成的目标只给个数（不列别的项目的 Agent 名和地址），不算连不通", async () => {
@@ -262,6 +291,55 @@ describe("探测地址的配置（SFLY_FIREWALL_PROBES）", () => {
 	});
 });
 
+describe("请求探测服务（httpProbe）", () => {
+	const servers: Server[] = [];
+	const serve = async (
+		handler: (req: IncomingMessage, body: string, res: ServerResponse) => void,
+	) => {
+		const server = createServer((req, res) => {
+			let body = "";
+			req.on("data", (chunk) => {
+				body += chunk;
+			});
+			req.on("end", () => handler(req, body, res));
+		});
+		servers.push(server);
+		await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+		return `127.0.0.1:${(server.address() as AddressInfo).port}`;
+	};
+	afterEach(async () => {
+		await Promise.all(servers.splice(0).map((server) => new Promise((done) => server.close(done))));
+	});
+
+	it("POST /probe 带上目标，回应按约定的形状解析", async () => {
+		const address = await serve((req, body, res) => {
+			expect(req.method).toBe("POST");
+			expect(req.url).toBe("/probe");
+			const { targets } = JSON.parse(body) as { targets: string[] };
+			res.setHeader("content-type", "application/json");
+			res.end(JSON.stringify({ results: targets.map(() => "closed") }));
+		});
+		expect(await httpProbe(address, ["10.0.0.9:50052"])).toEqual(["closed"]);
+	});
+
+	it("不跟随重定向：目标列表不会被转到配置之外的地址，这一轮算没测成", async () => {
+		const elsewhere: string[] = [];
+		const other = await serve((_req, body, res) => {
+			elsewhere.push(body);
+			res.end(JSON.stringify({ results: ["open"] }));
+		});
+		for (const status of [301, 302, 303, 307, 308]) {
+			const address = await serve((_req, _body, res) => {
+				res.statusCode = status;
+				res.setHeader("location", `http://${other}/probe`);
+				res.end();
+			});
+			await expect(httpProbe(address, ["10.0.0.9:50052"])).rejects.toThrow();
+		}
+		expect(elsewhere).toEqual([]);
+	});
+});
+
 describe("分批探测", () => {
 	const targets = Array.from(
 		{ length: 2 * PROBE_BATCH + 500 },
@@ -283,6 +361,19 @@ describe("分批探测", () => {
 		expect(results.flatMap((r, i) => (r === "open" ? [targets[i]] : []))).toEqual(
 			targets.filter((t) => t.endsWith(".7:1")),
 		);
+	});
+
+	it("没有目标时也请求一次（空批）", async () => {
+		const batches: string[][] = [];
+		await probeAll(
+			async (_address, batch) => {
+				batches.push(batch);
+				return [];
+			},
+			PROBE_ADDRESS,
+			[],
+		);
+		expect(batches).toEqual([[]]);
 	});
 
 	it("有一批没测成就是整轮没测成，不把一部分当成整轮的结果", async () => {

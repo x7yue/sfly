@@ -511,7 +511,10 @@ def test_the_probe_answers_the_control_plane_in_order(probe_server: Any) -> None
     assert post(port, b'{"targets": [1]}')[0] == 400
 
 
-@pytest.mark.parametrize("length", ["+15", "15 ", "1_5", "١٥", "-1", "0x0f", "99999999999"])
+@pytest.mark.parametrize(
+    "length",
+    ["+15", "1_5", "١٥", "-1", "0x0f", "1 5", "", "0", "99999999999", "9" * 19, "9" * 5000],
+)
 def test_a_bad_length_header_is_a_plain_400(probe_server: Any, length: str) -> None:
     server, _ = probe_server
     body = b'{"targets": []}'
@@ -521,6 +524,15 @@ def test_a_bad_length_header_is_a_plain_400(probe_server: Any, length: str) -> N
         + body
     )
     assert raw(server.server_address[1], request).startswith(b"HTTP/1.0 400")
+
+
+def test_a_length_header_with_surrounding_spaces_is_read(probe_server: Any) -> None:
+    server, _ = probe_server
+    request = (
+        b"POST /probe HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"
+        b"Content-Length:  15 \r\n\r\n" + b'{"targets": []}'
+    )
+    assert raw(server.server_address[1], request).startswith(b"HTTP/1.0 200")
 
 
 def test_other_sources_are_closed_before_any_byte_is_read(probe_server: Any) -> None:

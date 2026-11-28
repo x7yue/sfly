@@ -37,6 +37,8 @@ export const httpProbe: WorkbenchProbe = async (address, targets) => {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ targets }),
+		// 不跟随重定向（抛错，算这一轮没测成）：目标列表只发到配置的地址，不能被转到别处。
+		redirect: "error",
 		// 32 个一批同时连，每批最多一个连接期限；再留 10 秒。
 		signal: AbortSignal.timeout(Math.ceil(targets.length / 32) * PROBE_TIMEOUT_MS + 10_000),
 	});
@@ -53,16 +55,21 @@ export const httpProbe: WorkbenchProbe = async (address, targets) => {
 	return results as ProbeResult[];
 };
 
-/** 按 {@link PROBE_BATCH} 分批探完全部目标；有一批没成就整轮没成（抛错），不把一部分当成整轮的结果。 */
+/**
+ * 按 {@link PROBE_BATCH} 分批探完全部目标；有一批没成就整轮没成（抛错），不把一部分当成整轮的结果。没有目标时也请求一次（空批）：
+ * 探测服务连得上才算测成，「没有目标」不等于「探测服务能用」。
+ */
 export async function probeAll(
 	probe: WorkbenchProbe,
 	address: string,
 	targets: string[],
 ): Promise<ProbeResult[]> {
 	const results: ProbeResult[] = [];
-	for (let start = 0; start < targets.length; start += PROBE_BATCH) {
+	let start = 0;
+	do {
 		results.push(...(await probe(address, targets.slice(start, start + PROBE_BATCH))));
-	}
+		start += PROBE_BATCH;
+	} while (start < targets.length);
 	return results;
 }
 
