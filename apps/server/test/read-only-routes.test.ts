@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { httpContract, NICKNAME_HEADER, NON_GET_READS, type RouteDef } from "@sfly/schema";
+import { httpContract, NON_GET_READS, type RouteDef } from "@sfly/schema";
 import Ajv2020 from "ajv/dist/2020.js";
 import { strToU8 } from "fflate";
 import pg from "pg";
@@ -27,7 +27,7 @@ import { requiresCredential } from "../src/auth/access-rules.js";
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { ArrayCoverage } from "./support/array-coverage.js";
-import { TestAccounts } from "./support/credentials.js";
+import { actAs, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { putFocusItemsOk } from "./support/focus-items.js";
@@ -117,9 +117,9 @@ const ARTIFACT = "报告/结果 1.json";
 const UNVERIFIED_ARRAYS: Record<string, string> = {
 	"POST /orchestrations/:id/edits/check response diff.annotations.added[]":
 		"局部编辑没有加注释框的操作（#470 这一版不做），这组操作造成的差异里不会有新增的注释框",
-	"GET /dashboard response recent_ended[].focus[].series[]":
+	"GET /projects/:project/dashboard response recent_ended[].focus[].series[]":
 		"控制台汇总只要关注项的最新值：读数用 points=0，序列按设计就是空的（序列的元素由 GET /runs/:id/focus 对照）",
-	"GET /dashboard response recent_ended[].focus[].series[].points[]":
+	"GET /projects/:project/dashboard response recent_ended[].focus[].series[].points[]":
 		"同上：控制台汇总的关注项读数不带序列",
 	"GET /runs/:id/logs response file_problems[]":
 		"seed 里没有日志文件不在了、变短了的任务：只读接口里读日志文件的（下载）在这样的任务上是 410、不是成功的路径，所以不造它；" +
@@ -438,7 +438,7 @@ describe("声明为只读的接口真的不写库", () => {
 			...(body !== undefined && {
 				headers: {
 					"content-type": "application/json",
-					[NICKNAME_HEADER]: encodeURIComponent("tester"),
+					...actAs("tester"),
 				},
 				body: JSON.stringify(body),
 			}),
@@ -740,7 +740,7 @@ async function publishProbe(cp: TestControlPlane): Promise<void> {
 		}),
 		{ "probe-1.0.0-py3-none-any.whl": new TextEncoder().encode("wheel") },
 	);
-	const res = await cp.fetch("/packages", publishInit(archive));
+	const res = await cp.fetch("/projects/default/packages", publishInit(archive));
 	if (res.status !== 201) throw new Error(`publish probe: ${await res.text()}`);
 }
 
@@ -934,7 +934,9 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	// 再来一次运行：Agent 的槽位满了，任务排队
 	const queuedRunId = await api.triggerOk(pressure, { env: "prod" });
 	await eventually(async () => {
-		const { agents } = await api.getJson<{ agents: Array<{ queued_tasks: unknown[] }> }>("/agents");
+		const { agents } = await api.getJson<{ agents: Array<{ queued_tasks: unknown[] }> }>(
+			"/projects/default/agents",
+		);
 		expect(agents[0]?.queued_tasks).toHaveLength(1);
 	});
 

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
 import { ACTION, scenarioCreatedLabel } from "#/lib/copy";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -145,7 +146,7 @@ export function NewScenarioDialog({
 	const invalidate = useInvalidateScenarios();
 	const create = useMutation({
 		mutationFn: (body: { name: string; description: string }) =>
-			callApi(orchestrationsApi.create, { body }),
+			callApi(orchestrationsApi.create, { params: { project: PROJECT }, body }),
 		onSuccess: async (created) => {
 			onOpenChange(false);
 			notify.success(scenarioCreatedLabel(created.name));

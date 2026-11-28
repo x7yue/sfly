@@ -42,7 +42,7 @@ describe("节点包安装", () => {
 		return agent;
 	};
 	const agentView = async (name: string): Promise<AgentView | undefined> => {
-		const { agents } = await api.getJson<{ agents: AgentView[] }>("/agents");
+		const { agents } = await api.getJson<{ agents: AgentView[] }>("/projects/default/agents");
 		return agents.find((a) => a.name === name);
 	};
 
@@ -57,7 +57,7 @@ describe("节点包安装", () => {
 
 	it("派发的任务带上节点包归档的下载地址和 sha256，Agent 可以据此下载并校验", async () => {
 		const archive = packageArchive();
-		expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(201);
+		expect((await cp.fetch("/projects/default/packages", publishInit(archive))).status).toBe(201);
 		await (await connect({ name: "agent-a" })).disconnect();
 		const id = await api.orchestrationWith(
 			singleNode("demo-checks", "1.2.0", "ping", { host: "h" }),
@@ -102,13 +102,14 @@ describe("节点包安装", () => {
 				package: "sfly-stub",
 				version: "0.2.0",
 				state: 1, // INSTALLING
-				taskId: "t-1",
+				taskId: "",
 				installedPackages: [{ name: "sfly-stub", version: "0.1.0" }],
 			},
 		});
+		// 不为任务装的（没有任务编号）照常给包名和版本；为别的项目的任务装的见 agent-tasks-project.test.ts。
 		await eventually(async () =>
 			expect(await agentView("agent-a")).toMatchObject({
-				install: { package: "sfly-stub", version: "0.2.0", state: "installing", task_id: "t-1" },
+				install: { package: "sfly-stub", version: "0.2.0", state: "installing", task_id: "" },
 			}),
 		);
 
@@ -118,7 +119,7 @@ describe("节点包安装", () => {
 				package: "sfly-stub",
 				version: "0.2.0",
 				state: 2, // INSTALLED
-				taskId: "t-1",
+				taskId: "",
 				output: "Installed 1 package",
 				installedPackages: [
 					{ name: "demo", version: "1.0.0" },
@@ -132,7 +133,7 @@ describe("节点包安装", () => {
 					{ name: "demo", version: "1.0.0" },
 					{ name: "sfly-stub", version: "0.2.0" },
 				],
-				install: { package: "sfly-stub", version: "0.2.0", state: "installed", task_id: "t-1" },
+				install: { package: "sfly-stub", version: "0.2.0", state: "installed", task_id: "" },
 			}),
 		);
 	});

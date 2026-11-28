@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	type AssignedTask,
 	agentClock,
@@ -1011,7 +1012,7 @@ test("运行切换菜单里，已请求取消、还在等待清理的运行显�
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	const res = await controlPlane.fetch(`/runs/${runId}/cancel`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: "{}",
 	});
 	expect(res.ok).toBe(true);

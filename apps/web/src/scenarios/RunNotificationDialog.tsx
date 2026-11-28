@@ -16,6 +16,7 @@ import { FeishuBotSelect } from "#/editor/inspector/FeishuBotSelect";
 import { apiQuery, callApi } from "#/lib/api";
 import { DOC_PAGE, PAGE, TERM } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -57,7 +58,10 @@ export function RunNotificationDialog({
 	returnFocus?: React.RefObject<HTMLElement | null>;
 }) {
 	const invalidate = useInvalidateScenarios();
-	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), enabled: open });
+	const bots = useQuery({
+		...apiQuery(feishuBotsApi.list, { params: { project: PROJECT } }),
+		enabled: open,
+	});
 	const [settings, setSettings] = useState<RunNotificationSettings>(scenario.run_notification);
 	useEffect(() => {
 		if (open) setSettings(scenario.run_notification);

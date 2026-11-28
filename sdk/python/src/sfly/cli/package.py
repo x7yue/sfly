@@ -60,12 +60,13 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:
-    packages = session.client.get("/packages")["packages"]
+    packages = session.client.get(session.client.in_project("/packages"))["packages"]
     shown, hidden = apply_limit(packages, args.limit)
     rows = [
         {
             "name": p["name"],
-            "latest_version": p["versions"][0]["version"] if p["versions"] else None,
+            # 最新版本由控制面标出（按版本号，#434），不取「最近发布的」。
+            "latest_version": p["latest_version"],
             "versions": [
                 {
                     "version": v["version"],
@@ -85,7 +86,7 @@ def _list(session: Session, args: argparse.Namespace) -> None:
                 [
                     r["name"],
                     _versions_text([v["version"] for v in r["versions"]]),
-                    ", ".join(r["versions"][0]["nodes"]) if r["versions"] else "-",
+                    ", ".join(_latest(r)["nodes"]) if r["versions"] else "-",
                 ]
                 for r in rows
             ],
@@ -93,6 +94,11 @@ def _list(session: Session, args: argparse.Namespace) -> None:
     else:
         text = "还没有发布过节点包"
     session.out.emit(rows, text, note=more_note(hidden, len(packages), "个节点包"))
+
+
+def _latest(row: dict[str, Any]) -> dict[str, Any]:
+    """一行里最新版本（`latest_version`）的那个版本。"""
+    return next(v for v in row["versions"] if v["version"] == row["latest_version"])
 
 
 def _versions_text(versions: list[str]) -> str:
@@ -120,7 +126,7 @@ def _show(session: Session, args: argparse.Namespace) -> None:
         )
     client = session.client
     try:
-        summary = client.get(f"/packages/{segment(name)}")
+        summary = client.get(client.in_project(f"/packages/{segment(name)}"))
     except ApiError as error:
         if error.status != 404:
             raise
@@ -132,16 +138,17 @@ def _show(session: Session, args: argparse.Namespace) -> None:
         raise CliError(
             "package_not_found", f"节点包 {name} 没有已发布的版本", next="sfly package list"
         )
-    version = wanted or published[0]
+    latest = summary["latest_version"]
+    version = wanted or latest
     if version not in published:
         listed = "\n".join(f"  {v}" for v in published)
         raise CliError(
             "package_version_not_found",
             f"节点包 {name} 没有版本 {version}，已有的版本（新到旧）：\n{listed}",
-            next=f"sfly package show {name}@{published[0]}",
+            next=f"sfly package show {name}@{latest}",
         )
-    detail = client.get(f"/packages/{segment(name)}/versions/{segment(version)}")
-    view = describe(detail, latest=published[0])
+    detail = client.get(client.in_project(f"/packages/{segment(name)}/versions/{segment(version)}"))
+    view = describe(detail, latest=latest)
     session.out.emit(view, render(view))
 
 
@@ -153,7 +160,7 @@ def _show_dev(session: Session, name: str, agent: str | None) -> None:
     运行准入不算它（apps/server/src/runs/dev-package-loaded.ts），这里和准入一致。"""
     loaders = [
         (a["name"], a["status"] == "online", d)
-        for a in session.client.get("/agents")["agents"]
+        for a in session.client.get(session.client.in_project("/agents"))["agents"]
         for d in a["dev_packages"]
         if d["name"] == name
     ]

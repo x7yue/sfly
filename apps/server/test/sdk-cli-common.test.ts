@@ -11,6 +11,7 @@ import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const CLIENT = "x-sfly-client";
+// biome-ignore lint/plugin/test-nickname-header: 测的是命令行发的昵称请求头
 const NICKNAME = "x-sfly-nickname";
 
 describe("sfly 命令行的公共部分 → 控制面", () => {

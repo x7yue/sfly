@@ -20,6 +20,14 @@ export function agentStatusView(agent: AgentView): StatusView {
 	return { kind: "ok", label: AGENT_STATUS_LABEL.online };
 }
 
+/** 占用的槽位数：读者项目里的任务（`running_tasks`）加上别的项目的（只有个数，#500）。 */
+export const usedSlots = (agent: Pick<AgentView, "running_tasks" | "other_project_running">) =>
+	agent.running_tasks.length + agent.other_project_running;
+
+/** 在等这台 Agent 的任务数：读者项目里的加上别的项目的。 */
+export const queuedCount = (agent: Pick<AgentView, "queued_tasks" | "other_project_queued">) =>
+	agent.queued_tasks.length + agent.other_project_queued;
+
 /**
  * 这台 Agent 此刻能不能接新任务（与控制面派发的条件一致）：没有停用、在线、已准备好环境、版本与控制面一致
  * （更新中的 Agent 版本也不一致，ADR 0014）。不能接的 Agent 槽位不算空闲：不画空闲矮条、不写占用数，

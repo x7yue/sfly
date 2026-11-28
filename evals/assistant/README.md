@@ -225,6 +225,34 @@ CI 的 `package` job 在构建好控制面和助手镜像之后跑它（`.github
 缓存的键按决定下载什么的文件算（见工作流里那一步）：改了别处让环境要下载新东西时，正式的一遍会因为缓存里没有而失败，
 镜像站的日志里有没找到的路径，把那个文件加进键里。
 
+### 骨架验收（#553）
+
+`acceptance/accept.sh` 在**正式部署形态**里按 #553「一句话之后的十分钟」逐行核对页面，模型是假的模型端点（不花钱），
+结论只说明页面和平台怎么显示，不说明模型做得成。用 `deploy/docker-compose.yml --profile assistant`（和
+`scripts/release/compose-smoke.sh` 一样），不是上面评测自己的环境。
+
+先构建三个镜像（在仓库根目录；Agent 的包在 macOS 上照上面「从源码构建控制面镜像」在 `pnpm linux` 里打）：
+
+```sh
+pnpm bundle:server && docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-server:accept out/server
+pnpm bundle:assistant && docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-assistant:accept out/assistant
+docker build -t sfly-workbench:accept deploy/workbench
+pnpm heavy bash evals/assistant/acceptance/accept.sh [--project <项目>] [--images <标签>] [--out <目录>] [--keep]
+```
+
+- 环境：compose 的三个服务加一个 override（PostgreSQL、假的模型端点、被测机 `sut`：普通 Agent `sut-01` 和
+  `container/demo_svc.py`）；开着登录，登记工作台；准备一个编辑者账号（两人交替用），照「编排」那道题的初始状态发布
+  `svc-probe`、建「demo 巡检」。
+- 剧本：`acceptance/accept-*.json`，和 `fake_model.py` 放在同一个目录里给假的模型端点。剧本的一步可以带 `thinking`
+  （先流一段「思考」）和 `thinking_delay`；文字里的 `{last_user}` 换成最近一条用户的话（看插话、接着说送到了没有）。
+- 浏览器：Playwright 官方镜像（和 e2e 同一个版本）在这套环境的网络里跑 `acceptance/acceptance.spec.ts`。用例要停掉、
+  重启容器时在控制目录里写请求，`accept.sh` 在后台照做。
+- 结果（默认 `~/.local/share/sfly/evals/<日期>-accept/<时间>/`）：`summary.md`（每行 通过/失败、说明、证据）、
+  `results.jsonl`、`shots/`、`samples/`、各个日志。结束前按值搜管理员和编辑者的密码、Agent 凭据、助手的共享密钥，按格式搜会话令牌、
+  个人令牌、登录 Cookie；搜到就删掉这次的结果，以退出码 2 结束。全部通过退出码 0，有行没过 1。
+- `--project`：项目内的接口（登记工作台、就绪、建会话）都用它；第二个项目要等 #499、#796，现在只在默认项目跑通。
+- CI 的 `package` job 在 compose 冒烟之后用同一套 `:smoke` 镜像跑它（`--images smoke`），在上面的平台臂之前。
+
 ## 模型
 
 容器里的 pi 不拿密钥。它指向一个模型地址（模型配置里的 `endpoint`），凭据由宿主机上的转发口在转发时加上：

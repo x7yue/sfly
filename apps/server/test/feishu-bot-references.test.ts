@@ -54,7 +54,9 @@ describe("删除飞书机器人之前列出引用它的场景", () => {
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 		await api.createFeishuBot("ops", "http://127.0.0.1:9/hook/a");
 		await api.createFeishuBot("dev", "http://127.0.0.1:9/hook/b");
 	});
@@ -64,7 +66,7 @@ describe("删除飞书机器人之前列出引用它的场景", () => {
 
 	const references = async (bot: string) =>
 		feishuBotsApi.references.response.parse(
-			await api.getJson(`/feishu-bots/${encodeURIComponent(bot)}/references`),
+			await api.getJson(`/projects/default/feishu-bots/${encodeURIComponent(bot)}/references`),
 		).scenarios;
 
 	it("列出最新场景版本里选了这个机器人的节点所在的场景，按场景名排序，每个场景列出各个节点的输入", async () => {
@@ -110,7 +112,7 @@ describe("删除飞书机器人之前列出引用它的场景", () => {
 
 	it("没有场景引用时是空列表；机器人不存在时 404", async () => {
 		expect(await references("ops")).toEqual([]);
-		const res = await api.get("/feishu-bots/ghost/references");
+		const res = await api.get("/projects/default/feishu-bots/ghost/references");
 		expect(res.status).toBe(404);
 	});
 });

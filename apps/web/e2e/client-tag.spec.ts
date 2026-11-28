@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing } from "./support";
@@ -22,7 +23,7 @@ async function send(
 		method: "POST",
 		headers: {
 			...JSON_HEADERS,
-			"x-sfly-nickname": encodeURIComponent(nickname),
+			...actAs(nickname),
 			...(client ? { "x-sfly-client": client } : {}),
 		},
 		body: JSON.stringify(body),

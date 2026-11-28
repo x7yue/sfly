@@ -43,7 +43,9 @@ describeWithAgent("全栈：「Agent」类型的输入", () => {
 
 	it("节点收到 Agent 名称，并用控制面派发时解析的地址和端口访问那台 Agent", async () => {
 		const api = new ApiClient(cp);
-		const listed = agentsApi.list.response.parse(await (await cp.fetch("/agents")).json()).agents;
+		const listed = agentsApi.list.response.parse(
+			await (await cp.fetch("/projects/default/agents")).json(),
+		).agents;
 		const endpoint = listed.find((a) => a.name === "fs-source")?.endpoint;
 		expect(endpoint?.port).toBeGreaterThan(0);
 

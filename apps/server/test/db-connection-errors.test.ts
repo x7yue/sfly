@@ -28,7 +28,7 @@ const startProcess = (
  * 重启之后照样有效，不用在每次重新起进程时再传。
  */
 const issueAgentCredential = async (target: SourceServer, name: string): Promise<string> => {
-	const res = await target.request("POST", `/agents/${name}/credentials`, {});
+	const res = await target.request("POST", `/projects/default/agents/${name}/credentials`, {});
 	expect(res.status, await res.clone().text()).toBe(201);
 	return ((await res.json()) as { token: string }).token;
 };
@@ -89,7 +89,9 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 		return agent;
 	};
 	const createScenario = async (name: string, document: unknown) => {
-		const created = (await (await cp.request("POST", "/orchestrations", { name })).json()) as {
+		const created = (await (
+			await cp.request("POST", "/projects/default/orchestrations", { name })
+		).json()) as {
 			id: string;
 		};
 		const saved = await cp.request("POST", `/orchestrations/${created.id}/versions`, {
@@ -137,7 +139,7 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 			"%s 断开：进程有序退出，重启之后库里的版本和请求的结局一致",
 			async (_, match, action, stored) => {
 				const created = (await (
-					await cp.request("POST", "/orchestrations", { name: "连接被断开" })
+					await cp.request("POST", "/projects/default/orchestrations", { name: "连接被断开" })
 				).json()) as { id: string };
 				proxy.arm(match, action);
 
@@ -171,7 +173,7 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 
 		it("BEGIN 上断开（drizzle 在 BEGIN 失败时借出去的连接永远不还）：进程有序退出，连接池关不完也在时限内退出，重启之后一切照常", async () => {
 			const created = (await (
-				await cp.request("POST", "/orchestrations", { name: "BEGIN 上断开" })
+				await cp.request("POST", "/projects/default/orchestrations", { name: "BEGIN 上断开" })
 			).json()) as { id: string };
 			proxy.arm(/^begin/i, "drop");
 
@@ -203,7 +205,7 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 		// 不区分有没有「一收到致命错误消息就当作完了」；区分的是下面引擎的那条（失败处理会再借连接写）。
 		it("HTTP 请求里的事务在 BEGIN 上收到：进程有序退出，没有存下，重启之后一切照常", async () => {
 			const created = (await (
-				await cp.request("POST", "/orchestrations", { name: "BEGIN 上收到 FATAL" })
+				await cp.request("POST", "/projects/default/orchestrations", { name: "BEGIN 上收到 FATAL" })
 			).json()) as { id: string };
 			proxy.arm(/^begin/i, "terminate-backend");
 
@@ -234,7 +236,9 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 	describe("有序退出和停止信号一起来：退出码都是 1", () => {
 		it("致命错误先到、有序退出途中来了两个停止信号：退出码仍是 1，不是 0", async () => {
 			const created = (await (
-				await cp.request("POST", "/orchestrations", { name: "致命错误后来停止信号" })
+				await cp.request("POST", "/projects/default/orchestrations", {
+					name: "致命错误后来停止信号",
+				})
 			).json()) as { id: string };
 			// BEGIN 上断开：借出去的连接永远不还，有序关闭要等连接池的 3 秒上限，这段时间里停止信号到。
 			proxy.arm(/^begin/i, "drop");
@@ -259,7 +263,9 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 
 		it("停止信号先到、关闭途中借出去的连接收到致命错误：退出码是 1（关闭没写完的东西没有人补，如实说明这次退出不干净）", async () => {
 			const created = (await (
-				await cp.request("POST", "/orchestrations", { name: "停止信号后来致命错误" })
+				await cp.request("POST", "/projects/default/orchestrations", {
+					name: "停止信号后来致命错误",
+				})
 			).json()) as { id: string };
 			// 保存版本的那条语句在数据库里「进行中」6 秒：有序关闭等进行中的请求，这段时间里结束它的连接。
 			await slowDown(database.url, "orchestration_versions", "insert", 6);
@@ -411,7 +417,7 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 	describe("数据库整体不可用", () => {
 		it("正好有事务在进行时数据库不可用：进程有序退出；数据库没回来之前重启起不来（启动时就退出，重启策略会一直重试）；数据库回来之后起得来", async () => {
 			const created = (await (
-				await cp.request("POST", "/orchestrations", { name: "不可用" })
+				await cp.request("POST", "/projects/default/orchestrations", { name: "不可用" })
 			).json()) as { id: string };
 			// 让保存版本的那条语句在数据库里「进行中」几秒，在这段时间里整个数据库不可用。
 			await slowDown(database.url, "orchestration_versions", "insert", 8);
@@ -465,16 +471,18 @@ describe("没有借出去的连接出错：进程不退出（以前也不退出�
 	it("单条语句（`pool.query`，不在事务里）的连接断开：这次请求以 5xx 结束，进程不退出，之后的请求照常", async () => {
 		proxy.arm(/^insert into "orchestrations"/, "drop");
 
-		const res = await cp.request("POST", "/orchestrations", { name: "单条语句" });
+		const res = await cp.request("POST", "/projects/default/orchestrations", { name: "单条语句" });
 
 		expect(proxy.fired).toHaveLength(1);
 		expect(res.status).toBeGreaterThanOrEqual(500);
 		await expectAlive();
-		expect((await cp.request("POST", "/orchestrations", { name: "之后" })).status).toBe(201);
+		expect(
+			(await cp.request("POST", "/projects/default/orchestrations", { name: "之后" })).status,
+		).toBe(201);
 	}, 90_000);
 
 	it("空闲的连接被结束：进程不退出，记一条连接错误的日志，之后的请求照常", async () => {
-		await cp.request("GET", "/orchestrations");
+		await cp.request("GET", "/projects/default/orchestrations");
 		await new Promise((resolve) => setTimeout(resolve, 300));
 
 		// 机器忙的时候（CI 上整套测试一起跑）这一刻控制面唯一的连接可能正在执行别的语句、不是空闲的：等到有空闲的再结束
@@ -485,7 +493,9 @@ describe("没有借出去的连接出错：进程不退出（以前也不退出�
 		await eventually(async () => expect(cp.log).toContain("postgres connection error"), 10_000);
 
 		await expectAlive();
-		expect((await cp.request("POST", "/orchestrations", { name: "空闲之后" })).status).toBe(201);
+		expect(
+			(await cp.request("POST", "/projects/default/orchestrations", { name: "空闲之后" })).status,
+		).toBe(201);
 		// 不是「借出去的连接出错」的退出。
 		expect(cp.log).not.toContain("数据库连接在使用中断开");
 	}, 90_000);

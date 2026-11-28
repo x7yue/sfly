@@ -21,7 +21,7 @@ Preconditions:
 - 基线环境，`verify-agent` 在线。
 
 - **列表。** 打开 `$HTTP_URL/agents`，能看到 `heading "Agent 管理"` 和 `region "verify-agent"`：头部写着 `在线`、工作区版本（`apps/server/package.json` 的 version）、`linux/x86_64`、`最后在线 现在`，「槽位」一栏写着 `0 / 4 占用 · 排队 0`。截图 `agt-01-list.png`。
-- **已安装的节点包。** 按 [运行与监控](./run-and-monitor.md) 跑完一次 `sfly-stub` 节点后刷新页面，`region "verify-agent"` 底部的「节点包」一行出现 `sfly-stub@0.1.0`；再用 `curl -s $HTTP_URL/api/agents` 看 `installed_packages`，两边一致。
+- **已安装的节点包。** 按 [运行与监控](./run-and-monitor.md) 跑完一次 `sfly-stub` 节点后刷新页面，`region "verify-agent"` 底部的「节点包」一行出现 `sfly-stub@0.1.0`；再用 `curl -s $HTTP_URL/api/projects/default/agents` 看 `installed_packages`，两边一致。
 - **离线。** 运行 `kill -TERM -- -$AGENT_PGID` 只停掉这套环境的 Agent，几秒内页面上这个面板的状态变成 `离线`，侧边栏变成 `0/1`。截图 `agt-02-offline.png`。做完这一步这套环境就没有 Agent 了，之后只能 `down.sh` 再重新 `up.sh`。
 
 ## Gotchas

@@ -245,8 +245,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_publish.add_argument(
         "--project",
-        help="发布到哪个项目：现在只能写 public（公共项目，标准节点包放在这里，"
-        "只有平台管理员能发布）；不写发布到默认项目",
+        help="发布到哪个项目：公共项目写 public（标准节点包放在这里，只有平台管理员能发布）；"
+        "不写时是 $SFLY_PROJECT，没设置时是默认项目 default",
     )
     p_publish.set_defaults(func=_publish)
 

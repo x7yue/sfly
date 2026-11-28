@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Locator, Page } from "@playwright/test";
 import type { SessionEvent, SessionEventBody } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	recordRunSession,
 	recordVersionSession,
@@ -544,7 +545,7 @@ test("成果：场景块（场景名链到场景页；这个会话保存过的�
 	const save = async (scenarioId: string, base: number) => {
 		const saved = await controlPlane.fetch(`/orchestrations/${scenarioId}/versions`, {
 			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ base_version: base, document: scenarioUsing("agent") }),
 		});
 		expect(saved.status).toBe(201);
@@ -984,7 +985,7 @@ test("经 会话：会话触发的运行、保存的版本，运行记录、运�
 	});
 	const saved = await controlPlane.fetch(`/orchestrations/${scenario}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({ base_version: 1, document: scenarioUsing("agent") }),
 	});
 	expect(saved.status).toBe(201);

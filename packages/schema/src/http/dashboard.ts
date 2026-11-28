@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { SessionRef } from "../sessions.js";
-import { endpoint, Timestamp } from "./contract.js";
+import { endpoint, ProjectParams, Timestamp } from "./contract.js";
 import { RunFocusItem } from "./run-focus.js";
 import { RunListActiveNode } from "./run-list.js";
 import { ErrorView, QueueWaitView } from "./runs.js";
@@ -203,12 +203,13 @@ export const dashboardApi = {
 	/** 控制台统计（最近 24 小时）。 */
 	get: endpoint({
 		method: "GET",
-		path: "/dashboard",
+		path: "/projects/:project/dashboard",
 		summary: "控制台统计：最近 24 小时的运行结果、运行中的运行、Agent 在线情况",
 		effect: "read",
 		resource: { kind: "run", target: "collection" },
 		client: true,
 		key: ["dashboard", "get"],
+		params: ProjectParams,
 		response: DashboardView,
 	}),
 };

@@ -10,7 +10,7 @@ import {
 	seriesName,
 	sortedLabels,
 } from "@sfly/schema";
-import { formatFullDateTime, formatMetric, TIME_NOT_RECORDED } from "#/lib/format";
+import { formatClock, formatFullDateTime, formatMetric, TIME_NOT_RECORDED } from "#/lib/format";
 import type { ChartLine } from "./MetricChart";
 import type { TimeRange } from "./timeline-model";
 
@@ -61,6 +61,43 @@ export function chartWindow(
 	const start = Math.max(span.start, visible.start);
 	const end = Math.min(span.end, visible.end);
 	return { start, end: Math.max(end, start + MIN_CHART_SPAN) };
+}
+
+/**
+ * 有点、却没有一个落在这次尝试的时段里（开始到结束，还没结束就到 `now`）时，数据桶的范围（第一个桶的开始到最后一个桶的
+ * 结束）；否则 null。Agent 的时间换算有偏差时，点换算成控制面时间以后会落到尝试时段之外（#389）。
+ * 有桶没有换算后的时间（升级之前存下的，只有 Agent 时间）时不做这项推断。
+ */
+export function pointsOutsideAttempt(
+	lines: readonly ChartLine[],
+	attempt: AttemptTimes,
+	now: number,
+	bucketSeconds: number,
+): TimeRange | null {
+	const span = attemptSpan(attempt, now);
+	if (span === null) return null;
+	const width = bucketSeconds * 1000;
+	let start = Number.POSITIVE_INFINITY;
+	let end = Number.NEGATIVE_INFINITY;
+	for (const line of lines) {
+		for (const bucket of line.buckets) {
+			if (bucket.time === null) return null;
+			const t = Date.parse(bucket.time);
+			if (t + width > span.start && t <= span.end) return null;
+			start = Math.min(start, t);
+			end = Math.max(end, t + width);
+		}
+	}
+	return start === Number.POSITIVE_INFINITY ? null : { start, end };
+}
+
+/** 一段时间怎么写：两端都和 `now` 同一天时只写钟点（`10:23:20 – 10:43:20`），否则写日期和钟点。 */
+export function timeRangeText(range: TimeRange, now: number): string {
+	const day = (t: number) => new Date(t).toDateString();
+	const today = day(range.start) === day(now) && day(range.end) === day(now);
+	const text = (t: number) =>
+		today ? formatClock(t) : formatFullDateTime(new Date(t).toISOString());
+	return `${text(range.start)} – ${text(range.end)}`;
 }
 
 /**
