@@ -4,6 +4,7 @@ import { latestVersion } from "./package-versions";
 
 const pkg = (name: string, latest: string, versions: string[]): PackageSummary => ({
 	name,
+	public: false,
 	latest_version: latest,
 	versions: versions.map((version) => ({
 		version,

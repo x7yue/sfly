@@ -44,6 +44,7 @@ describe("节点包仓库", () => {
 			packages: [
 				{
 					name: "demo-checks",
+					public: false,
 					latest_version: "1.2.0",
 					versions: [
 						{

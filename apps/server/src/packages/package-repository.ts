@@ -46,6 +46,8 @@ export interface PackageVersionSummary {
 
 export interface PackageSummary {
 	name: string;
+	/** 在公共项目里（#501）。 */
+	public: boolean;
 	/** 最新版本：按版本号比较，不是发布时间（@sfly/orchestration 的 `newestVersion`，#434）。 */
 	latest_version: string;
 	/** 按发布时间从新到旧。 */
@@ -57,6 +59,7 @@ function summaryOf(name: string, rows: readonly Row[]): PackageSummary {
 	const versions = rows.map(toSummary);
 	return {
 		name,
+		public: rows.some((r) => r.projectId === PUBLIC_PROJECT),
 		latest_version: newestVersion(versions.map((v) => v.version)) ?? "",
 		versions,
 	};
