@@ -70,7 +70,7 @@ image=sfly-linux:$({
 	printf '%s\n' "${args[@]}"
 } | git hash-object --stdin | cut -c1-12)
 if ! docker image inspect "$image" >/dev/null 2>&1; then
-	echo "pnpm linux：构建镜像 $image（第一次要几分钟）" >&2
+	echo "pnpm linux：构建镜像 ${image}（第一次要几分钟）" >&2
 	docker build -t "$image" "${args[@]}" - <scripts/linux/Dockerfile >&2
 fi
 

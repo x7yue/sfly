@@ -68,7 +68,14 @@ export function queueTimeoutProblem(label: string, written: unknown): string | u
 }
 
 /** 任务失败的错误类型（docs/SEMANTICS.md §3.3）。 */
-export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
+export const ERROR_KINDS = [
+	"node_error",
+	"timeout",
+	"agent_lost",
+	"env_error",
+	"config_error",
+] as const;
+export type ErrorKind = (typeof ERROR_KINDS)[number];
 
 /** 按 `retries` 重试的错误类型；env_error、config_error 不重试。控制面引擎和运行视图共用。 */
 export const RETRYABLE_ERROR_KINDS: readonly ErrorKind[] = ["node_error", "timeout", "agent_lost"];

@@ -68,6 +68,7 @@ describe("添加节点菜单的内置节点", () => {
 describe("添加节点菜单的分组与「最近使用」", () => {
 	const pkg = (name: string, version: string, nodes: string[]): PackageSummary => ({
 		name,
+		latest_version: version,
 		versions: [
 			{
 				version,

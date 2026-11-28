@@ -61,6 +61,7 @@ import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
+import { openVaultKey } from "./secrets/vault-key.js";
 import { AssistantClient } from "./sessions/assistant-client.js";
 import { assistantSetup } from "./sessions/assistant-config.js";
 import { AssistantConnection } from "./sessions/assistant-connection.js";
@@ -291,6 +292,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 
 	try {
 		await database.migrate();
+		// 钥匙文件对不上就拒绝启动：放在迁移之后、任何别的写库（共享令牌、引擎恢复）之前，失败的启动不改动运行和任务。
+		await mkdir(options.dataDir, { recursive: true });
+		await openVaultKey(options.dataDir, database.db);
 		// 共享令牌登记成默认项目的旧式 Agent 凭据（ADR 0029）。
 		await registerSharedAgentToken(database.db, clock, options.agentToken);
 	} catch (error) {
@@ -503,7 +507,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			.catch((error) => logError("sfly: 用户停用时断开他的开发 Agent 失败", error));
 	});
 	try {
-		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({
 			accounts,
 			setupCode,

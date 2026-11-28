@@ -23,7 +23,7 @@ if ((build)); then
 	cargo build -p sfly-agent --locked --quiet
 fi
 for f in apps/web/dist/index.html target/debug/sfly-agent; do
-	[[ -e $f ]] || { echo "[up] 缺少 $f，去掉 --no-build 重新运行" >&2; exit 1; }
+	[[ -e $f ]] || { echo "[up] 缺少 ${f}，去掉 --no-build 重新运行" >&2; exit 1; }
 done
 ls apps/server/dist/sdk/*.whl >/dev/null 2>&1 || { echo "[up] 缺少 SDK wheel" >&2; exit 1; }
 

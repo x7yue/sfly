@@ -63,7 +63,7 @@ while [[ ${1:-} == --* ]]; do
 			if kill -0 "$pid" 2>/dev/null; then alive="$alive $pid"; else rm -f "$file"; fi
 		done
 		if [[ -n $alive ]]; then
-			echo "pnpm heavy：这个工作区还有 heavy 在运行（PID$alive），保留 $tmp_dir 和 $target_dir" >&2
+			echo "pnpm heavy：这个工作区还有 heavy 在运行（PID${alive}），保留 $tmp_dir 和 $target_dir" >&2
 		else
 			rm -rf "$tmp_dir" "$target_dir"
 			echo "pnpm heavy：已删除 $tmp_dir 和 $target_dir" >&2
@@ -78,7 +78,7 @@ while [[ ${1:-} == --* ]]; do
 				fi
 			done
 			# -v：连容器的匿名卷一起删（#525），不带的话每个容器留下一个卷。
-			# shellcheck disable=SC2086
+			# shellcheck disable=SC2086 # $stale 是空白分隔的多个容器 ID，要拆成多个参数
 			[[ -z $stale ]] || docker rm -f -v $stale >/dev/null 2>&1 || true
 			[[ -z $stale ]] || echo "pnpm heavy：已删除没人用的 PostgreSQL 容器：$stale" >&2
 		fi
