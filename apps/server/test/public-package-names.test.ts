@@ -1,8 +1,6 @@
 // 公共项目里的节点包名字（#501）：升级之后留在别的项目里的 sfly-std 版本由迁移挪进公共项目；之后公共项目里的名字不能在别的项目里发布，
 // 别的项目里的名字也不能发布到公共项目（名字这一步仍然全局唯一，第二步在 #502）。
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Database, defaultMigrationsDir, openDatabase } from "../src/db/database.js";
@@ -15,6 +13,7 @@ import { DEFAULT_PROJECT, type ProjectId, PUBLIC_PROJECT } from "../src/projects
 import { ManualClock } from "./support/manual-clock.js";
 import { migrationsCopy } from "./support/migrations.js";
 import { packageArchive, packageMetadata } from "./support/package-archive.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const OTHER = "other-team" as ProjectId;
@@ -39,7 +38,7 @@ describe("公共项目里的节点包名字（#501）", () => {
 			"insert into projects (id, display_name, created_at) values ($1, '项目乙', $2)",
 			[OTHER, AT],
 		);
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-public-names-"));
+		dataDir = await makeTempDir("sfly-public-names-");
 		packages = createPackageRepository({ db: database.db, clock: new ManualClock(), dataDir });
 	});
 	afterEach(async () => {
