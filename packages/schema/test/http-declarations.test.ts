@@ -50,8 +50,10 @@ describe("契约里全部接口的声明", () => {
 		expect(checkRouteDeclarations(httpContract)).toEqual([]);
 	});
 
-	it("每一类资源都有接口在用，每类都有中文名", () => {
-		const used = new Set(httpContract.map((def) => def.resource.kind));
+	it("每一类资源都有接口在用（定位到它，或者新建出它），每类都有中文名", () => {
+		const used = new Set(
+			httpContract.flatMap((def) => [def.resource.kind, ...(def.creates ? [def.creates] : [])]),
+		);
 		expect([...used].sort()).toEqual([...RESOURCE_KINDS].sort());
 		expect(Object.keys(RESOURCE_KIND_LABELS).sort()).toEqual([...RESOURCE_KINDS].sort());
 	});
@@ -118,6 +120,7 @@ describe("契约里全部接口的声明", () => {
 		expect(creating.sort()).toEqual([
 			"POST /orchestrations/:id/copy",
 			"POST /orchestrations/:id/runs",
+			"POST /sessions/:id/builds",
 		]);
 	});
 

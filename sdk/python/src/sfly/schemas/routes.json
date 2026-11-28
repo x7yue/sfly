@@ -9,6 +9,7 @@
     "dev_agent": "开发 Agent",
     "feishu_bot": "飞书机器人",
     "session": "会话",
+    "session_build": "会话构建",
     "system": "系统",
     "account": "账号",
     "project": "项目"
@@ -25992,6 +25993,139 @@
           "project",
           "readiness",
           "waiting_for"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/:id/builds",
+      "key": [
+        "session-builds",
+        "register"
+      ],
+      "kind": "upload",
+      "summary": "登记会话构建：请求体是 .sflypkg 归档的原始字节，版本号带这个会话的标签",
+      "effect": "write",
+      "resource": {
+        "kind": "session",
+        "target": {
+          "params": "id"
+        }
+      },
+      "creates": "session_build",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "registered_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "sha256",
+          "size",
+          "registered_at"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/:id/builds",
+      "key": [
+        "session-builds",
+        "list"
+      ],
+      "kind": "endpoint",
+      "summary": "列出这个会话登记的会话构建",
+      "effect": "read",
+      "resource": {
+        "kind": "session",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "builds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "registered_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                }
+              },
+              "required": [
+                "name",
+                "version",
+                "sha256",
+                "size",
+                "registered_at"
+              ]
+            },
+            "description": "按登记时间从新到旧。"
+          }
+        },
+        "required": [
+          "builds"
         ]
       },
       "notes": []
