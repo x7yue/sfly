@@ -16,7 +16,7 @@
 import { readFileSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { httpContract, NON_GET_READS, type RouteDef } from "@sfly/schema";
+import { httpContract, NON_GET_READS, type RouteDef, sessionBuildTag } from "@sfly/schema";
 import Ajv2020 from "ajv/dist/2020.js";
 import { strToU8 } from "fflate";
 import pg from "pg";
@@ -943,6 +943,17 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	// 会话：有每种持久事件，上一轮结束了；再来一个在做的、一个空闲没有事件的（列表里状态不同的几种）。
 	const sessionId = await seedSession(cp.database.url, { events: persistedBodies() });
 	await seedSession(cp.database.url, { title: "没有事件的会话", status: "idle" });
+	// 这个会话的一个会话构建（#795）：会话构建的列表非空。
+	const build = `1.0.0+${sessionBuildTag(sessionId)}.1`;
+	const registered = await cp.fetch(
+		`/sessions/${sessionId}/builds`,
+		publishInit(
+			packageArchive(packageMetadata({ name: "probe-session", version: build }), {
+				[`probe_session-${build}-py3-none-any.whl`]: new TextEncoder().encode("wheel"),
+			}),
+		),
+	);
+	if (registered.status !== 201) throw new Error(`register build: ${await registered.text()}`);
 	const docs = await api.getJson<{ pages: Array<{ slug: string }> }>("/docs");
 	const fixture = async (
 		scenarioId: string,

@@ -50,7 +50,7 @@ describe("公共项目里的节点包名字（#501）", () => {
 	const rejected = async (project: ProjectId, name: string, version = "2.0.0") => {
 		const error = await packages.publish(project, archive(name, version), null).catch((e) => e);
 		expect(error).toBeInstanceOf(PackageError);
-		expect((error as PackageError).kind).toBe("conflict");
+		expect((error as PackageError).kind).toBe("package_name_taken");
 		return (error as PackageError).message;
 	};
 
@@ -94,7 +94,7 @@ describe("公共项目里的节点包名字（#501）", () => {
 			]);
 			expect(early, "拿不到锁的发布要等着").toBe("waiting");
 			await holder.query("commit");
-			expect(((await racing) as PackageError).kind).toBe("conflict");
+			expect(((await racing) as PackageError).kind).toBe("package_name_taken");
 		} finally {
 			await holder.query("rollback").catch(() => undefined);
 			await holder.end();

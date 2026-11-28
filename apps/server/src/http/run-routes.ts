@@ -91,7 +91,12 @@ export function registerRunRoutes(
 			version: head.number,
 			params: declarations,
 			problems: [
-				...(await deps.preflight(deps.db, project, head.document)),
+				...(await deps.preflight(
+					deps.db,
+					project,
+					head.document,
+					await deps.orchestrations.versionSession(params.id, head.number),
+				)),
 				...secretSize.problems,
 			],
 			warnings: [

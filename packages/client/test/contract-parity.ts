@@ -187,5 +187,7 @@ export type ContractParity = [
 	Expect<Equal<Api["sessions"]["stop"]["output"], z.output<Apis["sessions"]["stop"]["response"]>>>,
 	Expect<Within<NonNullable<Api["sessions"]["end"]["input"]["params"]>, NonNullable<z.input<Apis["sessions"]["end"]["params"]>>>>,
 	Expect<Equal<Api["sessions"]["end"]["output"], z.output<Apis["sessions"]["end"]["response"]>>>,
+	Expect<Within<NonNullable<Api["sessionBuilds"]["list"]["input"]["params"]>, NonNullable<z.input<Apis["sessionBuilds"]["list"]["params"]>>>>,
+	Expect<Equal<Api["sessionBuilds"]["list"]["output"], z.output<Apis["sessionBuilds"]["list"]["response"]>>>,
 	Expect<Equal<Api["system"]["health"]["output"], z.output<Apis["system"]["health"]["response"]>>>,
 ];

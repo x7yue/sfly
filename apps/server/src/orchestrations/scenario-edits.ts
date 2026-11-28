@@ -12,12 +12,13 @@ import {
 	DEV_VERSION,
 	type EditOperation,
 	type EditOperationProblem,
+	isSessionBuildOf,
 	OrchestrationDocument,
 	removedNodesIn,
 	removedNodesMessage,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { inArray } from "drizzle-orm";
+import { and, inArray, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { agentsInProject } from "../agents/project-agents.js";
 import type { Db } from "../db/database.js";
@@ -52,6 +53,8 @@ export async function prepareEdits(
 	orchestrations: OrchestrationStore,
 	orchestrationId: string,
 	operations: readonly EditOperation[],
+	/** 编辑的人所在的会话：保存出来的版本属于它，这个会话的会话构建也找得到（#795）。 */
+	session: string | null,
 	baseVersion: number | undefined,
 ): Promise<PreparedEdits> {
 	const head = await orchestrations.head(orchestrationId);
@@ -74,7 +77,7 @@ export async function prepareEdits(
 	const outcome = applyEditOperations(
 		head.document,
 		operations,
-		await editContext(db, project, head.document, operations),
+		await editContext(db, project, head.document, operations, session),
 	);
 	if (!outcome.ok) return { kind: "invalid_operation", problem: outcome.problem };
 	const parsed = OrchestrationDocument.safeParse(outcome.doc);
@@ -103,6 +106,7 @@ async function editContext(
 	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 	operations: readonly EditOperation[],
+	session: string | null,
 ): Promise<EditContext> {
 	const projects = readableProjects(project);
 	const adds = operations.flatMap((op) => (op.op === "add_node" ? [op] : []));
@@ -117,12 +121,13 @@ async function editContext(
 	const devHere = new Set(
 		reports.filter((r) => r.online).flatMap((r) => [...r.devPackages.keys()]),
 	);
-	// 这个场景读得到的已发布版本（版本写错时列出来）：一次读完，行数是已发布的版本数。
+	// 这个场景读得到的已发布版本（版本写错时列出来）：一次读完，行数是已发布的版本数。会话构建不算（不进默认版本，#795），
+	// 这个会话的会话构建只在锁定、加节点时写明了版本才查。
 	const releases = new Map<string, string[]>();
 	for (const row of await db
 		.select({ name: nodePackages.name, version: nodePackages.version })
 		.from(nodePackages)
-		.where(inArray(nodePackages.projectId, projects))) {
+		.where(and(inArray(nodePackages.projectId, projects), isNull(nodePackages.sessionId)))) {
 		releases.set(row.name, [...(releases.get(row.name) ?? []), row.version]);
 	}
 	for (const versions of releases.values()) versions.sort((a, b) => compareReleases(b, a));
@@ -148,9 +153,10 @@ async function editContext(
 				if (types) catalog.set(packageKey(name, version), types);
 				continue;
 			}
-			const found = published.includes(version)
-				? await findPackageVersion(db, project, name, version)
-				: undefined;
+			const found =
+				published.includes(version) || (session !== null && isSessionBuildOf(version, session))
+					? await findPackageVersion(db, project, name, version, { session })
+					: undefined;
 			catalog.set(packageKey(name, version), found ? found.metadata.nodes : null);
 		}
 	}

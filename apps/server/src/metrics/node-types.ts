@@ -47,7 +47,7 @@ export async function nodeTypeOf(
 				| undefined;
 		}
 	} else {
-		metadata = await findPackageMetadata(db, project, node.package, version);
+		metadata = await findPackageMetadata(db, project, node.package, version, "any");
 	}
 	const type = metadata?.nodes?.find((n) => n.name === node.node);
 	return { package: node.package, node: node.node, version, type };

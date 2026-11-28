@@ -718,6 +718,19 @@ export class AccessGuard {
 				"这个接口只认有用户的人的凭据（登录、个人令牌）：会话令牌和项目令牌不能用它",
 			);
 		}
+		// 会话令牌只能访问自己的会话（ADR 0029 范围表的会话构建一行「定位到的会话：只能是令牌自己的会话」，#795）：定位到会话的接口
+		// （读会话、事件、登记和列出会话构建），路径里的会话不是令牌所属的会话时拒绝。读也拦：同一个项目里别的会话的对话和会话构建
+		// 不归这个会话管。
+		if (principal.kind === "session" && route.resource.kind === "session") {
+			const target = route.resource.target;
+			if (
+				typeof target === "object" &&
+				"params" in target &&
+				request.params[target.params] !== principal.sessionId
+			) {
+				return denied(403, "forbidden", "会话令牌只能访问它自己的会话");
+			}
+		}
 		if (principal.kind === "session" && route.effect === "write") {
 			// 会话令牌的勾选（可以改的场景、可以用的 Agent、可以发消息的机器人）和待批准的操作在 #495、#496 接进来；
 			// 在那之前，会话能改项目里的任何场景、往任何 Agent 派任务（骨架不对真实用户开放）。

@@ -21,4 +21,13 @@ export class RunService {
 			return deps.db.select().from(runs);
 		});
 	}
+
+	async load(runId: string) {
+		await this.deps.db.transaction(async (tx) => {
+			// @hit
+			const [run, tasks] = await Promise.all([tx.select().from(runs), tx.select().from(tasks)]);
+			// @hit
+			await Promise.allSettled([tx.delete(runs), tx.delete(tasks)]);
+		});
+	}
 }

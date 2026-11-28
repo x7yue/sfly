@@ -70,6 +70,8 @@ export const SCOPE_TABLE = {
 	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）；
 	// 而且只有人能做（ADR 0032）：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
 	session: { write: "edit", humanOnly: true },
+	// 会话构建（#795）：登记在会话下，要「会话构建」范围；会话令牌能登记到自己的会话（ADR 0029 范围表）。
+	session_build: { write: "session_build", humanOnly: false },
 	system: { write: null, humanOnly: false },
 	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
 	account: { write: null, humanOnly: false },
@@ -81,7 +83,8 @@ export const SCOPE_TABLE = {
  * 这个接口的写是不是只有人能做（范围表里的 `humanOnly`，ADR 0032）：在「范围够」之上再加一道「凭据必须是人」——
  * 只有登录的用户和个人令牌（它是用户本人的凭据，命令行和 API 客户端用）算人，别的凭据一律不行（项目令牌是服务账号，
  * 没有用户；会话令牌是助手干活用的；新种类的凭据默认也不行）。`humanOnly` 每一行都要写（布尔），新的资源类别漏写过不了
- * 类型检查。接口作用在 `resource.kind` 上或新建出 `creates` 时，任何一个是 `humanOnly` 就算。只读不受影响。
+ * 类型检查。看的是写落在哪一类上（和范围同一个取法，ADR 0029「一处检查」）：声明了 `creates` 的接口，`resource` 定位到的
+ * 那个只被读，看 `creates`；没有声明的看 `resource.kind`。只读不受影响。
  * Agent 凭据和任务凭据走自己的接口清单，不经这里。
  */
 export function writeNeedsPerson(route: {
@@ -90,10 +93,7 @@ export function writeNeedsPerson(route: {
 	creates?: ResourceKind | undefined;
 }): boolean {
 	if (route.effect === "read") return false;
-	return (
-		SCOPE_TABLE[route.resource.kind].humanOnly ||
-		(route.creates !== undefined && SCOPE_TABLE[route.creates].humanOnly)
-	);
+	return SCOPE_TABLE[route.creates ?? route.resource.kind].humanOnly;
 }
 
 /**
