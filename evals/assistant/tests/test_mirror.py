@@ -144,7 +144,7 @@ def test_a_200_with_an_empty_or_cut_off_body_falls_back_and_is_not_cached(
     assert sorted(p.suffix for p in files) == ["", ".meta"]
 
 
-BAD_LENGTHS = ["unknown", "²", "", "-1", "1.0", "+5", "１２", "٣"]
+BAD_LENGTHS = ["unknown", "²", "", "-1", "1.0", "+5", "１２", "٣", "9" * 5000, "1" * 19]
 
 
 @pytest.mark.parametrize("raw", [*BAD_LENGTHS, " ", "1 2"])
@@ -155,6 +155,7 @@ def test_content_length_is_ascii_digits_only(raw: str) -> None:
 def test_content_length_valid_and_missing() -> None:
     assert mirror.content_length(" 12 ") == (True, 12)
     assert mirror.content_length("0") == (True, 0)
+    assert mirror.content_length("9" * 18) == (True, 10**18 - 1)
     assert mirror.content_length(None) == (True, None)
 
 

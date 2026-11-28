@@ -43,13 +43,14 @@ UV_LATEST = "/github-release/astral-sh/uv/LatestRelease/"
 UV_GITHUB = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/"
 
 
-LENGTH = re.compile(r"[0-9]+")
+# 18 位够表示任何真实的大小，也远在 Python 整数转换的位数上限之内。
+LENGTH = re.compile(r"[0-9]{1,18}")
 
 
 def content_length(raw: str | None) -> tuple[bool, int | None]:
     """上游的 content-length：(合法, 长度)。没有这个头是 (True, None)。
-    去掉两头空白后整串只有 ASCII 的 0–9 才合法；校验和转换用同一条规则，转换不会失败。
-    别的写法（`unknown`、`-1`、`1.0`、`+5`、非 ASCII 的数字）是 (False, None)。"""
+    去掉两头空白后整串是 1 到 18 位 ASCII 的 0–9 才合法；校验和转换用同一条规则，转换不会失败。
+    别的写法（`unknown`、`-1`、`1.0`、`+5`、非 ASCII 的数字、超过 18 位）是 (False, None)。"""
     if raw is None:
         return True, None
     text = raw.strip()
