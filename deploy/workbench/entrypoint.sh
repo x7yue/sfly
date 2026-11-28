@@ -97,7 +97,8 @@ done
 # compose 起、Docker 按 restart 策略恢复（宿主机重启）、手工 docker start 都一样。名单写错时那个服务起不来，这里一直等。
 if [ "${SFLY_WORKBENCH_REQUIRE_FIREWALL:-}" = 1 ]; then
 	say "等出网名单的规则写好"
-	until curl -q -fsS --max-time 2 -o /dev/null http://127.0.0.1:47123/ 2>/dev/null; do
+	# --noproxy：直连本命名空间的回环，环境里的代理变量（部署者可能靠它装包）不能替它应答。
+	until curl -q --noproxy '*' -fsS --max-time 2 -o /dev/null http://127.0.0.1:47123/ 2>/dev/null; do
 		sleep 1
 	done
 	say "出网名单的规则已写好"

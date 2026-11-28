@@ -1,6 +1,9 @@
 #!/usr/bin/python3 -I
 """工作台的出网名单（#498）：在工作台的网络命名空间里用 iptables 只放行名单，其余出站连接被拒。
 
+信任关系：部署者写的环境变量可信，但会写错（还可能误填凭据），所以严格校验、报错不回显原文；
+成功的 DNS 解析是授权的唯一来源，而且有期限；工作台里的模型这三样（变量、解析、规则）都改不了。
+
 compose 里由 `sfly-workbench-firewall` 运行（同一个工作台镜像，root，只加 NET_ADMIN），
 网络命名空间归它，工作台用 `network_mode: service:sfly-workbench-firewall` 共用。
 工作台本身没有 NET_ADMIN，改不了规则。
@@ -16,14 +19,19 @@ Docker 按 restart 策略恢复还是手工 docker start，本次的规则写好
 - 包镜像：SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR（没设时放行 uv 的官方来源 OFFICIAL_*，
   和 install.sh 一致）、SFLY_PYTHON_INSTALL_MIRROR；只认 http、https，file:// 和绝对路径的不出网；
 - SFLY_WORKBENCH_EGRESS：部署者写的「主机:端口」，空格或逗号分隔。
-写错时只报变量名、第几条和原因（不回显原值：可能误填了凭据），退出，工作台不会起来。
+主机只认 IPv4 地址（四段十进制）和域名，不认 IPv6。
+写错时只报变量名、第几条和原因，退出，工作台不会起来。
 其余 TCP 回 RST，其余 IPv4 回 ICMP 不可达；IPv6 不允许主动新建非回环连接。
-主机名每 60 秒重新解析，整套规则用 iptables-restore 原子替换：控制面和 SFLY_WORKBENCH_EGRESS
-只放行当前解析到的地址（解析失败时沿用上一次的）；包镜像（CDN，每次给的地址不一样）放行一小时内解析到过的。
+
+授权（Grants）：每个放行的地址都有到期时间，只有成功的解析能加入或续期，解析失败什么都不续。
+每 60 秒解析一轮，整套规则用 iptables-restore 原子替换。控制面和 SFLY_WORKBENCH_EGRESS：
+这次结果里没有的地址立刻撤销，有的续 GRACE_SECONDS；名字不存在是成功的空结果，全部撤销。
+包镜像（CDN，每次给的地址不一样）：只续这次见到的，KEEP_SECONDS，不删别的。
 """
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import socket
@@ -38,6 +46,7 @@ from urllib.parse import urlsplit
 
 READY_PORT = 47123
 GATEWAY_PORT = 50051
+GRACE_SECONDS = 180
 KEEP_SECONDS = 3600
 REFRESH_SECONDS = 60
 OFFICIAL_PYPI = ("pypi.org", "files.pythonhosted.org")
@@ -48,64 +57,80 @@ OFFICIAL_GITHUB_RELEASE = (
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
 )
-LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
-HOST = re.compile(rf"{LABEL}(?:\.{LABEL})*")
-IPV6 = re.compile(r"[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*")
-HOST_PORT = re.compile(
-    rf"(?:(?P<host>{HOST.pattern})|\[(?P<ipv6>{IPV6.pattern})\]):(?P<port>[0-9]{{1,5}})"
-)
+LABEL = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?")
+PORT = re.compile(r"[0-9]{1,5}")
+NOT_FOUND = {getattr(socket, n) for n in ("EAI_NONAME", "EAI_NODATA") if hasattr(socket, n)}
 
 
 @dataclass(frozen=True, order=True)
 class Entry:
     host: str
     port: int
-    #: 包镜像：放行一小时内解析到过的地址；别的只放行当前解析到的。
+    #: 包镜像：放行 KEEP_SECONDS 内解析到过的地址；别的只放行最近一次成功解析到的。
     cdn: bool = False
 
 
 class Invalid(ValueError):
-    """名单写错了。消息里只有变量名、第几条和原因，没有原值。"""
+    """名单写错了。消息里只有变量名、第几条和原因，没有原文。"""
 
 
-def url_entry(name: str, url: str, cdn: bool) -> Entry | None:
-    """URL 的主机和端口；file:// 和绝对路径（PyPI 镜像认）不出网（None）；写得不对时报错。"""
-    parts = urlsplit(url.strip())
-    scheme = parts.scheme.lower()
-    if scheme == "file" or not scheme and url.strip().startswith("/"):
-        return None
-    if scheme not in ("http", "https"):
-        raise Invalid(f"{name}：要是 http://、https://、file:// 开头的地址或绝对路径")
-    host = parts.hostname or ""
-    try:
-        port = parts.port
-    except ValueError:
-        port = 0
-    if not (HOST.fullmatch(host) or IPV6.fullmatch(host)):
-        raise Invalid(f"{name}：主机名写得不对")
-    if port == 0:
-        raise Invalid(f"{name}：端口要在 1–65535 之间")
-    return Entry(host, port or (443 if scheme == "https" else 80), cdn)
+def endpoint(text: str, url: bool, cdn: bool = False) -> Entry | str | None:
+    """部署者写的一项（URL 或「主机:端口」）的名单项；写错时是原因（不含原文）；不出网时是 None。
 
-
-def egress_entries(text: str) -> list[Entry]:
-    found: list[Entry] = []
-    for index, item in enumerate(text.replace(",", " ").split(), 1):
-        match = HOST_PORT.fullmatch(item)
-        if not match or not 0 < int(match["port"]) < 65536:
-            raise Invalid(
-                f"SFLY_WORKBENCH_EGRESS 第 {index} 条：要写成「主机:端口」，端口在 1–65535 之间"
-            )
-        found.append(Entry(match["host"] or match["ipv6"], int(match["port"])))
-    return found
+    库函数的错在这里转成原因，调用方只看返回值。"""
+    text = text.strip()
+    default = 0
+    if url:
+        if text.startswith("/"):
+            return None
+        try:
+            parts = urlsplit(text)
+        except ValueError:
+            return "地址写得不对"
+        scheme = parts.scheme.lower()
+        if scheme == "file":
+            return None
+        if scheme not in ("http", "https"):
+            return "要是 http://、https://、file:// 开头的地址或绝对路径"
+        default = 443 if scheme == "https" else 80
+        text = parts.netloc.rpartition("@")[2]
+    if text.startswith("["):
+        return "不支持 IPv6 地址"
+    host, sep, port = text.rpartition(":")
+    if not sep:
+        if not url:
+            return "要写成「主机:端口」"
+        host, port = text, str(default)
+    host = host.lower()
+    labels = host.split(".")
+    if labels[-1].isascii() and labels[-1].isdigit():
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            return "IP 地址要写成四段十进制"
+    elif len(host) > 253 or not all(LABEL.fullmatch(label) for label in labels):
+        return "主机名写得不对"
+    if not PORT.fullmatch(port) or not 0 < int(port) < 65536:
+        return "端口要在 1–65535 之间"
+    return Entry(host, int(port), cdn)
 
 
 def allowlist(env: Mapping[str, str]) -> list[Entry]:
-    found: list[Entry | None] = []
+    found: list[Entry] = []
+
+    def add(name: str, text: str, url: bool, cdn: bool = False) -> Entry | None:
+        result = endpoint(text, url, cdn)
+        if isinstance(result, str):
+            raise Invalid(f"{name}：{result}")
+        if result is not None:
+            found.append(result)
+        return result
+
+    public = None
     for name in ("SFLY_WORKBENCH_URL", "SFLY_PUBLIC_URL", "SFLY_PUBLIC_GRPC_URL"):
-        url = env.get(name, "").strip()
-        found.append(url_entry(name, url, cdn=False) if url else None)
-    public = found[1]
+        if env.get(name, "").strip():
+            entry = add(name, env[name], url=True)
+            public = entry if name == "SFLY_PUBLIC_URL" else public
     if not env.get("SFLY_PUBLIC_GRPC_URL", "").strip() and public is not None:
         found.append(Entry(public.host, GATEWAY_PORT))
     for name, official in (
@@ -113,17 +138,24 @@ def allowlist(env: Mapping[str, str]) -> list[Entry]:
         ("SFLY_GITHUB_RELEASE_MIRROR", OFFICIAL_GITHUB_RELEASE),
         ("SFLY_PYTHON_INSTALL_MIRROR", ()),
     ):
-        mirror = env.get(name, "").strip()
-        if mirror:
-            found.append(url_entry(name, mirror, cdn=True))
+        if env.get(name, "").strip():
+            add(name, env[name], url=True, cdn=True)
         else:
             found.extend(Entry(host, 443, cdn=True) for host in official)
-    found.extend(egress_entries(env.get("SFLY_WORKBENCH_EGRESS", "")))
-    return sorted({e for e in found if e is not None})
+    items = env.get("SFLY_WORKBENCH_EGRESS", "").replace(",", " ").split()
+    for index, item in enumerate(items, 1):
+        add(f"SFLY_WORKBENCH_EGRESS 第 {index} 条", item, url=False)
+    return sorted(set(found))
 
 
 def resolve(host: str, port: int) -> set[str]:
-    infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    """IPv4 地址。名字不存在是成功的空结果；别的失败（DNS 一时不通）抛 OSError。"""
+    try:
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror as error:
+        if error.errno in NOT_FOUND:
+            return set()
+        raise
     return {str(info[4][0]) for info in infos}
 
 
@@ -157,8 +189,8 @@ IPV6_RULES = (
 )
 
 
-class Firewall:
-    """每一轮重新解析：控制面和部署者写的项放行这一轮解析到的（解析失败时沿用上一次的），包镜像放行一小时内解析到过的。"""
+class Grants:
+    """授权表：（名单项, 地址）→ 到期时间。放行的是没到期的。"""
 
     def __init__(
         self,
@@ -169,25 +201,24 @@ class Firewall:
         self.entries = entries
         self.lookup = lookup
         self.clock = clock
-        self.current: dict[Entry, set[str]] = {}
-        self.seen: dict[tuple[str, int], float] = {}
+        self.expiry: dict[tuple[Entry, str], float] = {}
 
     def allowed(self) -> set[tuple[str, int]]:
         now = self.clock()
         for entry in self.entries:
             try:
-                self.current[entry] = self.lookup(entry.host, entry.port)
+                addresses = self.lookup(entry.host, entry.port)
             except OSError as error:
-                print(
-                    f"出网名单：解析不了 {entry.host}（{error}），沿用上一次的地址", file=sys.stderr
-                )
+                print(f"出网名单：这一轮解析不了 {entry.host}（{error}），不续期", file=sys.stderr)
                 continue
-            if entry.cdn:
-                for ip in self.current[entry]:
-                    self.seen[(ip, entry.port)] = now
-        self.seen = {k: t for k, t in self.seen.items() if now - t <= KEEP_SECONDS}
-        exact = {(ip, e.port) for e, ips in self.current.items() if not e.cdn for ip in ips}
-        return exact | set(self.seen)
+            if not entry.cdn:
+                for key in [k for k in self.expiry if k[0] == entry and k[1] not in addresses]:
+                    del self.expiry[key]
+            term = KEEP_SECONDS if entry.cdn else GRACE_SECONDS
+            for ip in addresses:
+                self.expiry[(entry, ip)] = now + term
+        self.expiry = {key: until for key, until in self.expiry.items() if until > now}
+        return {(ip, entry.port) for entry, ip in self.expiry}
 
 
 class Ready(BaseHTTPRequestHandler):
@@ -210,7 +241,7 @@ def apply(command: str, rules: str) -> None:
 
 
 def run(
-    firewall: Firewall,
+    grants: Grants,
     write: Callable[[str, str], None] = apply,
     ready: Callable[[], None] = serve_ready,
     wait: Callable[[float], None] = time.sleep,
@@ -219,13 +250,13 @@ def run(
     """先只放行回环，再写完整的规则，然后才应答就绪；之后每 REFRESH_SECONDS 秒重写一次。"""
     write("ip6tables-restore", IPV6_RULES)
     write("iptables-restore", ipv4_rules(()))
-    write("iptables-restore", ipv4_rules(firewall.allowed()))
+    write("iptables-restore", ipv4_rules(grants.allowed()))
     ready()
     print("出网名单：规则已写好", flush=True)
     done = 0
     while rounds is None or done < rounds:
         wait(REFRESH_SECONDS)
-        write("iptables-restore", ipv4_rules(firewall.allowed()))
+        write("iptables-restore", ipv4_rules(grants.allowed()))
         done += 1
 
 
@@ -236,7 +267,7 @@ def main() -> int:
         print(f"出网名单写错了，工作台不会起来：{error}", file=sys.stderr)
         return 1
     print("出网名单：" + " ".join(f"{e.host}:{e.port}" for e in entries), flush=True)
-    run(Firewall(entries))
+    run(Grants(entries))
     return 0
 
 

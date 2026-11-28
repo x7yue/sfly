@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -37,11 +40,13 @@ NAME = "workbench"
 
 # 假的 curl：记下参数，把 $FAKE_INSTALL_SH 复制到 -o 指的文件
 # （FAKE_CURL_FAIL 设置时像连不上控制面一样失败）；问出网名单就绪的，
-# $FAKE_LOG/firewall.ready 在才成功。
+# $FAKE_LOG/firewall.ready 在才成功（FAKE_REAL_CURL 设置时交给真的 curl）。
 FAKE_CURL = """#!/bin/sh
 echo "$*" >> "$FAKE_LOG/curl.args"
 case "$*" in
-*127.0.0.1:47123*) [ -e "$FAKE_LOG/firewall.ready" ] && exit 0 || exit 7 ;;
+*127.0.0.1:47123*)
+	[ -z "${FAKE_REAL_CURL:-}" ] || exec "$FAKE_REAL_CURL" "$@"
+	[ -e "$FAKE_LOG/firewall.ready" ] && exit 0 || exit 7 ;;
 esac
 [ -z "${FAKE_CURL_FAIL:-}" ] || exit 7
 out=
@@ -209,6 +214,61 @@ def test_with_the_firewall_required_nothing_runs_until_its_rules_are_ready(
     assert harness.lines("agent.runs") == ["agent"]
     assert stdout.index("出网名单的规则已写好") < stdout.index("下载安装脚本")
     assert TOKEN not in stdout + stderr
+
+
+class Answer(BaseHTTPRequestHandler):
+    """什么请求都回 200，记下收到的请求行。"""
+
+    seen: list[str]
+
+    def do_GET(self) -> None:
+        self.seen.append(self.requestline)
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+def answering(port: int) -> tuple[HTTPServer, list[str]]:
+    seen: list[str] = []
+    handler = type("Handler", (Answer,), {"seen": seen})
+    server = HTTPServer(("127.0.0.1", port), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def test_a_proxy_in_the_environment_cannot_answer_for_the_firewall(harness: Harness) -> None:
+    # 部署者可能给工作台设了代理变量（装包用）：会回 200 的代理不能替出网名单应答就绪。
+    proxy, proxied = answering(0)
+    address = f"http://127.0.0.1:{proxy.server_address[1]}"
+    variables = ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY")
+    process = harness.start(
+        SFLY_WORKBENCH_REQUIRE_FIREWALL="1",
+        FAKE_REAL_CURL=shutil.which("curl") or "curl",
+        **dict.fromkeys(variables, address),
+    )
+    ready: HTTPServer | None = None
+    try:
+        deadline = time.monotonic() + 30
+        while len(harness.lines("curl.args")) < 3:
+            assert process.poll() is None, process.communicate()
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        assert harness.lines("install.runs") == [] and harness.lines("agent.runs") == []
+
+        ready, answered = answering(47123)
+        stdout, stderr = process.communicate(timeout=30)
+    finally:
+        process.kill()
+        proxy.shutdown()
+        if ready is not None:
+            ready.shutdown()
+            ready.server_close()
+    assert process.returncode == 0, stderr
+    assert proxied == [], "就绪请求走了代理"
+    assert answered and harness.lines("agent.runs") == ["agent"]
+    assert stdout.index("出网名单的规则已写好") < stdout.index("下载安装脚本")
 
 
 def test_without_the_firewall_requirement_the_entrypoint_does_not_wait(harness: Harness) -> None:

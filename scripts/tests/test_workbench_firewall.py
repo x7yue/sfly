@@ -1,12 +1,16 @@
 """工作台的出网名单（deploy/workbench/firewall.py，#498）：名单从哪些变量来、写错了怎么报、
-规则长什么样、地址留多久、启动时先写规则再应答就绪。
+规则长什么样、授权从哪来到什么时候为止、启动时先写规则再应答就绪。
 真的写规则、连不连得通在 compose 冒烟里（scripts/release/compose-smoke.sh）。"""
 
 from __future__ import annotations
 
 import importlib.util
+import socket
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,22 +26,27 @@ OFFICIAL = [
     Entry(h, 443, cdn=True) for h in (*firewall.OFFICIAL_PYPI, *firewall.OFFICIAL_GITHUB_RELEASE)
 ]
 NO_MIRRORS = {"SFLY_PYPI_MIRROR": "file:///p", "SFLY_GITHUB_RELEASE_MIRROR": "file:///g"}
+GRACE = firewall.GRACE_SECONDS
+KEEP = firewall.KEEP_SECONDS
 
 
 def pairs(entries: list[object]) -> list[tuple[str, int, bool]]:
     return [(e.host, e.port, e.cdn) for e in entries]  # type: ignore[attr-defined]
 
 
+# ---- 名单从哪些变量来 ----
+
+
 def test_control_plane_and_mirrors_are_allowed_and_nothing_else() -> None:
     env = {
         "SFLY_WORKBENCH_URL": "http://sfly:8080",
-        "SFLY_PUBLIC_URL": "https://sfly.example.com",
+        "SFLY_PUBLIC_URL": "https://SFLY.example.com",
         "SFLY_PUBLIC_GRPC_URL": "http://sfly.example.com:50051",
         "SFLY_PYPI_MIRROR": "https://user:pw@mirrors.example.com/pypi/simple",
         "SFLY_GITHUB_RELEASE_MIRROR": "http://mirror.internal:8000/github-release",
         "SFLY_PYTHON_INSTALL_MIRROR": "https://python.example.net/standalone/",
     }
-    # 包镜像标成 cdn（放行一小时内解析到过的地址），控制面不是。
+    # 包镜像标成 cdn（放行一小时内解析到过的地址），控制面不是。主机名统一成小写。
     assert pairs(firewall.allowlist(env)) == [
         ("mirror.internal", 8000, True),
         ("mirrors.example.com", 443, True),
@@ -70,87 +79,70 @@ def test_without_mirrors_uv_official_sources_are_allowed() -> None:
 
 
 def test_extra_entries_are_host_port_pairs_separated_by_spaces_or_commas() -> None:
-    env = {
-        **NO_MIRRORS,
-        "SFLY_WORKBENCH_EGRESS": " db.internal:5432,sut:9000  10.0.0.7:22 [fd00::1]:80 ",
-    }
+    env = {**NO_MIRRORS, "SFLY_WORKBENCH_EGRESS": " db.internal:5432,sut:9000  10.0.0.7:22 "}
     assert pairs(firewall.allowlist(env)) == [
         ("10.0.0.7", 22, False),
         ("db.internal", 5432, False),
-        ("fd00::1", 80, False),
         ("sut", 9000, False),
     ]
 
 
-SECRET = "s3cr3t-marker"
+# ---- 写错了怎么报：真的运行脚本，以「名单写错」退出，不回显原文，没有 traceback ----
+
+MARK = "s3cr3tmark"
+SCHEME = "要是 http://、https://、file:// 开头的地址或绝对路径"
+PORT = "端口要在 1–65535 之间"
+HOST = "主机名写得不对"
+IPV4 = "IP 地址要写成四段十进制"
+IPV6 = "不支持 IPv6 地址"
+BAD = [
+    # (变量, 值, 原因)
+    ("SFLY_WORKBENCH_EGRESS", f"[{MARK}]:80", IPV6),
+    ("SFLY_WORKBENCH_EGRESS", f"[{MARK}:80", IPV6),
+    ("SFLY_WORKBENCH_EGRESS", "[fd00::1]:80", IPV6),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}", "要写成「主机:端口」"),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}:", PORT),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}:0", PORT),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}:65536", PORT),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}:http", PORT),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}:٣", PORT),
+    ("SFLY_WORKBENCH_EGRESS", f":{MARK}", HOST),
+    ("SFLY_WORKBENCH_EGRESS", f"https://{MARK}.example:443", HOST),
+    ("SFLY_WORKBENCH_EGRESS", f"user@{MARK}.example:443", HOST),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}.example/x:443", HOST),
+    # 数字写法的地址：getaddrinfo 会把它们解析成 127.0.0.1、1.2.0.3。
+    ("SFLY_WORKBENCH_EGRESS", "2130706433:80", IPV4),
+    ("SFLY_WORKBENCH_EGRESS", "0x7f.1:80", IPV4),
+    ("SFLY_WORKBENCH_EGRESS", "1.2.3:80", IPV4),
+    ("SFLY_WORKBENCH_EGRESS", f"{MARK}.300:80", IPV4),
+    ("SFLY_PYPI_MIRROR", f"http://[{MARK}/simple", "地址写得不对"),
+    ("SFLY_PYPI_MIRROR", f"https://[{MARK}]/simple", "地址写得不对"),
+    ("SFLY_PYPI_MIRROR", f"https://[fd00::1]/{MARK}", IPV6),
+    ("SFLY_PYPI_MIRROR", f"ftp://{MARK}@mirror.example/pypi", SCHEME),
+    ("SFLY_PYPI_MIRROR", f"mirror.example/{MARK}", SCHEME),
+    ("SFLY_GITHUB_RELEASE_MIRROR", f"https://user:{MARK}@mirror.example:99999/", PORT),
+    ("SFLY_GITHUB_RELEASE_MIRROR", f"https://{MARK}@mirror.example:x/", PORT),
+    ("SFLY_PUBLIC_URL", f"https://{MARK}:pw@/x", HOST),
+    ("SFLY_PYTHON_INSTALL_MIRROR", f"https://bad host {MARK}/", HOST),
+    ("SFLY_PUBLIC_GRPC_URL", f"http://0x7f.1:50051/{MARK}", IPV4),
+]
 
 
-@pytest.mark.parametrize(
-    "bad",
-    [
-        "sut",
-        "sut:",
-        ":80",
-        "sut:0",
-        "sut:65536",
-        "sut:http",
-        "sut:٣",
-        "https://mirror.example:443",
-        f"{SECRET}@mirror.example:443",
-        f"mirror.example/{SECRET}:443",
-        f"[{SECRET}]:80",
-    ],
-)
-def test_a_malformed_extra_entry_is_reported_by_position_without_its_value(bad: str) -> None:
-    with pytest.raises(firewall.Invalid) as error:
-        firewall.allowlist({**NO_MIRRORS, "SFLY_WORKBENCH_EGRESS": f"ok.internal:80 {bad}"})
-    assert (
-        str(error.value)
-        == "SFLY_WORKBENCH_EGRESS 第 2 条：要写成「主机:端口」，端口在 1–65535 之间"
-    )
-    assert SECRET not in str(error.value) and "mirror" not in str(error.value)
-
-
-@pytest.mark.parametrize(
-    ("value", "reason"),
-    [
-        (
-            f"ftp://{SECRET}@mirror.example/pypi",
-            "要是 http://、https://、file:// 开头的地址或绝对路径",
-        ),
-        (f"mirror.example/{SECRET}", "要是 http://、https://、file:// 开头的地址或绝对路径"),
-        (f"https://{SECRET}:pw@/pypi", "主机名写得不对"),
-        (f"https://bad host/{SECRET}", "主机名写得不对"),
-        (f"https://{SECRET}@mirror.example:99999/", "端口要在 1–65535 之间"),
-        (f"https://{SECRET}@mirror.example:0/", "端口要在 1–65535 之间"),
-    ],
-)
-@pytest.mark.parametrize(
-    "name",
-    [
-        "SFLY_PUBLIC_URL",
-        "SFLY_PYPI_MIRROR",
-        "SFLY_GITHUB_RELEASE_MIRROR",
-        "SFLY_PYTHON_INSTALL_MIRROR",
-    ],
-)
-def test_a_malformed_url_is_reported_by_name_without_its_value(
+@pytest.mark.parametrize(("name", "value", "reason"), BAD)
+def test_a_bad_value_stops_the_firewall_with_only_its_name_and_reason(
     name: str, value: str, reason: str
 ) -> None:
-    with pytest.raises(firewall.Invalid) as error:
-        firewall.allowlist({name: value})
-    assert str(error.value) == f"{name}：{reason}"
-
-
-def test_main_prints_only_the_reason_and_exits_nonzero(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(firewall.os, "environ", {"SFLY_WORKBENCH_EGRESS": f"https://{SECRET}:443"})
-    monkeypatch.setattr(firewall, "run", lambda *_: pytest.fail("名单写错了还在写规则"))
-    assert firewall.main() == 1
-    out = capsys.readouterr()
-    assert SECRET not in out.out + out.err
-    assert "SFLY_WORKBENCH_EGRESS 第 1 条" in out.err
+    env = {"PATH": "/usr/bin:/bin", **NO_MIRRORS, name: value}
+    if name == "SFLY_WORKBENCH_EGRESS":
+        env[name] = f"ok.internal:80 {value}"
+        name = "SFLY_WORKBENCH_EGRESS 第 2 条"
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 1
+    assert result.stderr == f"出网名单写错了，工作台不会起来：{name}：{reason}\n"
+    assert MARK not in result.stdout + result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_rules_drop_by_default_and_accept_loopback_replies_and_the_allowlist() -> None:
@@ -170,63 +162,143 @@ def test_rules_drop_by_default_and_accept_loopback_replies_and_the_allowlist() -
     assert "-A OUTPUT -p tcp -j REJECT --reject-with tcp-reset" in firewall.IPV6_RULES
 
 
-class Lookup:
-    def __init__(self, answers: dict[str, set[str]]) -> None:
-        self.answers = answers
+# ---- 授权：放行的每个地址都来自期限内某次成功的解析 ----
 
-    def __call__(self, host: str, port: int) -> set[str]:
-        if host not in self.answers:
-            raise OSError("没有这个主机")
-        return set(self.answers[host])
+FAIL = None  # 这一轮解析失败（DNS 一时不通）
+Round = tuple[float, dict[str, set[str] | None]]
 
 
-def test_mirror_addresses_seen_within_an_hour_stay_allowed_and_older_ones_expire() -> None:
-    lookup = Lookup({"cdn.example.com": {"1.1.1.1"}})
+def check_rounds(entries: list[Any], rounds: list[Round]) -> list[set[tuple[str, int]]]:
+    """每一轮之后断言：放行的每个地址都来自期限内某次成功的解析（普通项：它最近一次成功的解析）。"""
+    answers: dict[str, set[str] | None] = {}
+
+    def lookup(host: str, port: int) -> set[str]:
+        answer = answers[host]
+        if answer is None:
+            raise OSError("Temporary failure in name resolution")
+        return set(answer)
+
     now = [0.0]
-    wall = firewall.Firewall([Entry("cdn.example.com", 443, cdn=True)], lookup, lambda: now[0])
-    assert wall.allowed() == {("1.1.1.1", 443)}
+    grants = firewall.Grants(entries, lookup, lambda: now[0])
+    successes: list[tuple[float, Any, set[str]]] = []
+    results = []
+    for at, this_round in rounds:
+        now[0] = at
+        answers.clear()
+        answers.update(this_round)
+        allowed = grants.allowed()
+        successes += [(at, e, ips) for e in entries if (ips := this_round[e.host]) is not None]
+        for ip, port in allowed:
+            sources = []
+            for entry in (e for e in entries if e.port == port):
+                own = [(t, ips) for t, e, ips in successes if e == entry]
+                if entry.cdn:
+                    sources += [t for t, ips in own if ip in ips and at - t < KEEP]
+                elif own and ip in own[-1][1] and at - own[-1][0] < GRACE:
+                    sources.append(own[-1][0])
+            assert sources, f"第 {at} 秒放行的 {ip}:{port} 不来自期限内的成功解析"
+        results.append(allowed)
+    return results
 
-    lookup.answers["cdn.example.com"] = {"2.2.2.2"}
-    now[0] = 1800
-    assert wall.allowed() == {("1.1.1.1", 443), ("2.2.2.2", 443)}
 
-    now[0] = 3601 + 1800
-    lookup.answers["cdn.example.com"] = {"3.3.3.3"}
-    assert wall.allowed() == {("3.3.3.3", 443)}
+def test_an_ordinary_entry_follows_successful_resolutions_and_a_failure_renews_nothing() -> None:
+    got = check_rounds(
+        [Entry("sfly", 8080)],
+        [
+            (0, {"sfly": {"172.18.0.3"}}),
+            # 换了地址：旧地址马上撤销（它可能分给了别的服务）。
+            (60, {"sfly": {"172.18.0.4"}}),
+            # 一时解析不了：不续期，宽限期内照旧放行……
+            (120, {"sfly": FAIL}),
+            (60 + GRACE - 1, {"sfly": FAIL}),
+            # ……过了宽限期就撤销，不再沿用。
+            (60 + GRACE, {"sfly": FAIL}),
+            # 恢复之后重新放行。
+            (60 + GRACE + 60, {"sfly": {"172.18.0.4"}}),
+            # 名字不存在（服务删了）是成功的空结果：马上撤销，不等宽限期。
+            (60 + GRACE + 120, {"sfly": set()}),
+        ],
+    )
+    assert got == [
+        {("172.18.0.3", 8080)},
+        {("172.18.0.4", 8080)},
+        {("172.18.0.4", 8080)},
+        {("172.18.0.4", 8080)},
+        set(),
+        {("172.18.0.4", 8080)},
+        set(),
+    ]
 
 
-def test_control_plane_and_listed_addresses_follow_the_current_resolution_only() -> None:
-    lookup = Lookup({"sfly": {"172.18.0.3"}, "sut": {"172.18.0.9"}})
-    now = [0.0]
-    wall = firewall.Firewall([Entry("sfly", 8080), Entry("sut", 9000)], lookup, lambda: now[0])
-    assert wall.allowed() == {("172.18.0.3", 8080), ("172.18.0.9", 9000)}
+def test_a_mirror_keeps_addresses_seen_within_an_hour_and_a_failure_renews_nothing() -> None:
+    cdn = "cdn.example.com"
+    got = check_rounds(
+        [Entry(cdn, 443, cdn=True)],
+        [
+            (0, {cdn: {"1.1.1.1"}}),
+            (1800, {cdn: {"2.2.2.2"}}),
+            (3000, {cdn: FAIL}),
+            (KEEP, {cdn: FAIL}),
+            (1800 + KEEP, {cdn: FAIL}),
+            (1800 + KEEP + 60, {cdn: {"3.3.3.3"}}),
+        ],
+    )
+    assert got == [
+        {("1.1.1.1", 443)},
+        {("1.1.1.1", 443), ("2.2.2.2", 443)},
+        {("1.1.1.1", 443), ("2.2.2.2", 443)},
+        {("2.2.2.2", 443)},
+        set(),
+        {("3.3.3.3", 443)},
+    ]
 
-    # 容器重建换了地址：旧地址马上不放行（它可能分给了别的服务）。
-    lookup.answers = {"sfly": {"172.18.0.4"}, "sut": {"172.18.0.10"}}
-    now[0] = 60
-    assert wall.allowed() == {("172.18.0.4", 8080), ("172.18.0.10", 9000)}
 
-    # 解析失败（DNS 一时不通）：沿用上一次解析到的，不是全拒。
-    lookup.answers = {"sut": {"172.18.0.10"}}
-    now[0] = 120
-    assert wall.allowed() == {("172.18.0.4", 8080), ("172.18.0.10", 9000)}
+def test_entries_sharing_a_port_are_granted_independently() -> None:
+    # 同一个端口的两项：一项撤销不影响另一项解析到的地址。
+    got = check_rounds(
+        [Entry("a.internal", 443), Entry("b.internal", 443)],
+        [
+            (0, {"a.internal": {"10.0.0.1"}, "b.internal": {"10.0.0.2"}}),
+            (60, {"a.internal": set(), "b.internal": {"10.0.0.2"}}),
+        ],
+    )
+    assert got[-1] == {("10.0.0.2", 443)}
+
+
+def raising(code: int) -> Callable[..., object]:
+    def getaddrinfo(*_: object) -> object:
+        raise socket.gaierror(code, "x")
+
+    return getaddrinfo
+
+
+def test_a_missing_name_is_an_empty_answer_and_other_failures_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(firewall.socket, "getaddrinfo", raising(socket.EAI_NONAME))
+    assert firewall.resolve("gone.internal", 80) == set()
+    monkeypatch.setattr(firewall.socket, "getaddrinfo", raising(socket.EAI_AGAIN))
+    with pytest.raises(OSError):
+        firewall.resolve("flaky.internal", 80)
+
+
+# ---- 启动顺序 ----
 
 
 def test_startup_writes_deny_rules_then_the_allowlist_and_only_then_answers_ready() -> None:
     events: list[str] = []
-    lookup = Lookup({"sfly": {"172.18.0.3"}})
 
     def resolving(host: str, port: int) -> set[str]:
         events.append(f"resolve {host}")
-        return lookup(host, port)
+        return {"172.18.0.3"}
 
     def write(command: str, rules: str) -> None:
         allowed = [line for line in rules.splitlines() if "--dport" in line]
         events.append(f"{command} {len(allowed)}")
 
-    wall = firewall.Firewall([Entry("sfly", 8080)], resolving)
+    grants = firewall.Grants([Entry("sfly", 8080)], resolving)
     firewall.run(
-        wall, write, lambda: events.append("ready"), lambda _: events.append("wait"), rounds=1
+        grants, write, lambda: events.append("ready"), lambda _: events.append("wait"), rounds=1
     )
     assert events == [
         # 两种地址族先只放行回环（解析名单要时间，这期间什么也出不去）。
@@ -248,5 +320,5 @@ def test_a_failing_rule_write_never_answers_ready() -> None:
 
     ready: list[str] = []
     with pytest.raises(firewall.subprocess.CalledProcessError):
-        firewall.run(firewall.Firewall([]), write, lambda: ready.append("ready"), rounds=0)
+        firewall.run(firewall.Grants([]), write, lambda: ready.append("ready"), rounds=0)
     assert ready == []

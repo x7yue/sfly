@@ -306,6 +306,8 @@ def test_the_workbench_shares_the_firewall_network_namespace_and_has_no_extra_ca
     assert firewall["image"] == workbench["image"]
     # 健康检查和工作台的入口脚本看同一样东西：本网络命名空间里规则写好之后才应答的端口。
     assert "http://127.0.0.1:47123/" in firewall["healthcheck"]["test"]
+    # 直连回环，环境里的代理不能替它应答。
+    assert firewall["healthcheck"]["test"][3:5] == ["--noproxy", "*"]
     assert environment(workbench)["SFLY_WORKBENCH_REQUIRE_FIREWALL"] == "1"
 
 

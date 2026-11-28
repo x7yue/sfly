@@ -107,7 +107,7 @@ services:
       SFLY_WORKBENCH_EGRESS: ${SFLY_WORKBENCH_EGRESS:-}
     # 本次的 IPv4、IPv6 规则写好之后才在本网络命名空间的 127.0.0.1:47123 上应答（工作台的入口脚本也等它）。
     healthcheck:
-      test: [CMD, curl, -q, -fsS, --max-time, "2", -o, /dev/null, "http://127.0.0.1:47123/"]
+      test: [CMD, curl, -q, --noproxy, "*", -fsS, --max-time, "2", -o, /dev/null, "http://127.0.0.1:47123/"]
       interval: 5s
       start_period: 60s
       start_interval: 1s
