@@ -131,7 +131,11 @@ export class AgentCredentialService {
 				),
 			);
 		if (!row) return "not_found";
-		if (row.revokedAt !== null) return "already_revoked";
+		if (row.revokedAt !== null) {
+			// 先到的吊销可能还在等着断开：重复的这次也等用它的连接断开、记为离线之后再返回。
+			await this.deps.onRevoked?.([id]);
+			return "already_revoked";
+		}
 		await this.deps.db
 			.update(agentCredentials)
 			.set({ revokedAt: this.deps.clock.now() })
@@ -239,13 +243,17 @@ export class AgentCredentialService {
 		if (rows.length === 0) return { kind: "not_found" };
 		if (!by.canManage && rows.some((row) => row.userId !== by.userId)) return { kind: "forbidden" };
 		const live = rows.filter((row) => row.revokedAt === null);
-		if (live.length === 0) return { kind: "already_revoked" };
+		if (live.length === 0) {
+			await this.deps.onRevoked?.(rows.map((row) => row.id));
+			return { kind: "already_revoked" };
+		}
 		const ids = live.map((row) => row.id);
 		await this.deps.db
 			.update(agentCredentials)
 			.set({ revokedAt: this.deps.clock.now() })
 			.where(and(inArray(agentCredentials.id, ids), isNull(agentCredentials.revokedAt)));
-		await this.deps.onRevoked?.(ids);
+		// 本次查到的全部凭据都交给断开：之前吊销了、离线还没记上的同名连接一并处理。
+		await this.deps.onRevoked?.(rows.map((row) => row.id));
 		return { kind: "revoked" };
 	}
 }

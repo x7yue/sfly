@@ -24,7 +24,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -171,9 +171,14 @@ def check_dependencies(project: Project) -> None:
             )
 
 
-def build(root: Path, out_dir: Path | None = None) -> Path:
-    """构建节点包，返回归档路径。"""
+def build(root: Path, out_dir: Path | None = None, version: str | None = None) -> Path:
+    """构建节点包，返回归档路径。
+
+    `version` 覆盖 `pyproject.toml` 里的版本号（会话构建用，不改源码）。
+    """
     project = load_project(root)
+    if version is not None:
+        project = replace(project, version=version)
     check_dependencies(project)
     metadata = package_metadata(project)
     validate_metadata(metadata)

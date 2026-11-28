@@ -55,6 +55,7 @@ import { MetricRetention } from "./metrics/metric-retention.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
+import { SessionBuildReclaim } from "./packages/session-builds.js";
 import { createStdIndex } from "./packages/std-index.js";
 import { PresetStore } from "./presets/preset-store.js";
 import { ProjectWorkbench } from "./projects/project-workbench.js";
@@ -740,6 +741,12 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		.startWaiting()
 		.catch((error) => logError("sfly: 开始排队中的会话失败：", error));
 
+	// 会话构建的回收（#795）：会话结束、没有没结束的运行用它之后删掉。
+	const sessionBuildReclaim = new SessionBuildReclaim({
+		db: database.db,
+		dataDir: options.dataDir,
+		onError: logError,
+	});
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
 	const fail = (what: string) => (error: unknown) => logError(`${what} failed:`, error);
 	const sweeps = [
@@ -759,6 +766,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			options.retentionSweepIntervalMs ?? 60_000,
 			async () => {
 				await metricRetention.sweep().catch(fail("metric retention sweep"));
+				await sessionBuildReclaim.sweep().catch(fail("session build reclaim"));
 				await retention.sweep();
 			},
 			fail("retention sweep"),

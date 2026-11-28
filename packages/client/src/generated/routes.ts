@@ -76,6 +76,7 @@ import type {
 	SavedVersionView,
 	SendMessageBody,
 	SendMessageResult,
+	SessionBuildListResponse,
 	SessionDetailQuery,
 	SessionDetailResponse,
 	SessionEventsQuery,
@@ -1475,6 +1476,21 @@ export interface Api {
 			SessionView
 		>;
 	};
+	sessionBuilds: {
+		/**
+		 * `GET /sessions/:id/builds`
+		 *
+		 * 这个会话登记的会话构建（已经回收的不在里面）。会话令牌只能列出自己的会话的。
+		 */
+		list: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			SessionBuildListResponse
+		>;
+	};
 	system: {
 		/**
 		 * `GET /health`
@@ -1585,6 +1601,9 @@ export const routes = {
 		message: { method: "POST", path: "/sessions/:id/messages", kind: "endpoint" },
 		stop: { method: "POST", path: "/sessions/:id/stop", kind: "endpoint" },
 		end: { method: "POST", path: "/sessions/:id/end", kind: "endpoint" },
+	},
+	sessionBuilds: {
+		list: { method: "GET", path: "/sessions/:id/builds", kind: "endpoint" },
 	},
 	system: {
 		health: { method: "GET", path: "/health", kind: "endpoint" },

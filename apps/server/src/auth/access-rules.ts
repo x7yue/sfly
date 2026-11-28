@@ -38,6 +38,9 @@ export function locatorOf(
 			return { from: "none" };
 		case "account":
 			return { from: "account" };
+		case "session_build":
+			// 会话构建没有自己定位的接口：登记和列出都定位到会话（`resource.kind` 是 session，`creates: "session_build"`）。
+			return undefined;
 		case "project":
 			// 项目本身和项目的管理面：项目就是路径里的 `:project`，没有别的得出方式。
 			return pathParamNames(def.path).includes(PROJECT_PARAM)
