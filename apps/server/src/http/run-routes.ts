@@ -20,7 +20,7 @@ import { secretSizePreflight } from "../runs/secret-size-preflight.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
-import { requireActor } from "./actor.js";
+import { actorOf } from "./actor.js";
 import { contractRoute, contractStream } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
@@ -118,8 +118,7 @@ export function registerRunRoutes(
 	});
 
 	contractRoute(app, runsApi.trigger, async ({ params, body }, reply, request) => {
-		const actor = requireActor(request, reply);
-		if (!actor) return reply;
+		const actor = actorOf(request);
 		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "orchestration not found");
 		const outcome = await deps.engine.trigger(params.id, body, actor);
 		if (!outcome.ok) {
@@ -179,8 +178,7 @@ export function registerRunRoutes(
 
 	// 取消整个运行（#12）；运行还没结束时再次调用即强制取消。返回取消后的运行视图。
 	contractRoute(app, runsApi.cancel, async ({ params }, reply, request) => {
-		const actor = requireActor(request, reply);
-		if (!actor) return reply;
+		const actor = actorOf(request);
 		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "run not found");
 		const outcome = await deps.engine.cancel(params.id, actor);
 		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);

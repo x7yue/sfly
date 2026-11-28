@@ -2,7 +2,6 @@ import {
 	CLIENT_HEADER,
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
-	NICKNAME_HEADER,
 } from "@sfly/schema";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
@@ -13,9 +12,11 @@ const ALLOWED_REQUEST_HEADERS = [
 	// 跨域的页面只能用请求头里的令牌（`Authorization: Bearer`）；控制面永远不发 Access-Control-Allow-Credentials，
 	// 所以跨域请求带不了登录 Cookie（ADR 0029「认证的几处细节」）。
 	"authorization",
-	NICKNAME_HEADER,
 	CLIENT_HEADER,
 	"last-event-id",
+	// 上一版的 API 客户端只给昵称时还带它（#494 删掉了昵称）：让预检照常通过，自建页面拿到的是写明怎么带令牌的 401，
+	// 不是浏览器里看不出原因的跨域错误。控制面不读它。
+	"x-sfly-nickname",
 ].join(", ");
 const EXPOSED_RESPONSE_HEADERS = `${CONTROL_PLANE_VERSION_HEADER}, ${CONTROL_PLANE_TIME_HEADER}`;
 /** 每个请求都带 `x-sfly-client`，都要预检；让浏览器缓存预检结果，名单改动十分钟内生效。 */

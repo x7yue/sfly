@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { promisify } from "node:util";
-import { type AttemptView, logsApi, metricsApi, NICKNAME_HEADER, runsApi } from "@sfly/schema";
+import { type AttemptView, logsApi, metricsApi, runsApi } from "@sfly/schema";
 import { type BundledServer, startBundledServer } from "../test/support/bundled-server.js";
 import { registerCredentialIssuer } from "../test/support/fake-agent.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "../test/support/real-agent.js";
@@ -104,7 +104,7 @@ export class PerfApi {
 	async postJson(path: string, body: unknown): Promise<unknown> {
 		const res = await this.request(path, {
 			method: "POST",
-			headers: { "content-type": "application/json", [NICKNAME_HEADER]: "perf" },
+			headers: { "content-type": "application/json" },
 			body: JSON.stringify(body),
 		});
 		return res.json();

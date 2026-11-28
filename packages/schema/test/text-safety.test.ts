@@ -1,4 +1,4 @@
-// 名字里能有哪些字符（src/text-safety.ts，#606）：令牌的名称、用户的显示名、写操作的昵称、初始管理员的显示名共用一个函数。
+// 名字里能有哪些字符（src/text-safety.ts，#606）：令牌的名称、用户的显示名、初始管理员的显示名共用一个函数。
 // 目标：名字不能在控制台和终端里倒着显示、藏字（往 AI 助手的上下文里塞看不见的话）、换行；不是「看起来一样的名字不能并存」。
 // 字符都用码位造出来，不把看不见的字符直接写在源码里。
 import { readFileSync, writeFileSync } from "node:fs";
@@ -162,7 +162,7 @@ const ALLOWED: ReadonlyArray<readonly [string, string]> = [
 describe("名字里不能有的字符", () => {
 	it.each(REJECTED)("拒绝：%s", (_what, name) => {
 		expect(nameProblem(name), name).toBeDefined();
-		expect(unsafeNameProblem("昵称", name), name).toBeTypeOf("string");
+		expect(unsafeNameProblem("显示名", name), name).toBeTypeOf("string");
 		// 空白在 Zod 里先被去掉：只有空白的名字在那里是「不能为空」，一样拒绝。
 		expect(TokenName.safeParse(name).success, name).toBe(false);
 		expect(AccountDisplayName.safeParse(name).success, name).toBe(false);
@@ -170,15 +170,15 @@ describe("名字里不能有的字符", () => {
 
 	it.each(ALLOWED)("放行：%s", (_what, name) => {
 		expect(nameProblem(name), name).toBeUndefined();
-		expect(unsafeNameProblem("昵称", name)).toBeUndefined();
+		expect(unsafeNameProblem("显示名", name)).toBeUndefined();
 		expect(TokenName.safeParse(name).success, name).toBe(true);
 		expect(AccountDisplayName.safeParse(name).success, name).toBe(true);
 	});
 
-	it("报错说出第几个字符、哪个码位（被拒的几乎都看不见，使用者才知道要删什么），四处同一句，称呼不同", () => {
+	it("报错说出第几个字符、哪个码位（被拒的几乎都看不见，使用者才知道要删什么），三处同一句，称呼不同", () => {
 		const name = `ab${chars(ZWSP)}c`;
-		expect(unsafeNameProblem("昵称", name)).toBe(
-			`昵称的第 3 个字符是 U+200B：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符${POSITION_NOTE}`,
+		expect(unsafeNameProblem("显示名", name)).toBe(
+			`显示名的第 3 个字符是 U+200B：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符${POSITION_NOTE}`,
 		);
 		for (const [schema, what] of [
 			[TokenName, "令牌的名称"],
@@ -209,7 +209,7 @@ describe("名字里不能有的字符", () => {
 			codePoint: 0x85,
 		});
 		// 「第几个字符」的说明写在报错里。
-		expect(unsafeNameProblem("昵称", name)).toContain("按码位数，从去掉首尾空白之后的第一个算起");
+		expect(unsafeNameProblem("显示名", name)).toContain("按码位数，从去掉首尾空白之后的第一个算起");
 		// 孤立的代理码元、盲文空白：同样说出第几个字符、哪个码位（成对的代理码元算一个字符）。
 		expect(unsafeNameProblem("昵称", `${chars(0x1f600)}${chars(0xd800)}`)).toBe(
 			`昵称的第 2 个字符是 U+D800：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符${POSITION_NOTE}`,

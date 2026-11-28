@@ -1,5 +1,5 @@
 // 登录失效之后页面回到登录页（PR #555 的复审：事件流重连拿到 401 就悄悄停了，页面停在原处，用户不知道）：
-// 只有「本来登录着、现在确实不是了」才跳转；从没登录过的人（昵称模式，#494 之前仍然合法）不受影响。
+// 只有「本来登录着、现在确实不是了」才跳转；没有登录的人（页面打开时问到没有登录，main.tsx 自己去登录页；登录页上登录失败）不受影响。
 // 401 不一定是登录失效（#578）：公开地址和浏览器实际地址不一致、又不是安全上下文时，登录有效，写请求也会被当作没登录。
 // 所以拿到 401 先问一次 `GET /auth/me`，真的失效了才跳转，不然人被困在「登录 → 又被带回登录页」的循环里。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -64,7 +64,7 @@ describe("请求拿到 401（noteUnauthorized）", () => {
 		expect(getIdentity().status).toBe("unknown");
 	});
 
-	it("没有登录（昵称模式、登录页上登录失败的 401）：不问、不跳转", async () => {
+	it("没有登录（页面打开时已经问过、登录页上登录失败的 401）：不问、不跳转", async () => {
 		setCurrentUser(null);
 		noteUnauthorized();
 		noteUnauthorized();

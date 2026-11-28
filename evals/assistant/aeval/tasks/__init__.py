@@ -194,7 +194,6 @@ def run_scenario(
     started = d.sh(
         stack.dev,
         f"sfly run start {shlex.quote(scenario)} --wait --timeout {timeout} --json",
-        env={"SFLY_NICKNAME": "grader"},
         check=False,
         timeout=900,
     )

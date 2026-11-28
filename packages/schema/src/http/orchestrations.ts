@@ -185,7 +185,7 @@ export const FocusItemView = z.discriminatedUnion("status", [
 
 /** 关注项最后一次修改：谁、什么时候（控制面时间）、一句话说明改了什么（控制面比较新旧列表生成）。 */
 export const FocusEditView = z.object({
-	/** 修改人的昵称。 */
+	/** 修改人的名字。 */
 	updated_by: z.string(),
 	updated_at: Timestamp,
 	/** 例如「添加了「TPS」」「把「下单延迟」移到第 6 位」「撤销了移除「TPS」」「复制自「撮合浸泡」」。 */
@@ -218,7 +218,7 @@ export const OrchestrationView = z.object({
 export const OrchestrationHeadView = z.object({
 	orchestration_id: z.string(),
 	number: z.number().int(),
-	/** 保存这个版本的人的昵称；还没有版本时为 null。 */
+	/** 保存这个版本的人的名字；还没有版本时为 null。 */
 	author: z.string().nullable(),
 	/** 经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。 */
 	author_via: z.string().nullable(),
@@ -228,7 +228,7 @@ export const OrchestrationHeadView = z.object({
 
 export const VersionSummaryView = z.object({
 	number: z.number().int(),
-	/** 保存这个版本的人的昵称。 */
+	/** 保存这个版本的人的名字。 */
 	author: z.string(),
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: z.string().nullable(),
@@ -242,7 +242,7 @@ export const OrchestrationVersionView = z.object({
 	id: z.string(),
 	orchestration_id: z.string(),
 	number: z.number().int(),
-	/** 保存这个版本的人的昵称。 */
+	/** 保存这个版本的人的名字。 */
 	author: z.string(),
 	author_via: z.string().nullable(),
 	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
@@ -425,7 +425,7 @@ export const LastRun = z.object({
 	cancelling: z.boolean(),
 	/** 运行绑定的场景版本号。 */
 	version: z.number().int(),
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: z.string(),
 	started_at: Timestamp,
 	ended_at: Timestamp.nullable(),
@@ -518,7 +518,7 @@ export const orchestrationsApi = {
 		response: OrchestrationHeadView,
 	}),
 	/**
-	 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
+	 * 保存（追加）一个版本，返回 201。base_version 是编辑起点的版本号，
 	 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 	 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
 	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
@@ -575,7 +575,7 @@ export const orchestrationsApi = {
 	 *   每条多一个 `existing`：改动之前就有（见 CheckedWarningView）。
 	 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
 	 *
-	 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
+	 * 用 POST 是因为请求体是一整份文档；它是只读的。
 	 */
 	check: endpoint({
 		method: "POST",
@@ -625,7 +625,7 @@ export const orchestrationsApi = {
 	}),
 	/**
 	 * 对场景做一组局部编辑（#470），存成一个新版本，返回 201：和保存相同的响应，再加上这组操作造成的差异（`diff`，相对 base_version）。
-	 * 需要昵称请求头。操作见 @sfly/schema 的 EditOperation：加节点、删节点、连线、断开、改一个节点的字段，
+	 * 操作见 @sfly/schema 的 EditOperation：加节点、删节点、连线、断开、改一个节点的字段，
 	 * 由控制面按顺序作用在最新版本上，用的是画布的编辑函数（@sfly/orchestration 的 applyEditOperations）。
 	 *
 	 * 要么全部生效，要么都不生效：
@@ -675,7 +675,7 @@ export const orchestrationsApi = {
 	}),
 	/**
 	 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
-	 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+	 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写。
 	 * 没有给 base_version 时对照最新版本，不报冲突。
 	 */
 	checkEdits: endpoint({
@@ -723,7 +723,7 @@ export const orchestrationsApi = {
 		response: OrchestrationVersionView,
 	}),
 	/**
-	 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
+	 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。
 	 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
 	 * 恢复也不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样恢复（#576），响应的 `warnings` 里每个这样的字段一条
 	 * （`timeout_out_of_range`、`queue_timeout_out_of_range`）；要保存任何改动之前先把它们改成合格的值。

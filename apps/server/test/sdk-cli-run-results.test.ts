@@ -51,7 +51,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			name,
 		);
 	};
-	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl, "--nickname", "alice"]);
+	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl, "--as-user", "alice"]);
 	const trigger = async (id: string) => {
 		const res = await api.trigger(id, {}, "alice");
 		return ((await res.json()) as { id: string }).id;
@@ -131,7 +131,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			});
 		});
 
-		it("latest 是自己（昵称）触发的最近一次，别人触发的不算；没有自己触发过的运行时报错", async () => {
+		it("latest 是令牌所属的用户触发的最近一次，别人触发的不算；没有自己触发过的运行时报错", async () => {
 			const id = await scenario("最近场景", [echo("a")]);
 			// 手动时钟不走：前面的用例触发的运行和这次的开始时间相同，先让时间过去。
 			clock.advance(60_000);
@@ -148,7 +148,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 				"--json",
 				"--server",
 				cp.httpUrl,
-				"--nickname",
+				"--as-user",
 				"bob",
 			]);
 			expect((JSON.parse(bob.stdout) as { id: string }).id).toBe(theirs);
@@ -160,11 +160,18 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 				"--json",
 				"--server",
 				cp.httpUrl,
-				"--nickname",
+				"--as-user",
 				"nobody-ran-this",
 			]);
 			expect(stranger.code).toBe(2);
 			expect(JSON.parse(stranger.stderr).error.code).toBe("no_recent_run");
+
+			// 没有令牌：不再按昵称找，问控制面得到 401，下一步是 sfly login（#494）。
+			const anonymous = await sfly(["run", "show", "latest", "--json", "--server", cp.httpUrl], {
+				env: { SFLY_API_TOKEN: undefined },
+			});
+			expect(anonymous.code).toBe(2);
+			expect(JSON.parse(anonymous.stderr).error).toMatchObject({ next: "sfly login" });
 		});
 	});
 
@@ -377,7 +384,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			await old?.close();
 		});
 		const viaOld = (...args: string[]) =>
-			sfly([...args, "--server", old.url, "--nickname", "alice"]);
+			sfly([...args, "--server", old.url, "--as-user", "alice"]);
 		const NOTE = "提示：控制面没有运行摘要接口（它比这个命令行旧），摘要只有状态，没有失败的任务；";
 
 		it("run wait 一次已经失败的运行：摘要退回到只有状态，退出码仍然是运行的结果，不是「运行不存在」", async () => {
@@ -414,7 +421,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 				"--wait",
 				"--server",
 				old.url,
-				"--nickname",
+				"--as-user",
 				"alice",
 			]);
 			try {

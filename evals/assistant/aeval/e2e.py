@@ -25,10 +25,6 @@ from aeval import docker as d
 from aeval.env import ADMIN_LOGIN, Stack
 from aeval.tasks import REFERENCE_DIR, Task, stage_reference, summarize
 
-# 发话的人：以前控制面把会话和它的操作记在这个昵称下；#494 起昵称不再给身份，
-# 每个请求都带初始管理员的登录 Cookie（`login_cookie`，建会话从 #547 起就只认用户的凭据），
-# 会话记在这个用户名下。
-NICKNAME = "e2e"
 PROJECT = "default"
 
 
@@ -133,7 +129,6 @@ def login_cookie(stack: Stack) -> str:
 def _request(stack: Stack, method: str, path: str, body: Any = None) -> Any:
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
     request = urllib.request.Request(stack.cp_url + path, data=data, method=method)
-    request.add_header("x-sfly-nickname", NICKNAME)
     request.add_header("cookie", login_cookie(stack))
     request.add_header("sec-fetch-site", "same-origin")
     if data is not None:

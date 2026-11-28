@@ -318,12 +318,6 @@ export type ControlPlaneTimeEvent = z.infer<typeof ControlPlaneTimeEvent>;
 export const CONTROL_PLANE_VERSION_HEADER = "x-sfly-version";
 
 /**
- * 昵称请求头（ADR 0004：只用于显示，不做鉴权）。值按 encodeURIComponent 编码，这样中文昵称也能放进请求头。
- * 写操作必须带它，没有时控制面回复 400 `nickname_required`。
- */
-export const NICKNAME_HEADER = "x-sfly-nickname";
-
-/**
  * 客户端标识请求头：API 客户端是 `sfly-client/<版本>`，命令行是 `sfly-cli/<版本>`，命令行检测到自己运行在
  * AI 编程助手里时再追加 ` agent/<AI 编程助手名称>`。只用于标注，不是鉴权；名称只收字母、数字和 `. _ + -`、最多 64 个字符
  * （`VIA_NAME_PATTERN`），有 `agent/` 但名称都不合格时存固定的占位值（`VIA_UNKNOWN`，不可能是合格的名称），显示成「未知」。

@@ -3,7 +3,6 @@ import {
 	CLIENT_HEADER,
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
-	NICKNAME_HEADER,
 } from "./generated/protocol.js";
 import { type CallOptions, type RouteInput, type RouteRef, requestPath } from "./route.js";
 import { CLIENT_VERSION } from "./version.js";
@@ -28,9 +27,6 @@ export interface ResponseLike {
 	text(): Promise<string>;
 }
 
-/** 固定的昵称，或每次请求时取值的函数；空白算没有。 */
-export type Nickname = string | (() => string | null | undefined);
-
 /** API 令牌：固定值，或每次请求时取值的函数（轮换令牌）；空白算没有。 */
 export type Token = string | (() => string | null | undefined);
 
@@ -45,7 +41,6 @@ export interface ExchangeConfig {
 	baseUrl: string;
 	fetch: FetchLike;
 	token?: Token;
-	nickname?: Nickname;
 	onControlPlaneTime: (time: string) => void;
 	onVersionMismatch: (mismatch: VersionMismatch) => void;
 	/** 带着令牌往不是本机的 `http://` 地址发请求（令牌在网络上是明文）：每个客户端实例调用一次，请求照常进行。 */
@@ -87,22 +82,13 @@ export function createExchange(config: ExchangeConfig): Exchange {
 		return value?.trim() || undefined;
 	};
 
-	const nicknameNow = (): string | undefined => {
-		const value = typeof config.nickname === "function" ? config.nickname() : config.nickname;
-		return value?.trim() || undefined;
-	};
-
-	const headersFor = (
-		route: RouteRef,
-		input: RouteInput | undefined,
-		init: SendInit,
-	): Record<string, string> => {
+	const headersFor = (input: RouteInput | undefined, init: SendInit): Record<string, string> => {
 		const headers: Record<string, string> = {
 			accept: init.accept,
 			[CLIENT_HEADER]: `sfly-client/${CLIENT_VERSION}`,
 		};
 		if (input?.body !== undefined) headers["content-type"] = "application/json";
-		// 有令牌时身份由令牌决定：带 Authorization，不发昵称，写操作也不再要昵称。
+		// 没有令牌时请求照发（同源页面带着登录后的 Cookie）；不带凭据的请求控制面回 401（错误码 unauthorized）。
 		const token = tokenNow();
 		if (token !== undefined) {
 			if (!insecureWarned && isInsecureRemote(baseUrl)) {
@@ -112,19 +98,6 @@ export function createExchange(config: ExchangeConfig): Exchange {
 				);
 			}
 			headers.authorization = `Bearer ${token}`;
-			return headers;
-		}
-		const nickname = nicknameNow();
-		if (nickname !== undefined) {
-			headers[NICKNAME_HEADER] = encodeURIComponent(nickname);
-		} else if (route.method !== "GET") {
-			throw new ApiError({
-				status: 400,
-				code: "nickname_required",
-				message: "写操作需要令牌：创建客户端时给 token（令牌在控制台的「令牌」页签发）",
-				method: route.method,
-				path: requestPath(route, input),
-			});
 		}
 		return headers;
 	};
@@ -154,7 +127,7 @@ export function createExchange(config: ExchangeConfig): Exchange {
 
 	const send = async (route: RouteRef, input: RouteInput | undefined, init: SendInit) => {
 		const path = requestPath(route, input);
-		const headers = { ...headersFor(route, input, init), ...init.headers };
+		const headers = { ...headersFor(input, init), ...init.headers };
 		let res: ResponseLike;
 		try {
 			res = await config.fetch(`${baseUrl}${path}`, {

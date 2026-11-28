@@ -7,7 +7,7 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
 
 场景、运行、Agent、节点包都用 `uv run sfly <组> <命令>` 操作，全程不用浏览器。参数以 `uv run sfly <组> <命令> --help` 为准；输出约定、退出码和各命令的用法见 [reference.md](reference.md)。
 
-身份由令牌决定：命令返回 401（没有登录，或令牌失效、被吊销）时，停下来请用户在终端里运行 `sfly login`（密码只输入给 `sfly login`，不要让用户把密码或令牌告诉你，也不要读取、打印凭据文件和 `SFLY_API_TOKEN`）；脚本和 CI 里令牌放在环境变量 `SFLY_API_TOKEN` 里。没有令牌时（过渡期）命令用昵称，`--nickname`、`$SFLY_NICKNAME` 有令牌时被忽略。
+身份由令牌决定：命令返回 401（没有登录，或令牌失效、被吊销）时，停下来请用户在终端里运行 `sfly login`（密码只输入给 `sfly login`，不要让用户把密码或令牌告诉你，也不要读取、打印凭据文件和 `SFLY_API_TOKEN`）；脚本和 CI 里令牌放在环境变量 `SFLY_API_TOKEN` 里。命令没有 `--nickname` 选项。
 
 ## 联调
 

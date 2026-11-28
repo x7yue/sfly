@@ -663,7 +663,7 @@ export type DashboardEndedRun = {
 	orchestration_id: string;
 	orchestration_name: string;
 	orchestration_version: number;
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	started_at: Timestamp;
 	ended_at: Timestamp;
@@ -680,7 +680,7 @@ export type DashboardEndedRun = {
 	orchestration_id: string;
 	orchestration_name: string;
 	orchestration_version: number;
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	started_at: Timestamp;
 	ended_at: Timestamp;
@@ -727,7 +727,7 @@ export interface DashboardRunningRun {
 	orchestration_id: string;
 	orchestration_name: string;
 	orchestration_version: number;
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
 	triggered_via: string | null;
@@ -1082,7 +1082,7 @@ export type FocusAnomalyKind = "log" | "stale" | "failed" | "retry";
 
 /** 关注项最后一次修改：谁、什么时候（控制面时间）、一句话说明改了什么（控制面比较新旧列表生成）。 */
 export interface FocusEditView {
-	/** 修改人的昵称。 */
+	/** 修改人的名字。 */
 	updated_by: string;
 	updated_at: Timestamp;
 	/** 例如「添加了「TPS」」「把「下单延迟」移到第 6 位」「撤销了移除「TPS」」「复制自「撮合浸泡」」。 */
@@ -1222,7 +1222,7 @@ export interface LastRun {
 	cancelling: boolean;
 	/** 运行绑定的场景版本号。 */
 	version: number;
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
@@ -1590,7 +1590,7 @@ export interface OrchestrationDocument {
 export interface OrchestrationHeadView {
 	orchestration_id: string;
 	number: number;
-	/** 保存这个版本的人的昵称；还没有版本时为 null。 */
+	/** 保存这个版本的人的名字；还没有版本时为 null。 */
 	author: string | null;
 	/** 经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。 */
 	author_via: string | null;
@@ -1646,7 +1646,7 @@ export interface OrchestrationVersionView {
 	id: string;
 	orchestration_id: string;
 	number: number;
-	/** 保存这个版本的人的昵称。 */
+	/** 保存这个版本的人的名字。 */
 	author: string;
 	author_via: string | null;
 	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
@@ -2080,7 +2080,7 @@ export interface PresetView {
 	status: "ok" | "invalid";
 	/** 失效的原因，按参数名称排序；`status` 为 `ok` 时为空。 */
 	problems: PresetProblemView[];
-	/** 最后修改人的昵称。 */
+	/** 最后修改人的名字。 */
 	updated_by: string;
 	/** 最后修改时间（控制面时间）。 */
 	updated_at: Timestamp;
@@ -2352,7 +2352,7 @@ export interface RunListItem {
 	status: "running" | "success" | "failed" | "cancelled";
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
@@ -2387,7 +2387,7 @@ export interface RunListQuery {
 	orchestration_id?: string;
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q?: string;
-	/** 只要这个触发人的运行：昵称整个相等（区分大小写）。`q` 会把昵称里的文字也当关键字，要精确找一个人的运行用它。 */
+	/** 只要这个触发人的运行：名字整个相等（区分大小写）。`q` 会把名字里的文字也当关键字，要精确找一个人的运行用它。 */
 	triggered_by?: string;
 	/** 只要运行编号以它开头的运行（不分大小写，只能写十六进制数字和 `-`）。`q` 还会按触发人匹配，只想按编号找时用它。 */
 	id_prefix?: string;
@@ -2622,7 +2622,7 @@ export interface RunReport {
 	 * 否则是 `success`；运行结束时的最终状态只会比它更坏（运行已经结束时它就是 `status`）。
 	 */
 	result_so_far: "success" | "failed" | "cancelled";
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
@@ -2862,7 +2862,7 @@ export interface RunSummary {
 	orchestration_id: string;
 	orchestration_version: number;
 	status: RunStatus;
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
@@ -2881,7 +2881,7 @@ export interface RunView {
 	orchestration_id: string;
 	orchestration_version: number;
 	status: RunStatus;
-	/** 触发人的昵称。 */
+	/** 触发人的名字。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
@@ -2974,7 +2974,7 @@ export interface SavedVersionView {
 	id: string;
 	orchestration_id: string;
 	number: number;
-	/** 保存这个版本的人的昵称。 */
+	/** 保存这个版本的人的名字。 */
 	author: string;
 	author_via: string | null;
 	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
@@ -3033,7 +3033,7 @@ export interface SessionEventsQuery {
 export type SessionId = string;
 
 /**
- * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
+ * 会话列表里的一项。`created_by` 是发起人的名字；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
  * 排在这一轮后面的在做的会话（`status` 为 `running`）也有，从 1 起，按说话的时刻排（和轮到谁开始的顺序一致）；
  * `last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
  */
@@ -3383,7 +3383,7 @@ export interface VersionCheckView {
 
 export interface VersionSummaryView {
 	number: number;
-	/** 保存这个版本的人的昵称。 */
+	/** 保存这个版本的人的名字。 */
 	author: string;
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: string | null;
@@ -3392,7 +3392,7 @@ export interface VersionSummaryView {
 	created_at: Timestamp;
 }
 
-/** 排队的会话在等谁：正在做的那个会话，它的标题和发起人（昵称）。 */
+/** 排队的会话在等谁：正在做的那个会话，它的标题和发起人（名字）。 */
 export interface WaitingFor {
 	session_id: SessionId;
 	title: string;

@@ -9,7 +9,6 @@ import {
 	HistoryIcon,
 	KeyboardIcon,
 	ListFilterIcon,
-	LogInIcon,
 	type LucideIcon,
 	PanelLeftIcon,
 	PauseIcon,
@@ -18,7 +17,6 @@ import {
 	RadioIcon,
 	RotateCcwIcon,
 	SaveIcon,
-	UserPenIcon,
 	WorkflowIcon,
 } from "lucide-react";
 import { type RefObject, useEffect, useRef, useState } from "react";
@@ -28,7 +26,6 @@ import { runStatusView } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
-import { useIdentity } from "#/lib/identity";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { PROJECT } from "#/lib/project";
 import type { PaletteShortcutId } from "#/lib/shortcuts";
@@ -71,7 +68,6 @@ export function CommandPalette({
 }) {
 	const all = scope === null;
 	const navigate = useNavigate();
-	const loggedIn = useIdentity().status === "user";
 	const pageCommands = usePaletteCommands();
 	// 「场景」分组只列出没有归档的场景。
 	const orchestrations = useQuery({
@@ -91,7 +87,6 @@ export function CommandPalette({
 		action();
 	};
 
-	// 登录了：写操作的身份是登录的用户，没有昵称可改，也不用再登录。
 	const commands = [
 		{
 			id: "new-scenario",
@@ -116,25 +111,13 @@ export function CommandPalette({
 			perform: toggleSidebar,
 		},
 		{
-			id: "nickname",
-			label: "修改昵称",
-			icon: UserPenIcon,
-			perform: () => openOverlay("nickname"),
-		},
-		{
-			id: "login",
-			label: "登录账号",
-			icon: LogInIcon,
-			perform: () => navigate({ to: "/login" }),
-		},
-		{
 			id: "motion",
 			label: motionPaused ? "恢复动效" : "暂停动效",
 			keywords: ["暂停动效", "恢复动效", "脉冲"],
 			icon: motionPaused ? PlayIcon : PauseIcon,
 			perform: toggleMotionPaused,
 		},
-	].filter((c) => !(loggedIn && (c.id === "nickname" || c.id === "login")));
+	];
 
 	return (
 		<CommandDialog open={open} onOpenChange={onOpenChange}>

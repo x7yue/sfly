@@ -117,7 +117,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 	describe("--wait 和 run wait：等运行结束", () => {
 		it("成功：退出码 0，stdout 是摘要，节点状态的进度写在 stderr", async () => {
 			const id = await scenario("成功场景", [echo("a"), echo("b")]);
-			const waiting = start("run", "start", "成功场景", "--wait", "--nickname", "alice");
+			const waiting = start("run", "start", "成功场景", "--wait", "--as-user", "alice");
 
 			const a = await assign();
 			clock.advance(2_000);
@@ -386,7 +386,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			const task = await assign();
 			const runId = await runOf(id);
 
-			const cancel = await cli("run", "cancel", runId, "--nickname", "carol");
+			const cancel = await cli("run", "cancel", runId, "--as-user", "carol");
 			expect(cancel.code, cancel.stderr).toBe(0);
 			expect(cancel.stdout).toContain(`已请求取消运行 ${runId}`);
 			expect(cancel.stdout).toContain(`sfly run wait ${runId}`);
@@ -729,7 +729,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 
 		it("不在 AI 编程助手里时，运行上没有「经 …」", async () => {
 			const id = await scenario("人工场景", [echo("a")]);
-			const result = await cli("run", "start", "人工场景", "--nickname", "erin");
+			const result = await cli("run", "start", "人工场景", "--as-user", "erin");
 			expect(result.code, result.stderr).toBe(0);
 			expect(await api.run(await runOf(id))).toMatchObject({
 				triggered_by: "erin",

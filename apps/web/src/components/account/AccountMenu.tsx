@@ -20,8 +20,8 @@ import {
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
 
 /**
- * 顶栏右上角的账号菜单（登录之后代替昵称按钮）：显示名、登录名，令牌页、修改密码、登出。
- * 登出之后回到登录页：没有登录的页面在 #494 之前仍然能用，但登出是用户明确要换身份。
+ * 顶栏右上角的账号菜单：显示名、登录名，令牌页、修改密码、登出。
+ * 登出之后回到登录页：没有登录什么页面都用不了（#494 起不带凭据的请求一律 401）。
  */
 export function AccountMenu({ user }: { user: CurrentUser }) {
 	const navigate = useNavigate();

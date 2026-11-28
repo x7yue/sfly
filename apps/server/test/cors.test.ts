@@ -67,8 +67,14 @@ describe("跨域：默认允许所有来源", () => {
 		expect(await res.text()).toBe("");
 		expect(res.headers.get("access-control-allow-origin")).toBe("*");
 		expect(headerNames(res, "access-control-allow-headers")).toEqual(
-			// biome-ignore lint/plugin/test-nickname-header: 测的是跨域允许的请求头里有昵称请求头
-			expect.arrayContaining(["content-type", "x-sfly-nickname", "x-sfly-client", "last-event-id"]),
+			// x-sfly-nickname：上一版的 API 客户端只给昵称时还带它，预检通过才拿得到 401 的说明（#494）。
+			expect.arrayContaining([
+				"content-type",
+				"authorization",
+				"x-sfly-client",
+				"last-event-id",
+				"x-sfly-nickname",
+			]),
 		);
 		expect(Number(res.headers.get("access-control-max-age"))).toBeGreaterThan(0);
 		expect(res.headers.get("access-control-allow-credentials")).toBeNull();
@@ -191,8 +197,14 @@ describe("跨域：来源名单", () => {
 		expect(answered.status).toBe(204);
 		expect(answered.headers.get("access-control-allow-origin")).toBe(PAGE);
 		expect(headerNames(answered, "access-control-allow-headers")).toEqual(
-			// biome-ignore lint/plugin/test-nickname-header: 测的是跨域允许的请求头里有昵称请求头
-			expect.arrayContaining(["content-type", "x-sfly-nickname", "x-sfly-client", "last-event-id"]),
+			// x-sfly-nickname：上一版的 API 客户端只给昵称时还带它，预检通过才拿得到 401 的说明（#494）。
+			expect.arrayContaining([
+				"content-type",
+				"authorization",
+				"x-sfly-client",
+				"last-event-id",
+				"x-sfly-nickname",
+			]),
 		);
 		expect(Number(answered.headers.get("access-control-max-age"))).toBeGreaterThan(0);
 		expect(agents.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");

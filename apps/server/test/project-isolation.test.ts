@@ -32,7 +32,7 @@ import { createTestDatabase, type TestDatabase } from "./support/test-database.j
 
 /** 项目乙：测试里直接写库建（建项目的接口在 #499）。 */
 const OTHER = "other-team" as ProjectId;
-const ACTOR = { nickname: "测试", via: null, userId: null, token: null, sessionId: null };
+const ACTOR = { name: "测试", via: null, userId: null, token: null, sessionId: null };
 const AT = "2026-01-01T00:00:00Z";
 const DOCUMENT = {
 	default_agent: "agent-a",

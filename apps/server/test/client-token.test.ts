@@ -1,5 +1,5 @@
-// API 客户端的令牌（ADR 0029，#491）：初始化参数从昵称换成令牌，每个请求（含事件流）带 `Authorization: Bearer`，
-// 身份由令牌决定：有令牌时不发昵称、写操作不再要昵称。没有令牌的请求控制面一律 401（#494），昵称参数之后一并删除。
+// API 客户端的令牌（ADR 0029，#491）：每个请求（含事件流）带 `Authorization: Bearer`，身份由令牌决定。
+// 没有令牌时请求照发，控制面一律 401（#494），客户端抛出错误码 unauthorized 的 ApiError。
 import { ApiError, createClient } from "@sfly/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestAccounts } from "./support/credentials.js";
@@ -33,20 +33,16 @@ describe("API 客户端带令牌", () => {
 
 	const sent = () => proxy.requests.at(-1);
 
-	it("读和写都带 Authorization: Bearer，不发昵称；写操作不需要昵称，记下的身份是令牌的用户", async () => {
+	it("读和写都带 Authorization: Bearer，记下的身份是令牌的用户", async () => {
 		const client = createClient({ baseUrl: proxy.url, token });
 		await client.system.health();
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
-		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
-		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 		const created = await client.request(
 			{ method: "POST", path: "/projects/default/orchestrations", kind: "endpoint" },
 			{ body: { name: "令牌建的场景" } },
 		);
 		expect(created).toMatchObject({ name: "令牌建的场景" });
 		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
-		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
-		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 	});
 
 	it("令牌可以是每次请求时取值的函数（轮换令牌）；空白算没有", async () => {
@@ -68,7 +64,7 @@ describe("API 客户端带令牌", () => {
 		expect((failure as ApiError).message).toContain("sfly login");
 	});
 
-	it("事件流同样带令牌：订阅时的请求带 Authorization: Bearer，不发昵称", async () => {
+	it("事件流同样带令牌：订阅时的请求带 Authorization: Bearer", async () => {
 		const { run } = await seedTask(cp, { agent: "agent-a", status: "running" });
 		const streaming = await startStreamingProxy(cp.httpUrl);
 		try {
@@ -80,14 +76,12 @@ describe("API 客户端带令牌", () => {
 			const stream = streaming.requests.find((r) => r.path === `/runs/${run}/events`);
 			expect(stream?.headers.accept).toContain("text/event-stream");
 			expect(stream?.headers.authorization).toBe(`Bearer ${token}`);
-			// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
-			expect(stream?.headers["x-sfly-nickname"]).toBeUndefined();
 		} finally {
 			await streaming.close();
 		}
 	});
 
-	it("没有令牌也没有昵称的写操作在发请求之前就抛错，说明要给令牌；读操作不受影响", async () => {
+	it("没有令牌：写请求照发，控制面 401，抛出 ApiError，说明里有 sfly login", async () => {
 		const client = createClient({ baseUrl: proxy.url });
 		const before = proxy.requests.length;
 		const failure = await client
@@ -99,11 +93,11 @@ describe("API 客户端带令牌", () => {
 				() => undefined,
 				(error: unknown) => error,
 			);
+		expect(proxy.requests.length).toBe(before + 1);
+		expect(sent()?.headers.authorization).toBeUndefined();
 		expect(failure).toBeInstanceOf(ApiError);
-		expect(failure).toMatchObject({ status: 400, code: "nickname_required" });
-		expect((failure as ApiError).message).toContain("token");
-		expect(proxy.requests.length).toBe(before);
-		await client.system.health();
+		expect(failure).toMatchObject({ status: 401, code: "unauthorized", method: "POST" });
+		expect((failure as ApiError).message).toContain("sfly login");
 	});
 
 	it("令牌失效（吊销、范围不够）：控制面的 401、403 抛成带控制面错误码的 ApiError", async () => {
@@ -124,14 +118,6 @@ describe("API 客户端带令牌", () => {
 				(error: unknown) => error,
 			);
 		expect(forbidden).toMatchObject({ status: 403, code: "forbidden" });
-	});
-
-	it("昵称参数还在（之后一并删除）：有令牌时令牌优先、昵称不发", async () => {
-		const both = createClient({ baseUrl: proxy.url, token, nickname: "冒充的人" });
-		await both.orchestrations.list({ params: { project: "default" } });
-		expect(sent()?.headers.authorization).toBe(`Bearer ${token}`);
-		// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发不发昵称请求头
-		expect(sent()?.headers["x-sfly-nickname"]).toBeUndefined();
 	});
 });
 

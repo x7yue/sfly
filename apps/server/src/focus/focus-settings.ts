@@ -69,7 +69,7 @@ export async function replaceFocusItems(
 		columns: {
 			focusItems: [...requested],
 			focusEdit: {
-				by: actor.nickname,
+				by: actor.name,
 				by_user_id: actor.userId,
 				at: now.toISOString(),
 				summary: undo
@@ -107,7 +107,7 @@ export function copiedFocus(
 		source.focusItems.length === 0
 			? null
 			: {
-					by: actor.nickname,
+					by: actor.name,
 					by_user_id: actor.userId,
 					at: now.toISOString(),
 					summary: `复制自「${source.name}」`,

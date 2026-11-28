@@ -84,14 +84,9 @@ describe("令牌的几处收紧", () => {
 				const read = await call({ authorization }, "GET", "/projects/default/orchestrations");
 				expect(read.status, authorization.slice(0, 20)).toBe(401);
 				expect((await errorOf(read)).message).toContain("Bearer <令牌>");
-				// 带着昵称的写：以前会以匿名（昵称）身份写成功。
-				const write = await call(
-					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
-					{ authorization, "x-sfly-nickname": encodeURIComponent("脚本") },
-					"POST",
-					"/projects/default/orchestrations",
-					{ name: "不该建出来" },
-				);
+				const write = await call({ authorization }, "POST", "/projects/default/orchestrations", {
+					name: "不该建出来",
+				});
 				expect(write.status, authorization.slice(0, 20)).toBe(401);
 			}
 			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);

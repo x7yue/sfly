@@ -16,14 +16,14 @@ async function send(
 	cp: TestControlPlane,
 	path: string,
 	body: unknown,
-	nickname: string,
+	user: string,
 	client?: string,
 ) {
 	const res = await cp.fetch(path, {
 		method: "POST",
 		headers: {
 			...JSON_HEADERS,
-			...actAs(nickname),
+			...actAs(user),
 			...(client ? { "x-sfly-client": client } : {}),
 		},
 		body: JSON.stringify(body),
@@ -132,12 +132,12 @@ test("版本列表：经 AI 编程助手保存的版本在作者旁边显示「�
 	controlPlane,
 }) => {
 	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent"));
-	const save = (base: number, nickname: string, client?: string) =>
+	const save = (base: number, user: string, client?: string) =>
 		send(
 			controlPlane,
 			`/orchestrations/${scenario}/versions`,
 			{ base_version: base, document: scenarioUsing("agent") },
-			nickname,
+			user,
 			client,
 		);
 	await save(1, "bob", CLAUDE_CODE);

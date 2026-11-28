@@ -104,7 +104,7 @@ function newPresetRow(
 		values: fields.values,
 		createdAt: now,
 		updatedAt: now,
-		updatedBy: actor.nickname,
+		updatedBy: actor.name,
 		updatedByUserId: actor.userId,
 	};
 }
@@ -221,7 +221,7 @@ export class PresetStore {
 						...(changes.description === undefined ? {} : { description: changes.description }),
 						...(values === undefined ? {} : { values }),
 						updatedAt: this.deps.clock.now(),
-						updatedBy: actor.nickname,
+						updatedBy: actor.name,
 						updatedByUserId: actor.userId,
 					})
 					.where(eq(runPresets.id, presetId))

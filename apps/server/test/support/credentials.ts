@@ -2,7 +2,6 @@
 // 返回请求里要带的原值。
 // 访问检查（src/auth/access-guard.ts）只认库里已有的凭据，所以访问检查的测试、跨项目的测试都从这里取。
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { NICKNAME_HEADER } from "@sfly/schema";
 import pg from "pg";
 import { hashCredential } from "../../src/auth/credential-hash.js";
 import { SCOPES } from "../../src/auth/scopes.js";
@@ -292,19 +291,25 @@ export const loginNameOf = (nickname: string): string =>
 		: `t_${createHash("sha256").update(nickname).digest("hex").slice(0, 24)}`;
 
 /**
- * 以这个昵称的用户发请求（#493）：测试控制面的 `fetch`、命令行和 API 客户端的辅助按它换成这个用户的个人令牌（`TestUsers`）。
- * 测试里按昵称选人只用它，不手写昵称请求头（lint 规则 biome-plugins/test-nickname-header.grit）：#494 删掉昵称时只改这里。
+ * 测试里标记「这个请求以谁的身份发」的请求头：只在测试里用，发出去之前 {@link TestUsers.sign} 把它换成这个用户的个人令牌并去掉。
+ * 控制面不认它（昵称请求头 #494 已经删掉）；没有经过签名就发出去的请求是不带凭据的。
+ */
+const TEST_USER_HEADER = "x-sfly-test-user";
+
+/**
+ * 以这个名字的用户发请求（#493）：测试控制面的 `fetch`、命令行和 API 客户端的辅助按它换成这个用户的个人令牌（`TestUsers`）。
+ * 名字也是用户的显示名，作者、触发人记的就是它。
  */
 export const actAs = (nickname: string): Record<string, string> => ({
-	[NICKNAME_HEADER]: encodeURIComponent(nickname),
+	[TEST_USER_HEADER]: encodeURIComponent(nickname),
 });
 
-/** 测试里的请求默认是谁（#493）：昵称请求头没有写时就是他。 */
+/** 测试里的请求默认是谁（#493）：没有用 {@link actAs} 时就是他。 */
 export const DEFAULT_TESTER = "tester";
 
-/** 请求以谁的身份发（{@link actAs} 写进去的昵称）：没写是 tester，解不开的编码是 undefined。 */
+/** 请求以谁的身份发（{@link actAs} 写进去的名字）：没写是 tester，解不开的编码是 undefined。 */
 export function nicknameIn(headers: Headers): string | undefined {
-	const raw = headers.get(NICKNAME_HEADER);
+	const raw = headers.get(TEST_USER_HEADER);
 	if (raw === null) return DEFAULT_TESTER;
 	try {
 		return decodeURIComponent(raw);
@@ -405,10 +410,11 @@ export class TestUsers {
 	/** 请求要带的请求头：自己带了凭据、或 `credentials: "omit"` 时原样返回。 */
 	async sign(init: RequestInit): Promise<Headers> {
 		const headers = new Headers(init.headers);
+		const nickname = nicknameIn(headers);
+		headers.delete(TEST_USER_HEADER);
 		if (init.credentials === "omit" || headers.has("authorization") || headers.has("cookie")) {
 			return headers;
 		}
-		const nickname = nicknameIn(headers);
 		// 昵称本身不合格（测的就是控制面怎么拒绝它）：不带凭据，照旧是不带凭据的请求。
 		if (nickname === undefined || !usableNickname(nickname)) return headers;
 		headers.set("authorization", `Bearer ${await this.token(nickname)}`);

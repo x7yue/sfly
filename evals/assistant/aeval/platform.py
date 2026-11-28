@@ -42,7 +42,7 @@ from typing import Any
 
 from aeval import docker as d
 from aeval.classify import read_events
-from aeval.env import ADMIN_LOGIN, ADMIN_PASSWORD_ENV, ASSISTANT_NICKNAME, Stack
+from aeval.env import ADMIN_LOGIN, ADMIN_PASSWORD_ENV, Stack
 from aeval.models import Model, load_models
 from aeval.tasks import REFERENCE_DIR, Task, stage_reference
 
@@ -54,12 +54,10 @@ DEADLINE_SLACK_SECONDS = 60.0
 # 会话驱动停下之后等结局的时间（platform_driver.STOP_WAIT_SECONDS），宿主机在它之外再留的余量。
 DRIVER_STOP_WAIT_SECONDS = 40.0
 HOST_SLACK_SECONDS = 120.0
-# 请求里带的昵称头。建会话只认用户的凭据（#547），驱动用初始管理员登录；带凭据的请求取登录用户的
-# **显示名**，昵称头不起作用，所以控制面起来时把初始管理员的显示名设成臂 A 的昵称
-# （`aeval.env.ASSISTANT_NICKNAME`，`Stack._start_control_plane` 设 `SFLY_ADMIN_DISPLAY_NAME`）：
-# 会话和助手的命令（`SFLY_NICKNAME`、`AI_AGENT=pi`）记在 `eval` 下，和臂 A 一致；
-# 判分里评测自己的操作用 `grader` 这个昵称，和助手的分得开。
-NICKNAME = ASSISTANT_NICKNAME
+# 驱动用初始管理员登录（建会话只认用户的凭据，#547）：请求的身份是登录用户的**显示名**，
+# 所以控制面起来时把初始管理员的显示名设成臂 A 的名字（`aeval.env.ASSISTANT_NICKNAME`，
+# `Stack._start_control_plane` 设 `SFLY_ADMIN_DISPLAY_NAME`）：会话和助手的命令
+# （`SFLY_NICKNAME`、`AI_AGENT=pi`）记在 `eval` 下，和臂 A 一致。
 DRIVER = "/aeval/container/platform_driver.py"
 DRIVER_OUT = "/tmp/aeval-platform"
 ASSISTANT_DATA = "/data/sessions"
@@ -430,8 +428,6 @@ def driver_argv(mirror: str, prompt: str, run_dir: str, budget: float) -> list[s
         mirror,
         "python3",
         DRIVER,
-        "--nickname",
-        NICKNAME,
         "--login-name",
         ADMIN_LOGIN,
         "--prompt-file",

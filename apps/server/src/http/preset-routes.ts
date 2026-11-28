@@ -7,10 +7,9 @@ import {
 	type PresetStore,
 } from "../presets/preset-store.js";
 import { isUuid } from "../util/uuid.js";
-import { requireActor } from "./actor.js";
+import { actorOf } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
-import { requireNickname } from "./nickname.js";
 
 const notFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "orchestration not found");
@@ -57,7 +56,7 @@ function rejected(
 
 /**
  * 运行预设（契约见 @sfly/schema 的 presetsApi，ADR 0024）：列出、新建、修改、复制、删除。
- * 写操作需要昵称，昵称记为最后修改人；场景归档期间也能写。预设是场景的设置，不产生新的场景版本。
+ * 写操作的身份记为最后修改人；场景归档期间也能写。预设是场景的设置，不产生新的场景版本。
  */
 export function registerPresetRoutes(
 	app: FastifyInstance,
@@ -69,8 +68,7 @@ export function registerPresetRoutes(
 	});
 
 	contractRoute(app, presetsApi.create, async ({ params, body }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		if (!isUuid(params.id)) return notFound(reply);
 		const result = await presets.create(params.id, body, actor);
 		return result.kind === "created"
@@ -79,8 +77,7 @@ export function registerPresetRoutes(
 	});
 
 	contractRoute(app, presetsApi.update, async ({ params, body }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		if (!isUuid(params.id) || !isUuid(params.presetId)) return presetNotFound(reply);
 		const result = await presets.update(params.id, params.presetId, body, actor);
 		return result.kind === "updated"
@@ -89,8 +86,7 @@ export function registerPresetRoutes(
 	});
 
 	contractRoute(app, presetsApi.copy, async ({ params, body }, reply, raw) => {
-		const actor = requireActor(raw, reply);
-		if (!actor) return reply;
+		const actor = actorOf(raw);
 		if (!isUuid(params.id) || !isUuid(params.presetId)) return presetNotFound(reply);
 		const result = await presets.copy(params.id, params.presetId, body.name, actor);
 		return result.kind === "copied"
@@ -98,8 +94,7 @@ export function registerPresetRoutes(
 			: rejected(reply, result, presetNotFound, body.name);
 	});
 
-	contractRoute(app, presetsApi.remove, async ({ params }, reply, raw) => {
-		if (!requireNickname(raw, reply)) return reply;
+	contractRoute(app, presetsApi.remove, async ({ params }, reply) => {
 		const removed =
 			isUuid(params.id) && isUuid(params.presetId)
 				? await presets.remove(params.id, params.presetId)

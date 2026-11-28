@@ -272,7 +272,7 @@ describe("下载带上可以核对的结尾信息，命令行读完核对（#721
 
 		// 经代理连的地址不是测试控制面登记的地址，默认凭据带不上：自己给令牌。
 		const download = async (server: string, runId: string, target: string) =>
-			sfly(["run", "logs", runId, "--all", target, "--server", server, "--nickname", "alice"], {
+			sfly(["run", "logs", runId, "--all", target, "--server", server], {
 				env: { SFLY_API_TOKEN: await cp.users.token("alice") },
 			});
 

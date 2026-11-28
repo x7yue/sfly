@@ -17,7 +17,7 @@ import {
 	toListItem,
 } from "../sessions/session-store.js";
 import type { Sse } from "../sse/sse.js";
-import { requireActor } from "./actor.js";
+import { actorOf } from "./actor.js";
 import { contractRoute, contractStream } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
@@ -40,7 +40,7 @@ export interface SessionRouteDeps {
 /**
  * 助手会话（契约见 @sfly/schema 的 sessionsApi，ADR 0027）：列出、读、事件流，以及写接口。
  * 项目不存在、会话不存在（或属于别的项目：访问检查在进处理函数之前已经按会话所在的项目判断过）都是 404。
- * 写接口需要昵称（记为发起人）；助手没有配置时返回 503 `assistant_not_configured`，读接口照常。
+ * 写接口的发起人是访问检查得出的身份；助手没有配置时返回 503 `assistant_not_configured`，读接口照常。
  * 新建返回 201 和新会话；发话返回这句话的序号；停止返回会话（这一轮的 `turn_end` 由助手服务的事件带回来）。
  */
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
@@ -74,8 +74,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 	});
 
 	contractRoute(app, sessionsApi.create, async ({ params, body }, reply, request) => {
-		const actor = requireActor(request, reply);
-		if (actor === undefined) return reply;
+		const actor = actorOf(request);
 		// 建会话只认用户的凭据（访问检查已经对不带凭据的请求回了 401）：`created_by_user_id` 从凭据取，会话令牌要代他干活。
 		// 这是第二道：没有经过访问检查的请求（没有身份）到这里也不能建出一个没有发起人的会话。
 		if (actor.userId === null) {
@@ -138,8 +137,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 	});
 
 	contractRoute(app, sessionsApi.message, async ({ params, body }, reply, request) => {
-		const actor = requireActor(request, reply);
-		if (actor === undefined) return reply;
+		const actor = actorOf(request);
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
 		// 写的时候会话被删了（新建会话没接住、等结局的那段时间删掉的）：和一开始找不到一样，404。
@@ -153,8 +151,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 	});
 
 	contractRoute(app, sessionsApi.end, async ({ params }, reply, request) => {
-		const actor = requireActor(request, reply);
-		if (actor === undefined) return reply;
+		const actor = actorOf(request);
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
 		try {
@@ -167,9 +164,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		return view((await sessions.find(row.id)) ?? row);
 	});
 
-	contractRoute(app, sessionsApi.stop, async ({ params }, reply, request) => {
-		const actor = requireActor(request, reply);
-		if (actor === undefined) return reply;
+	contractRoute(app, sessionsApi.stop, async ({ params }, reply) => {
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
 		try {

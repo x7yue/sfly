@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useActionSummary } from "./use-task-actions";
 
 /**
- * 测试环境没有 DOM：挂载的组件不渲染任何节点，React 只用 `window` 取当前事件、用容器和它的 document 注册事件，请求层从 `localStorage` 读昵称。
+ * 测试环境没有 DOM：挂载的组件不渲染任何节点，React 只用 `window` 取当前事件、用容器和它的 document 注册事件。
  * TanStack Query 在加载时就按 `window` 是否存在判断是不是服务端，所以这个替身要在导入之前放好。
  */
 const dom = vi.hoisted(() => {
@@ -17,7 +17,6 @@ const dom = vi.hoisted(() => {
 			event: undefined,
 			document,
 			HTMLIFrameElement,
-			localStorage: { getItem: () => null },
 			...listeners,
 		},
 		IS_REACT_ACT_ENVIRONMENT: true,

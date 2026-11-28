@@ -282,7 +282,7 @@ export class Engine implements AgentSessionHandler {
 					orchestrationVersionId: version.id,
 					// 运行的项目和它的场景一致（触发准入读场景时一起取出，ADR 0029）。
 					projectId,
-					triggeredBy: actor.nickname,
+					triggeredBy: actor.name,
 					triggeredByUserId: actor.userId,
 					triggeredVia: actor.via,
 					triggeredToken: actor.token,
@@ -347,7 +347,7 @@ export class Engine implements AgentSessionHandler {
 						? { cancelForcedAt: step.now }
 						: {
 								cancelRequestedAt: step.now,
-								cancelRequestedBy: actor.nickname,
+								cancelRequestedBy: actor.name,
 								cancelRequestedByUserId: actor.userId,
 								cancelRequestedVia: actor.via,
 								cancelRequestedToken: actor.token,

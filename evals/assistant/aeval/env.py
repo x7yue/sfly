@@ -891,12 +891,11 @@ class Stack:
 
     def sfly(self, *args: str, check: bool = True, workdir: str | None = None) -> Any:
         """以「评分」的身份在开发环境容器里执行 sfly 命令行。凭据是 `_login_cli` 存下的登录：
-        身份是初始管理员，昵称 `grader` 不再作数（带令牌时命令行不发昵称）。"""
+        身份是初始管理员（命令行没有昵称了，#494）。"""
         quoted = " ".join(_quote(a) for a in args)
         return d.sh(
             self.dev,
             f"sfly {quoted}",
-            env={"SFLY_NICKNAME": "grader"},
             workdir=workdir,
             check=check,
             timeout=900,

@@ -29,7 +29,7 @@ from collections.abc import Callable
 from typing import Any
 
 from sfly.cli import credentials
-from sfly.cli.client import ApiError, Client, check_address, resolve_nickname, without_userinfo
+from sfly.cli.client import ApiError, Client, check_address, without_userinfo
 from sfly.cli.errors import EXIT_ERROR, CliError
 from sfly.cli.home import DEFAULT_SERVER, control_plane_url
 from sfly.cli.output import Output
@@ -143,7 +143,7 @@ def _read_password(args: argparse.Namespace) -> str:
 def _anonymous(url: str) -> Client:
     """换令牌用的客户端：不带令牌（`SFLY_API_TOKEN` 不该被发给控制面去换令牌）；发出去的是账号密码，
     往不是本机的 `http://` 地址发之前提示一次（明文）。"""
-    return Client(url, resolve_nickname(None), sends_password=True)
+    return Client(url, sends_password=True)
 
 
 def _login(args: argparse.Namespace, out: Output) -> int:
@@ -205,7 +205,7 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     # 失败（已失效、连不上）不挡着登录。
     if previous is not None:
         try:
-            Client(url, resolve_nickname(None), token=previous.token).request(
+            Client(url, token=previous.token).request(
                 "DELETE", f"/account/tokens/{previous.token_id}"
             )
         except (CliError, OSError):
@@ -259,9 +259,7 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
     rejected = False
     if not args.local:
         try:
-            Client(url, resolve_nickname(None), token=stored.token).request(
-                "DELETE", f"/account/tokens/{stored.token_id}"
-            )
+            Client(url, token=stored.token).request("DELETE", f"/account/tokens/{stored.token_id}")
             revoked = True
         except ApiError as error:
             # 401：令牌已经失效（别处吊销了、过期了）。账号被停用时令牌也能吊销它自己

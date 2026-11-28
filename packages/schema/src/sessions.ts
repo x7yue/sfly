@@ -260,7 +260,7 @@ export type TokenUsage = z.infer<typeof TokenUsage>;
 /**
  * 用户说了一句话。控制面收到这句话时产生。`message_id` 是这句话自己的 ID（控制面收到时分配）：插话队列
  * （{@link SteerQueueEvent}）和插话命令都带它，连发两句相同的话也分得清。`steer` 为 true 是插话（助手正在做时发的，#544）。
- * `author` 是说这句话的人的昵称，`author_user_id` 是他的用户 ID（#547 起有值，在那之前为 null）。
+ * `author` 是说这句话的人的名字，`author_user_id` 是他的用户 ID（#547 起有值，在那之前为 null）。
  * 持久。#541 起。
  */
 export const UserMessageEvent = z.object({
@@ -278,7 +278,7 @@ export const TurnStartedEvent = z.object({
 	turn: z.int().min(1),
 });
 
-/** 排队的会话在等谁：正在做的那个会话，它的标题和发起人（昵称）。 */
+/** 排队的会话在等谁：正在做的那个会话，它的标题和发起人（名字）。 */
 export const WaitingFor = z.object({
 	session_id: SessionId,
 	title: z.string(),
@@ -505,7 +505,7 @@ export const PlatformEvent = z.discriminatedUnion("kind", [
 	PlatformRunEvent,
 ]);
 
-/** 会话结束，`by` 是结束它的人的昵称。控制面产生。持久。#544 起。 */
+/** 会话结束，`by` 是结束它的人的名字。控制面产生。持久。#544 起。 */
 export const SessionEndedEvent = z.object({
 	type: z.literal("session_ended"),
 	by: z.string(),
@@ -704,7 +704,7 @@ export const SessionRef = z.object({ id: z.string(), title: z.string() });
 export type SessionRef = z.infer<typeof SessionRef>;
 
 /**
- * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
+ * 会话列表里的一项。`created_by` 是发起人的名字；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
  * 排在这一轮后面的在做的会话（`status` 为 `running`）也有，从 1 起，按说话的时刻排（和轮到谁开始的顺序一致）；
  * `last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
  */

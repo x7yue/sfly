@@ -3,7 +3,6 @@ export { ApiError, type ApiErrorInit, type ClientErrorCode } from "./errors.js";
 export type {
 	FetchInit,
 	FetchLike,
-	Nickname,
 	ResponseLike,
 	Token,
 	VersionMismatch,

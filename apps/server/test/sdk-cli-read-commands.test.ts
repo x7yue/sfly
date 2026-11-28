@@ -53,28 +53,28 @@ describe("sfly 只读命令 → 控制面", () => {
 	const ids: Record<string, string> = {};
 	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl]);
 
-	const write = (path: string, body: unknown, client?: string, nickname = "小明") =>
+	const write = (path: string, body: unknown, client?: string, user = "小明") =>
 		cp.fetch(path, {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				...actAs(nickname),
+				...actAs(user),
 				...(client === undefined ? {} : { "x-sfly-client": client }),
 			},
 			body: JSON.stringify(body),
 		});
-	const save = async (scenario: string, document: unknown, client?: string, nickname?: string) => {
+	const save = async (scenario: string, document: unknown, client?: string, user?: string) => {
 		const base = await api.headVersion(scenario);
 		const res = await write(
 			`/orchestrations/${scenario}/versions`,
 			{ base_version: base, document },
 			client,
-			nickname,
+			user,
 		);
 		expect(res.status, await res.clone().text()).toBe(201);
 	};
-	const trigger = async (scenario: string, client: string | undefined, nickname: string) => {
-		const res = await write(`/orchestrations/${scenario}/runs`, { params: {} }, client, nickname);
+	const trigger = async (scenario: string, client: string | undefined, user: string) => {
+		const res = await write(`/orchestrations/${scenario}/runs`, { params: {} }, client, user);
 		expect(res.status, await res.clone().text()).toBe(201);
 		return ((await res.json()) as { id: string }).id;
 	};

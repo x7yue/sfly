@@ -66,7 +66,7 @@ def _publish(args: argparse.Namespace) -> int:
     path = Path(args.path).resolve()
     try:
         archive = build(path) if path.is_dir() else path
-        result = publish(archive, Client.from_options(args.server, None), args.project)
+        result = publish(archive, Client.from_options(args.server), args.project)
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1

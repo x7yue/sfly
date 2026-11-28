@@ -4,10 +4,10 @@ import { ApiError, callApi } from "./api";
 
 /**
  * 登录的身份（ADR 0029）：控制台用登录 Cookie（HttpOnly，页面脚本读不到）认人，页面只知道「当前用户是谁」，
- * 由 `GET /auth/me` 取得。在 #494 之前不登录也能照旧使用：`anonymous` 就是没有登录，用昵称。
+ * 由 `GET /auth/me` 取得。#494 起不带凭据的请求一律 401，控制台要登录才能用。
  *
  * - `unknown`：页面刚打开，还没问过控制面；
- * - `anonymous`：没有登录（401）；
+ * - `anonymous`：没有登录（401）：页面打开时问到这个就去登录页（`main.tsx`），登录失效之后也变成它；
  * - `user`：已登录。
  */
 export type Identity =
@@ -38,7 +38,7 @@ export function setCurrentUser(user: CurrentUser | null): void {
 	set(user ? { status: "user", user } : { status: "anonymous" });
 }
 
-/** 问控制面当前是不是登录着：401 是没有登录；网络出错等别的失败不改变已知的状态（还是 unknown 时按没有登录）。 */
+/** 问控制面当前是不是登录着：401 是没有登录；网络出错等别的失败不改变已知的状态（还是 unknown 时按没有登录，去登录页）。 */
 export async function refreshIdentity(): Promise<void> {
 	try {
 		setCurrentUser(await callApi(authApi.me));
@@ -73,7 +73,7 @@ export const CONFIRM_TIMEOUT_MS = 10_000;
  * 写请求也会被当作没登录（401），这时回到登录页，重新登录后再试又被带回去，人被困在循环里。所以只在 `GET /auth/me` 也是 401
  * 时才跳转；登录还有效（200）或者问不出结果（网络出错、一直不回）都留在原页面，这次请求的错误由页面自己显示
  * （页面上已有「请用正确的地址打开」的提示）。
- * 只有 `user` 才问：从没登录过的人（昵称模式，#494 之前仍然合法）、还不知道有没有登录（页面刚打开）、
+ * 只有 `user` 才问：没有登录（页面打开时问到没有登录，`main.tsx` 自己去登录页）、还不知道有没有登录（页面刚打开）、
  * 登录页上登录失败的 401，都不跳转；同时到的好几个 401 只问一次、最多跳转一次。
  */
 export function noteUnauthorized(): void {

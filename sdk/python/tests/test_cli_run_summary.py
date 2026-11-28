@@ -305,7 +305,7 @@ def report(**overrides: Any) -> dict[str, Any]:
     return {**base, **overrides}
 
 
-CLIENT = Client("http://cp", "alice")
+CLIENT = Client("http://cp")
 
 
 def test_the_summary_keeps_the_keys_the_json_output_always_had() -> None:

@@ -205,14 +205,14 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 	});
 
 	describe("push", () => {
-		it("pull → 改 → push：保存成新版本，作者是昵称，文件里的 base_version 更新后可以接着 push", async () => {
+		it("pull → 改 → push：保存成新版本，作者是登录的用户，文件里的 base_version 更新后可以接着 push", async () => {
 			const id = await createScenario("推送-基本", echoDocument());
 			const file = await pull(id);
 
 			const edited = await readScenarioFile(file);
 			edited.document.default_agent = "agent-b";
 			await writeScenarioFile(file, edited);
-			const first = await cli("scenario", "push", file, "--nickname", "小林");
+			const first = await cli("scenario", "push", file, "--as-user", "小林");
 			expect(first.code, first.stderr).toBe(0);
 			expect(first.stderr).toBe("");
 			expect(first.stdout).toContain(`已保存场景 ${id} 的版本 2`);
@@ -708,7 +708,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			});
 		});
 
-		it("--from 文件：同时保存第一个版本，作者是昵称，保存警告一并输出", async () => {
+		it("--from 文件：同时保存第一个版本，作者是登录的用户，保存警告一并输出", async () => {
 			const source = await createScenario("新建-来源", echoDocument("from-agent"));
 			const file = await pull(source);
 			const edited = await readScenarioFile(file);
@@ -728,7 +728,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				"新建-来自文件",
 				"--from",
 				file,
-				"--nickname",
+				"--as-user",
 				"小林",
 			);
 			expect(result.code, result.stderr).toBe(0);
