@@ -104,21 +104,24 @@ describe("令牌的几处收紧", () => {
 			expect(echoed).not.toContain(token);
 		});
 
-		it("正确的 Bearer 写法照常（大小写不敏感、多个空格）；和我们无关的方案（Basic 带别的内容、空头）照旧当作没带", async () => {
+		it("正确的 Bearer 写法照常（大小写不敏感、多个空格）；和我们无关的方案（Basic 带别的内容、空头）当作没带凭据：401 要登录或令牌", async () => {
 			const { token } = await issue({ name: "脚本" });
 			for (const authorization of [`Bearer ${token}`, `bearer ${token}`, `BEARER   ${token}`]) {
 				expect(
 					(await call({ authorization }, "GET", "/projects/default/orchestrations")).status,
 				).toBe(200);
 			}
-			// 前面有反向代理做基本认证的部署：Authorization 是 Basic，里面没有我们的令牌，不能被挡。
+			// 前面有反向代理做基本认证的部署：Authorization 是 Basic，里面没有我们的令牌，不当作写错了的令牌，
+			// 是没带凭据（#494 起不带凭据一律 401，说的是要登录或令牌）。
 			const basic = `Basic ${Buffer.from("proxy-user:proxy-pass").toString("base64")}`;
-			expect(
-				(await call({ authorization: basic }, "GET", "/projects/default/orchestrations")).status,
-			).toBe(200);
-			expect(
-				(await call({ authorization: "" }, "GET", "/projects/default/orchestrations")).status,
-			).toBe(200);
+			for (const authorization of [basic, ""]) {
+				const res = await call({ authorization }, "GET", "/projects/default/orchestrations");
+				expect(res.status, authorization).toBe(401);
+				expect(await errorOf(res)).toMatchObject({
+					code: "unauthorized",
+					message: expect.stringContaining("sfly login"),
+				});
+			}
 		});
 
 		it("登录、初始化状态、健康检查本来就不看凭据：写错的头不挡它们；系统接口同样", async () => {
@@ -268,8 +271,8 @@ describe("令牌的几处收紧", () => {
 		});
 	});
 
-	describe("显示名和昵称：同一个函数", () => {
-		it("建用户的显示名、写操作的昵称：不合格的拒绝（400）；零宽连接符的文字和表情照常", async () => {
+	describe("显示名的字符检查", () => {
+		it("建用户的显示名：不合格的拒绝（400），不建出用户；零宽连接符的文字和表情照常", async () => {
 			for (const display_name of [
 				"带\u200b零宽",
 				"带\u202e倒着",
@@ -287,6 +290,10 @@ describe("令牌的几处收紧", () => {
 				});
 				expect(res.status, JSON.stringify(display_name)).toBe(400);
 			}
+			expect(
+				(await db.query("select count(*)::int as n from users where login_name = 'someone'"))
+					.rows[0].n,
+			).toBe(0);
 			for (const [i, display_name] of ["小明 💻", "👩\u200d💻 程序员", "می\u200cخواهم"].entries()) {
 				const ok = await call(loginCookie(adminCookie), "POST", "/users", {
 					login_name: `someone${i}`,
@@ -295,141 +302,6 @@ describe("令牌的几处收紧", () => {
 				});
 				expect(ok.status, display_name).toBe(201);
 			}
-			for (const nickname of [
-				"带\u200b零宽",
-				"带\u202e倒着",
-				"带\n换行",
-				"带\u{e0067}标签",
-				"\u200d开头",
-			]) {
-				const res = await call(
-					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
-					{ "x-sfly-nickname": encodeURIComponent(nickname) },
-					"POST",
-					"/projects/default/orchestrations",
-					{ name: "不该建出来" },
-				);
-				expect(res.status, JSON.stringify(nickname)).toBe(400);
-			}
-			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
-		});
-
-		it("升级前的校验只拒绝 NUL：不含表里字符的昵称升级后照旧能用；含表里字符的（制表符、方向标记、零宽空格、标签字符……）升级前能写、现在 400，这是有意的行为变化", async () => {
-			// 改之前的校验：昵称里只有 NUL 被拒绝。
-			const beforeAccepts = (nickname: string) => !nickname.includes("\u0000");
-			const stillAccepted = [
-				"小明",
-				"田中",
-				"김철수",
-				"ci-bot",
-				"Zoë",
-				"笔记本 💻",
-				"👩\u200d💻",
-				"🏳\ufe0f\u200d🌈",
-				"می\u200cخواهم",
-				"ශ්\u200dරී",
-				"क्\u200dष",
-				"带\u00a0不换行空格",
-			];
-			const nowRejected = [
-				"带\t制表",
-				"带\u200e方向标记",
-				"带\u200b零宽空格",
-				"带\u00ad软连字符",
-				"带\u0085下一行",
-				"aㅤb",
-				"🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
-			];
-			for (const nickname of [...stillAccepted, ...nowRejected]) {
-				expect(
-					beforeAccepts(nickname),
-					`${JSON.stringify(nickname)} 改之前就不被放行：这条用例的名单写错了`,
-				).toBe(true);
-			}
-			for (const [nicknames, status] of [
-				[stillAccepted, 201],
-				[nowRejected, 400],
-			] as const) {
-				for (const nickname of nicknames) {
-					const res = await call(
-						// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
-						{ "x-sfly-nickname": encodeURIComponent(nickname) },
-						"POST",
-						"/projects/default/orchestrations",
-						{ name: `昵称 ${nickname}` },
-					);
-					expect(res.status, JSON.stringify(nickname)).toBe(status);
-				}
-			}
-		});
-
-		it("昵称不合格的报错说出第几个字符、哪个码位；按契约编码过的请求不再收到「请编码」的提示（说字符的事），不管被拒的字符是不是 U+0080–U+00FF 的", async () => {
-			for (const [nickname, expected] of [
-				["ab\u200bc", "昵称的第 3 个字符是 U+200B"],
-				// 软连字符、下一行（NEL）在 U+0080–U+00FF 里：编码过的请求同样不提示。
-				["ab\u00adc", "昵称的第 3 个字符是 U+00AD"],
-				["ab\u0085c", "昵称的第 3 个字符是 U+0085"],
-			] as const) {
-				const res = await call(
-					// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
-					{ "x-sfly-nickname": encodeURIComponent(nickname) },
-					"POST",
-					"/projects/default/orchestrations",
-					{ name: "不该建出来" },
-				);
-				expect(res.status, JSON.stringify(nickname)).toBe(400);
-				const { message } = await errorOf(res);
-				expect(message, JSON.stringify(nickname)).toContain(expected);
-				expect(message, JSON.stringify(nickname)).not.toContain("encodeURIComponent");
-			}
-			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
-		});
-
-		it("昵称请求头没按契约编码（直接写 UTF-8，字节被读成 U+0080–U+009F 的控制字符）：400，报错写明要按 encodeURIComponent 编码", async () => {
-			const raw = Buffer.from("小明", "utf8").toString("latin1");
-			const res = await call(
-				// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
-				{ "x-sfly-nickname": raw },
-				"POST",
-				"/projects/default/orchestrations",
-				{
-					name: "不该建出来",
-				},
-			);
-			expect(res.status).toBe(400);
-			const { message } = await errorOf(res);
-			expect(message).toContain("encodeURIComponent");
-			expect(message).toContain("昵称的第 3 个字符是 U+008F");
-			// 值里带不合法的 %（解码不了）也算没编码：同样提示。
-			const withPercent = await call(
-				// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
-				{ "x-sfly-nickname": `50%${raw}` },
-				"POST",
-				"/projects/default/orchestrations",
-				{ name: "不该建出来" },
-			);
-			expect(withPercent.status).toBe(400);
-			const percent = (await errorOf(withPercent)).message;
-			expect(percent).toContain("encodeURIComponent");
-			expect(percent).toContain("昵称的第 6 个字符是 U+008F");
-			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
-		});
-
-		it("没编码、但被拒的是 ASCII 的字符（直接写的制表符）：编码了一样被拒，不提示编码，只说字符", async () => {
-			const res = await call(
-				// biome-ignore lint/plugin/test-nickname-header: 测的是控制面怎么校验昵称请求头（编码、字符）
-				{ "x-sfly-nickname": "a\tb" },
-				"POST",
-				"/projects/default/orchestrations",
-				{
-					name: "不该建出来",
-				},
-			);
-			expect(res.status).toBe(400);
-			const { message } = await errorOf(res);
-			expect(message).toContain("昵称的第 2 个字符是 U+0009");
-			expect(message).not.toContain("encodeURIComponent");
-			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 	});
 

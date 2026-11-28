@@ -156,4 +156,4 @@ def notify(ctx: Context, bot: FeishuBot, text: str, at_all: bool = False) -> Non
 - **不支持代理**，控制面必须能直接访问飞书。
 - **IP 白名单填控制面的出口 IP**，不是 Agent 的 IP。
 - **运行通知的「查看运行」按钮**需要 `SFLY_PUBLIC_URL` 配成浏览器能访问的控制面地址。
-- Webhook 地址当凭据保护：数据库里明文保存，数据库备份里有它；平台没有认证，能打开页面的人可以管理机器人。
+- Webhook 地址当凭据保护：数据库里明文保存，数据库备份里有它；项目里有编辑权限的人可以管理机器人。

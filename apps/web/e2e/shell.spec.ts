@@ -1,7 +1,7 @@
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
-// 应用外壳：侧边栏、面包屑、命令面板、快捷键面板、昵称、焦点管理、样式分层与字体。
+// 应用外壳：侧边栏、面包屑、命令面板、快捷键面板、没有登录时去登录页、焦点管理、样式分层与字体。
 
 const sidebar = (page: import("@playwright/test").Page) =>
 	page.getByRole("navigation", { name: "主导航" });
@@ -334,27 +334,39 @@ test("弹窗锁定焦点，Esc 关闭后焦点回到打开它的按钮", async (
 	await expect(keysButton).toBeFocused();
 });
 
-test.describe("没有昵称时", () => {
-	test.use({ loginAs: null });
+test.describe("没有登录时", () => {
+	const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
+	test.use({ loginAs: null, controlPlaneOptions: { initialAdmin: ADMIN } });
 
-	test("第一次打开要求填写昵称，不能跳过；之后可以在顶栏修改", async ({ page }) => {
+	test("打开任何页面都换到登录页（redirect 是原来的地址），登录之后回到原来的页面；登录页、初始化页本身不跳", async ({
+		page,
+	}) => {
 		await page.goto("/agents");
-		const dialog = page.getByRole("dialog", { name: "欢迎使用 sfly" });
-		await expect(dialog).toBeVisible();
-		await page.keyboard.press("Escape");
-		await expect(dialog).toBeVisible();
+		await expect(page).toHaveURL(/\/login\?/);
+		expect(new URL(page.url()).searchParams.get("redirect")).toBe("/agents");
+		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+		// 没有昵称弹窗，也没有应用外壳（侧边栏）。
+		await expect(page.getByRole("dialog")).toBeHidden();
+		await expect(sidebar(page)).toBeHidden();
 
-		await dialog.getByRole("textbox", { name: "昵称" }).fill("评审员");
-		await dialog.getByRole("button", { name: "开始使用" }).click();
-		await expect(dialog).toBeHidden();
+		await page.getByLabel("登录名").fill(ADMIN.loginName);
+		await page.getByLabel("密码").fill(ADMIN.password);
+		await page.getByRole("button", { name: "登录" }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 
-		const me = page.getByRole("button", { name: "评审员" });
-		await me.click();
-		const edit = page.getByRole("dialog", { name: "修改昵称" });
-		await edit.getByRole("textbox", { name: "昵称" }).fill("小王");
-		await edit.getByRole("button", { name: "保存" }).click();
-		await expect(page.getByText("昵称已改为 小王")).toBeVisible();
-		await expect(page.getByRole("button", { name: "小王" })).toBeVisible();
+		// 登录页、初始化页本身：问过身份（没有登录）之后仍停在原处，不带 redirect 再跳一次。
+		await page.context().clearCookies();
+		for (const [path, heading] of [
+			["/login", "登录"],
+			["/setup", "已经初始化过了"],
+		] as const) {
+			const asked = page.waitForResponse((response) => response.url().endsWith("/api/auth/me"));
+			await page.goto(path);
+			expect((await asked).status()).toBe(401);
+			await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+			await expect(page).toHaveURL(new RegExp(`${path}$`));
+		}
 	});
 });
 

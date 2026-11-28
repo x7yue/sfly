@@ -21,10 +21,10 @@ import type { AgentView } from "@sfly/schema";
 import { afterAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { type ControlPlane, startControlPlane } from "../src/control-plane.js";
-import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { type BundledServer, startBundledServer } from "./support/bundled-server.js";
+import { bearer, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
@@ -34,6 +34,12 @@ const bundleDir = process.env.SFLY_BUNDLE_DIR;
 const previousDir = process.env.SFLY_PREVIOUS_AGENT_DIR;
 const { version } = packageJson;
 const NAME = "previous-agent";
+/**
+ * 共享的注册令牌（至少 32 个字符，#494）。上一个 Release 的 Agent 下载节点包归档不带凭据（#719 之前），控制面只对以旧方式连接的
+ * Agent 手上的任务放行（`legacy-agent-access.ts`）；「旧控制面」跑的是当前源码，所以这里用共享令牌连接，和升级前的真实部署
+ * 拿到任务时一样（真正的旧控制面不检查）。升级之后版本不一致的连接也放行（它在做完手上的任务）。
+ */
+const SHARED = "previous-agent-shared-token-0123456789abcdef";
 
 /** 上一个 Release 的 Agent；不能测试时给出跳过原因。 */
 type Previous = { skip: string } | { bin: string; wheel: string; version: string };
@@ -109,6 +115,7 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 			version: previous.version,
 			http: { host: "127.0.0.1", port: 0 },
 			grpc: { host: "127.0.0.1", port: 0 },
+			agentToken: SHARED,
 		});
 		cleanups.push(async () => old?.close());
 		const ports = {
@@ -116,7 +123,19 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 			grpc: Number(new URL(old.grpcUrl).port),
 		};
 		let httpUrl = old.httpUrl;
-		const api = new ApiClient({ fetch: (path, init) => fetch(`${httpUrl}${path}`, init) });
+		// 不带凭据的请求是 401（#494）：建一个平台管理员，测试的请求都带他的个人令牌（在库里，升级之后照样有效）。
+		const accounts = new TestAccounts(database.url);
+		cleanups.push(() => accounts.close());
+		const auth = bearer(
+			await accounts.personalToken(await accounts.user("admin", { admin: true })),
+		);
+		const api = new ApiClient({
+			fetch: (path, init = {}) =>
+				fetch(`${httpUrl}${path}`, {
+					...init,
+					headers: { ...(init.headers as Record<string, string> | undefined), ...auth },
+				}),
+		});
 
 		const out = join(tmp, "pkg");
 		await run(
@@ -128,20 +147,17 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 		);
 		const res = await fetch(`${httpUrl}/projects/default/packages`, {
 			method: "POST",
-			headers: { "content-type": "application/octet-stream" },
+			headers: { "content-type": "application/octet-stream", ...auth },
 			body: await readFile(join(out, "sfly-stub-0.1.0.sflypkg")),
 		});
 		expect(res.status).toBe(201);
-
-		// 没有凭据的 Agent 只接受已登记过的名字（#492）：像真实的部署一样为这台 Agent 签发凭据。凭据在库里，换成打包的控制面
-		// （同一个数据库）之后照样有效；上一个 Release 的 Agent 认环境变量 SFLY_TOKEN，自更新之后（execve）环境不变。
-		const { token } = await old.agentCredentials.issue(DEFAULT_PROJECT, NAME);
 
 		// 版本覆盖只给扮演上一版本的本地构建用（--simulate）；真正的旧 Agent 不认识这个环境变量，没有影响。
 		const agent: RealAgent = await startRealAgent({
 			grpcUrl: old.grpcUrl,
 			name: NAME,
-			credential: token,
+			// 上一个 Release 的 Agent 认环境变量 SFLY_TOKEN，自更新之后（execve）环境不变。
+			credential: SHARED,
 			bin: installed,
 			venv,
 			env: { SFLY_HOME: home, SFLY_VERSION_OVERRIDE: previous.version },
@@ -182,6 +198,8 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 			databaseUrl: database.url,
 			dataDir: dataDir as string,
 			ports,
+			// 和「旧控制面」同一个共享令牌：重连的 Agent 照样认。
+			env: { SFLY_AGENT_TOKEN: SHARED },
 		});
 		cleanups.push(() => server.stop());
 		httpUrl = server.httpUrl;

@@ -112,14 +112,9 @@ export async function startFleet(options: {
 }): Promise<LoadFleet> {
 	const { api, plan } = options;
 	const metrics = Array.from({ length: options.metricsPerTask }, (_, i) => metricName(i));
-	await publishPackage(
-		{ fetch: (path, init) => fetch(`${api.httpUrl}${path}`, init) },
-		PACKAGE,
-		PACKAGE_VERSION,
-		{
-			[NODE]: { outputs: [], metrics: metrics.map((name) => ({ name, unit: "", kind: "gauge" })) },
-		},
-	);
+	await publishPackage({ fetch: (path, init) => api.fetch(path, init) }, PACKAGE, PACKAGE_VERSION, {
+		[NODE]: { outputs: [], metrics: metrics.map((name) => ({ name, unit: "", kind: "gauge" })) },
+	});
 	options.log(
 		`连上 ${plan.tasksPerAgent.length} 个假 Agent，触发 ${plan.tasks} 个任务（每个任务 ${metrics.length} 个指标）`,
 	);

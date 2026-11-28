@@ -657,28 +657,28 @@ test.describe("谁看得到这些按钮", () => {
 	});
 
 	test.describe("没有登录", () => {
-		test.use({ loginAs: null, nickname: "tester" });
+		test.use({ loginAs: null });
 
-		test("没有登录（昵称模式）的人看不到凭据、停用的按钮，也看不到「为新 Agent 签发凭据」；接口也要登录", async ({
+		test("没有登录打开 Agent 页：被带到登录页（redirect 指回 Agent 页），看不到凭据；接口不带凭据是 401，提示先登录", async ({
 			page,
 			controlPlane,
 			connectAgent,
 		}) => {
 			await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
 			await page.goto("/agents");
-			await expect(rack(page, "agent-a")).toBeVisible();
+			await expect(page).toHaveURL(/\/login\?/);
+			expect(new URL(page.url()).searchParams.get("redirect")).toBe("/agents");
+			await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+			await expect(rack(page, "agent-a")).toHaveCount(0);
 			await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
-			await expect(
-				rack(page, "agent-a").getByRole("button", { name: "agent-a 的凭据" }),
-			).toHaveCount(0);
-			await expect(rack(page, "agent-a").getByRole("button", { name: "停用 agent-a" })).toHaveCount(
-				0,
-			);
 			// 页面不给看，接口本来就拒绝：不带凭据的请求是 401。
 			const refused = await controlPlane.fetch("/projects/default/agents/agent-a/credentials", {
 				credentials: "omit",
 			});
 			expect(refused.status).toBe(401);
+			const body = (await refused.json()) as { error: { code: string; message: string } };
+			expect(body.error.code).toBe("unauthorized");
+			expect(body.error.message).toContain("sfly login");
 		});
 	});
 });

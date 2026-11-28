@@ -82,30 +82,9 @@ export type ChartSpec = {
 	metrics: string[];
 };
 
-/**
- * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限），
- * 或 `{ outputs, inputs, metrics, charts, primary_metric, timeout }`（inputs 是输入 schema，派发前按它校验已解析的输入；
- * timeout 是节点类型声明的默认超时，秒）。
- * 触发运行前的预检要求编排锁定的包版本已经发布、引用的输出键已经声明。
- */
-export async function publishPackage(
-	cp: { fetch(path: string, init?: RequestInit): Promise<Response> },
-	name: string,
-	version: string,
-	nodes: Record<
-		string,
-		| readonly string[]
-		| {
-				outputs: readonly string[];
-				inputs?: InputsSchema;
-				metrics?: MetricSpec[];
-				charts?: ChartSpec[];
-				primary_metric?: string;
-				timeout?: number;
-		  }
-	>,
-): Promise<void> {
-	const archive = packageArchive(
+/** {@link publishPackage} 发布的那个归档（节点的写法同它）：要绕开 HTTP 直接写库的测试用。 */
+export function nodePackageArchive(name: string, version: string, nodes: NodeSpecs): Uint8Array {
+	return packageArchive(
 		packageMetadata({
 			name,
 			version,
@@ -132,6 +111,34 @@ export async function publishPackage(
 		}),
 		{ [`${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`]: strToU8("wheel") },
 	);
+}
+
+type NodeSpecs = Record<
+	string,
+	| readonly string[]
+	| {
+			outputs: readonly string[];
+			inputs?: InputsSchema;
+			metrics?: MetricSpec[];
+			charts?: ChartSpec[];
+			primary_metric?: string;
+			timeout?: number;
+	  }
+>;
+
+/**
+ * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限），
+ * 或 `{ outputs, inputs, metrics, charts, primary_metric, timeout }`（inputs 是输入 schema，派发前按它校验已解析的输入；
+ * timeout 是节点类型声明的默认超时，秒）。
+ * 触发运行前的预检要求编排锁定的包版本已经发布、引用的输出键已经声明。
+ */
+export async function publishPackage(
+	cp: { fetch(path: string, init?: RequestInit): Promise<Response> },
+	name: string,
+	version: string,
+	nodes: NodeSpecs,
+): Promise<void> {
+	const archive = nodePackageArchive(name, version, nodes);
 	const res = await cp.fetch("/projects/default/packages", publishInit(archive));
 	if (res.status !== 201) throw new Error(`publish ${name}@${version}: ${await res.text()}`);
 }

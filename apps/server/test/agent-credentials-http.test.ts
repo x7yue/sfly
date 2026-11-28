@@ -195,7 +195,7 @@ describe("Agent 凭据和开发 Agent", () => {
 			).toBe(200);
 		});
 
-		it("不带任何凭据、带共享令牌：签发、列出、吊销、停用、恢复都不行（401 / 403），什么都没有发生；Agent 凭据是新这一套信任的根，不能匿名（#638 审查）", async () => {
+		it("不带任何凭据、带共享令牌：签发、列出、吊销、停用、恢复都不行（401），什么都没有发生；Agent 凭据是新这一套信任的根，不能匿名（#638 审查）", async () => {
 			const issued = await json<Issued>(await issue("worker-1"), 201);
 			const calls: [string, string, number][] = [
 				["POST", "/projects/default/agents/worker-1/credentials", 401],
@@ -226,7 +226,7 @@ describe("Agent 凭据和开发 Agent", () => {
 					bearer(sharedToken),
 					method === "POST" && path.endsWith("credentials") ? {} : undefined,
 				);
-				expect(shared.status, `${method} ${path}（共享令牌）`).toBe(403);
+				expect(shared.status, `${method} ${path}（共享令牌）`).toBe(401);
 			}
 			// 没有签发出新的凭据、没有吊销、没有停用。
 			const state = await rows("worker-1");

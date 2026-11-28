@@ -457,11 +457,11 @@ describe("产物", () => {
 		});
 	});
 
-	it("配置了 Agent 注册令牌时，上传必须带上令牌", async () => {
-		const { task } = await setup({ agentToken: "s3cret" });
+	it("上传要凭据：不带凭据、错的令牌是 401（共享令牌和过渡窗口的放行见 access-http.test.ts，#494）", async () => {
+		const { task } = await setup();
 		expect((await upload(task, "a.txt", "x", "")).status).toBe(401);
 		expect((await upload(task, "a.txt", "x", "wrong")).status).toBe(401);
-		expect((await upload(task, "a.txt", "x", "s3cret")).status).toBe(201);
+		expect((await upload(task, "a.txt", "x")).status).toBe(201);
 	});
 
 	it("任务或产物不存在时 404", async () => {

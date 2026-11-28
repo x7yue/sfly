@@ -57,6 +57,8 @@ ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
 ASSISTANT_NICKNAME = "eval"
 # 两台 Agent 的配置文件（install.sh 写的）：凭据换了要改这里的 SFLY_TOKEN。
 AGENT_ENV_FILE = "/root/.sfly/agent.env"
+# 开发环境容器里 sfly 命令行的登录（`sfly login` 写的个人令牌，见 `Stack._login_cli`）。
+CLI_CREDENTIALS_FILE = "/root/.sfly/credentials.json"
 # 开发环境容器里 Agent 的名称：沿用以前 `install.sh --dev` 默认的 dev-<用户名>-<主机名>
 # （容器里是 root、主机名 dev）。`install.sh --dev` 不给 --name 时现在向控制面注册，
 # 名字是 dev-<登录名>-<主机>、凭据记在登录的人名下（#492）；评测里不要换了名字就改了题目的前提，
@@ -378,6 +380,7 @@ class Stack:
             mirror_log = d.docker("logs", "--tail", "30", self.name("mirror"), check=False)
             log(f"镜像站最后的日志：\n{mirror_log.stderr}{mirror_log.stdout}")
             raise
+        self._login_cli()
         self.start_agents()
         self.wait_agents()
         # 共享 venv 的基线：每次重置恢复成它，`sfly dev` 和装过的节点包都不会留到下一次会话。
@@ -622,12 +625,14 @@ class Stack:
             time.sleep(1)
         raise d.DockerError("助手服务 60 秒内没有起来")
 
-    def readiness(self) -> dict[str, Any] | None:
+    def readiness(self, cookie: str) -> dict[str, Any] | None:
         """控制面说助手此刻能不能用（`GET /projects/default/sessions` 的 readiness）；
-        读不到时是 None。控制面没有会话的接口（404，镜像太旧）时直接报错，不用等。"""
+        读不到时是 None。控制面没有会话的接口（404，镜像太旧）时直接报错，不用等。
+        不带凭据是 401（#494）：带初始管理员的登录 Cookie（`_admin_cookie`），经标准输入给 curl。"""
         out = d.sh(
             self.dev,
-            "curl -sS -m 10 -w '\\n%{http_code}' http://sfly.internal:8080/projects/default/sessions",
+            "curl -sS -m 10 -H @- -w '\\n%{http_code}' http://sfly.internal:8080/projects/default/sessions",
+            input_text=f"cookie: {cookie}\n",
             check=False,
         )
         body, _, status = out.stdout.rpartition("\n")
@@ -646,8 +651,10 @@ class Stack:
         """等控制面说助手能用（助手服务连得上、工作台在线、能力端口有地址）。"""
         deadline = time.monotonic() + timeout
         ready: dict[str, Any] | None = None
+        # 登录一次，轮询时都带这个 Cookie（不每两秒登录一次）。
+        cookie = self._admin_cookie(self.dev)
         while time.monotonic() < deadline:
-            ready = self.readiness()
+            ready = self.readiness(cookie)
             if ready and ready.get("ready"):
                 return
             time.sleep(2)
@@ -715,6 +722,26 @@ class Stack:
                 f"&& grep -q '^SFLY_TOKEN=' {AGENT_ENV_FILE}",
                 input_text=token + "\n",
             )
+
+    def _login_cli(self) -> None:
+        """开发环境容器里的 sfly 命令行用初始管理员登录（`sfly login --password-stdin`，
+        令牌存在 `/root/.sfly/credentials.json`）：控制面对不带凭据的请求一律 401（#494），
+        昵称不再给身份。评分的命令（`Stack.sfly`、`run_scenario`、题目的准备）、参考答案、
+        臂 A 的助手和臂 B 落到 dev 上的命令都以 root 在 dev 上执行，都用这一份登录
+        （像一台 `sfly login` 过的开发机）；它们记在初始管理员的显示名（`ASSISTANT_NICKNAME`）下，
+        评分和助手的操作不再按昵称分开，靠「经」（`AI_AGENT`）分。平台臂的命令带会话令牌
+        （环境变量优先于这个文件）。库重建（reset）之后旧令牌失效：先删掉再登录，
+        不去吊销已经不存在的令牌。密码经标准输入，不在命令行参数里。"""
+        if not self.admin_password:
+            raise d.DockerError(
+                "不知道初始管理员的密码：控制面不是这一次进程起的（先 ./aeval.sh up）"
+            )
+        d.sh(
+            self.dev,
+            f"rm -f {CLI_CREDENTIALS_FILE} && "
+            f"sfly login --login-name {ADMIN_LOGIN} --password-stdin >/dev/null",
+            input_text=self.admin_password + "\n",
+        )
 
     def _install_agents(self) -> None:
         url = "http://sfly.internal:8080/install.sh"
@@ -833,6 +860,7 @@ class Stack:
         # 库重建了：登记和 Agent 凭据都没了，两台 Agent 的配置里还是旧凭据，
         # 重启后会被拒绝。重新签发并换上。
         self._renew_agent_credentials()
+        self._login_cli()
         for container in (self.dev, self.sut):
             d.sh(
                 container,
@@ -862,7 +890,8 @@ class Stack:
     # ---- 在开发环境容器里执行 ----
 
     def sfly(self, *args: str, check: bool = True, workdir: str | None = None) -> Any:
-        """以「评分」的身份在开发环境容器里执行 sfly 命令行。"""
+        """以「评分」的身份在开发环境容器里执行 sfly 命令行。凭据是 `_login_cli` 存下的登录：
+        身份是初始管理员，昵称 `grader` 不再作数（带令牌时命令行不发昵称）。"""
         quoted = " ".join(_quote(a) for a in args)
         return d.sh(
             self.dev,

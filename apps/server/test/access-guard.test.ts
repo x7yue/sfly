@@ -14,8 +14,6 @@ import {
 	AGENT_CREDENTIAL_ROUTES,
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
-	REQUIRES_CREDENTIAL_ROUTES,
-	requiresCredential,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "../src/auth/access-rules.js";
@@ -173,8 +171,6 @@ describe("契约路由的访问检查", () => {
 		return from !== "none" && from !== "account";
 	});
 	const SYSTEM = httpContract.filter((def) => locatorOf(def)?.from === "none");
-	/** 现在就要求凭据的接口（项目的管理面）：不走「不带凭据照旧放行」的过渡。 */
-	const needsCredential = (def: RouteDef) => requiresCredential(def);
 	/** 只认人的登录的接口：令牌（含带管理范围的个人令牌）是 403。 */
 	const loginOnly = (def: RouteDef) => routeKey(def) in LOGIN_ONLY_ROUTES;
 	const route = (key: string): RouteDef => {
@@ -183,21 +179,9 @@ describe("契约路由的访问检查", () => {
 		return found;
 	};
 
-	describe("不带凭据、带共享令牌：照旧放行（到 #494 才拒绝）", () => {
-		it("不带凭据的请求每个接口都放行，没有身份（账号类接口除外：它们需要登录，见 accounts-http.test.ts）；只有路径里写了项目的读一次库，核对项目存在", async () => {
-			let pathScoped = 0;
-			for (const def of httpContract) {
-				// 登录、初始化、状态本来就不要凭据，登出什么凭据都不拒绝，其余账号类接口不带登录是 401：这是新接口，没有「照旧」可言。
-				if (locatorOf(def)?.from === "account" || needsCredential(def)) continue;
-				const result = await run(def, {});
-				expect(result, routeKey(def)).toEqual({ ok: true, access: null });
-				if (def.path.startsWith("/projects/:project/")) pathScoped++;
-			}
-			expect(pathScoped).toBeGreaterThan(0);
-			expect(store.reads).toBe(pathScoped);
-		});
-
-		it("项目的管理面（项目令牌）和 Agent 凭据的签发、列出、吊销、Agent 的停用、恢复是新这一套信任的根，没有「照旧」可言：不带凭据是 401，带共享令牌是 403，不读库", async () => {
+	describe("不带凭据、带共享令牌：401（#494）", () => {
+		const shared = { authorization: "Bearer shared-secret" };
+		const registerShared = () =>
 			store.agentCredentials.set(hashCredential("shared-secret"), {
 				kind: "shared",
 				projectId: DEFAULT,
@@ -205,33 +189,166 @@ describe("契约路由的访问检查", () => {
 				user: null,
 				revokedAt: null,
 			});
-			const covered = httpContract.filter(needsCredential);
-			expect(covered.map(routeKey)).toEqual(
-				expect.arrayContaining([
-					"GET /projects/:project/tokens",
-					"POST /projects/:project/tokens",
-					"DELETE /projects/:project/tokens/:id",
-					// 不带任何凭据的请求能给任意名字签发 Agent 凭据、再用它连上来顶掉用共享令牌连着的那一台（#638 审查）。
-					"GET /projects/:project/agents/:name/credentials",
-					"POST /projects/:project/agents/:name/credentials",
-					"DELETE /projects/:project/agents/:name/credentials/:id",
-					"POST /projects/:project/agents/:name/disable",
-					"POST /projects/:project/agents/:name/enable",
-					// 建会话只认用户的凭据（#547）：会话令牌代发起人干活，没有发起人的会话签发不了令牌。
-					"POST /projects/:project/sessions",
-					...REQUIRES_CREDENTIAL_ROUTES,
-				]),
-			);
-			for (const def of covered) {
-				expect(outcome(await run(def, {})), routeKey(def)).toBe(401);
+
+		it("不属于项目的接口之外，每个接口不带凭据都是 401，说明写明怎么带上凭据；不读库，不透露路径里的项目、资源存不存在", async () => {
+			for (const def of OUTSIDE_PROJECT) {
+				const result = await run(def, {});
+				expect(result, routeKey(def)).toMatchObject({
+					ok: false,
+					status: 401,
+					code: "unauthorized",
+				});
+				expect((result as { message: string }).message, routeKey(def)).toMatch(
+					/sfly login|只有平台管理员能写/,
+				);
 			}
 			expect(store.reads).toBe(0);
-			for (const def of covered) {
-				expect(
-					outcome(await run(def, { authorization: "Bearer shared-secret" })),
-					routeKey(def),
-				).toBe(403);
+		});
+
+		it("带共享令牌和不带凭据一样：每个接口 401（不是 403），只读一次凭据", async () => {
+			registerShared();
+			for (const def of OUTSIDE_PROJECT) {
+				const before = store.reads;
+				const result = await run(def, shared);
+				expect(result, routeKey(def)).toMatchObject({
+					ok: false,
+					status: 401,
+					code: "unauthorized",
+				});
+				// 只读凭据（令牌表、Agent 凭据表），不读资源。
+				expect(store.reads - before, routeKey(def)).toBeLessThanOrEqual(2);
 			}
+		});
+
+		it("公开的接口（system）不要凭据，带什么都不看", async () => {
+			registerShared();
+			for (const def of SYSTEM) {
+				for (const credentials of [{}, shared, { authorization: "Bearer 从没见过的令牌" }]) {
+					expect(await run(def, credentials), routeKey(def)).toEqual({ ok: true, access: null });
+				}
+			}
+		});
+
+		describe("过渡窗口里以旧方式连接的 Agent 还要用的三条通道（ADR 0029「迁移与过渡」）", () => {
+			const calls: string[] = [];
+			const legacyGuard = (
+				allow: Partial<Record<"archive" | "upload" | "taskArtifacts", boolean>>,
+			) =>
+				new AccessGuard({
+					store,
+					clock,
+					legacy: {
+						archive: async (project, name, version) => {
+							calls.push(`archive ${project} ${name} ${version}`);
+							return allow.archive === true;
+						},
+						upload: async (taskId) => {
+							calls.push(`upload ${taskId}`);
+							return allow.upload === true;
+						},
+						taskArtifacts: async (taskId) => {
+							calls.push(`taskArtifacts ${taskId}`);
+							return allow.taskArtifacts === true;
+						},
+					},
+				});
+			const TASK = "00000000-0000-4000-8000-00000000aaaa";
+			const archive = route("GET /projects/:project/packages/:name/versions/:version/archive");
+			const upload = route("PUT /tasks/:id/artifacts/*");
+			const download = route("GET /tasks/:id/artifacts/*");
+			const at = (def: RouteDef, credentials: Credentials, params: Record<string, string>) => ({
+				route: def,
+				params,
+				fetchSite: "same-origin",
+				...credentials,
+			});
+			const ARCHIVE = { project: "default", name: "probe", version: "1.0.0" };
+			const ARTIFACT = { id: TASK, "*": "report.txt" };
+
+			it("符合放行条件的：不带凭据、带共享令牌都通过，没有身份；问的是 URL 里的版本和任务", async () => {
+				registerShared();
+				calls.length = 0;
+				const allowing = legacyGuard({ archive: true, upload: true, taskArtifacts: true });
+				for (const credentials of [{}, shared]) {
+					expect(await allowing.check(at(archive, credentials, ARCHIVE))).toEqual({
+						ok: true,
+						access: null,
+					});
+					expect(await allowing.check(at(upload, credentials, ARTIFACT))).toEqual({
+						ok: true,
+						access: null,
+					});
+					expect(await allowing.check(at(download, credentials, ARTIFACT))).toEqual({
+						ok: true,
+						access: null,
+					});
+				}
+				expect(calls).toEqual([
+					"archive default probe 1.0.0",
+					`upload ${TASK}`,
+					`taskArtifacts ${TASK}`,
+					"archive default probe 1.0.0",
+					`upload ${TASK}`,
+					`taskArtifacts ${TASK}`,
+				]);
+			});
+
+			it("不符合的：401；ID 不是 UUID、路径里的项目写法不对的不去问", async () => {
+				calls.length = 0;
+				const refusing = legacyGuard({});
+				for (const [def, params] of [
+					[archive, ARCHIVE],
+					[upload, ARTIFACT],
+					[download, ARTIFACT],
+				] as const) {
+					expect(outcome(await refusing.check(at(def, {}, params))), routeKey(def)).toBe(401);
+				}
+				expect(calls).toHaveLength(3);
+				calls.length = 0;
+				const allowing = legacyGuard({ archive: true, upload: true, taskArtifacts: true });
+				expect(outcome(await allowing.check(at(upload, {}, { id: "not-a-uuid", "*": "x" })))).toBe(
+					401,
+				);
+				expect(
+					outcome(await allowing.check(at(archive, {}, { ...ARCHIVE, project: "Bad_Project" }))),
+				).toBe(401);
+				expect(calls).toEqual([]);
+			});
+
+			it("别的接口不问放行：同样的任务 ID 读任务的日志、动作是 401", async () => {
+				calls.length = 0;
+				const allowing = legacyGuard({ archive: true, upload: true, taskArtifacts: true });
+				for (const def of OUTSIDE_PROJECT) {
+					const key = routeKey(def);
+					if (key === routeKey(archive) || key === routeKey(upload) || key === routeKey(download))
+						continue;
+					expect(
+						outcome(await allowing.check(at(def, {}, { id: TASK, project: "default" }))),
+						key,
+					).toBe(401);
+				}
+				expect(calls).toEqual([]);
+			});
+
+			it("没有给放行的判断（窗口当作已经关上）：三条也是 401", async () => {
+				for (const [def, params] of [
+					[archive, ARCHIVE],
+					[upload, ARTIFACT],
+					[download, ARTIFACT],
+				] as const) {
+					expect(outcome(await guard.check(at(def, {}, params))), routeKey(def)).toBe(401);
+				}
+			});
+
+			it("带了失效的凭据不走放行：401（凭据无效），不退回到「不带凭据」", async () => {
+				calls.length = 0;
+				const allowing = legacyGuard({ archive: true, upload: true, taskArtifacts: true });
+				const result = await allowing.check(
+					at(upload, { authorization: "Bearer 从没见过的令牌" }, ARTIFACT),
+				);
+				expect(result).toMatchObject({ ok: false, status: 401 });
+				expect(calls).toEqual([]);
+			});
 		});
 
 		it("账号类接口：登录、初始化、状态不要凭据（带什么都不看）；其余需要登录，不带凭据是 401，不读库", async () => {
@@ -249,7 +366,7 @@ describe("契约路由的访问检查", () => {
 			expect(store.reads).toBe(0);
 		});
 
-		it("共享令牌认得出（登记成默认项目的旧式 Agent 凭据），和不带凭据一样放行、没有身份", async () => {
+		it("共享令牌认得出（登记成默认项目的旧式 Agent 凭据），和不带凭据一样是 401（#494）", async () => {
 			store.agentCredentials.set(hashCredential("shared-secret"), {
 				kind: "shared",
 				projectId: DEFAULT,
@@ -258,9 +375,8 @@ describe("契约路由的访问检查", () => {
 				revokedAt: null,
 			});
 			for (const def of OUTSIDE_PROJECT) {
-				if (needsCredential(def)) continue;
 				const result = await run(def, { authorization: "Bearer shared-secret" });
-				expect(result, routeKey(def)).toEqual({ ok: true, access: null });
+				expect(result, routeKey(def)).toMatchObject({ ok: false, status: 401 });
 			}
 		});
 
@@ -364,12 +480,15 @@ describe("契约路由的访问检查", () => {
 			).toBe("ok");
 		});
 
-		it("不是 Bearer 的 Authorization 写法不是 sfly 的凭据，不认；Cookie 里别的名字也不认", async () => {
-			expect(await run(get, { authorization: "Basic dXNlcjpwYXNz" })).toEqual({
-				ok: true,
-				access: null,
+		it("不是 Bearer 的 Authorization 写法不是 sfly 的凭据，不认（当作没带，401）；Cookie 里别的名字也不认", async () => {
+			expect(await run(get, { authorization: "Basic dXNlcjpwYXNz" })).toMatchObject({
+				ok: false,
+				status: 401,
 			});
-			expect(await run(get, { cookie: "other=1; theme=dark" })).toEqual({ ok: true, access: null });
+			expect(await run(get, { cookie: "other=1; theme=dark" })).toMatchObject({
+				ok: false,
+				status: 401,
+			});
 			// 多个 Cookie 里认得出登录的那个。
 			const { cookie } = login(USERS.editor);
 			expect(outcome(await run(get, { cookie: `theme=dark; ${cookie}; other=1` }))).toBe("ok");
@@ -846,7 +965,7 @@ describe("契约路由的访问检查", () => {
 			}
 		});
 
-		it("资源不存在、ID 写得不对：和属于别的项目一样的 404（只对带了凭据的请求）", async () => {
+		it("资源不存在、ID 写得不对：和属于别的项目一样的 404（带了凭据的请求；不带凭据的是 401）", async () => {
 			const cancel = route("POST /runs/:id/cancel");
 			const missing = { ...request(cancel, login(USERS.boss)), params: { id: id(999) } };
 			expect(await guard.check(missing)).toMatchObject({
@@ -860,13 +979,10 @@ describe("契约路由的访问检查", () => {
 					JSON.stringify(bad),
 				).toMatchObject({ ok: false, status: 404 });
 			}
-			// 不带凭据的请求照旧放行，由处理函数回答「不存在」。
+			// 不带凭据的请求是 401，不透露资源存不存在（#494）。
 			expect(
 				await guard.check({ ...missing, authorization: undefined, cookie: undefined }),
-			).toEqual({
-				ok: true,
-				access: null,
-			});
+			).toMatchObject({ ok: false, status: 401 });
 		});
 
 		it("限定项目的凭据请求别的项目：404（经场景、经运行、经任务的接口都按资源所在的项目）", async () => {
@@ -1029,8 +1145,8 @@ describe("契约路由的访问检查", () => {
 			expect(locatorOf(publish)).toEqual({ from: "path", param: "project" });
 		});
 
-		it("发布到默认项目：和以前一样，不带凭据放行、没有身份", async () => {
-			expect(await check({})).toEqual({ ok: true, access: null });
+		it("发布到默认项目：要凭据（不带凭据 401，#494）；带了凭据的项目是默认项目", async () => {
+			expect(await check({})).toMatchObject({ ok: false, status: 401 });
 			const result = await check(personal(USERS.boss));
 			expect(result).toMatchObject({ ok: true, access: { project: "default" } });
 		});
@@ -1088,7 +1204,7 @@ describe("契约路由的访问检查", () => {
 			expect(store.adminWrites).toEqual([]);
 		});
 
-		it("Agent 凭据、任务凭据：403（这个接口不在它们的清单里）；共享令牌：403；不带凭据：401", async () => {
+		it("Agent 凭据、任务凭据：403（这个接口不在它们的清单里）；共享令牌、不带凭据：401", async () => {
 			store.agentCredentials.set(hashCredential("agent-secret"), {
 				kind: "agent",
 				projectId: DEFAULT,
@@ -1107,7 +1223,7 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await check(token({ kind: "task", projectId: DEFAULT }), "public"))).toBe(403);
 			expect(await check({ authorization: "Bearer shared-secret" }, "public")).toMatchObject({
 				ok: false,
-				status: 403,
+				status: 401,
 				message: expect.stringContaining(DENIED),
 			});
 			expect(await check({}, "public")).toMatchObject({
@@ -1125,7 +1241,7 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await check({ authorization: "Bearer unknown" }, "public"))).toBe(401);
 		});
 
-		it("跨站的请求带着平台管理员的登录 Cookie 发布到公共项目：Cookie 不算（和不带凭据一样 401），不写平台管理员的记录；发布到默认项目时和不带凭据一样放行", async () => {
+		it("跨站的请求带着平台管理员的登录 Cookie 发布：Cookie 不算（和不带凭据一样 401），不写平台管理员的记录", async () => {
 			const { cookie } = login(USERS.admin);
 			for (const fetchSite of ["cross-site", "same-site"]) {
 				const result = await check({ cookie, fetchSite }, "public");
@@ -1135,7 +1251,7 @@ describe("契约路由的访问检查", () => {
 					code: "unauthorized",
 					message: expect.stringContaining(DENIED),
 				});
-				expect(await check({ cookie, fetchSite })).toEqual({ ok: true, access: null });
+				expect(await check({ cookie, fetchSite })).toMatchObject({ ok: false, status: 401 });
 			}
 			expect(store.adminWrites).toEqual([]);
 			// 对照：同源的同一个 Cookie 通过（上一条用例）。
@@ -1144,11 +1260,12 @@ describe("契约路由的访问检查", () => {
 			});
 		});
 
-		it("路径里的项目不存在或写法不对：404；有没有凭据、是谁都一样", async () => {
+		it("路径里的项目不存在或写法不对：带凭据的 404，是谁都一样；不带凭据的 401（不透露项目存不存在）", async () => {
 			for (const value of ["no-such-project", "Public", "public ", "", "public\u0000"]) {
-				for (const credentials of [{}, personal(USERS.admin), personal(USERS.boss)]) {
+				for (const credentials of [personal(USERS.admin), personal(USERS.boss)]) {
 					expect(outcome(await check(credentials, value)), JSON.stringify(value)).toBe(404);
 				}
+				expect(outcome(await check({}, value)), JSON.stringify(value)).toBe(401);
 			}
 		});
 
@@ -1166,9 +1283,7 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await guard.check(at(personal(USERS.admin))))).toBe("ok");
 		});
 
-		it("不带凭据、共享令牌写公共项目：项目写在路径里的接口也一样（401、403），不止查询参数那一个", async () => {
-			// 现在的 `POST /projects/:project/sessions`，和 #488 之后的 `POST /projects/:project/packages`
-			// （用 #488 的写法构造的接口）：项目都在路径里，这条规则对这类接口的每个请求成立（按 ID 定位的写不带凭据时读库之前没有项目，不在这里，由 #494 关上）。
+		it("不带凭据、共享令牌写公共项目：401，说明写明只有平台管理员能写；写默认项目也是 401（#494）", async () => {
 			store.agentCredentials.set(hashCredential("shared-secret"), {
 				kind: "shared",
 				projectId: DEFAULT,
@@ -1206,19 +1321,16 @@ describe("契约路由的访问检查", () => {
 				});
 				expect(await guard.check(at("public", shared)), `${name}：共享令牌`).toMatchObject({
 					ok: false,
-					status: 403,
-					code: "forbidden",
+					status: 401,
+					code: "unauthorized",
 					message: expect.stringContaining(DENIED),
 				});
-				// 对照：同样的两种凭据写默认项目，和以前一样（到 #494 才拒绝；会话这一类的接口本来就要凭据，所以不在这里对照）。
-				if (!name.includes("sessions")) {
-					expect(await guard.check(at("default")), `${name}：默认项目不带凭据`).toEqual({
-						ok: true,
-						access: null,
-					});
-					expect(await guard.check(at("default", shared)), `${name}：默认项目共享令牌`).toEqual({
-						ok: true,
-						access: null,
+				// 同样的两种凭据写默认项目也是 401，说明写的是怎么带上凭据。
+				for (const credentials of [{}, shared]) {
+					expect(await guard.check(at("default", credentials)), `${name}：默认项目`).toMatchObject({
+						ok: false,
+						status: 401,
+						message: expect.stringMatching(/sfly login|登录/),
 					});
 				}
 				// 平台管理员的个人令牌照常通过。
@@ -1227,15 +1339,14 @@ describe("契约路由的访问检查", () => {
 					`${name}：平台管理员`,
 				).toMatchObject({ ok: true });
 			}
-			// 读公共项目不受影响：不带凭据的读照旧放行。
+			// 读公共项目：不带凭据也是 401（说明是怎么带上凭据，不是「只有平台管理员能写」）。
 			const read: RouteDef = {
 				...route("GET /projects/:project/orchestrations"),
 				path: "/projects/:project/orchestrations",
 			};
-			expect(await guard.check({ route: read, params: { project: "public" } })).toEqual({
-				ok: true,
-				access: null,
-			});
+			const reading = await guard.check({ route: read, params: { project: "public" } });
+			expect(reading).toMatchObject({ ok: false, status: 401 });
+			expect((reading as { message: string }).message).not.toContain(DENIED);
 		});
 
 		it("拒绝的说明不带具体的操作：建会话、发布、建场景被拒时是同一句", async () => {

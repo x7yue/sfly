@@ -2126,7 +2126,7 @@ test.describe("开发文档", () => {
 // 本地账号与登录（ADR 0029，#490）：登录页、初始化页、账号菜单、修改密码弹窗。
 test.describe("账号与登录", () => {
 	const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
-	// 没有预先写昵称：登录页和初始化页上没有昵称弹窗，登录之后也没有。
+	// 从没有登录开始：登录页、初始化页本身不跳转；要登录的截图先在登录页登录。
 	test.use({ loginAs: null });
 
 	const signIn = async (page: Page) => {

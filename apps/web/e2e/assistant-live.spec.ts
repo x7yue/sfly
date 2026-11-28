@@ -344,7 +344,7 @@ test("停止途中说了话、再点一次停止（按钮写「撤掉排着的�
 	await expect(composer(page)).toBeEnabled();
 });
 
-test("有话排在这一轮后面时按钮的字只由时间线的状态定：另一个人的标签页、刷新之后也是「撤掉排着的话」，点了就撤掉那句话，这一轮照常停", async ({
+test("有话排在这一轮后面时按钮的字只由时间线的状态定：另一个标签页、刷新之后也是「撤掉排着的话」，点了就撤掉那句话，这一轮照常停", async ({
 	page,
 	assistant,
 	workbench,
@@ -360,9 +360,8 @@ test("有话排在这一轮后面时按钮的字只由时间线的状态定：�
 	await expect(said).toHaveAttribute("data-role", "behind");
 	const cancelButton = (target: Page) => target.getByRole("button", { name: "撤掉排着的话" });
 	const stopButton = (target: Page) => target.getByRole("button", { name: "停止", exact: true });
-	// 另一个人在另一个标签页打开这个会话：没有点过停止，看到的按钮和说明一样是「撤掉排着的话」，不是「停止」。
+	// 另一个标签页（同一个浏览器，同样的登录）打开这个会话：没有点过停止，看到的按钮和说明一样是「撤掉排着的话」，不是「停止」。
 	const other = await page.context().newPage();
-	await other.addInitScript(() => window.localStorage.setItem("sfly.nickname", "bob"));
 	await other.goto(`/sessions/${id}`);
 	await expect(cancelButton(other)).toBeVisible();
 	await expect(cancelButton(other)).toHaveAttribute(

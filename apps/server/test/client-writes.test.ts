@@ -22,7 +22,8 @@ import { startFakeFeishu } from "./support/fake-feishu.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import type { TestControlPlane } from "./support/test-control-plane.js";
 
-const NICKNAME = "小明";
+/** 客户端带的令牌是这个用户的（测试控制面默认凭据里的用户，显示名就是它）：记下的触发人、作者、取消人都是它。 */
+const USER = "小明";
 const CLIENT_TAG = `sfly-client/${CLIENT_VERSION}`;
 
 const document = (env: string): OrchestrationDocument => ({
@@ -51,16 +52,19 @@ describe("API 客户端的写操作", () => {
 		await cp.close();
 	});
 
+	/** 经记录请求的代理连控制面的客户端：默认带 {@link USER} 的个人令牌，`token: undefined` 时不带。 */
 	async function through(options: Omit<ClientOptions, "baseUrl"> = {}) {
 		const proxy = await startRecordingProxy(cp.httpUrl);
 		proxies.push(proxy);
-		// 这里测的是客户端的昵称本身（不带令牌时才发，#494 一并删除）：照旧不带默认的令牌。
-		return { proxy, ...observedClient({ baseUrl: proxy.url, ...options }) };
+		return {
+			proxy,
+			...observedClient({ baseUrl: proxy.url, token: await cp.users.token(USER), ...options }),
+		};
 	}
 
 	describe("运行", () => {
-		it("带参数触发场景并拿到运行 id，运行记录里的触发人是配置的昵称", async () => {
-			const { client } = await through({ nickname: NICKNAME });
+		it("带参数触发场景并拿到运行 id，运行记录里的触发人是令牌的用户", async () => {
+			const { client } = await through();
 			const run = await client.runs.trigger({
 				params: { id: seeded.scenarioId },
 				body: { params: { env: "prod" } },
@@ -68,7 +72,7 @@ describe("API 客户端的写操作", () => {
 			expect(run).toMatchObject({
 				orchestration_id: seeded.scenarioId,
 				status: "running",
-				triggered_by: NICKNAME,
+				triggered_by: USER,
 				triggered_via: null,
 				params: { env: "prod" },
 			});
@@ -76,23 +80,23 @@ describe("API 客户端的写操作", () => {
 			const { runs } = await client.runs.listForOrchestration({
 				params: { id: seeded.scenarioId },
 			});
-			expect(runs.find((r) => r.id === run.id)).toMatchObject({ triggered_by: NICKNAME });
-			expect((await client.runs.get({ params: { id: run.id } })).triggered_by).toBe(NICKNAME);
+			expect(runs.find((r) => r.id === run.id)).toMatchObject({ triggered_by: USER });
+			expect((await client.runs.get({ params: { id: run.id } })).triggered_by).toBe(USER);
 		});
 
 		it("不带请求体触发等于没有参数", async () => {
-			const { client } = await through({ nickname: NICKNAME });
+			const { client } = await through();
 			const run = await client.runs.trigger({ params: { id: seeded.scenarioId } });
-			expect(run.triggered_by).toBe(NICKNAME);
+			expect(run.triggered_by).toBe(USER);
 			expect(run.params).toEqual({ env: "staging" });
 		});
 
-		it("取消运行：返回取消后的视图，取消人是配置的昵称，运行最终 cancelled", async () => {
-			const { client } = await through({ nickname: NICKNAME });
+		it("取消运行：返回取消后的视图，取消人是令牌的用户，运行最终 cancelled", async () => {
+			const { client } = await through();
 			const run = await client.runs.trigger({ params: { id: seeded.scenarioId } });
 
 			const cancelled = await client.runs.cancel({ params: { id: run.id } });
-			expect(cancelled.cancel).toMatchObject({ requested_by: NICKNAME });
+			expect(cancelled.cancel).toMatchObject({ requested_by: USER });
 			await eventually(async () => {
 				expect((await client.runs.get({ params: { id: run.id } })).status).toBe("cancelled");
 			});
@@ -103,7 +107,7 @@ describe("API 客户端的写操作", () => {
 		});
 
 		it("控制面拒绝写操作时抛出带控制面错误码的 ApiError", async () => {
-			const { client } = await through({ nickname: NICKNAME });
+			const { client } = await through();
 			const missing = await rejection(client.runs.trigger({ params: { id: randomUUID() } }));
 			expect(missing).toBeInstanceOf(ApiError);
 			expect(missing).toMatchObject({ status: 404, method: "POST" });
@@ -117,7 +121,7 @@ describe("API 客户端的写操作", () => {
 
 	describe("场景", () => {
 		it("创建、改名、复制、归档和恢复场景", async () => {
-			const { client } = await through({ nickname: NICKNAME });
+			const { client } = await through();
 			const created = await client.orchestrations.create({
 				params: { project: "default" },
 				body: { name: "看板场景", description: "自建页面用" },
@@ -158,8 +162,8 @@ describe("API 客户端的写操作", () => {
 			expect((await visible(false)).map((o) => o.id)).toContain(created.id);
 		});
 
-		it("保存场景版本，再恢复旧版本：恢复追加一个新版本，作者是配置的昵称", async () => {
-			const { client } = await through({ nickname: NICKNAME });
+		it("保存场景版本，再恢复旧版本：恢复追加一个新版本，作者是令牌的用户", async () => {
+			const { client } = await through();
 			const { id } = await client.orchestrations.create({
 				params: { project: "default" },
 				body: { name: "版本场景" },
@@ -175,7 +179,7 @@ describe("API 客户端的写操作", () => {
 				body: { base_version: first.number, document: document("prod") },
 			});
 			expect([first.number, second.number]).toEqual([1, 2]);
-			expect([first.author, second.author]).toEqual([NICKNAME, NICKNAME]);
+			expect([first.author, second.author]).toEqual([USER, USER]);
 
 			const restored = await client.orchestrations.restoreVersion({
 				params: { id, number: "1" },
@@ -184,9 +188,9 @@ describe("API 客户端的写操作", () => {
 			expect(restored.document).toEqual(first.document);
 			const { versions } = await client.orchestrations.versions({ params });
 			expect(versions.map((v) => [v.number, v.author])).toEqual([
-				[3, NICKNAME],
-				[2, NICKNAME],
-				[1, NICKNAME],
+				[3, USER],
+				[2, USER],
+				[1, USER],
 			]);
 
 			const stale = await rejection(
@@ -204,7 +208,7 @@ describe("API 客户端的写操作", () => {
 		it("新建、修改、发送测试消息、删除", async () => {
 			const feishu = await startFakeFeishu();
 			try {
-				const { client } = await through({ nickname: NICKNAME });
+				const { client } = await through();
 				const created = await client.feishuBots.create({
 					params: { project: "default" },
 					body: { name: "看板群", webhook_url: feishu.webhookUrl("a") },
@@ -239,33 +243,7 @@ describe("API 客户端的写操作", () => {
 		});
 	});
 
-	describe("昵称", () => {
-		it("中文昵称按 URL 编码放进 x-sfly-nickname，控制面记录到的昵称和配置的一致", async () => {
-			const { client, proxy } = await through({ nickname: NICKNAME });
-			const run = await client.runs.trigger({ params: { id: seeded.scenarioId } });
-			expect(run.triggered_by).toBe("小明");
-
-			const writes = proxy.requests.filter((r) => r.method === "POST");
-			expect(writes).toHaveLength(1);
-			// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发的昵称请求头
-			expect(writes[0]?.headers["x-sfly-nickname"]).toBe("%E5%B0%8F%E6%98%8E");
-		});
-
-		it("昵称是函数时每次请求都重新取值", async () => {
-			let current: string | null | undefined = "甲";
-			const { client, proxy } = await through({ nickname: () => current });
-			const params = { id: seeded.scenarioId };
-			const byFirst = await client.runs.trigger({ params });
-			current = "乙";
-			const bySecond = await client.runs.trigger({ params });
-			expect([byFirst.triggered_by, bySecond.triggered_by]).toEqual(["甲", "乙"]);
-
-			current = undefined;
-			const failure = await rejection(client.runs.trigger({ params }));
-			expect(failure).toMatchObject({ code: "nickname_required" });
-			expect(proxy.requests.filter((r) => r.method === "POST")).toHaveLength(2);
-		});
-
+	describe("没有令牌", () => {
 		it.each([
 			["没有给昵称", undefined],
 			["昵称是空字符串", ""],
@@ -273,8 +251,8 @@ describe("API 客户端的写操作", () => {
 			["昵称函数返回 null", () => null],
 			["昵称函数返回 undefined", () => undefined],
 			["昵称函数返回空白", () => " "],
-		])("%s：每个写操作都在发请求之前抛出 nickname_required，控制面没有收到请求", async (_, nickname) => {
-			const { client, proxy } = await through({ nickname });
+		])("没有令牌、%s：每个写操作都在发请求之前抛出 nickname_required，控制面没有收到请求", async (_, nickname) => {
+			const { client, proxy } = await through({ token: undefined, nickname });
 			const params = { id: seeded.scenarioId };
 			const writes = {
 				"POST /projects/:project/orchestrations": () =>
@@ -298,43 +276,30 @@ describe("API 客户端的写操作", () => {
 			}
 			expect(proxy.requests).toEqual([]);
 		});
-
-		it("没有昵称时读操作不受影响，请求里也没有昵称", async () => {
-			const { client, proxy } = await through();
-			const { orchestrations } = await client.orchestrations.list({
-				params: { project: "default" },
-			});
-			expect(orchestrations.map((o) => o.id)).toContain(seeded.scenarioId);
-			expect(await client.runs.get({ params: { id: seeded.runId } })).toMatchObject({
-				id: seeded.runId,
-			});
-			expect(proxy.requests.map((r) => r.method)).toEqual(["GET", "GET"]);
-			for (const request of proxy.requests) {
-				// biome-ignore lint/plugin/test-nickname-header: 测的是 API 客户端发的昵称请求头
-				expect(request.headers["x-sfly-nickname"]).toBeUndefined();
-			}
-		});
 	});
 
 	describe("x-sfly-client", () => {
-		it("每个请求都带 sfly-client/<版本>：读、写、下载、失败的请求，有昵称或没有昵称", async () => {
-			const withNickname = await through({ nickname: NICKNAME });
-			const without = await through();
+		it("每个请求都带 sfly-client/<版本>：读、写、下载、失败的请求，带不带令牌", async () => {
+			const withToken = await through();
+			const without = await through({ token: undefined });
 			expect(CLIENT_VERSION).toMatch(/^\d+\.\d+\.\d+/);
 
-			await withNickname.client.system.health();
-			await withNickname.client.runs.trigger({ params: { id: seeded.scenarioId } });
-			await withNickname.client.request(
+			await withToken.client.system.health();
+			await withToken.client.runs.trigger({ params: { id: seeded.scenarioId } });
+			await withToken.client.request(
 				{ method: "GET", path: "/runs/:id/logs/download", kind: "download" },
 				{ params: { id: seeded.runId } },
 			);
-			await rejection(withNickname.client.orchestrations.get({ params: { id: randomUUID() } }));
-			await without.client.orchestrations.list({ params: { project: "default" } });
+			await rejection(withToken.client.orchestrations.get({ params: { id: randomUUID() } }));
+			// 不带令牌的读：控制面 401，请求照样带着客户端版本；写操作在发出之前就被客户端拦下。
+			expect(
+				await rejection(without.client.orchestrations.list({ params: { project: "default" } })),
+			).toMatchObject({ status: 401, code: "unauthorized" });
 			await rejection(without.client.runs.cancel({ params: { id: seeded.runId } }));
 
-			expect(withNickname.proxy.requests).toHaveLength(4);
+			expect(withToken.proxy.requests).toHaveLength(4);
 			expect(without.proxy.requests).toHaveLength(1);
-			for (const request of [...withNickname.proxy.requests, ...without.proxy.requests]) {
+			for (const request of [...withToken.proxy.requests, ...without.proxy.requests]) {
 				expect(request.headers["x-sfly-client"], `${request.method} ${request.path}`).toBe(
 					CLIENT_TAG,
 				);
@@ -367,7 +332,7 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 		const mismatches: VersionMismatch[] = [];
 		const client = createClient({
 			baseUrl: cp.httpUrl,
-			nickname: NICKNAME,
+			token: await cp.users.token(),
 			onVersionMismatch: (mismatch) => mismatches.push(mismatch),
 		});
 
@@ -448,7 +413,7 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 	it("没有给回调时默认 console.warn，同样只警告一次", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const cp = await controlPlane("9.9.9");
-		const client = createClient({ baseUrl: cp.httpUrl });
+		const client = createClient({ baseUrl: cp.httpUrl, token: await cp.users.token() });
 		await client.system.health();
 		await client.orchestrations.list({ params: { project: "default" } });
 
@@ -465,7 +430,7 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 		const mismatches: VersionMismatch[] = [];
 		const client = createClient({
 			baseUrl: cp.httpUrl,
-			nickname: NICKNAME,
+			token: await cp.users.token(),
 			onVersionMismatch: (mismatch) => mismatches.push(mismatch),
 		});
 		await client.system.health();

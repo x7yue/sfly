@@ -20,7 +20,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { ASSISTANT_REJECTION_TEXT, AssistantClient } from "../src/sessions/assistant-client.js";
 import { STOP_GRACE_MS } from "../src/sessions/session-service.js";
 import { ApiClient } from "./support/api-client.js";
-import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { FAKE_SECRET, FakeAssistant } from "./support/fake-assistant.js";
@@ -839,27 +838,11 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect((await create("另一个")).status).toBe(201);
 	});
 
-	it("昵称或正文里有数据库存不进去的字符（NUL、不成对的代理字符）：400，在改任何状态之前挡掉，会话不变、没有事件", async () => {
+	it("正文里有数据库存不进去的字符（不成对的代理字符）：400，在改任何状态之前挡掉，会话不变、没有事件", async () => {
 		const view = await json<SessionView>(await create());
 		assistant.emit(view.id, 1, turnEnd(1));
 		await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
 		const before = (await events(view.id)).length;
-		const nul = "\u0000x";
-		// 昵称：不带凭据的请求（#494 之前会话的别的写接口照旧）。带了凭据的请求，身份是凭据的用户，昵称请求头不看；
-		// 建会话只认用户的凭据，没有凭据是 401，到不了昵称这一步。
-		for (const [path, body] of [
-			[`/sessions/${view.id}/messages`, { text: "你好" }],
-			[`/sessions/${view.id}/stop`, {}],
-		] as const) {
-			const res = await cp.fetch(path, {
-				method: "POST",
-				credentials: "omit",
-				headers: { "content-type": "application/json", ...actAs(nul) },
-				body: JSON.stringify(body),
-			});
-			expect(res.status, `昵称 ${path}`).toBe(400);
-			expect((await json<{ error: { code: string } }>(res)).error.code).toBe("invalid_request");
-		}
 		const credential = { authorization: `Bearer ${await users.token("alice")}` };
 		for (const path of [`/sessions/${view.id}/messages`, "/projects/default/sessions"]) {
 			const res = await cp.fetch(path, {
@@ -874,7 +857,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect((await events(view.id)).length).toBe(before);
 		expect(await sessionCount(cp)).toBe(1);
 		expect(assistant.prompts).toHaveLength(1);
-		// 对照：正常的昵称和正文照常。
+		// 对照：正常的正文照常。
 		expect((await api.post(`/sessions/${view.id}/messages`, { text: "你好" })).status).toBe(200);
 	});
 

@@ -141,15 +141,18 @@ describe("编排版本", () => {
 		).toBe(0);
 	});
 
-	it("保存版本必须带昵称", async () => {
-		const id = await api.createOrchestration("无昵称");
+	it("保存版本不带凭据 401", async () => {
+		const id = await api.createOrchestration("不带凭据");
 		const res = await cp.fetch(`/orchestrations/${id}/versions`, {
 			method: "POST",
 			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ base_version: 0, document: docV1 }),
 		});
-		expect(res.status).toBe(400);
+		expect(res.status).toBe(401);
+		expect(await res.json()).toMatchObject({
+			error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+		});
 	});
 
 	it("编排列表按新建时间从新到旧排列，带最新版本号", async () => {
@@ -231,15 +234,17 @@ describe("编排版本", () => {
 		});
 	});
 
-	it("新建编排需要昵称", async () => {
+	it("新建编排不带凭据 401", async () => {
 		const res = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			credentials: "omit",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ name: "无昵称" }),
+			body: JSON.stringify({ name: "不带凭据" }),
 		});
-		expect(res.status).toBe(400);
-		expect(await res.json()).toMatchObject({ error: { code: "nickname_required" } });
+		expect(res.status).toBe(401);
+		expect(await res.json()).toMatchObject({
+			error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+		});
 	});
 
 	it("复制还没有版本的编排得到同样没有版本的新编排", async () => {
@@ -249,16 +254,18 @@ describe("编排版本", () => {
 		expect(await res.json()).toMatchObject({ name: "空副本", head_version: 0 });
 	});
 
-	it("复制编排需要昵称和非空名字，源编排不存在时返回 404", async () => {
+	it("复制编排不带凭据 401、要非空名字，源编排不存在时返回 404", async () => {
 		const source = await api.createOrchestration("复制校验");
-		const noNick = await cp.fetch(`/orchestrations/${source}/copy`, {
+		const anonymous = await cp.fetch(`/orchestrations/${source}/copy`, {
 			method: "POST",
 			credentials: "omit",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ name: "x" }),
 		});
-		expect(noNick.status).toBe(400);
-		expect(await noNick.json()).toMatchObject({ error: { code: "nickname_required" } });
+		expect(anonymous.status).toBe(401);
+		expect(await anonymous.json()).toMatchObject({
+			error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+		});
 
 		const noName = await api.post(`/orchestrations/${source}/copy`, { name: "  " });
 		expect(noName.status).toBe(400);

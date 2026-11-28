@@ -29,7 +29,7 @@ Preconditions:
 - **添加节点。** 点 `button "添加节点"`，再运行 `find role combobox fill "回显" --name "搜索节点类型"`，点 `option "回显 echo"`。画布上出现 `echo_1`，和 entry 之间有一条链；顶部提示变成「1 条警告」，因为必填输入还没填。
 - **填参数。** 在 `textbox "输入 text"` 里填 `"你好 sfly"`，带 JSON 引号。警告消失，`combobox "节点 Agent"` 显示 `跟随默认（verify-agent）`。
 - **保存。** 点 `button "保存 Ctrl S"`，页面上出现「已保存」，标题旁边显示 `v1`，画布上的节点卡片显示 `text = 你好 sfly`。
-- **证据。** 截图 `scn-01-canvas-saved.png`，再存 `curl -s $HTTP_URL/api/orchestrations/<id> > $RUN/evidence/scn-orchestration.json`，用来确认版本号和文档里的节点。
+- **证据。** 截图 `scn-01-canvas-saved.png`，再存 `curl -s -b "$COOKIES" $HTTP_URL/api/orchestrations/<id> > $RUN/evidence/scn-orchestration.json`，用来确认版本号和文档里的节点。
 
 ## Gotchas
 

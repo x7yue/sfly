@@ -1,10 +1,10 @@
 // 契约路由上的一处访问检查（ADR 0029「一处检查」）：解析凭据，按接口的声明得出项目，查归属，查范围。
 // 不依赖 Fastify：输入是凭据和接口的声明，输出是「谁、哪个项目、允许还是拒绝、拒绝的原因」，读数据走 {@link AccessStore}。
 //
-// 这一步只对带了凭据的请求生效（规格 #489）：不带凭据的请求照旧放行，到 #494 才改成 401；带共享令牌的 HTTP 请求
-// 和不带凭据的走同一套（共享令牌不对应任何一台 Agent）。带了凭据就一定检查：库里没有的、过期的、吊销的、用户停用的，
-// 一律 401，不会退回到「不带凭据」的放行。一处例外：吊销自己的凭据的三个接口，停用的用户的登录和个人令牌也认
-// （{@link REVOKE_OWN_ROUTES}，#578），只能用来吊销自己的凭据。
+// 不带凭据的请求一律 401（#494），公开的接口（`system`）和账号类里不看凭据的（登录、初始化、状态、登出）除外；带共享令牌的
+// HTTP 请求和不带凭据的走同一套（共享令牌不对应任何一台 Agent，也不是人）。过渡窗口里只放行以旧方式连接的 Agent 还要用的三条通道
+// （{@link LEGACY_AGENT_ROUTES}，判断在 {@link LegacyAgentAccess}）。带了凭据就一定检查：库里没有的、过期的、吊销的、用户停用的，
+// 一律 401。一处例外：吊销自己的凭据的三个接口，停用的用户的登录和个人令牌也认（{@link REVOKE_OWN_ROUTES}，#578），只能用来吊销自己的凭据。
 import { type RouteDef, TOKEN_PREFIXES } from "@sfly/schema";
 import type { Clock } from "../clock.js";
 import type { ProjectRole } from "../db/schema.js";
@@ -21,11 +21,12 @@ import {
 	AGENT_CREDENTIAL_ROUTES,
 	credentialRequiredMessage,
 	exhaustive,
+	LEGACY_AGENT_ROUTES,
+	type LegacyAgentRoute,
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
 	type ProjectLocator,
 	REVOKE_OWN_ROUTES,
-	requiresCredential,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "./access-rules.js";
@@ -49,6 +50,16 @@ import {
 	userScopes,
 	writeNeedsPerson,
 } from "./scopes.js";
+
+/**
+ * 过渡窗口里以旧方式连接的 Agent 还要用的三条 HTTP 通道（{@link LEGACY_AGENT_ROUTES}，ADR 0029「迁移与过渡」，#494）：
+ * 这个请求是不是它们要的。窗口关上（任何一个项目登记了工作台）时一律为 false。实现在 src/agents/legacy-agent-access.ts。
+ */
+export interface LegacyAgentAccess {
+	archive(project: ProjectId, name: string, version: string): Promise<boolean>;
+	upload(taskId: string): Promise<boolean>;
+	taskArtifacts(taskId: string): Promise<boolean>;
+}
 
 /** 控制台登录的 Cookie 名（签发在 #490）。 */
 export const LOGIN_COOKIE = "sfly_login";
@@ -246,6 +257,8 @@ export class AccessGuard {
 			loginIdleMs?: number;
 			/** 哪些来源算同源（./cross-site.ts）；默认没有配置公开地址，用请求的 Host 兜底。 */
 			origins?: OriginRules;
+			/** 以旧方式连接的 Agent 的过渡放行；不给时窗口当作已经关上（三条通道也要凭据）。 */
+			legacy?: LegacyAgentAccess;
 		},
 	) {}
 
@@ -257,8 +270,8 @@ export class AccessGuard {
 	 * 检查一个请求；返回拒绝的原因，或通过时的身份。
 	 *
 	 * 公共项目只有平台管理员能写（{@link PUBLIC_WRITE_DENIED}），判的范围：项目写在路径里的写接口（对所有身份，
-	 * 不读库），和带凭据的、按 ID 定位的写接口（读库得出项目之后，在 `#checkScoped` 里判）。不带凭据和共享令牌的、按 ID 定位的
-	 * 写（场景、运行、任务、会话）没有判：读库之前没有项目可判，强制登录（#494）之后这一类都带凭据，由 #494 关上。
+	 * 不读库），和带凭据的、按 ID 定位的写接口（读库得出项目之后，在 `#checkScoped` 里判）。不带凭据和共享令牌的请求
+	 * 除了过渡放行的三条通道（都不是写公共项目）一律 401，所以每一个写公共项目的请求都带了凭据（#494）。
 	 */
 	async check(request: AccessRequest): Promise<AccessResult> {
 		const locator = locatorOf(request.route);
@@ -283,18 +296,12 @@ export class AccessGuard {
 		const presented = crossSite ? undefined : offered;
 		// 登出例外（`#checkLogout`）：它要看到跨站带来的 Cookie，才能把库里的这条登录也注销。
 		if (locator.from === "account") return this.#checkAccount(request, presented, offered);
-		// 这次写的是公共项目吗：只看路径里的项目，不读库。按 ID 定位的资源（场景、运行、会话…）要读库才知道它在哪个项目里：
-		// 带了凭据的在 `#checkScoped` 里判，不带凭据和共享令牌的这里没有判（到 #494 强制登录之后它们都带凭据）。
+		// 这次写的是公共项目吗：只看路径里的项目，不读库。按 ID 定位的资源（场景、运行、会话…）要读库才知道它在哪个项目里，
+		// 在 `#checkScoped` 里判。
 		const named =
 			locator.from === "path" ? parseProjectId(request.params[locator.param] ?? "") : undefined;
 		const publicWrite = writesPublicProject(named, request.route);
-		if (presented === undefined) {
-			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
-			if (publicWrite) return denied(401, "unauthorized", PUBLIC_WRITE_DENIED);
-			return requiresCredential(request.route)
-				? denied(401, "unauthorized", credentialRequiredMessage(request.route))
-				: this.#letThrough(locator, named);
-		}
+		if (presented === undefined) return this.#withoutCredential(request, named, publicWrite);
 		const resolved = await this.#resolve(presented);
 		const result = await this.#decide(resolved, request, locator, named, publicWrite);
 		return withCookie(result, resolved, request, this.#idleMs);
@@ -310,12 +317,8 @@ export class AccessGuard {
 		if (principal === undefined) {
 			return denied(401, "unauthorized", "凭据无效、已过期或已吊销");
 		}
-		if (principal.kind === "shared") {
-			if (publicWrite) return denied(403, "forbidden", PUBLIC_WRITE_DENIED);
-			return requiresCredential(request.route)
-				? denied(403, "forbidden", "共享令牌不能调用这个接口：它只给 Agent 用")
-				: this.#letThrough(locator, named);
-		}
+		// 共享令牌不对应任何一台 Agent，也不是人：和不带凭据的请求同一套（ADR 0029「一处检查」）。
+		if (principal.kind === "shared") return this.#withoutCredential(request, named, publicWrite);
 		// 路径参数含 NUL：它不指向任何东西，和不带凭据时一样是 404（契约路由的约定，#212）；
 		// 不能往下走：管理员的写记录要把路径参数写进库，NUL 存不进 PostgreSQL 的文本。
 		if (Object.values(request.params).some((value) => value?.includes("\u0000"))) {
@@ -490,16 +493,47 @@ export class AccessGuard {
 	}
 
 	/**
-	 * 不带凭据、共享令牌照旧放行的请求（到 #494）：路径里写了项目的，项目要存在（ADR 0029：不存在和看不见一样是 404），
-	 * 读一次库；别的不读库。带凭据的请求在得出项目之后的检查里同样是 404。
+	 * 不带凭据、只带共享令牌的请求（#494）：过渡窗口里以旧方式连接的 Agent 还要用的三条通道按 {@link LegacyAgentAccess} 放行，
+	 * 没有身份（`access: null`）；别的一律 401，说明写明怎么带上凭据（写公共项目的说「只有平台管理员能写」）。不读库，不透露路径里的
+	 * 项目、资源存不存在。
 	 */
-	async #letThrough(
-		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
+	async #withoutCredential(
+		request: AccessRequest,
 		named: ProjectId | undefined,
+		publicWrite: boolean,
 	): Promise<AccessResult> {
-		if (locator.from !== "path") return { ok: true, access: null };
-		if (named === undefined || !(await this.deps.store.projectExists(named))) return notFound();
-		return { ok: true, access: null };
+		const legacy = (LEGACY_AGENT_ROUTES as Readonly<Record<string, LegacyAgentRoute>>)[
+			routeKey(request.route)
+		];
+		if (legacy !== undefined && (await this.#legacyAllows(legacy, request, named))) {
+			return { ok: true, access: null };
+		}
+		if (publicWrite) return denied(401, "unauthorized", PUBLIC_WRITE_DENIED);
+		return denied(401, "unauthorized", credentialRequiredMessage(request.route));
+	}
+
+	async #legacyAllows(
+		rule: LegacyAgentRoute,
+		request: AccessRequest,
+		named: ProjectId | undefined,
+	): Promise<boolean> {
+		const access = this.deps.legacy;
+		if (access === undefined) return false;
+		switch (rule) {
+			case "archive": {
+				const { name, version } = request.params;
+				if (named === undefined || name === undefined || version === undefined) return false;
+				return access.archive(named, name, version);
+			}
+			case "upload":
+			case "task_artifacts": {
+				const taskId = request.params.id ?? "";
+				if (!isUuid(taskId)) return false;
+				return rule === "upload" ? access.upload(taskId) : access.taskArtifacts(taskId);
+			}
+			default:
+				return exhaustive(rule);
+		}
 	}
 
 	// ---- 项目从请求的哪里来 ----

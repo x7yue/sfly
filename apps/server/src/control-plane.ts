@@ -355,12 +355,12 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	// 不用登录就能读的地方（/install.sh、/sdk/project-settings）用去掉用户名和密码的地址（#755）；去不干净的那个当没配，打一条警告
-	// （只写是哪个环境变量，不写地址）。Welcome 用上面的原值。
+	// （只写是哪个环境变量，不写地址）。Welcome 只对带 Agent 凭据的连接用上面的原值，以旧方式连接的用去掉的这份（#494）。
 	const published = publicMirrors(mirrors);
 	for (const key of published.withheld) {
 		if (logger) {
 			printWarning(
-				`sfly: ${MIRROR_VARIABLES[key]} 地址里的用户名和密码没能去掉（写法认不出来），/install.sh 和 /sdk/project-settings 里把它当作没配；Agent 握手时下发的不受影响`,
+				`sfly: ${MIRROR_VARIABLES[key]} 地址里的用户名和密码没能去掉（写法认不出来），/install.sh、/sdk/project-settings 和以旧方式连接的 Agent 握手时都把它当作没配；带 Agent 凭据的 Agent 握手时下发的不受影响`,
 			);
 		}
 	}
@@ -434,6 +434,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 				return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
 			},
 			mirrors,
+			publicMirrors: published.mirrors,
 			packageIndexUrl: () => `${publicHttpUrl}/simple/`,
 			agentBinary: async (arch) => {
 				const binary = await agentBinaries.find(version, arch);
@@ -570,7 +571,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		metricQueries,
 		retention,
 		artifacts,
-		agentToken: options.agentToken,
 		publicConfig: {
 			httpUrl: () => publicHttpUrl,
 			grpcUrl: () => publicGrpcUrl,

@@ -388,6 +388,8 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 	],
 	SFLY_ADMIN_PASSWORD: [M],
 	SFLY_ADMIN_DISPLAY_NAME: [M],
+	// 共享令牌：短于 32 个字符的不启动（#494），报错不回显。
+	SFLY_AGENT_TOKEN: [M, `${U}${M}`, SHORT_MARK, NUMBER_MARK],
 	// 数值类：填成别的变量的值（地址、令牌、带凭据的写法）。
 	SFLY_RETENTION_DAYS: numberShapes(),
 	SFLY_METRIC_RETENTION_DAYS: numberShapes(),
@@ -842,10 +844,10 @@ describe("main.ts：合法的值真的传给了控制面", () => {
 			expect((await write("http://dev.example.com:3000")).status).toBe(201);
 			// 对外地址同源。
 			expect((await write("https://sfly.example.com")).status).toBe(201);
-			// 名单外的来源：Cookie 不被承认，没有昵称就是 400。
+			// 名单外的来源：Cookie 不被承认，等于不带凭据：401（#494）。
 			const denied = await write("http://evil.example.com");
-			expect(denied.status).toBe(400);
-			expect(await denied.text()).toContain("nickname_required");
+			expect(denied.status).toBe(401);
+			expect(await denied.text()).toContain("unauthorized");
 		} finally {
 			await cp.stop();
 		}

@@ -1,7 +1,6 @@
 // 跨站检查和跨项目（规格 #490 的验收标准）：登录 Cookie 是浏览器自动带上的凭据，只认同源的请求；
 // 只是项目甲成员的用户登录后，用他的 Cookie 请求项目乙的资源被 #489 的检查拒绝。
-// 没有登录的请求在 #494 之前照旧放行，所以「不被当作已登录」靠响应里能不能看到身份、
-// 以及账号类接口（只认登录）是 401 来观察。
+// 不被当作已登录的请求就是不带凭据的请求（#494）：接口一律 401 unauthorized。
 import { request } from "node:http";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -104,17 +103,19 @@ describe("跨站检查：带 Cookie 的请求", () => {
 		expect(res.status).toBe(201);
 	});
 
-	it("Sec-Fetch-Site 是 cross-site 或 same-site 的写请求不被当作已登录：没有昵称就是 400 nickname_required", async () => {
+	it("Sec-Fetch-Site 是 cross-site 或 same-site 的写请求不被当作已登录：401 unauthorized", async () => {
 		for (const site of [crossSite, sameSite]) {
 			const res = await write(browser(cookie, site));
-			expect(res.status).toBe(400);
-			expect(await res.json()).toMatchObject({ error: { code: "nickname_required" } });
+			expect(res.status).toBe(401);
+			expect(await res.json()).toMatchObject({
+				error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+			});
 		}
 	});
 
 	it("Origin 是别的地址（浏览器没有发 Sec-Fetch-Site）：不被当作已登录；Origin 是公开地址：当作已登录", async () => {
 		const evil = await write(browser(cookie, {}, { origin: "https://evil.example" }));
-		expect(evil.status).toBe(400);
+		expect(evil.status).toBe(401);
 		const same = await write(browser(cookie, {}, { origin: "https://sfly.example.com" }));
 		expect(same.status).toBe(201);
 		// 开发时 vite 的地址也算同源。
@@ -122,21 +123,27 @@ describe("跨站检查：带 Cookie 的请求", () => {
 		expect(vite.status).toBe(201);
 	});
 
-	it("两个头都缺的写请求当作跨站：不被当作已登录", async () => {
+	it("两个头都缺的写请求当作跨站：不被当作已登录（401）", async () => {
 		const res = await write(browser(cookie, {}));
-		expect(res.status).toBe(400);
-		expect(await res.json()).toMatchObject({ error: { code: "nickname_required" } });
+		expect(res.status).toBe(401);
+		expect(await res.json()).toMatchObject({
+			error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+		});
 	});
 
-	it("被当作没有登录的写请求，带了昵称就是不带凭据的老样子（照旧放行，到 #494 才拒绝）：Cookie 没有给它任何权限", async () => {
-		const res = await write(browser(cookie, crossSite), "某人");
-		expect(res.status).toBe(201);
+	it("被当作没有登录的写请求，带了昵称也是 401：Cookie 和昵称都没有给它任何权限，什么也没有建", async () => {
 		const db = new pg.Client({ connectionString: cp.database.url });
 		await db.connect();
 		try {
-			// 创建的场景没有记用户 ID：Cookie 里的身份没有被采用。
-			const rows = await db.query("select author_user_id from orchestration_versions");
-			expect(rows.rows.every((r) => r.author_user_id === null)).toBe(true);
+			const count = async () =>
+				(await db.query("select count(*)::int as n from orchestrations")).rows[0].n as number;
+			const before = await count();
+			const res = await write(browser(cookie, crossSite), "某人");
+			expect(res.status).toBe(401);
+			expect(await res.json()).toMatchObject({
+				error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+			});
+			expect(await count()).toBe(before);
 		} finally {
 			await db.end();
 		}
@@ -330,12 +337,12 @@ describe("跨项目：只是项目甲成员的用户，他的 Cookie 请求项�
 		expect(res.status).toBe(404);
 	});
 
-	it("对照：同样的请求跨站 fetch 带 Cookie 不被当作已登录，在 #494 之前就是不带凭据的老样子（放行）；导航带着登录所以被拒绝", async () => {
+	it("对照：同样的请求跨站 fetch 带 Cookie 不被当作已登录，是不带凭据的 401；导航带着登录所以按项目拒绝（404）", async () => {
 		const asAnonymous = await cp.fetch(
 			`/orchestrations/${defaultScenario}`,
 			as(alphaCookie, crossSite),
 		);
-		expect(asAnonymous.status).toBe(200);
+		expect(asAnonymous.status).toBe(401);
 		const asLoggedIn = await rawRequest(
 			cp,
 			`/orchestrations/${defaultScenario}`,

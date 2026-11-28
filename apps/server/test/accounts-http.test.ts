@@ -651,7 +651,7 @@ describe("登出和停用关掉打开的事件流", () => {
 	});
 });
 
-describe("不登录也能照旧使用（在 #494 之前）", () => {
+describe("还没有初始化（没有任何用户）：不带凭据只能初始化、登录和用公开的接口（#494）", () => {
 	let cp: TestControlPlane;
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ defaultCredentials: false });
@@ -660,21 +660,43 @@ describe("不登录也能照旧使用（在 #494 之前）", () => {
 		await cp.close();
 	});
 
-	it("没有任何用户、不带凭据：现有接口照常可用（写操作照旧要昵称）；登录页的状态接口说要初始化", async () => {
-		expect((await cp.fetch("/projects/default/orchestrations")).status).toBe(200);
-		const noNickname = await cp.fetch("/projects/default/orchestrations", {
+	it("登录页的状态接口说要初始化；初始化、登录、登出、健康检查不要凭据；别的接口不带凭据（带了昵称也一样）401", async () => {
+		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: true });
+		expect((await cp.fetch("/health")).status).toBe(200);
+		// 初始化和登录走到了处理函数：码不对、账号不对是它们自己的错误，不是要凭据的 401。
+		const setup = await cp.fetch("/auth/setup", {
 			method: "POST",
 			headers: JSON_HEADERS,
-			body: JSON.stringify({ name: "场景" }),
+			body: JSON.stringify({
+				setup_code: "0000-0000-0000-0000-0000",
+				login_name: "boss",
+				display_name: "第一个管理员",
+				password: "first-password-1",
+			}),
 		});
-		expect(noNickname.status).toBe(400);
-		expect(await noNickname.json()).toMatchObject({ error: { code: "nickname_required" } });
-		const withNickname = await cp.fetch("/projects/default/orchestrations", {
+		expect(setup.status).toBe(403);
+		expect(await setup.json()).toMatchObject({ error: { code: "invalid_setup_code" } });
+		const login = await cp.fetch("/auth/login", {
+			method: "POST",
+			headers: JSON_HEADERS,
+			body: JSON.stringify({ login_name: "nobody", password: "whatever-password" }),
+		});
+		expect(login.status).toBe(401);
+		expect(await login.json()).toMatchObject({ error: { code: "invalid_credentials" } });
+		expect((await cp.fetch("/auth/logout", { method: "POST" })).status).toBe(204);
+
+		const read = await cp.fetch("/projects/default/orchestrations");
+		const write = await cp.fetch("/projects/default/orchestrations", {
 			method: "POST",
 			headers: { ...JSON_HEADERS, ...actAs("xiaoming") },
 			body: JSON.stringify({ name: "场景" }),
 		});
-		expect(withNickname.status).toBe(201);
+		for (const res of [read, write]) {
+			expect(res.status).toBe(401);
+			expect(await res.json()).toMatchObject({
+				error: { code: "unauthorized", message: expect.stringContaining("sfly login") },
+			});
+		}
 		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: true });
 	});
 });

@@ -246,6 +246,20 @@ export class AgentHub {
 		return info.agent_version !== this.deps.version;
 	}
 
+	/**
+	 * 此刻还要过渡放行的 Agent 的名字（#494）：连接还开着的都算，不管推没推 Welcome。两种：
+	 * - 以旧方式连接的（共享令牌、没有凭据）；
+	 * - 版本和控制面不一致的（ADR 0014：不派新任务，只等手上的任务做完再自更新）。升级控制面之后，上一版的 Agent 即使用
+	 *   Agent 凭据连接，下载归档也不带凭据，它手上的旧 SDK 不认识任务凭据（#719 之前），手上的任务要能照常做完。
+	 */
+	legacyConnected(): string[] {
+		return [...this.#connections.values()]
+			.filter(
+				(conn) => !conn.closed && (conn.auth.kind !== "agent" || this.versionMismatch(conn.info)),
+			)
+			.map((conn) => conn.name);
+	}
+
 	/** 当前在线（已推送 Welcome，含准备环境中）的连接。 */
 	connection(name: string): AgentConnection | undefined {
 		const conn = this.#connections.get(name);

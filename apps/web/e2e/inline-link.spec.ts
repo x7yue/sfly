@@ -160,18 +160,6 @@ test.describe("开发文档", () => {
 	});
 });
 
-test.describe("昵称弹窗", () => {
-	test.use({ loginAs: null });
-
-	test("「已有账号，去登录」是行内链接的样式", async ({ page }) => {
-		await page.goto("/");
-		const dialog = page.getByRole("dialog", { name: "欢迎使用 sfly" });
-		await expectInlineLink(dialog.getByRole("link", { name: "已有账号，去登录" }), {
-			dimmerAround: false,
-		});
-	});
-});
-
 test("检查器的警告框：「前往」是行内链接的样式（黄色警告框里文字和周围不同色）", async ({
 	page,
 	controlPlane,

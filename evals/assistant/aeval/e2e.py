@@ -25,8 +25,9 @@ from aeval import docker as d
 from aeval.env import ADMIN_LOGIN, Stack
 from aeval.tasks import REFERENCE_DIR, Task, stage_reference, summarize
 
-# 发话的人：控制面把会话和它的操作记在这个昵称下（别的会话接口在 #494 之前不带凭据、只带昵称）。
-# 建会话只认用户的凭据（#547）：用初始管理员登录，见 `login_cookie`。
+# 发话的人：以前控制面把会话和它的操作记在这个昵称下；#494 起昵称不再给身份，
+# 每个请求都带初始管理员的登录 Cookie（`login_cookie`，建会话从 #547 起就只认用户的凭据），
+# 会话记在这个用户名下。
 NICKNAME = "e2e"
 PROJECT = "default"
 
@@ -153,10 +154,16 @@ def follow(
     """跟着 `GET /sessions/:id/events`（从头补发、再接实时）收事件，到这一轮的 `turn_end` 为止。
     返回收到的事件，和没等到时的原因（过了时限、事件流提前结束、断开）：没等到时已经收到的事件也带回来。
 
-    时限的粒度是控制面的心跳（15 秒一次）：没有事件时最多晚这么久才发现过了时限。"""
+    时限的粒度是控制面的心跳（15 秒一次）：没有事件时最多晚这么久才发现过了时限。
+    不带凭据是 401（#494）：和别的请求一样带初始管理员的登录 Cookie
+    （登录失败抛 `ControlPlaneError`）。"""
     request = urllib.request.Request(
         f"{stack.cp_url}/sessions/{session_id}/events?after=0",
-        headers={"accept": "text/event-stream"},
+        headers={
+            "accept": "text/event-stream",
+            "cookie": login_cookie(stack),
+            "sec-fetch-site": "same-origin",
+        },
     )
     events: list[dict[str, Any]] = []
     try:

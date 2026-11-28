@@ -66,12 +66,31 @@ export function existingArtifacts(repoRoot: string): Artifacts {
 	return artifacts;
 }
 
-/** 不依赖 vitest 的 HTTP API 客户端（test/support/api-client.ts 用 expect 断言，只能在测试里用）。 */
+/**
+ * 不依赖 vitest 的 HTTP API 客户端（test/support/api-client.ts 用 expect 断言，只能在测试里用）。
+ * 控制面对不带凭据的请求一律 401（#494）：每个请求都带初始管理员的登录 Cookie（{@link allowAgents} 登录拿到的），
+ * 带 Cookie 的写请求要同源，所以一起带 `sec-fetch-site: same-origin`。
+ */
 export class PerfApi {
-	constructor(readonly httpUrl: string) {}
+	constructor(
+		readonly httpUrl: string,
+		private readonly cookie: string,
+	) {}
+
+	/** 登录的请求头：给自己发请求的地方（事件流）用。 */
+	get authHeaders(): Record<string, string> {
+		return { cookie: this.cookie, "sec-fetch-site": "same-origin" };
+	}
+
+	/** 带着登录发请求，不检查状态码。 */
+	fetch(path: string, init: RequestInit = {}): Promise<Response> {
+		const headers = new Headers(init.headers);
+		for (const [name, value] of Object.entries(this.authHeaders)) headers.set(name, value);
+		return fetch(`${this.httpUrl}${path}`, { ...init, headers });
+	}
 
 	async request(path: string, init: RequestInit = {}): Promise<Response> {
-		const res = await fetch(`${this.httpUrl}${path}`, init);
+		const res = await this.fetch(path, init);
 		if (!res.ok) {
 			throw new Error(`${init.method ?? "GET"} ${path} 返回 ${res.status}：${await res.text()}`);
 		}
@@ -290,9 +309,9 @@ export const PERF_ADMIN_ENV = {
 
 /**
  * 以初始管理员（{@link PERF_ADMIN_ENV}）登录这个控制面，登记按名字签发 Agent 凭据的办法：真实 Agent（`startRealAgent`）和
- * 假 Agent（`FakeAgent.connect`）连接时自己取。项结束时撤掉。
+ * 假 Agent（`FakeAgent.connect`）连接时自己取。项结束时撤掉。返回登录 Cookie（`sfly_login=…`），交给 {@link PerfApi}。
  */
-export async function allowAgents(ctx: PerfContext, server: BundledServer): Promise<void> {
+export async function allowAgents(ctx: PerfContext, server: BundledServer): Promise<string> {
 	const login = await fetch(`${server.httpUrl}/auth/login`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -304,20 +323,24 @@ export async function allowAgents(ctx: PerfContext, server: BundledServer): Prom
 	if (!login.ok) throw new Error(`初始管理员登录返回 ${login.status}：${await login.text()}`);
 	const cookie = /sfly_login=([^;]*)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
 	const issue = async (name: string) => {
-		const res = await fetch(`${server.httpUrl}/agents/${encodeURIComponent(name)}/credentials`, {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				cookie: `sfly_login=${cookie}`,
-				"sec-fetch-site": "same-origin",
+		const res = await fetch(
+			`${server.httpUrl}/projects/default/agents/${encodeURIComponent(name)}/credentials`,
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie: `sfly_login=${cookie}`,
+					"sec-fetch-site": "same-origin",
+				},
+				body: "{}",
 			},
-			body: "{}",
-		});
+		);
 		if (res.status !== 201)
 			throw new Error(`签发 ${name} 的 Agent 凭据返回 ${res.status}：${await res.text()}`);
 		return ((await res.json()) as { token: string }).token;
 	};
 	ctx.defer(registerCredentialIssuer(server.grpcUrl, issue));
+	return `sfly_login=${cookie}`;
 }
 
 /** 一套运行中的被测对象。 */
@@ -354,8 +377,7 @@ export async function startStack(
 		createStubVenv(),
 	]);
 	ctx.defer(() => server.stop());
-	await allowAgents(ctx, server);
-	const api = new PerfApi(server.httpUrl);
+	const api = new PerfApi(server.httpUrl, await allowAgents(ctx, server));
 	await api.publishStubPackage(ctx.repoRoot, ctx.tmpDir);
 	const agent = await startRealAgent({
 		grpcUrl: server.grpcUrl,

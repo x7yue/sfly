@@ -1,12 +1,6 @@
 // 访问检查要用的、只和契约有关的规则（ADR 0029「项目从请求的哪里来」「一处检查」）：
 // 一个接口的项目从哪里得出，以及 Agent 凭据和任务凭据各自能调用的接口清单。不依赖 Fastify，也不碰数据库。
-import {
-	PROJECT_PARAM,
-	pathParamNames,
-	type ResourceKind,
-	type ResourceTarget,
-	type RouteDef,
-} from "@sfly/schema";
+import { PROJECT_PARAM, pathParamNames, type ResourceTarget, type RouteDef } from "@sfly/schema";
 import type { z } from "zod";
 
 /**
@@ -147,43 +141,38 @@ export const LOGIN_ONLY_ROUTES = {
 } as const satisfies Record<string, string>;
 
 /**
- * 现在就要求凭据的资源类别：不带凭据（和带共享令牌）是 401 / 403，不走「不带凭据照旧放行」的过渡。
- * 过渡放行是为了让已有的用法（昵称、共享令牌）在 #494 之前不受影响；这些类别是新的，没有旧用法要保持，
- * 放行就是没有检查：项目的管理面（项目令牌；以后的成员、项目密钥）没有身份就没法做。#494 开始所有类别都要求凭据，
- * 到时这张表删掉。
+ * 不带凭据（和只带共享令牌）的请求一律 401（#494，ADR 0029「强制」）：说明写明怎么带上凭据。个别接口有自己的说明。
+ * 公开的接口（`system`）和账号类接口里不看凭据的（登录、初始化、状态、登出）不走到这里。
  */
-export const REQUIRES_CREDENTIAL: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["project"]);
+export const CREDENTIAL_REQUIRED =
+	"需要登录或令牌：命令行运行 `sfly login`（脚本里设环境变量 SFLY_API_TOKEN），控制台先登录，API 客户端在 `token` 里给个人令牌或项目令牌（请求头 `Authorization: Bearer <令牌>`）";
 
-/**
- * 现在就要求凭据的接口（在上面按资源类别要求的之外，按接口）：签发、列出、吊销 Agent 凭据，停用、恢复 Agent（#492）。
- * Agent 凭据是新这一套信任的根——不带任何凭据的请求能给任意名字签发 Agent 凭据，再用它连上来顶掉用共享令牌连着的那一台——所以
- * 这几个不走「不带凭据照旧放行」的过渡，不能匿名；范围照常要「管理」。Agent 的别的接口（列表、更新……）在 #494 之前照旧。
- */
-export const REQUIRES_CREDENTIAL_ROUTES: ReadonlySet<string> = new Set([
-	"GET /projects/:project/agents/:name/credentials",
-	"POST /projects/:project/agents/:name/credentials",
-	"DELETE /projects/:project/agents/:name/credentials/:id",
-	"POST /projects/:project/agents/:name/disable",
-	"POST /projects/:project/agents/:name/enable",
-	// 建会话（#547）：会话令牌代发起人干活，发起人是用户（`sessions.created_by_user_id` 从凭据取），所以只认用户的凭据
-	// （登录 Cookie、个人令牌）。会话的别的接口在 #494 之前照旧。
-	"POST /projects/:project/sessions",
-]);
-
-/** 要求凭据的接口不带凭据时 401 的说明，没有写的用「需要登录或令牌」。 */
+/** 不带凭据时 401 的说明里另有要说的接口。 */
 export const CREDENTIAL_REQUIRED_MESSAGES: Readonly<Record<string, string>> = {
 	"POST /projects/:project/sessions":
 		"建会话需要登录的用户：先登录控制台，或者在命令行运行 `sfly login`，再带上登录 Cookie 或个人令牌" +
 		"（`Authorization: Bearer <个人令牌>`）；不带凭据、项目令牌、会话令牌都不行（会话令牌代发起人干活，建会话要有发起人）",
 };
 
-/** 这个接口现在就要求凭据（按资源类别，或者按接口）。 */
-export const requiresCredential = (def: Pick<RouteDef, "method" | "path" | "resource">): boolean =>
-	REQUIRES_CREDENTIAL.has(def.resource.kind) || REQUIRES_CREDENTIAL_ROUTES.has(routeKey(def));
-
-/** 要求凭据的接口不带凭据时的 401 说明。 */
+/** 不带凭据时的 401 说明。 */
 export const credentialRequiredMessage = (def: Pick<RouteDef, "method" | "path">): string =>
-	CREDENTIAL_REQUIRED_MESSAGES[routeKey(def)] ?? "需要登录或令牌";
+	CREDENTIAL_REQUIRED_MESSAGES[routeKey(def)] ?? CREDENTIAL_REQUIRED;
+
+/**
+ * 过渡窗口里，以旧方式连接的 Agent（共享令牌、没有凭据，#492 记在连接上）、升级控制面之后正在做完手上任务的上一版 Agent
+ * （版本不一致：它下载归档不带凭据，#719 之前），和它们手上的旧 SDK 还要用的三条 HTTP 通道
+ * （ADR 0029「迁移与过渡」，#494）。不带凭据和带共享令牌的请求走同一套判断，只看 URL 里的版本或任务，不当作「某一台 Agent」：
+ * - `archive`：下载节点包归档——有一个还没结束的任务派给了一台以旧方式连接的 Agent，节点要的正是这个包的这个版本；
+ * - `upload`：上传产物——任务派给了一台以旧方式连接的 Agent，还在上报期内（和产物保存时的判断一样）；
+ * - `task_artifacts`：任务里下载产物（旧 SDK 不认识任务凭据）——这次运行里此刻有任务在一台以旧方式连接的 Agent 上执行。
+ * 任何一个项目登记了工作台，窗口就关上（`ProjectWorkbench.credentialRequired`）；之后这三条也是 401。
+ */
+export const LEGACY_AGENT_ROUTES = {
+	"GET /projects/:project/packages/:name/versions/:version/archive": "archive",
+	"PUT /tasks/:id/artifacts/*": "upload",
+	"GET /tasks/:id/artifacts/*": "task_artifacts",
+} as const satisfies Record<string, "archive" | "upload" | "task_artifacts">;
+export type LegacyAgentRoute = (typeof LEGACY_AGENT_ROUTES)[keyof typeof LEGACY_AGENT_ROUTES];
 
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
@@ -255,10 +244,7 @@ export function checkCredentialRoutes(contract: readonly RouteDef[]): string[] {
 		["TASK_CREDENTIAL_ROUTES", TASK_CREDENTIAL_ROUTES],
 		["ACCOUNT_ROUTES", ACCOUNT_ROUTES],
 		["LOGIN_ONLY_ROUTES", LOGIN_ONLY_ROUTES],
-		[
-			"REQUIRES_CREDENTIAL_ROUTES",
-			Object.fromEntries([...REQUIRES_CREDENTIAL_ROUTES].map((k) => [k, true])),
-		],
+		["LEGACY_AGENT_ROUTES", LEGACY_AGENT_ROUTES],
 		["REVOKE_OWN_ROUTES", Object.fromEntries([...REVOKE_OWN_ROUTES].map((key) => [key, true]))],
 		["CREDENTIAL_REQUIRED_MESSAGES", CREDENTIAL_REQUIRED_MESSAGES],
 	].flatMap(([name, list]) =>

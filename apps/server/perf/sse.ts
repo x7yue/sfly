@@ -57,10 +57,12 @@ export interface SseStream {
 export async function openSse(
 	url: string,
 	onEvent: (event: SseEvent, receivedAtMs: number) => void,
+	/** 额外的请求头：控制面的事件流不带凭据是 401（#494），传 `PerfApi.authHeaders`。 */
+	headers: Record<string, string> = {},
 ): Promise<SseStream> {
 	const abort = new AbortController();
 	const res = await fetch(url, {
-		headers: { accept: "text/event-stream" },
+		headers: { ...headers, accept: "text/event-stream" },
 		signal: abort.signal,
 	});
 	if (res.status !== 200 || !res.body) {

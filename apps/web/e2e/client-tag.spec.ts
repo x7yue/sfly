@@ -11,7 +11,7 @@ const CLAUDE_CODE = "sfly-cli/0.5.0 agent/claude-code";
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
-/** 像命令行那样写入：带昵称，client 不为空时再带 `x-sfly-client`。 */
+/** 像命令行那样写入：以这个人的身份（`actAs`，换成他的个人令牌），client 不为空时再带 `x-sfly-client`。 */
 async function send(
 	cp: TestControlPlane,
 	path: string,

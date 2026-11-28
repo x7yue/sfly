@@ -105,7 +105,11 @@ describeWithAgent("验收 S1：数据流", () => {
 		expect(fetched.agent).toBe("s1-b");
 		expect(fetched.attempts[0]?.inputs).toEqual({ urls: refs });
 		expect(fetched.outputs).toEqual({ texts: { "问候/greeting.txt": "你好，世界！" } });
-		expect(await (await fetch(refs["问候/greeting.txt"] as string)).text()).toBe("你好，世界！");
+		expect(
+			await (
+				await fetch(refs["问候/greeting.txt"] as string, { headers: await cp.users.as("tester") })
+			).text(),
+		).toBe("你好，世界！");
 
 		// A 启动的常驻进程在节点结束后继续存活，直到 always 节点 C 把它清理掉。
 		const boom = nodeOf(main, "boom");

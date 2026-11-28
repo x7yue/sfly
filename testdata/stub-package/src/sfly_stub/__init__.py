@@ -109,13 +109,14 @@ def stop_process(ctx: Context, pid: int | None = None, wait: float = 10) -> dict
 
 @node(title="下载", outputs=["texts"])
 def download(ctx: Context, urls: dict[str, str]) -> dict[str, Any]:
-    """按引用地址下载文本（读取上游节点的产物，urls 即 artifacts 节点输出的 refs）。"""
-    import urllib.request
+    """按引用地址下载文本（读取上游节点的产物，urls 即 artifacts 节点输出的 refs）。
 
+    经 SDK 下载：带任务凭据（`SFLY_TASK_TOKEN`），控制面不收不带凭据的请求（#494）。
+    """
     texts = {}
-    for name, url in urls.items():
-        with urllib.request.urlopen(url, timeout=30) as response:
-            texts[name] = response.read().decode("utf-8")
+    for index, (name, url) in enumerate(urls.items()):
+        path = ctx.artifacts.download(url, f"download-{index}")
+        texts[name] = path.read_text(encoding="utf-8")
     return {"texts": texts}
 
 

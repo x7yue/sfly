@@ -2,6 +2,9 @@
 # 启动一套独立的 sfly 验证环境：独立 PostgreSQL 库 + 从源码运行的控制面（托管刚构建的前端）+ 一个真实 Agent。
 # 用法：up.sh [--no-build]
 # 成功时最后一行打印 RUN=<运行目录>；运行目录里的 state.env 记录地址、端口、进程组和库名，doctor.sh / down.sh 读取它。
+# 控制面对不带凭据的请求一律 401（#494）：控制面带一个初始管理员（state.env 的 ADMIN_LOGIN、ADMIN_PASSWORD，浏览器里用它登录），
+# 登录 Cookie 存在 COOKIES（curl -b "$COOKIES" 读 API），sfly 命令行的登录存在 CLI_HOME（SFLY_HOME，publish-stub.sh 用它），
+# Agent 用管理员为它签发的 Agent 凭据连接。state.env 和这两个文件只有属主能读。
 set -euo pipefail
 
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -37,9 +40,13 @@ DB_URL=$(python3 -c 'import sys,urllib.parse as u; p=u.urlparse(sys.argv[1]); pr
 HTTP_URL="http://127.0.0.1:$HTTP_PORT"
 GRPC_URL="http://127.0.0.1:$GRPC_PORT"
 AGENT_NAME=verify-agent
+ADMIN_LOGIN=verify_admin
+ADMIN_PASSWORD=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+COOKIES="$RUN/cookies.txt"
+CLI_HOME="$RUN/cli"
 
 write_state() {
-	cat >"$RUN/state.env" <<EOF
+	(umask 077 && cat >"$RUN/state.env" <<EOF
 RUN=$RUN
 REPO=$REPO
 HTTP_URL=$HTTP_URL
@@ -53,7 +60,12 @@ AGENT_NAME=$AGENT_NAME
 SERVER_PGID=${SERVER_PGID:-}
 AGENT_PGID=${AGENT_PGID:-}
 BROWSER_SESSION=sfly-verify-$(basename "$RUN")
+ADMIN_LOGIN=$ADMIN_LOGIN
+ADMIN_PASSWORD=$ADMIN_PASSWORD
+COOKIES=$COOKIES
+CLI_HOME=$CLI_HOME
 EOF
+	)
 	ln -sfn "$RUN" "$VERIFY_ROOT/current"
 }
 fail() {
@@ -65,7 +77,9 @@ psql "$ADMIN_URL" -qc "CREATE DATABASE \"$DB\"" >/dev/null
 write_state
 
 # 控制面：setsid 让它自成进程组，down.sh 只杀这个进程组。迁移在启动时自动执行。
-setsid env DATABASE_URL="$DB_URL" SFLY_DATA_DIR="$RUN/data" \
+# 初始管理员的密码经环境变量交给控制面（库里还没有用户时建出来），不在命令行参数里。
+SFLY_ADMIN_PASSWORD=$ADMIN_PASSWORD setsid env DATABASE_URL="$DB_URL" SFLY_DATA_DIR="$RUN/data" \
+	SFLY_ADMIN_LOGIN="$ADMIN_LOGIN" \
 	SFLY_HTTP_HOST=127.0.0.1 SFLY_HTTP_PORT="$HTTP_PORT" \
 	SFLY_GRPC_HOST=127.0.0.1 SFLY_GRPC_PORT="$GRPC_PORT" \
 	SFLY_PUBLIC_URL="$HTTP_URL" SFLY_PUBLIC_GRPC_URL="$GRPC_URL" \
@@ -84,10 +98,23 @@ for _ in $(seq 120); do
 done
 curl -fsS "$HTTP_URL/api/health" | grep -q '"database":"ok"' || fail "控制面 60 秒内没有就绪"
 
+# 管理员登录（Cookie 存到 $COOKIES；带 Cookie 的写请求要 sec-fetch-site: same-origin），给 Agent 签发 Agent 凭据；
+# sfly 命令行也登录一次（令牌存在 $CLI_HOME/credentials.json）。密码经标准输入，凭据不打印。
+(umask 077 && : >"$COOKIES")
+printf '{"login_name":"%s","password":"%s"}' "$ADMIN_LOGIN" "$ADMIN_PASSWORD" |
+	curl -fsS -c "$COOKIES" -H 'content-type: application/json' -H 'sec-fetch-site: same-origin' --data-binary @- \
+		"$HTTP_URL/api/auth/login" >/dev/null || fail "管理员登录"
+AGENT_TOKEN=$(curl -fsS -b "$COOKIES" -H 'content-type: application/json' -H 'sec-fetch-site: same-origin' -d '{}' \
+	"$HTTP_URL/api/projects/default/agents/$AGENT_NAME/credentials" |
+	python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])') || fail "给 $AGENT_NAME 签发 Agent 凭据"
+printf '%s\n' "$ADMIN_PASSWORD" | SFLY_HOME="$CLI_HOME" uv run --locked --quiet sfly login --server "$HTTP_URL" \
+	--login-name "$ADMIN_LOGIN" --password-stdin >/dev/null || fail "sfly login（命令行登录）"
+
 # 真实 Agent：独立 SFLY_HOME / venv / 工作目录；用 PATH 上的 uv，不让 Agent 去外网装 uv。
 # 首次连上后它用 uv 建空 venv、从控制面下载同版本的 SDK 运行时，然后才输出 welcome 事件。
+# Agent 凭据经环境变量 SFLY_TOKEN 交给 Agent，不在命令行参数里。
 mkdir -p "$RUN/agent/home"
-setsid env SFLY_HOME="$RUN/agent/home" "$REPO/target/debug/sfly-agent" \
+SFLY_TOKEN=$AGENT_TOKEN setsid env SFLY_HOME="$RUN/agent/home" "$REPO/target/debug/sfly-agent" \
 	--server "$GRPC_URL" --name "$AGENT_NAME" \
 	--venv "$RUN/agent/venv" --work-dir "$RUN/agent/work" --uv uv \
 	>"$RUN/evidence/logs/agent.jsonl" 2>"$RUN/evidence/logs/agent.stderr.log" &
