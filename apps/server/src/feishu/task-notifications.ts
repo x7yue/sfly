@@ -49,7 +49,7 @@ export class TaskNotifications {
 		private readonly deps: {
 			db: Db;
 			clock: Clock;
-			logs: Pick<TaskLogs, "appendSystem" | "runSecrets">;
+			logs: Pick<TaskLogs, "appendSystem" | "withRunSecrets">;
 			delivery: Pick<FeishuDelivery, "wake">;
 		},
 	) {}
@@ -95,30 +95,31 @@ export class TaskNotifications {
 		if (!referenced.includes(event.bot)) {
 			return `飞书机器人「${event.bot}」不是通过「飞书机器人」类型的参数传给这个节点的，把它声明成 sfly.FeishuBot 类型的参数`;
 		}
-		// 发到群里的就是存下的这份：先按这次运行的 secret 值打码（#505），再按长度上限组装。
-		const secrets = await this.deps.logs.runSecrets(runId);
-		// 加密副本已经删除（#505）：迟到的通知丢弃，已经计过数，不发。
-		if (!secrets) return undefined;
-		const message =
-			event.text === undefined
-				? rawMessage(maskValue(event.message, secrets))
-				: { body: textMessage(secrets.mask(event.text), event.at_all) };
-		if ("problem" in message) return message.problem;
-		const { body } = message;
-		return this.deps.db.transaction(async (tx) => {
-			if (!(await registeredBots(tx, project, [event.bot])).has(event.bot)) {
-				return feishuBotGone(event.bot);
-			}
-			await enqueueFeishuMessage(tx, {
-				botName: event.bot,
-				source: "notify",
-				runId,
-				taskId: notification.taskId,
-				body,
-				now: this.deps.clock.now(),
+		// 发到群里的就是存下的这份：先按这次运行的 secret 值打码（#505），再按长度上限组装。准入和入队拿着运行的闸门做
+		// （`TaskLogs.withRunSecrets`）：加密副本已经删除时迟到的通知丢弃、计数，不发。
+		const problem = await this.deps.logs.withRunSecrets(runId, async (secrets) => {
+			const message =
+				event.text === undefined
+					? rawMessage(maskValue(event.message, secrets))
+					: { body: textMessage(secrets.mask(event.text), event.at_all) };
+			if ("problem" in message) return message.problem;
+			const { body } = message;
+			return this.deps.db.transaction(async (tx) => {
+				if (!(await registeredBots(tx, project, [event.bot])).has(event.bot)) {
+					return feishuBotGone(event.bot);
+				}
+				await enqueueFeishuMessage(tx, {
+					botName: event.bot,
+					source: "notify",
+					runId,
+					taskId: notification.taskId,
+					body,
+					now: this.deps.clock.now(),
+				});
+				return null;
 			});
-			return undefined;
 		});
+		return problem ?? undefined;
 	}
 }
 

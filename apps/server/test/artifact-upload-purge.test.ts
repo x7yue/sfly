@@ -127,7 +127,7 @@ describe("上传进行中运行被保留期清理", () => {
 			db: database.db,
 			clock: cp.clock,
 			dataDir: cp.dataDir,
-			onVaultDeleted: () => {},
+			deletingVault: (_runId, work) => work(),
 		});
 	const markDue = (runId: string) =>
 		database.pool.query("update runs set ended_at = '2000-01-01' where id = $1", [runId]);

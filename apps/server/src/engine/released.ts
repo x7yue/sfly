@@ -1,7 +1,9 @@
 // 一次尝试什么时候离开了 Agent 之手（#505，ADR 0029「密钥」）：结果已被 Ack；重连时 Hello 里没有列出它；或者控制面在 Welcome 里
-// 告诉 Agent 放弃它、之后这条连接的心跳里不再列出它。租约过期不算。运行结束、每次尝试都离手之后删除运行的加密副本。
+// 告诉 Agent 放弃它、之后这条连接的心跳里不再列出它。租约过期不算。运行结束、每次尝试都离手之后删除运行的加密副本：
+// 在那一步提交之后另起一个事务，拿着这个运行的闸门做（`RunSecrets.deleting`），不插在一条上报的准入和写入之间。
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
-import type { Tx } from "../db/database.js";
+import type { Clock } from "../clock.js";
+import type { Db, Tx } from "../db/database.js";
 import { chainInstances, runs, tasks } from "../db/schema.js";
 import type { RunSecrets } from "../secrets/run-secrets.js";
 import { isUuid } from "../util/uuid.js";
@@ -40,7 +42,23 @@ export async function runReleased(tx: Tx, runId: string): Promise<boolean> {
 
 /** 记下离手、在运行结束而且全都离手时删除加密副本；引擎在已有的那一步事务里调用。 */
 export class Releases {
-	constructor(private readonly secrets: RunSecrets) {}
+	/** 还没做完的删除（关闭控制面时等它们，{@link idle}）。 */
+	readonly #deleting = new Set<Promise<void>>();
+
+	constructor(
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			secrets: RunSecrets;
+			/** 删除副本的事务失败（保留期清理会再删）。 */
+			onError: (what: string, error: unknown) => void;
+		},
+	) {}
+
+	/** 等还没做完的删除做完。 */
+	async idle(): Promise<void> {
+		while (this.#deleting.size > 0) await Promise.all([...this.#deleting]);
+	}
 
 	/** 结果已被 Ack（被接受的，和被忽略、照样 Ack 的旧尝试）：副本已经删除时，这条结果算一条迟到的上报。 */
 	async acked(step: Step, agentName: string, ref: AttemptRef): Promise<void> {
@@ -66,8 +84,8 @@ export class Releases {
 			.from(tasks)
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(and(eq(tasks.id, ref.taskId), eq(tasks.attempt, ref.attempt)));
-		if (row?.masked && (await this.secrets.deleted(step.tx, row.runId))) {
-			await this.secrets.countDropped(step.tx, row.runId);
+		if (row?.masked && (await this.deps.secrets.deleted(step.tx, row.runId))) {
+			await this.deps.secrets.countDropped(step.tx, row.runId);
 		}
 	}
 
@@ -144,7 +162,27 @@ export class Releases {
 				.from(runs)
 				.where(eq(runs.id, runId));
 			if (!run?.masked || run.deletedAt !== null) continue;
-			if (await runReleased(step.tx, runId)) await this.secrets.delete(step, runId);
+			if (await runReleased(step.tx, runId)) step.afterCommit.push(() => this.#deleteLater(runId));
 		}
+	}
+
+	/**
+	 * 删除副本：在这一步提交之后另起一个事务，拿着闸门做（不在引擎的事务里拿闸门：拿着行锁等闸门、上报拿着闸门等行锁就等死了）。
+	 * 事务里再确认一次全都离手（提交之后到这里之间运行不会再有新的尝试，确认是防御）。失败时副本留着，保留期清理会删。
+	 */
+	#deleteLater(runId: string): void {
+		const { db, clock, secrets } = this.deps;
+		const done = secrets
+			.deleting(runId, () =>
+				db.transaction(async (tx) =>
+					(await runReleased(tx, runId)) ? secrets.deleteIn(tx, runId, clock.now()) : false,
+				),
+			)
+			.then(
+				() => undefined,
+				(error) => this.deps.onError(`删除运行 ${runId} 的加密副本失败：`, error),
+			);
+		this.#deleting.add(done);
+		void done.then(() => this.#deleting.delete(done));
 	}
 }

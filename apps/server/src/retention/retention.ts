@@ -49,8 +49,11 @@ export class Retention {
 			retentionDays?: number;
 			/** {@link Retention.isPurgedAfterWait} 最多等多久（毫秒），默认 {@link DEFAULT_PURGE_WAIT_MS}。 */
 			purgeWaitMs?: number;
-			/** 清理时删掉了这个运行的加密副本（#505：Agent 一直没回来，保留期就是上限），提交之后告诉 `RunSecrets`。 */
-			onVaultDeleted: (runId: string) => void;
+			/**
+			 * 拿着这个运行的闸门做清理的事务（`RunSecrets.deleting`，#505：Agent 一直没回来，保留期就是删除副本的上限）：
+			 * `work` 返回删没删副本，提交之后、放开闸门之前它记下已删除；上报的准入和写入不会插在中间。
+			 */
+			deletingVault: (runId: string, work: () => Promise<boolean>) => Promise<boolean>;
 		},
 	) {}
 
@@ -129,46 +132,50 @@ export class Retention {
 			.where(and(isNull(runs.purgedAt), lt(runs.endedAt, cutoff)))
 			.limit(BATCH);
 		for (const { id } of due) {
-			const vaultDeleted = await this.deps.db.transaction(async (tx) => {
-				// 先锁住这个运行的行（`FOR UPDATE`），再删文件、删产物行、标记已清理，一起提交（#649 的审查）：产物上传
-				// （`ArtifactStore`）在 `FOR KEY SHARE` 的锁下核对运行没有被清理、改名、记账，两边不会交错：上传在改名中时这里等它
-				// 提交，之后删文件和行时连它存下的一起删；这里拿到锁之后上传的核对要等这个事务提交、读到「已清理」，不改名也不记账。
-				// 不然上传进行中运行被清理时，文件会落进已经清理过的目录、库里多一行，没有人再删。
-				// 次序没变：先删文件、再标记，在同一个事务里：中途出错或进程被杀，事务回滚、没有标记，下一次扫描重新处理（删除是
-				// 幂等的）。代价是删文件期间事务开着、持着这一个运行行的锁（一个运行一把，批次里顺序做）：大目录要几秒；这个运行
-				// 结束已经超过保留期，没有别的事务要更新它。
-				const [locked] = await tx
-					.select({ purgedAt: runs.purgedAt })
-					.from(runs)
-					.where(eq(runs.id, id))
-					.for("update");
-				if (!locked || locked.purgedAt !== null) return false; // 选出来之后别处已经清理了
-				await Promise.all(
-					["logs", "artifacts"].map((dir) =>
-						rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),
-					),
-				);
-				const runTasks = tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.runId, id));
-				await tx.delete(taskActions).where(inArray(taskActions.taskId, runTasks));
-				await tx.delete(taskActionNames).where(inArray(taskActionNames.taskId, runTasks));
-				await tx.delete(taskActionSummaries).where(inArray(taskActionSummaries.taskId, runTasks));
-				await tx
-					.delete(apiTokens)
-					.where(and(eq(apiTokens.kind, "task"), inArray(apiTokens.taskId, runTasks)));
-				await tx.delete(artifacts).where(eq(artifacts.runId, id));
-				await tx.delete(feishuMessages).where(eq(feishuMessages.runId, id));
-				const vaults = await tx.delete(runVaults).where(eq(runVaults.runId, id)).returning();
-				await tx
-					.update(runs)
-					.set({
-						purgedAt: now,
-						...(vaults.length > 0 && { vaultDeletedAt: now }),
-					})
-					.where(eq(runs.id, id));
-				return vaults.length > 0;
-			});
-			if (vaultDeleted) this.deps.onVaultDeleted(id);
+			await this.deps.deletingVault(id, () => this.#purge(id, now));
 		}
 		return due.length;
+	}
+
+	/** 清理一个运行（一个事务），返回删没删它的加密副本。 */
+	#purge(id: string, now: Date): Promise<boolean> {
+		return this.deps.db.transaction(async (tx) => {
+			// 先锁住这个运行的行（`FOR UPDATE`），再删文件、删产物行、标记已清理，一起提交（#649 的审查）：产物上传
+			// （`ArtifactStore`）在 `FOR KEY SHARE` 的锁下核对运行没有被清理、改名、记账，两边不会交错：上传在改名中时这里等它
+			// 提交，之后删文件和行时连它存下的一起删；这里拿到锁之后上传的核对要等这个事务提交、读到「已清理」，不改名也不记账。
+			// 不然上传进行中运行被清理时，文件会落进已经清理过的目录、库里多一行，没有人再删。
+			// 次序没变：先删文件、再标记，在同一个事务里：中途出错或进程被杀，事务回滚、没有标记，下一次扫描重新处理（删除是
+			// 幂等的）。代价是删文件期间事务开着、持着这一个运行行的锁（一个运行一把，批次里顺序做）：大目录要几秒；这个运行
+			// 结束已经超过保留期，没有别的事务要更新它。
+			const [locked] = await tx
+				.select({ purgedAt: runs.purgedAt })
+				.from(runs)
+				.where(eq(runs.id, id))
+				.for("update");
+			if (!locked || locked.purgedAt !== null) return false; // 选出来之后别处已经清理了
+			await Promise.all(
+				["logs", "artifacts"].map((dir) =>
+					rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),
+				),
+			);
+			const runTasks = tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.runId, id));
+			await tx.delete(taskActions).where(inArray(taskActions.taskId, runTasks));
+			await tx.delete(taskActionNames).where(inArray(taskActionNames.taskId, runTasks));
+			await tx.delete(taskActionSummaries).where(inArray(taskActionSummaries.taskId, runTasks));
+			await tx
+				.delete(apiTokens)
+				.where(and(eq(apiTokens.kind, "task"), inArray(apiTokens.taskId, runTasks)));
+			await tx.delete(artifacts).where(eq(artifacts.runId, id));
+			await tx.delete(feishuMessages).where(eq(feishuMessages.runId, id));
+			const vaults = await tx.delete(runVaults).where(eq(runVaults.runId, id)).returning();
+			await tx
+				.update(runs)
+				.set({
+					purgedAt: now,
+					...(vaults.length > 0 && { vaultDeletedAt: now }),
+				})
+				.where(eq(runs.id, id));
+			return vaults.length > 0;
+		});
 	}
 }

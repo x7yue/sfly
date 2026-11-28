@@ -214,8 +214,14 @@ export class TaskMetrics {
 			clock: Clock;
 			/** 保留期与分区（#32）：写入前确保分区存在。 */
 			retention: MetricRetention;
-			/** 标签的值写进库之前按这次运行的 secret 值打码（#505，`TaskLogs.runSecrets`）。 */
-			secrets: (runId: string) => Promise<SecretSet | undefined>;
+			/**
+			 * 一批点的准入：标签的值按这次运行的 secret 值打码、攒进内存，在 `work` 里做完（#505，`TaskLogs.withRunSecrets`，
+			 * 和删除加密副本互斥）；副本已经删除时这一批丢弃、计数，不调 `work`。攒下的点是准入时打过码的，之后写库时副本删了也照写。
+			 */
+			secrets: <T>(
+				runId: string,
+				work: (secrets: SecretSet) => Promise<T>,
+			) => Promise<T | undefined>;
 			/** 单个任务指标数据的上限（字节，按每点 28 字节折算成点数），默认 {@link DEFAULT_METRIC_LIMIT_BYTES}。 */
 			limitBytes?: number;
 		},
@@ -249,89 +255,91 @@ export class TaskMetrics {
 			}
 			const full = new Set<Series>();
 			const accepted: MetricPointView[] = [];
-			const secrets = await this.deps.secrets(state.runId);
 			// 加密副本已经删除（#505）：迟到的点丢弃，已经计过数。
-			if (!secrets) return;
-			for (let i = 0; i < batch.points.length; i++) {
-				const reported = batch.points[i] as MetricBatch["points"][number];
-				const keys = state.declared.get(reported.name);
-				if (keys === undefined) continue;
-				const labels = maskedLabels(reported.labels, secrets);
-				const p = labels === reported.labels ? reported : { ...reported, labels };
-				if (!labelsMatch(p.labels, keys)) {
-					state.dropped++;
-					state.countersDirty = true;
-					continue;
-				}
-				if (![p.value, p.min, p.max].every(Number.isFinite)) continue;
-				const agentT = agentSeconds(p.timeUnixS);
-				// 能折算的读数（去重用）和控制面时间；没有读数的点（旧版本 Agent）按收到的时刻排。
-				const occurredAt = source.clock.occurredAt(p.monotonicMs);
-				const mono = occurredAt && Number(p.monotonicMs);
-				let t = occurredAt ? Math.floor(occurredAt.getTime() / 1000) : arrival.of(i);
-				const key = seriesKey(p.name, p.labels);
-				let series = state.series.get(key);
-				if (series && series.points > 0) {
-					if (isDuplicate(series, t, mono)) continue;
-					if (t <= series.lastT) t = series.lastT + 1;
-					if (series.legacyStarts) while (series.legacyStarts.has(t)) t++;
-				}
-				// 控制面时间超出可接收范围的丢弃（例如排队太久、已经过了保留期的点），不为它建分区（#32）。
-				if (!this.deps.retention.accepts(t)) continue;
-				if (state.truncated) continue;
-				if (state.points >= this.#limitPoints) {
-					state.truncated = true;
-					state.countersDirty = true;
-					continue;
-				}
-				if (!series && keys.length > 0) {
-					if (state.labeledSeries >= state.maxLabeledSeries) {
+			const admitted = await this.deps.secrets(state.runId, async (secrets) => {
+				for (let i = 0; i < batch.points.length; i++) {
+					const reported = batch.points[i] as MetricBatch["points"][number];
+					const keys = state.declared.get(reported.name);
+					if (keys === undefined) continue;
+					const labels = maskedLabels(reported.labels, secrets);
+					const p = labels === reported.labels ? reported : { ...reported, labels };
+					if (!labelsMatch(p.labels, keys)) {
 						state.dropped++;
-						state.seriesCapped = true;
 						state.countersDirty = true;
 						continue;
 					}
-					state.labeledSeries++;
+					if (![p.value, p.min, p.max].every(Number.isFinite)) continue;
+					const agentT = agentSeconds(p.timeUnixS);
+					// 能折算的读数（去重用）和控制面时间；没有读数的点（旧版本 Agent）按收到的时刻排。
+					const occurredAt = source.clock.occurredAt(p.monotonicMs);
+					const mono = occurredAt && Number(p.monotonicMs);
+					let t = occurredAt ? Math.floor(occurredAt.getTime() / 1000) : arrival.of(i);
+					const key = seriesKey(p.name, p.labels);
+					let series = state.series.get(key);
+					if (series && series.points > 0) {
+						if (isDuplicate(series, t, mono)) continue;
+						if (t <= series.lastT) t = series.lastT + 1;
+						if (series.legacyStarts) while (series.legacyStarts.has(t)) t++;
+					}
+					// 控制面时间超出可接收范围的丢弃（例如排队太久、已经过了保留期的点），不为它建分区（#32）。
+					if (!this.deps.retention.accepts(t)) continue;
+					if (state.truncated) continue;
+					if (state.points >= this.#limitPoints) {
+						state.truncated = true;
+						state.countersDirty = true;
+						continue;
+					}
+					if (!series && keys.length > 0) {
+						if (state.labeledSeries >= state.maxLabeledSeries) {
+							state.dropped++;
+							state.seriesCapped = true;
+							state.countersDirty = true;
+							continue;
+						}
+						state.labeledSeries++;
+					}
+					if (!series) {
+						series = emptySeries(p.name, sortedLabels(p.labels));
+						state.series.set(key, series);
+					}
+					const point = {
+						t,
+						agentT,
+						value: p.value,
+						min: Math.min(p.min, p.value),
+						max: Math.max(p.max, p.value),
+					};
+					addPoint(series, point);
+					series.lastMono = mono;
+					accepted.push({
+						name: p.name,
+						labels: series.labels,
+						time: new Date(t * 1000).toISOString(),
+						agent_time: new Date(agentT * 1000).toISOString(),
+						value: point.value,
+						min: point.min,
+						max: point.max,
+					});
+					series.dirtySince ??= now;
+					state.points++;
+					if (series.segment.length >= SEGMENT_POINTS) {
+						series.closed.push(series.segment);
+						series.segment = [];
+						full.add(series);
+					}
 				}
-				if (!series) {
-					series = emptySeries(p.name, sortedLabels(p.labels));
-					state.series.set(key, series);
+				if (accepted.length > 0) {
+					this.increments.publish(state.runId, {
+						task_id: state.taskId,
+						chain_instance_id: state.chainInstanceId,
+						node_id: state.nodeId,
+						attempt: state.attempt,
+						points: accepted,
+					});
 				}
-				const point = {
-					t,
-					agentT,
-					value: p.value,
-					min: Math.min(p.min, p.value),
-					max: Math.max(p.max, p.value),
-				};
-				addPoint(series, point);
-				series.lastMono = mono;
-				accepted.push({
-					name: p.name,
-					labels: series.labels,
-					time: new Date(t * 1000).toISOString(),
-					agent_time: new Date(agentT * 1000).toISOString(),
-					value: point.value,
-					min: point.min,
-					max: point.max,
-				});
-				series.dirtySince ??= now;
-				state.points++;
-				if (series.segment.length >= SEGMENT_POINTS) {
-					series.closed.push(series.segment);
-					series.segment = [];
-					full.add(series);
-				}
-			}
-			if (accepted.length > 0) {
-				this.increments.publish(state.runId, {
-					task_id: state.taskId,
-					chain_instance_id: state.chainInstanceId,
-					node_id: state.nodeId,
-					attempt: state.attempt,
-					points: accepted,
-				});
-			}
+				return true;
+			});
+			if (!admitted) return;
 			if (full.size > 0 || state.countersDirty) await this.#write(state, [...full]);
 		});
 	}

@@ -119,7 +119,7 @@ git diff --stat 879c61104a1a2821eee26732081c74031745b610 -- \
 - #492、#638、#719（Agent 凭据、停用 Agent、任务凭据、连接的项目、被拒绝之后不退出）：没有改模型，结论并进上面「范围」里认身份、任务凭据两条。
 - #723、#728（结果有上界、超限的结果换成失败）：加了 `AgentReplaceResult` 和变异体 `replace-fail-to-success`。
 - #738（同步提交移到 `879c6110`）：逐个读了 `f44b09d8` 到 `879c6110` 之间上面清单里的文件。模型只改了一处：`AgentFinish` 不再要求「没有被告知停止」才能报成功（代码里取消在执行器退出之后、开始上传之前到时照样报成功；同步提交时就是这样，#673 只把上传期间到的取消改成了 cancelled）。状态数从 365,921 / 5,602,537 / 6,842,713 变成 564,460 / 10,194,904 / 12,069,478（都无违例），加了变异体 `result-accepts-lost`（九个变异体都被抓到）。覆盖表补上 `artifacts.rs`、`step.ts`、断开连接的新来源，`foreign-agent-tasks.ts`、`ledger.rs` 里两处说错了协议行为的注释改正，`git diff` 的清单补上 `step.ts`、`foreign-agent-tasks.ts`、`dispatch-gate.ts`、`artifacts.rs`；「范围」补上 `failForeignAgentTasks`、`wind_down`、跨连接迟到的消息。
-- #505（运行的加密副本什么时候删）：加了变量 `rel`（派发过、放弃过、已离手）、不变式 `ReleasedLeftHand` 和变异体 `release-on-lease-expiry`、`release-on-welcome`、`heartbeat-releases-unlisted`（十二个变异体都被抓到）。状态数从 564,460 / 10,194,904 / 12,069,478 变成 1,003,090 / 14,587,063 / 18,711,209（都无违例）。同步提交没有移动：只核对了 `released.ts` 和 `engine.ts` 里调用它的三处。
+- #505（运行的加密副本什么时候删）：加了变量 `rel`（派发过、放弃过、已离手）、不变式 `ReleasedLeftHand` 和变异体 `release-on-lease-expiry`、`release-on-welcome`、`heartbeat-releases-unlisted`（十二个变异体都被抓到）。状态数从 564,460 / 10,194,904 / 12,069,478 变成 1,003,090 / 14,587,063 / 18,711,209（都无违例）。同步提交没有移动：只核对了 `released.ts` 和 `engine.ts` 里调用它的三处。#862 第 1 轮审查之后删除副本改到那一步提交之后、另起一个事务（拿着运行的闸门），只改了删除的时机，离手的记录和派发、结果、心跳的处理不变，模型不用改；`check.sh`、`mutants.sh` 重新跑过，结果同上。
 
 ## 读结果
 

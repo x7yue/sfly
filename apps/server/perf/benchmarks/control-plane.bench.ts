@@ -175,7 +175,7 @@ beforeAll(async () => {
 		db: database.db,
 		clock: cp.clock,
 		retention,
-		secrets: (runId) => logs.runSecrets(runId),
+		secrets: (runId, work) => logs.withRunSecrets(runId, work),
 		limitBytes: Number.MAX_SAFE_INTEGER,
 	});
 	queries = new MetricQueries({ db: database.db, clock: cp.clock, metrics });

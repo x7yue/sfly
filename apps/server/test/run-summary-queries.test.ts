@@ -75,7 +75,7 @@ describe("运行摘要的查询次数", () => {
 						db,
 						clock,
 						retention: new MetricRetention({ db, clock }),
-						secrets: (runId) => logs.runSecrets(runId),
+						secrets: (runId, work) => logs.withRunSecrets(runId, work),
 					}),
 				}),
 				logs,

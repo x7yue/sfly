@@ -70,7 +70,12 @@ export class RunVaults {
 			.onConflictDoUpdate({ target: runVaults.runId, set: { sealed } });
 	}
 
-	async delete(tx: Tx, runId: string): Promise<void> {
-		await tx.delete(runVaults).where(eq(runVaults.runId, runId));
+	/** 删除副本；没有这个运行的副本时返回 false。 */
+	async delete(tx: Tx, runId: string): Promise<boolean> {
+		const removed = await tx
+			.delete(runVaults)
+			.where(eq(runVaults.runId, runId))
+			.returning({ runId: runVaults.runId });
+		return removed.length > 0;
 	}
 }
