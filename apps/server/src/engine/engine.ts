@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { create } from "@bufbuild/protobuf";
 import {
 	effectiveQueueTimeout,
@@ -56,6 +57,7 @@ import {
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { workbenchOf } from "../projects/project-workbench.js";
 import { RunStateError, runStateForDispatch, type SelfNode } from "../runs/run-state-source.js";
 import type {
 	TriggerAdmission,
@@ -69,6 +71,7 @@ import {
 	withoutSecretConstants,
 	withoutSecretDefaults,
 } from "../runs/withheld-secrets.js";
+import { allowsSecretsOnWorkbench, workbenchDispatchProblem } from "../runs/workbench-secrets.js";
 import type { SessionStore } from "../sessions/session-store.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
@@ -293,6 +296,10 @@ export class Engine implements AgentSessionHandler {
 			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, {
 				...request,
 				withholdSecrets,
+				secretsOnWorkbench: allowsSecretsOnWorkbench({
+					sessionId: actor.sessionId,
+					secretsWithheld: withholdSecrets,
+				}),
 			});
 			if (!admitted.ok) {
 				// 版本冲突的拒绝要计数（#449）：这一步没有别的写入，提交的只有这几行。
@@ -1549,12 +1556,25 @@ export class Engine implements AgentSessionHandler {
 			return undefined;
 		}
 
+		const inputs = await this.deps.masking.record(step, run, content.inputs);
+		// 带 secret 值的任务不派到工作台（#497）：输入打码前后不一样就是带着原值（secret 参数、经子流程参数传进来的、上游的原样输出）。
+		if (
+			!allowsSecretsOnWorkbench(run) &&
+			!isDeepStrictEqual(inputs, content.inputs) &&
+			conn.name === (await workbenchOf(step.tx, run.projectId))
+		) {
+			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
+			const problem = workbenchDispatchProblem(nodeNameWithId(node), conn.name);
+			await this.#failTask(step, task, "config_error", problem);
+			return undefined;
+		}
+
 		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
 			.update(tasks)
 			.set({
 				status: "dispatched",
-				inputs: await this.deps.masking.record(step, run, content.inputs),
+				inputs,
 				referencedFeishuBots: content.referencedFeishuBots,
 				leaseExpiresAt: this.#leaseFrom(step.now),
 			})

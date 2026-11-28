@@ -25,6 +25,7 @@ import {
 	withheldWarnings,
 	withholdsSecrets,
 } from "../runs/withheld-secrets.js";
+import { allowsSecretsOnWorkbench } from "../runs/workbench-secrets.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
@@ -96,9 +97,9 @@ export function registerRunRoutes(
 		const raw = await rawScenario(deps.db, params.id);
 		const secretSize = raw ? await secretSizePreflight(raw) : { problems: [], warnings: [] };
 		// 会话（没勾选「联调时可以使用项目密钥」）读预检：它触发的运行不解析 secret 参数（#497），和触发时同一个判断。
-		const planned = (await withholdsSecrets(deps.db, sessionOf(request)))
-			? planRun(head.document)
-			: undefined;
+		const requester = sessionOf(request);
+		const withholding = await withholdsSecrets(deps.db, requester);
+		const planned = withholding ? planRun(head.document) : undefined;
 		const withheld = planned && !("errors" in planned) ? planned : undefined;
 		return {
 			version: head.number,
@@ -109,6 +110,7 @@ export function registerRunRoutes(
 					project,
 					head.document,
 					await deps.orchestrations.versionSession(params.id, head.number),
+					allowsSecretsOnWorkbench({ sessionId: requester, secretsWithheld: withholding }),
 				)),
 				...secretSize.problems,
 				...(withheld

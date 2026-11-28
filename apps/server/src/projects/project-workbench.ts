@@ -26,7 +26,7 @@
 // 在库里把 `projects.workbench_agent` 置空。
 import { eq, isNotNull } from "drizzle-orm";
 import { agentsNotOnCredentials } from "../agents/agent-auth.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { agents, projects, users } from "../db/schema.js";
 import type { Mutex } from "../util/mutex.js";
 import type { ProjectId } from "./project-id.js";
@@ -47,6 +47,15 @@ export type RegisterWorkbenchOutcome =
 	/** 开关还没开（部署里还没有项目登记过工作台），登记的人不是平台管理员：第一次登记会让整个部署只接受 Agent 凭据（#778）。 */
 	| { ok: false; reason: "switch_needs_platform_admin" };
 
+/** 这个项目登记的工作台（Agent 的名字）；没有登记为 undefined。在事务里读时传事务（触发准入、派发）。 */
+export async function workbenchOf(db: Db | Tx, project: ProjectId): Promise<string | undefined> {
+	const [row] = await db
+		.select({ agent: projects.workbenchAgent })
+		.from(projects)
+		.where(eq(projects.id, project));
+	return row?.agent ?? undefined;
+}
+
 export class ProjectWorkbench {
 	constructor(
 		private readonly deps: {
@@ -57,12 +66,8 @@ export class ProjectWorkbench {
 	) {}
 
 	/** 这个项目登记的工作台（Agent 的名字）；没有登记为 undefined。 */
-	async get(project: ProjectId): Promise<string | undefined> {
-		const [row] = await this.deps.db
-			.select({ agent: projects.workbenchAgent })
-			.from(projects)
-			.where(eq(projects.id, project));
-		return row?.agent ?? undefined;
+	get(project: ProjectId): Promise<string | undefined> {
+		return workbenchOf(this.deps.db, project);
 	}
 
 	/**

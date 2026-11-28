@@ -24,6 +24,8 @@ export interface TriggerRequest {
 	preset?: string | undefined;
 	/** 不解析 secret 参数（会话令牌触发、会话没勾选「联调时可以使用项目密钥」，#497）：内嵌的默认值和预设里的值当作没有提供。 */
 	withholdSecrets?: boolean;
+	/** 能不能把带 secret 值的任务派到工作台（#497）：勾选了「联调时可以使用项目密钥」的会话触发时为 true。 */
+	secretsOnWorkbench?: boolean;
 }
 
 /** 不能触发：HTTP 状态码、错误码和原因；`details` 是逐条的问题（预检、参数、预设的问题清单）。 */
@@ -197,6 +199,7 @@ export function createTriggerAdmission(checks: {
 			orchestration.projectId,
 			version.document,
 			version.sessionId,
+			request.secretsOnWorkbench ?? false,
 		);
 		if (problems.length > 0) {
 			return {
