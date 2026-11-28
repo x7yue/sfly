@@ -1,8 +1,7 @@
 // 全栈：会话构建（#795）。助手在会话里用 `sfly publish --session-build` 登记开发中的节点包（会话令牌、SFLY_SESSION_ID，
 // 和工作台上一样），这个会话的场景锁定它、节点派到工作台以外的真实 Agent 上：Agent 下载、安装、执行的是这次构建的代码。
 // 会话结束、运行结束之后周期清理回收它。
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sessionBuildTag } from "@sfly/schema";
 import pg from "pg";
@@ -12,6 +11,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const AGENT = "sut-agent";
@@ -45,7 +45,7 @@ describeWithAgent("全栈：会话构建派到工作台以外的 Agent", () => {
 	};
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-session-builds-"));
+		dir = await makeTempDir("sfly-session-builds-");
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv({ sdkOnly: true })]);
 		accounts = new TestAccounts(cp.database.url);
 		const alice = await accounts.user("alice");
