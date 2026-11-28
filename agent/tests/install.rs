@@ -502,6 +502,7 @@ async fn no_new_task_starts_while_installing_but_running_tasks_keep_running() {
         json!({ "seconds": 6.0 }),
     ))
     .await;
+    #[allow(clippy::disallowed_methods)] // 造场景：第一个任务先运行起来，再派要装包的任务
     tokio::time::sleep(Duration::from_millis(500)).await;
     cp.assign(package_task(
         "task-install",

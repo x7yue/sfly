@@ -5,50 +5,20 @@
 mod support;
 
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 use sfly_agent::proto::{RunningTask, agent_message};
-use support::{AgentOptions, AgentProcess, FakeControlPlane, spawn_agent, stub_task};
+use support::{
+    AgentOptions, AgentProcess, FakeControlPlane, alive, spawn_agent, stub_task, wait_for_file,
+    wait_for_path, wait_until,
+};
 use tokio::io::{AsyncBufReadExt, BufReader};
-
-fn alive(pid: u32) -> bool {
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => !stat
-            .rsplit_once(')')
-            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
-        Err(_) => false,
-    }
-}
-
-async fn wait_for_file(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path)
-            && !text.is_empty()
-        {
-            return text;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{} never appeared",
-            path.display()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
 
 /// 测试结束时任务还在执行：丢弃 Agent 后它的执行器不能留下来继续运行（#113）。
 async fn assert_no_orphan_after_dropping(agent: AgentProcess, pid: u32) {
     drop(agent);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while alive(pid) {
-        assert!(
-            Instant::now() < deadline,
-            "orphaned executor {pid} still running"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until(&format!("孤儿执行器 {pid} 退出"), || !alive(pid)).await;
 }
 
 fn held(task_id: &str) -> RunningTask {
@@ -152,7 +122,7 @@ async fn hello_lists_a_task_that_finishes_while_the_hello_is_being_prepared() {
     // 断开：Agent 重连前准备 Hello，清点已安装的包时停住。
     std::fs::write(&hold, "").unwrap();
     cp.end_session();
-    wait_for_file_to_exist(&dir.path().join("refreshing")).await;
+    wait_for_path(&dir.path().join("refreshing")).await;
 
     // 这时任务结束：等到 Agent 在标准错误里说结果已经交出（任务已从执行中换成结果待发），才让清点继续。
     std::fs::write(&release, "").unwrap();
@@ -171,18 +141,6 @@ async fn hello_lists_a_task_that_finishes_while_the_hello_is_being_prepared() {
     std::fs::remove_file(&hold).unwrap();
 
     assert_eq!(cp.hello(1).await.running_tasks, vec![held("task-gate")]);
-}
-
-async fn wait_for_file_to_exist(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "{} never appeared",
-            path.display()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 #[tokio::test]
@@ -210,12 +168,9 @@ async fn abandoned_tasks_are_killed_and_their_results_dropped() {
     cp.hello(1).await;
 
     // 放弃的任务立即被杀掉（不等宽限期）。
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while alive(pid) {
-        assert!(Instant::now() < deadline, "abandoned task still running");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until("放弃的任务被杀掉", || !alive(pid)).await;
     // 两个任务的结果都不再上报。
+    #[allow(clippy::disallowed_methods)] // 确认某件事没有发生：两个任务的结果都不再上报
     tokio::time::sleep(Duration::from_millis(500)).await;
     let resent: Vec<_> = cp
         .received_with_session()
@@ -236,6 +191,7 @@ async fn sends_heartbeats_at_the_interval_given_in_welcome() {
     cp.set_heartbeat_interval(Duration::from_millis(100));
     let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-heartbeat"));
     cp.hello(0).await;
+    #[allow(clippy::disallowed_methods)] // 在一段固定时间里数心跳的次数
     tokio::time::sleep(Duration::from_millis(1000)).await;
     let beats = cp.heartbeats();
     assert!(
