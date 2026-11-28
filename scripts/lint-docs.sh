@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 文档的检查（`pnpm lint:docs`）：ADR 的编号和正文；文档里的路径、章节号、链接和 pnpm 命令；
+# 文档的检查（`pnpm lint:docs`）：ADR 的编号和正文；文档里的路径、章节号、链接、pnpm 命令和手写的 HTTP 接口；
 # 仓库自带 skill 的目录布局（.agents/skills 里是真实文件，.claude/skills 里是指向它的软链接）；
 # secret 参数的旧说法（敏感、保密、机密）不再出现（check_terms.py：只查这一个概念，词表写在脚本里，
 # 不读 GLOSSARY.md；要守别的概念在脚本里加）。

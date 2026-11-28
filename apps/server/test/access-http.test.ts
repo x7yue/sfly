@@ -413,6 +413,7 @@ describe("带凭据的请求", () => {
 			expect((await publish(token, "elsewhere", "default", "2.0")).status).toBe(201);
 			const toPublic = await publish(token, "elsewhere", "public", "2.0");
 			expect(toPublic.status).toBe(409);
+			expect((await error(toPublic.clone())).code).toBe("package_name_taken");
 			expect((await error(toPublic)).message).toBe(
 				"已经有项目发布了名为 elsewhere 的节点包：公共项目里不能发布和别的项目同名的包，换一个名字",
 			);
@@ -423,6 +424,7 @@ describe("带凭据的请求", () => {
 			for (const version of ["3.0", "3.1"]) {
 				const toDefault = await publish(token, "shared-first", "default", version);
 				expect(toDefault.status, version).toBe(409);
+				expect((await error(toDefault.clone())).code, version).toBe("package_name_taken");
 				expect((await error(toDefault)).message, version).toContain(
 					"公共项目里已有节点包 shared-first",
 				);
@@ -430,6 +432,7 @@ describe("带凭据的请求", () => {
 
 			// 同一个项目里重发：说明和以前一样，不多说项目。
 			const again = await publish(token, "shared-first", "public", "3.0");
+			expect((await error(again.clone())).code).toBe("conflict");
 			expect((await error(again)).message).toBe(
 				"节点包 shared-first@3.0 已存在，不能覆盖已发布的版本",
 			);

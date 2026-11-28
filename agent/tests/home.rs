@@ -8,23 +8,9 @@ mod support;
 
 use std::path::Path;
 use std::process::Stdio;
-use std::time::Duration;
 
 use support::{FakeControlPlane, SpawnAgent, WAIT, agent_command, python_interpreter, stub_venv};
 use tokio::io::{AsyncBufReadExt, BufReader};
-
-/// 等到路径出现。
-async fn wait_exists(path: &Path) {
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while !path.exists() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {}",
-            path.display()
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
 
 /// 在 `cwd` 下启动 Agent，只给控制面地址、名称和 Python，venv 与工作目录用默认值。
 fn agent_in(
@@ -52,8 +38,8 @@ async fn venv_work_dir_and_dev_socket_default_to_sfly_home_wherever_the_agent_st
 
     let _agent = agent_in(&home, &cwd, &cp, &dir.path().join("uv-cache")).spawn_agent();
     cp.hello(0).await;
-    wait_exists(&home.join("venv/bin/python")).await;
-    wait_exists(&home.join("work/agent.sock")).await;
+    support::wait_for_path(&home.join("venv/bin/python")).await;
+    support::wait_for_path(&home.join("work/agent.sock")).await;
     assert!(!cwd.join("venv").exists() && !cwd.join("work").exists());
 }
 
@@ -71,8 +57,8 @@ async fn sfly_home_defaults_to_dot_sfly_in_the_home_directory() {
         .env("HOME", &user)
         .spawn_agent();
     cp.hello(0).await;
-    wait_exists(&user.join(".sfly/venv/bin/python")).await;
-    wait_exists(&user.join(".sfly/work/agent.sock")).await;
+    support::wait_for_path(&user.join(".sfly/venv/bin/python")).await;
+    support::wait_for_path(&user.join(".sfly/work/agent.sock")).await;
 }
 
 #[tokio::test]
@@ -150,5 +136,5 @@ async fn shared_venv_is_created_only_after_welcome() {
     // 控制面上线：收到 Welcome 后创建 venv。
     let cp = FakeControlPlane::start_on(port).await;
     cp.hello(0).await;
-    wait_exists(&home.join("venv/bin/python")).await;
+    support::wait_for_path(&home.join("venv/bin/python")).await;
 }

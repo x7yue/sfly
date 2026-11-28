@@ -6,3 +6,11 @@
 docs/guide/sdk-reference.md | .agents/skills/sfly-node-dev/reference.md | 用户项目里 sfly skill 生成的文件，本仓库没有这个路径
 docs/guide/sdk-reference.md | .agents/skills/sfly-node-dev/ | 用户项目里 sfly skill 生成的目录，本仓库没有这个路径
 docs/guide/sdk-reference.md | .agents/skills/sfly-platform/ | 用户项目里 sfly skill 生成的目录，本仓库没有这个路径
+
+# 文档里有意写出的旧接口：sfly api 收到它们时报 route_moved（#488），或者说明以前的写法已经去掉。
+docs/ARCHITECTURE.md | GET /agents | 举例 sfly api 收到搬走的旧路径时报 route_moved
+docs/ARCHITECTURE.md | POST /packages?project=public | 举例旧的发布写法，后面写着它的新写法
+docs/guide/platform-cli.md | GET /agents | 举例 sfly api 收到搬走的旧路径时报 route_moved
+docs/guide/platform-cli.md | GET /runs | 举例 sfly api 收到搬走的旧路径时报 route_moved
+docs/guide/platform-cli.md | POST /packages?project=public | 举例旧的发布写法，后面写着它的新写法
+docs/guide/standard-nodes.md | POST /packages?project=public | 说明以前的写法已经去掉

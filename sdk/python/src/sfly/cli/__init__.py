@@ -64,6 +64,8 @@ def _publish(args: argparse.Namespace) -> int:
     from sfly.cli.publish import PublishError, publish
 
     path = Path(args.path).resolve()
+    if args.session_build:
+        return _session_build(path, args)
     try:
         archive = build(path) if path.is_dir() else path
         result = publish(archive, Client.from_options(args.server, None), args.project)
@@ -79,6 +81,36 @@ def _publish(args: argparse.Namespace) -> int:
     print(
         printable(
             f"已发布 {result['name']}@{result['version']}{where}（sha256 {result['sha256']}）"
+        )
+    )
+    return 0
+
+
+def _session_build(path: Path, args: argparse.Namespace) -> int:
+    from sfly.cli.build import BuildError
+    from sfly.cli.client import Client
+    from sfly.cli.publish import PublishError, register_session_build
+
+    if not path.is_dir():
+        print("--session-build 要给节点包目录（命令按会话加上版本号的标签再构建）", file=sys.stderr)
+        return 1
+    try:
+        result = register_session_build(path, Client.from_options(args.server, None))
+    except BuildError as error:
+        print(f"构建失败：{error}", file=sys.stderr)
+        return 1
+    except (PublishError, OSError) as error:
+        print(printable(f"登记会话构建失败：{error}"), file=sys.stderr)
+        return 1
+    print(
+        printable(
+            f"已登记会话构建 {result['name']}@{result['version']}（sha256 {result['sha256']}）"
+        )
+    )
+    print(
+        printable(
+            f"在这个会话的场景里把 {result['name']} 锁定到 {result['version']}，"
+            "节点的 Agent 换成要跑它的那台；会话结束后这个版本回收"
         )
     )
     return 0
@@ -247,6 +279,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--project",
         help="发布到哪个项目：公共项目写 public（标准节点包放在这里，只有平台管理员能发布）；"
         "不写时是 $SFLY_PROJECT，没设置时是默认项目 default",
+    )
+    p_publish.add_argument(
+        "--session-build",
+        action="store_true",
+        help="登记成当前会话的会话构建（会话取自 $SFLY_SESSION_ID）：版本号加上会话的标签，"
+        "只能被这个会话的场景锁定，可以派到工作台以外的 Agent；会话结束后回收",
     )
     p_publish.set_defaults(func=_publish)
 

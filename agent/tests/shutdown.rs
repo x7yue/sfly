@@ -4,39 +4,15 @@
 
 mod support;
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use serde_json::json;
-use support::{AgentOptions, AgentProcess, FakeControlPlane, spawn_agent, stub_task};
-
-fn alive(pid: u32) -> bool {
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => !stat
-            .rsplit_once(')')
-            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
-        Err(_) => false,
-    }
-}
-
-async fn wait_for_file(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path)
-            && !text.is_empty()
-        {
-            return text;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{} never appeared",
-            path.display()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
+use support::{
+    AgentOptions, AgentProcess, FakeControlPlane, assert_all_gone, spawn_agent, stub_task,
+    wait_for_file,
+};
 
 fn pids(text: &str) -> Vec<u32> {
     text.split_whitespace()
@@ -54,14 +30,6 @@ async fn stop_agent(agent: &mut AgentProcess, signal: Signal, within: Duration) 
         .expect("agent did not exit after the signal")
         .unwrap();
     started.elapsed()
-}
-
-async fn assert_all_gone(pids: &[u32]) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while pids.iter().any(|&p| alive(p)) {
-        assert!(Instant::now() < deadline, "processes still alive: {pids:?}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 /// Agent 收到 `signal` 后优雅终止正在执行的任务（节点的 finally 照常执行），然后退出，不留执行器。
@@ -144,6 +112,7 @@ async fn a_second_signal_during_the_grace_period_kills_task_processes_at_once() 
 
     // 第一次：开始等宽限期（执行器忽略 SIGTERM）；第二次：不再等，直接强制杀掉后退出。
     kill(agent_pid, Signal::SIGTERM).unwrap();
+    #[allow(clippy::disallowed_methods)] // 造场景：第一次 SIGTERM 之后、宽限期之内再发第二次
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(
         agent.child.try_wait().unwrap().is_none(),

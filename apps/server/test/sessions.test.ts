@@ -656,6 +656,8 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 	let sessionId: string;
 	/** 另一个项目（sessions-elsewhere）里的会话：默认项目的凭据访问它都应该是 404。 */
 	let elsewhereId: string;
+	/** 会话令牌所属的会话（编辑者建的）。 */
+	let ownSessionId: string;
 	let headers: {
 		reader: Record<string, string>;
 		editor: Record<string, string>;
@@ -675,6 +677,7 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 		await accounts.member("default", reader, "read_only");
 		await accounts.member("default", editor, "editor");
 		await accounts.member("sessions-elsewhere", other, "project_admin");
+		ownSessionId = await accounts.session(editor, "default");
 		elsewhereId = await seedSession(cp.database.url, {
 			project: "sessions-elsewhere",
 			title: "另一个项目里的会话",
@@ -684,7 +687,7 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 			reader: bearer(await accounts.personalToken(reader)),
 			editor: loginCookie(await accounts.login(editor)),
 			other: bearer(await accounts.personalToken(other)),
-			sessionToken: bearer(await accounts.sessionToken(editor, "default")),
+			sessionToken: bearer(await accounts.sessionTokenIn(ownSessionId, editor, "default")),
 			// 项目令牌带着全部范围（其中有「编辑」）：范围够，但它不是人。
 			projectToken: bearer(await accounts.projectToken("default")),
 			personal: bearer(await accounts.personalToken(editor)),
@@ -792,9 +795,12 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 		expect(list.sessions.map((session) => session.title)).not.toContain("你好");
 	});
 
-	it("会话令牌对会话只有读（ADR 0027）：列表和会话读得到，建会话、发话、停止是 403", async () => {
+	it("会话令牌对会话只有读（ADR 0027）：列表和自己的会话读得到，建会话、发话、停止是 403；别的会话读也 403（#795）", async () => {
 		expect((await call("sessionToken", "GET", "/projects/default/sessions")).status).toBe(200);
-		expect((await call("sessionToken", "GET", `/sessions/${sessionId}`)).status).toBe(200);
+		expect((await call("sessionToken", "GET", `/sessions/${ownSessionId}`)).status).toBe(200);
+		const others = await call("sessionToken", "GET", `/sessions/${sessionId}`);
+		expect(others.status).toBe(403);
+		expect(await others.text()).toContain("会话令牌只能访问它自己的会话");
 		for (const [path, body] of [
 			["/projects/default/sessions", { text: "你好" }],
 			[`/sessions/${sessionId}/messages`, { text: "你好" }],

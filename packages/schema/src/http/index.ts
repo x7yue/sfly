@@ -16,6 +16,7 @@ import { runFocusApi } from "./run-focus.js";
 import { runListApi } from "./run-list.js";
 import { runSummaryApi } from "./run-summary.js";
 import { artifactsApi, logsApi, runsApi } from "./runs.js";
+import { sessionBuildsApi } from "./session-builds.js";
 import { sessionsApi } from "./sessions.js";
 import { sdkApi, systemApi } from "./system.js";
 import { tokensApi } from "./tokens.js";
@@ -40,6 +41,7 @@ export * from "./run-focus.js";
 export * from "./run-list.js";
 export * from "./run-summary.js";
 export * from "./runs.js";
+export * from "./session-builds.js";
 export * from "./sessions.js";
 export * from "./system.js";
 export * from "./tokens.js";
@@ -64,6 +66,7 @@ export const httpApis = {
 	runs: { ...runListApi, ...runFocusApi, ...runSummaryApi, ...runsApi },
 	sdk: sdkApi,
 	sessions: sessionsApi,
+	sessionBuilds: sessionBuildsApi,
 	system: systemApi,
 	tokens: tokensApi,
 	users: usersApi,

@@ -13,7 +13,7 @@ import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
 /** 节点包归档上传上限。 */
-const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
+export const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 
 const notFound = (reply: FastifyReply, message: string) =>
 	sendError(reply, 404, "not_found", message);
@@ -65,7 +65,12 @@ export function registerPackageRoutes(
 				return published;
 			} catch (error) {
 				if (error instanceof PackageError) {
-					return sendError(reply, error.kind === "conflict" ? 409 : 400, error.kind, error.message);
+					return sendError(
+						reply,
+						error.kind === "conflict" || error.kind === "package_name_taken" ? 409 : 400,
+						error.kind,
+						error.message,
+					);
 				}
 				throw error;
 			}

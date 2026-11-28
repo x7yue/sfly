@@ -2,6 +2,7 @@
 // 连接立即断开，它手上的任务按 Agent 失联处理（租约过期后 agent_lost，走现有的重试规则，不新造状态）；恢复之后照常。
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
@@ -31,8 +32,11 @@ describe("停用的 Agent 不参与派发", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	const agents: FakeAgent[] = [];
-	const connect = async (name = "agent-a") => {
-		const agent = await FakeAgent.connect(cp.grpcUrl, { name });
+	const connect = async (name = "agent-a", token?: string) => {
+		const agent = await FakeAgent.connect(cp.grpcUrl, {
+			name,
+			...(token === undefined ? {} : { token }),
+		});
 		agents.push(agent);
 		return agent;
 	};
@@ -40,6 +44,12 @@ describe("停用的 Agent 不参与派发", () => {
 	let accounts: TestAccounts;
 	let admin: Record<string, string>;
 	const post = (path: string) => cp.fetch(path, { method: "POST", headers: admin });
+	/** Agent 列表里这台的状态：控制台吊销、停用之后马上重读的就是它。 */
+	const status = async (name: string) => {
+		const res = await cp.fetch("/projects/default/agents", { headers: admin });
+		const { agents: list } = (await res.json()) as { agents: { name: string; status: string }[] };
+		return list.find((a) => a.name === name)?.status;
+	};
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
@@ -124,6 +134,8 @@ describe("停用的 Agent 不参与派发", () => {
 		await eventually(async () => expect((await api.node(runId, "a")).status).toBe("running"));
 
 		expect((await post("/projects/default/agents/agent-a/disable")).status).toBe(204);
+		// 停用返回时已经是离线（#878）：之后连接的流结束，不再走一遍离线处理，任务只失败一次。
+		expect(await status("agent-a")).toBe("offline");
 		await eventually(async () => expect(agent.ended).toBe(true));
 		// 连接断了，但不立刻判失败：和别的失联一样，等租约过期。
 		expect((await api.node(runId, "a")).status).toBe("running");
@@ -144,5 +156,27 @@ describe("停用的 Agent 不参与派发", () => {
 		expect(second).toMatchObject({ runId, nodeId: "a", attempt: 2 });
 		await again.succeed(second, { text: "ok" });
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+	});
+
+	it("吊销一台正在执行任务的 Agent 用的凭据：吊销返回时已是离线（#878）；连接的流结束后不再处理一遍，任务只以 agent_lost 失败一次", async () => {
+		const issued = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "agent-a");
+		const agent = await connect("agent-a", issued.token);
+		const runId = await api.triggerOk(await api.orchestrationWith(orchestration(1)));
+		const task = await agent.nextAssign();
+		await agent.started(task);
+		await eventually(async () => expect((await api.node(runId, "a")).status).toBe("running"));
+
+		await cp.current.agentCredentials.revoke(DEFAULT_PROJECT, "agent-a", issued.credential.id);
+		expect(await status("agent-a")).toBe("offline");
+		await eventually(async () => expect(agent.ended).toBe(true));
+		expect((await api.node(runId, "a")).status).toBe("running");
+		(cp.clock as ManualClock).advance(LEASE_MS + 1000);
+		await eventually(async () => {
+			const a = await api.node(runId, "a");
+			expect(a.attempts.map((t) => [t.attempt, t.status, t.error?.kind ?? null])).toEqual([
+				[1, "failed", "agent_lost"],
+				[2, "queued", null],
+			]);
+		});
 	});
 });
