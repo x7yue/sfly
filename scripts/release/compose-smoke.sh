@@ -199,7 +199,7 @@ for target in "other-agent 50052" "sfly-assistant 8090" "1.1.1.1 443"; do
 	[[ $got == ConnectionRefusedError ]] || fail "工作台连 $target 应当被出网名单拒绝，实际：$got"
 done
 # 探测：重启工作台（新的连接，控制面下一轮就探），agent-b 被出网名单挡住，探测结果里没有它。
-since=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+since=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 compose --profile assistant restart sfly-workbench >/dev/null || fail "重启工作台"
 exposed=$(client exposure "$since" 300) || fail "重启工作台之后没有探测结果"
 [[ -z $exposed ]] || fail "名单外的 Agent 不该连得通：$exposed"
@@ -208,7 +208,8 @@ code=$(docker exec "$(compose --profile assistant ps -q sfly-workbench)" curl -q
 	-w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"targets":[]}' http://127.0.0.1:47124/probe)
 [[ $code == 403 ]] || fail "工作台自己调探测服务应当被拒（403），实际：$code"
 # 加进名单：出网名单的容器重建，工作台跟着重启（共用它的网络命名空间）。
-since=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+# 毫秒（GNU date）：上一次的探测结果可能就在同一秒里，按秒取整会把它当成这一次的。
+since=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 egress="other-agent:50052"
 compose --profile assistant up -d --wait --wait-timeout 300 sfly-workbench-firewall sfly-workbench >/dev/null ||
 	fail "改了名单之后没有起来"
