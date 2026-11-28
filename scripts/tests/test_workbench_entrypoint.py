@@ -15,7 +15,9 @@
   取不到照常启动（短超时、不重试）；
 - 入口脚本自己用的命令只在系统目录里找：家目录的 ~/.local/bin 里放了假的 cat、curl、sh……
   也不执行，Agent 的 PATH 里它在最后；
-- 凭据不出现在入口脚本的输出里。
+- 凭据不出现在入口脚本的输出里；
+- compose 里（SFLY_WORKBENCH_REQUIRE_FIREWALL=1）出网名单的规则写好之前（127.0.0.1:47123 不应答）
+  不下载、不安装、不启动 Agent，一直等。
 真实的镜像、卷和控制面由 scripts/release/workbench-image-smoke.sh 检查。
 """
 
@@ -23,19 +25,29 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from polling import wait_for
 
 ENTRYPOINT = Path(__file__).resolve().parents[2] / "deploy" / "workbench" / "entrypoint.sh"
 TOKEN = "sfly_agt_" + "a1b2c3d4e5f6" * 4
 NAME = "workbench"
 
 # 假的 curl：记下参数，把 $FAKE_INSTALL_SH 复制到 -o 指的文件
-# （FAKE_CURL_FAIL 设置时像连不上控制面一样失败）。
+# （FAKE_CURL_FAIL 设置时像连不上控制面一样失败）；问出网名单就绪的，
+# $FAKE_LOG/firewall.ready 在才成功（FAKE_REAL_CURL 设置时交给真的 curl）。
 FAKE_CURL = """#!/bin/sh
 echo "$*" >> "$FAKE_LOG/curl.args"
+case "$*" in
+*127.0.0.1:47123*)
+	[ -z "${FAKE_REAL_CURL:-}" ] || exec "$FAKE_REAL_CURL" "$@"
+	[ -e "$FAKE_LOG/firewall.ready" ] && exit 0 || exit 7 ;;
+esac
 [ -z "${FAKE_CURL_FAIL:-}" ] || exit 7
 out=
 while [ $# -gt 0 ]; do
@@ -90,6 +102,24 @@ class Harness:
         return self.home / ".sfly"
 
     def run(self, **overrides: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/bin/sh", str(ENTRYPOINT)],
+            env=self.env(overrides),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def start(self, **overrides: str) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            ["/bin/sh", str(ENTRYPOINT)],
+            env=self.env(overrides),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def env(self, overrides: dict[str, str]) -> dict[str, str]:
         env = {
             # 容器里的 PATH：~/.local/bin 在最前（Dockerfile 里原来的写法，现在入口脚本不看它）。
             "PATH": f"{self.home}/.local/bin:{self.path}",
@@ -104,10 +134,7 @@ class Harness:
             "SFLY_WORKBENCH_WORK": str(self.work),
         }
         env.update(overrides)
-        env = {key: value for key, value in env.items() if value != "<unset>"}
-        return subprocess.run(
-            ["/bin/sh", str(ENTRYPOINT)], env=env, capture_output=True, text=True, timeout=60
-        )
+        return {key: value for key, value in env.items() if value != "<unset>"}
 
     def change_install_script(self, note: str) -> None:
         """控制面的 install.sh 变了（升级、改了对外地址）：内容不一样。"""
@@ -159,6 +186,100 @@ def test_a_fresh_volume_installs_the_agent_the_dev_way_and_starts_it(harness: Ha
     assert harness.lines("agent.runs") == ["agent"]
     # curl 不读家目录里的 .curlrc（模型写得了）：-q 是第一个参数。
     assert all(line.startswith("-q ") for line in harness.lines("curl.args"))
+
+
+def test_with_the_firewall_required_nothing_runs_until_its_rules_are_ready(
+    harness: Harness,
+) -> None:
+    # 宿主机重启时 Docker 直接恢复两个容器，不等 compose 的健康检查：工作台可能比规则先起。
+    process = harness.start(SFLY_WORKBENCH_REQUIRE_FIREWALL="1")
+    try:
+        # 入口脚本问过三次就绪端口（或者提前退出了：那就是没在等）。
+        wait_for(
+            lambda: len(harness.lines("curl.args")) >= 3 or process.poll() is not None,
+            30,
+            what="入口脚本问三次就绪端口",
+        )
+        assert process.poll() is None, process.communicate()
+        # 一直在问就绪端口；没有下载 install.sh、没有安装、没有启动 Agent。
+        assert all("http://127.0.0.1:47123/" in line for line in harness.lines("curl.args"))
+        assert harness.lines("install.runs") == [] and harness.lines("agent.runs") == []
+
+        (harness.log / "firewall.ready").touch()
+        stdout, stderr = process.communicate(timeout=30)
+    finally:
+        process.kill()
+    assert process.returncode == 0, stderr
+    calls = harness.lines("curl.args")
+    ready = max(i for i, line in enumerate(calls) if "127.0.0.1:47123" in line)
+    assert "http://sfly:8080/install.sh" in calls[ready + 1]
+    assert harness.lines("agent.runs") == ["agent"]
+    assert stdout.index("出网名单的规则已写好") < stdout.index("下载安装脚本")
+    assert TOKEN not in stdout + stderr
+
+
+class Answer(BaseHTTPRequestHandler):
+    """什么请求都回 200，记下收到的请求行。"""
+
+    seen: list[str]
+
+    def do_GET(self) -> None:
+        self.seen.append(self.requestline)
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+def answering(port: int) -> tuple[HTTPServer, list[str]]:
+    seen: list[str] = []
+    handler = type("Handler", (Answer,), {"seen": seen})
+    server = HTTPServer(("127.0.0.1", port), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def test_a_proxy_in_the_environment_cannot_answer_for_the_firewall(harness: Harness) -> None:
+    # 部署者可能给工作台设了代理变量（装包用）：会回 200 的代理不能替出网名单应答就绪。
+    proxy, proxied = answering(0)
+    address = f"http://127.0.0.1:{proxy.server_address[1]}"
+    variables = ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY")
+    process = harness.start(
+        SFLY_WORKBENCH_REQUIRE_FIREWALL="1",
+        FAKE_REAL_CURL=shutil.which("curl") or "curl",
+        **dict.fromkeys(variables, address),
+    )
+    ready: HTTPServer | None = None
+    try:
+        # 入口脚本问过三次就绪端口（或者提前退出了：那就是没在等）。
+        wait_for(
+            lambda: len(harness.lines("curl.args")) >= 3 or process.poll() is not None,
+            30,
+            what="入口脚本问三次就绪端口",
+        )
+        assert process.poll() is None, process.communicate()
+        assert harness.lines("install.runs") == [] and harness.lines("agent.runs") == []
+
+        ready, answered = answering(47123)
+        stdout, stderr = process.communicate(timeout=30)
+    finally:
+        process.kill()
+        proxy.shutdown()
+        if ready is not None:
+            ready.shutdown()
+            ready.server_close()
+    assert process.returncode == 0, stderr
+    assert proxied == [], "就绪请求走了代理"
+    assert answered and harness.lines("agent.runs") == ["agent"]
+    assert stdout.index("出网名单的规则已写好") < stdout.index("下载安装脚本")
+
+
+def test_without_the_firewall_requirement_the_entrypoint_does_not_wait(harness: Harness) -> None:
+    # 镜像冒烟、评测的被测机等不经 compose 出网名单的用法：不设这个变量，不等。
+    result = harness.run()
+    assert result.returncode == 0, result.stderr
+    assert not any("47123" in line for line in harness.lines("curl.args"))
 
 
 def test_the_credential_goes_to_the_installer_and_the_agent_by_environment_only(

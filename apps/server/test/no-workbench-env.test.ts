@@ -3,6 +3,7 @@
 // （控制面读它、compose 和 .env.example 里传它）删干净：控制面的源码、部署的文件、评测环境和冒烟脚本里都不能再出现，
 // 也不能留一个换了名字、实际还是环境变量的选项（`workbenchAgent`）。工作台容器自己的名字是它自己的变量 `SFLY_WORKBENCH_NAME`
 // （`deploy/workbench/entrypoint.sh`），控制面不读。
+// 控制面读的 `SFLY_FIREWALL_PROBES`（#498）说的是「出网名单容器上的探测服务在哪」，按工作台的 Agent 名对应，不是「哪台 Agent 是工作台」。
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -39,10 +40,11 @@ describe("没有指名工作台的环境变量", () => {
 		const hits = files(join(root, "apps/server/src")).filter((path) =>
 			/\bworkbenchAgent\b/.test(read(path)),
 		);
-		// `projects.workbenchAgent` 是库里的那一列（schema.ts、project-workbench.ts），不是选项。
+		// `projects.workbenchAgent` 是库里的那一列（schema.ts、project-workbench.ts、探测时读登记的工作台的 workbench-exposure.ts），不是选项。
 		expect(hits.map(relative).sort()).toEqual([
 			"apps/server/src/db/schema.ts",
 			"apps/server/src/projects/project-workbench.ts",
+			"apps/server/src/sessions/workbench-exposure.ts",
 		]);
 		for (const path of hits) {
 			expect(read(path), relative(path)).not.toMatch(/options\.workbenchAgent|workbenchAgent\?:/);

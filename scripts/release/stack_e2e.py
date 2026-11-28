@@ -13,6 +13,11 @@
                                          连上来之前登记是 409，等它连上再登记
   stack_e2e.py ready [秒数]              等控制面说助手可以用（助手服务连得上、工作台在线、
                                          能力端口有地址）
+  stack_e2e.py agent <Agent 名字> [秒数]   等这台 Agent 在项目（PROJECT）里在线
+  stack_e2e.py exposure <时刻> [秒数]     等就绪状态里有晚于这个时刻（ISO 8601）测成的
+                                         工作台探测结果（#498），把连得通的项目外 Agent
+                                         每台一行（名字 地址）打印出来；这一轮没测成、
+                                         有没测成的目标时退出码 1
   stack_e2e.py session <剧本> [--results]  用假的模型端点的剧本（`AEVAL-SCRIPT:<名字>`）建一个会话，
                                          跟到这一轮结束，检查持久事件的顺序；通过时退出码 0；
                                          --results 把每个工具的结果也打印出来
@@ -111,6 +116,42 @@ def wait_ready(seconds: float) -> int:
     return 1
 
 
+def wait_agent(name: str, seconds: float) -> int:
+    s = stack()
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            listed = e2e._request(s, "GET", f"/projects/{PROJECT}/agents")["agents"]
+            if any(a["name"] == name and a["status"] == "online" for a in listed):
+                return 0
+        except e2e.ControlPlaneError:
+            pass
+        time.sleep(2)
+    print(f"{seconds:.0f} 秒内 Agent {name} 没有在项目 {PROJECT} 里在线", file=sys.stderr)
+    return 1
+
+
+def wait_exposure(after: str, seconds: float) -> int:
+    s = stack()
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        page = e2e._request(s, "GET", f"/projects/{PROJECT}/sessions")
+        exposure = (page.get("readiness") or {}).get("exposure") or {}
+        if str(exposure.get("failed_at") or "") > after:
+            print(f"这一轮探测整个没测成：{exposure.get('failure')}", file=sys.stderr)
+            return 1
+        if str(exposure.get("checked_at") or "") > after:
+            if exposure["unmeasured"]:
+                print(f"有 {exposure['unmeasured']} 个没测成的目标", file=sys.stderr)
+                return 1
+            for item in exposure["agents"]:
+                print(f"{item['agent']} {item['address']}")
+            return 0
+        time.sleep(2)
+    print(f"{seconds:.0f} 秒内没有晚于 {after} 的探测结果", file=sys.stderr)
+    return 1
+
+
 def run_session(script: str, show_results: bool = False) -> int:
     """建会话 → 跟事件流到这一轮结束 → 读控制面存下的持久事件，检查顺序
     （和 `aeval e2e` 同一份检查）。"""
@@ -163,6 +204,10 @@ def main(argv: list[str]) -> int:
         return register_workbench(argv[2], float(argv[3]) if len(argv) > 3 else 300)
     if command == "ready":
         return wait_ready(float(argv[2]) if len(argv) > 2 else 180)
+    if command == "agent" and len(argv) in (3, 4):
+        return wait_agent(argv[2], float(argv[3]) if len(argv) > 3 else 300)
+    if command == "exposure" and len(argv) in (3, 4):
+        return wait_exposure(argv[2], float(argv[3]) if len(argv) > 3 else 120)
     if command == "session" and len(argv) in (3, 4):
         return run_session(argv[2], show_results=argv[3:] == ["--results"])
     print(__doc__, file=sys.stderr)

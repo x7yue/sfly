@@ -84,7 +84,12 @@ def test_the_profile_adds_the_assistant_and_the_workbench_and_leaves_the_control
     plain = render(tmp_path, {**REQUIRED, **ASSISTANT})
     with_profile = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")
 
-    assert sorted(with_profile["services"]) == ["sfly", "sfly-assistant", "sfly-workbench"]
+    assert sorted(with_profile["services"]) == [
+        "sfly",
+        "sfly-assistant",
+        "sfly-workbench",
+        "sfly-workbench-firewall",
+    ]
     assert with_profile["services"]["sfly"] == plain["services"]["sfly"]
 
 
@@ -96,6 +101,7 @@ def test_neither_the_assistant_nor_the_workbench_publishes_a_port(tmp_path: Path
     assert len(services["sfly"]["ports"]) == 2
     assert "ports" not in services["sfly-assistant"]
     assert "ports" not in services["sfly-workbench"]
+    assert "ports" not in services["sfly-workbench-firewall"]
 
 
 def test_the_workbench_credential_goes_to_the_workbench_only(tmp_path: Path) -> None:
@@ -103,11 +109,11 @@ def test_the_workbench_credential_goes_to_the_workbench_only(tmp_path: Path) -> 
     token = ASSISTANT["SFLY_WORKBENCH_TOKEN"]
 
     assert environment(services["sfly-workbench"])["SFLY_WORKBENCH_TOKEN"] == token
-    for other in ("sfly", "sfly-assistant"):
+    for other in ("sfly", "sfly-assistant", "sfly-workbench-firewall"):
         assert token not in json.dumps(services[other]), other
     # 模型的密钥只给助手容器。
     assert environment(services["sfly-assistant"])["MODEL_API_KEY"] == "model-key-value"
-    for other in ("sfly", "sfly-workbench"):
+    for other in ("sfly", "sfly-workbench", "sfly-workbench-firewall"):
         assert "model-key-value" not in json.dumps(services[other]), other
 
 
@@ -121,7 +127,7 @@ def test_the_shared_agent_token_never_reaches_the_workbench(tmp_path: Path) -> N
     ]
 
     assert environment(services["sfly"])["SFLY_AGENT_TOKEN"] == shared
-    for other in ("sfly-workbench", "sfly-assistant"):
+    for other in ("sfly-workbench", "sfly-assistant", "sfly-workbench-firewall"):
         assert shared not in json.dumps(services[other]), other
     # 工作台用的是它自己的 Agent 凭据。
     workbench = environment(services["sfly-workbench"])
@@ -131,7 +137,7 @@ def test_the_shared_agent_token_never_reaches_the_workbench(tmp_path: Path) -> N
 
 def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> None:
     # 工作台上的模型读得到工作台的环境：助手的共享密钥只给控制面和助手服务，模型的密钥只给助手服务，
-    # 工作台只拿它自己要的四个变量（加一个别的变量，这里就红）。
+    # 工作台只拿它自己要的这几个变量（加一个别的变量，这里就红）。
     services = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"]
     workbench = services["sfly-workbench"]
 
@@ -140,9 +146,12 @@ def test_the_assistant_secrets_do_not_reach_the_workbench(tmp_path: Path) -> Non
         "SFLY_WORKBENCH_NAME",
         "SFLY_WORKBENCH_PUBLIC_ADDRESS",
         "SFLY_WORKBENCH_TOKEN",
+        "SFLY_PYTHON_INSTALL_MIRROR",
+        "SFLY_WORKBENCH_REQUIRE_FIREWALL",
     }
     for secret in (ASSISTANT["SFLY_ASSISTANT_SECRET"], ASSISTANT["MODEL_API_KEY"]):
         assert secret not in json.dumps(workbench)
+        assert secret not in json.dumps(services["sfly-workbench-firewall"])
     # 控制面和助手服务读同一个共享密钥。
     for holder in ("sfly", "sfly-assistant"):
         assert ASSISTANT["SFLY_ASSISTANT_SECRET"] in json.dumps(services[holder]), holder
@@ -159,6 +168,9 @@ def test_the_workbench_is_named_by_its_own_variable_and_the_control_plane_reads_
     control_plane = environment(services["sfly"])
     assert "SFLY_WORKBENCH_AGENT" not in control_plane
     assert not [name for name in control_plane if name.startswith("SFLY_WORKBENCH")]
+    # 控制面读的是「出网名单容器上的探测服务在哪」（#498），按工作台的 Agent 名对应，
+    # 不是「哪台 Agent 是工作台」。
+    assert control_plane["SFLY_FIREWALL_PROBES"] == "workbench=sfly-workbench:47124"
     workbench = environment(services["sfly-workbench"])
     assert "SFLY_WORKBENCH_AGENT" not in workbench
     assert workbench["SFLY_WORKBENCH_NAME"] == "workbench"
@@ -242,8 +254,8 @@ def test_the_readme_alias_example_gives_the_control_plane_the_public_host_name(
     config = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=example)
 
     assert config["services"]["sfly"]["networks"]["default"]["aliases"] == ["sfly.example.com"]
-    # 工作台和控制面在同一个网络里，别名对它有效。
-    assert "networks" in config["services"]["sfly-workbench"]
+    # 工作台共用出网名单那个服务的网络命名空间，它和控制面在同一个网络里，别名对它有效。
+    assert "networks" in config["services"]["sfly-workbench-firewall"]
 
 
 def test_the_readme_extra_hosts_example_points_the_public_host_name_at_the_docker_host(
@@ -252,7 +264,8 @@ def test_the_readme_extra_hosts_example_points_the_public_host_name_at_the_docke
     example = readme_override_examples()["extra_hosts"]
     config = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant", override=example)
 
-    hosts = config["services"]["sfly-workbench"]["extra_hosts"]
+    # 工作台共用出网名单那个服务的网络和 /etc/hosts：extra_hosts 加在它上面。
+    hosts = config["services"]["sfly-workbench-firewall"]["extra_hosts"]
     # compose 的版本不同，输出是列表（`主机名=host-gateway`）或映射。
     pairs = hosts if isinstance(hosts, dict) else dict(h.split("=", 1) for h in hosts)
     assert pairs == {"sfly.example.com": "host-gateway"}
@@ -271,3 +284,56 @@ def test_the_readme_netrc_example_mounts_a_read_only_file_next_to_the_home_volum
     assert netrc["source"].endswith("workbench.netrc")
     # 家目录还是命名卷：.netrc 是叠在它上面的一个文件，卷里的东西不受影响。
     assert mounts["/home/workbench"]["type"] == "volume"
+
+
+# ---- 出网名单（#498）----
+
+
+def test_the_workbench_shares_the_firewall_network_namespace_and_has_no_extra_capability(
+    tmp_path: Path,
+) -> None:
+    services = render(tmp_path, {**REQUIRED, **ASSISTANT}, "assistant")["services"]
+    workbench = services["sfly-workbench"]
+    firewall = services["sfly-workbench-firewall"]
+
+    assert workbench["network_mode"] == "service:sfly-workbench-firewall"
+    assert "networks" not in workbench
+    gate = workbench["depends_on"]["sfly-workbench-firewall"]
+    assert gate["condition"] == "service_healthy" and gate["restart"] is True
+    assert "cap_add" not in workbench and "user" not in workbench
+    # 只有写规则的那个服务有 NET_ADMIN，别的能力全去掉；能力端口的地址（网络别名）挂在它上面。
+    assert firewall["user"] == "root"
+    assert firewall["cap_drop"] == ["ALL"] and firewall["cap_add"] == ["NET_ADMIN"]
+    assert firewall["entrypoint"] == ["/usr/local/bin/sfly-workbench-firewall"]
+    assert firewall["networks"]["default"]["aliases"] == ["sfly-workbench"]
+    assert firewall["image"] == workbench["image"]
+    # 健康检查和工作台的入口脚本看同一样东西：本网络命名空间里规则写好之后才应答的端口。
+    assert "http://127.0.0.1:47123/" in firewall["healthcheck"]["test"]
+    # 直连回环，环境里的代理不能替它应答。
+    assert firewall["healthcheck"]["test"][3:5] == ["--noproxy", "*"]
+    assert environment(workbench)["SFLY_WORKBENCH_REQUIRE_FIREWALL"] == "1"
+
+
+def test_the_firewall_reads_the_control_plane_mirrors_and_the_extra_entries(tmp_path: Path) -> None:
+    variables = {
+        **REQUIRED,
+        **ASSISTANT,
+        "SFLY_PYPI_MIRROR": "https://mirrors.example.com/pypi/simple",
+        "SFLY_PYTHON_INSTALL_MIRROR": "https://python.example.net/standalone/",
+        "SFLY_WORKBENCH_EGRESS": "db.internal:5432 sut.internal:9000",
+    }
+    services = render(tmp_path, variables, "assistant")["services"]
+    firewall = services["sfly-workbench-firewall"]
+
+    assert environment(firewall) == {
+        "SFLY_WORKBENCH_URL": "http://sfly:8080",
+        "SFLY_PUBLIC_URL": REQUIRED["SFLY_PUBLIC_URL"],
+        "SFLY_PUBLIC_GRPC_URL": "",
+        "SFLY_PYPI_MIRROR": "https://mirrors.example.com/pypi/simple",
+        "SFLY_GITHUB_RELEASE_MIRROR": "",
+        "SFLY_PYTHON_INSTALL_MIRROR": "https://python.example.net/standalone/",
+        "SFLY_WORKBENCH_EGRESS": "db.internal:5432 sut.internal:9000",
+    }
+    # 独立的 Python 下载镜像：安装脚本和出网名单拿同一个值（不是工作台卷里 agent.env 的）。
+    python_mirror = environment(services["sfly-workbench"])["SFLY_PYTHON_INSTALL_MIRROR"]
+    assert python_mirror == environment(firewall)["SFLY_PYTHON_INSTALL_MIRROR"]

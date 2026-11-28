@@ -227,6 +227,7 @@ describe("会话页的文字", () => {
 	it("就绪状态：逐条写缺什么和该找谁；工作台不在线时写出是哪一台；就绪时没有原因", () => {
 		const offline: Readiness = {
 			ready: false,
+			exposure: null,
 			workbench: "bench-1",
 			problems: [{ kind: "workbench_offline", message: "工作台的 Agent 不在线" }],
 		};
@@ -246,6 +247,7 @@ describe("会话页的文字", () => {
 		]);
 		const none: Readiness = {
 			ready: false,
+			exposure: null,
 			workbench: null,
 			problems: [
 				{ kind: "assistant_not_configured", message: "没有配置助手" },
@@ -256,7 +258,9 @@ describe("会话页的文字", () => {
 			["没有配置助手", "请部署者在控制面上开启助手"],
 			["没有登记工作台", "请项目管理员登记工作台（见部署文档「登记工作台」）"],
 		]);
-		expect(readinessItems({ ready: true, workbench: "bench-1", problems: [] })).toEqual([]);
+		expect(
+			readinessItems({ ready: true, workbench: "bench-1", problems: [], exposure: null }),
+		).toEqual([]);
 	});
 
 	it("就绪状态里的每一种问题都写了该找谁（读不到就是漏了）", () => {
@@ -271,6 +275,7 @@ describe("会话页的文字", () => {
 		for (const kind of kinds) {
 			const [item] = readinessItems({
 				ready: false,
+				exposure: null,
 				workbench: null,
 				problems: [{ kind, message: "x" }],
 			});
@@ -280,6 +285,7 @@ describe("会话页的文字", () => {
 		expect(
 			readinessItems({
 				ready: false,
+				exposure: null,
 				workbench: null,
 				problems: [{ kind: "model_not_configured", message: "没有配置模型：缺少端点" }],
 			})[0]?.hint,
@@ -566,6 +572,7 @@ describe("读屏的播报", () => {
 describe("就绪状态里有没有模型的问题（会话页据此不让空闲的会话说话）", () => {
 	const readiness = (...kinds: Readiness["problems"][number]["kind"][]): Readiness => ({
 		ready: kinds.length === 0,
+		exposure: null,
 		problems: kinds.map((kind) => ({ kind, message: "原因" })),
 		workbench: "bench-1",
 	});

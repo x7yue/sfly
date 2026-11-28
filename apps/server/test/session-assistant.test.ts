@@ -1050,7 +1050,12 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			(await json<SessionListResponse>(await api.get("/projects/default/sessions"))).readiness;
 
 		it("都好：可用，带工作台的名字；助手服务的 /health 缓存 5 秒", async () => {
-			expect(await readiness()).toEqual({ ready: true, problems: [], workbench: WORKBENCH });
+			expect(await readiness()).toEqual({
+				ready: true,
+				problems: [],
+				workbench: WORKBENCH,
+				exposure: null,
+			});
 			// 5 秒内助手服务连不上也不重新问（读缓存）；之后问一遍，写明原因。
 			await assistant.stop();
 			await eventually(() => expect(cp.current.assistantConnected()).toBe(false));

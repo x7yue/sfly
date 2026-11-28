@@ -63,6 +63,9 @@
 //                    没开时会话的写接口返回 503 assistant_not_configured，读接口照常（ADR 0027）
 //   SFLY_ASSISTANT_SECRET 和助手服务共用的密钥，至少 32 个字符（可选；太短当作没有配置，原因写进日志和就绪状态）
 //                    哪台 Agent 是项目的工作台不是环境变量：项目管理员用 PUT /projects/:project/workbench 登记（存在库里，#549）
+//   SFLY_FIREWALL_PROBES 每台工作台的出网名单容器上探测服务的地址（可选，#498）：「工作台的 Agent 名=主机:端口」，空格分隔，
+//                    compose 里是 workbench=sfly-workbench:47124。说的是出网名单容器在哪，不是哪台 Agent 是工作台；
+//                    没有配置的工作台，助手页写「没有测成」
 //   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
 //                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
 //   SFLY_MIGRATIONS_DIR 数据库迁移目录（默认 apps/server/drizzle）
@@ -213,6 +216,7 @@ const controlPlane = await startControlPlane({
 	migrationsDir: env.SFLY_MIGRATIONS_DIR || defaults.migrationsDir,
 	assistantUrl: env.SFLY_ASSISTANT_URL || undefined,
 	assistantSecret: env.SFLY_ASSISTANT_SECRET || undefined,
+	workbenchProbes: env.SFLY_FIREWALL_PROBES || undefined,
 	// 检查过的设置（保留天数、各种上限、登录的空闲期限、数据库地址、对外地址、跨域来源、初始管理员、代理信任、镜像）：
 	// `...settings` 一次传进去，不逐项接线（漏掉一项就是悄悄不生效）。放在最后：前面没有同名的项（有就编译不过），后面也不能再有
 	// 把它盖掉的（test/main-env-settings.test.ts 的结构检查守着）。

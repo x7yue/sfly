@@ -11,7 +11,7 @@ export const LIVE_POLL_MS = 2_000;
 export const ACTIONS_POLL_MS = 1_000;
 /** 变化较慢的状态（场景列表的最近运行、Agent 管理页、监控页的平台自带图表）：每 5 秒。 */
 export const STATUS_POLL_MS = 5_000;
-/** 背景信息（侧边栏的 Agent 计数、画布上的 Agent 在线状态）：每 10 秒。 */
+/** 背景信息（侧边栏的 Agent 计数、画布上的 Agent 在线状态、助手页和会话页的就绪状态）：每 10 秒。 */
 export const BACKGROUND_POLL_MS = 10_000;
 /** 搜索框停止输入多久后写进地址并查询。 */
 export const SEARCH_DEBOUNCE_MS = 250;

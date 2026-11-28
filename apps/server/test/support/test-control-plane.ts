@@ -128,6 +128,9 @@ export async function startTestControlPlane(
 		| "assistantEventsIdleMs"
 		| "assistantCommandTimeoutMs"
 		| "sessionSweepIntervalMs"
+		| "exposureSweepIntervalMs"
+		| "workbenchProbe"
+		| "workbenchProbes"
 		| "onSessionEnded"
 		| "initialAdmin"
 		| "loginIdleMs"
@@ -189,6 +192,11 @@ export async function startTestControlPlane(
 			// 兜底收拾「一直在做」的会话（超过 30 分钟没有持久事件）：测试里默认不扫（用例里手动推进时钟、直接写库造会话，
 			// 不该被它收拾掉），要测它的用例自己传间隔。
 			sessionSweepIntervalMs: options.sessionSweepIntervalMs ?? 3_600_000,
+			exposureSweepIntervalMs: options.exposureSweepIntervalMs ?? 3_600_000,
+			// 测试里不去连真的探测服务：默认一台也连不通，要测探测的用例自己传。
+			workbenchProbes: options.workbenchProbes,
+			workbenchProbe:
+				options.workbenchProbe ?? (async (_host, targets) => targets.map(() => "closed" as const)),
 			onSessionEnded: options.onSessionEnded,
 			// 停止之后等助手服务带回结局的宽限：测试里短一点（要测它的用例自己传）。
 			sessionStopGraceMs:

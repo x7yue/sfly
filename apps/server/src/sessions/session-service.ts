@@ -27,6 +27,7 @@ import {
 import type { AssistantSetup } from "./assistant-config.js";
 import { commandEnv } from "./command-env.js";
 import { effectiveTurn, type SessionRow, type SessionStore } from "./session-store.js";
+import { capabilityAddress, type WorkbenchExposure } from "./workbench-exposure.js";
 
 /** 请求没有成功的原因：状态码、错误码（`SessionErrorCode`）和给人看的一句话。 */
 export interface Rejection {
@@ -176,6 +177,8 @@ export interface SessionServiceDeps {
 	client: AssistantClient | undefined;
 	/** 项目的工作台（Agent 的名字）：每次从库里读（`projects.workbench_agent`，`PUT /projects/:project/workbench` 登记，#549）。 */
 	workbench: Pick<ProjectWorkbench, "get">;
+	/** 工作台够得着的项目外 Agent（#498）：就绪状态里带上最近一次探测的结果。 */
+	exposure: Pick<WorkbenchExposure, "get">;
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
 	/**
@@ -394,8 +397,9 @@ export class SessionService {
 		if (!connection) {
 			return { problem: { kind: "workbench_offline", message: `工作台 ${name} 不在线` } };
 		}
-		const endpoint = agentEndpoint(connection.info);
-		if (endpoint.port === null || endpoint.address === "") {
+		const address = capabilityAddress(connection);
+		if (address === undefined) {
+			const endpoint = agentEndpoint(connection.info);
 			return {
 				problem: {
 					kind: "workbench_offline",
@@ -403,8 +407,7 @@ export class SessionService {
 				},
 			};
 		}
-		const host = endpoint.address.includes(":") ? `[${endpoint.address}]` : endpoint.address;
-		return { target: { name, address: `${host}:${endpoint.port}`, workdir: WORKDIR } };
+		return { target: { name, address, workdir: WORKDIR } };
 	}
 
 	/**
@@ -435,6 +438,11 @@ export class SessionService {
 			ready: problems.length === 0,
 			problems,
 			workbench: registered ?? null,
+			exposure: this.deps.exposure.get(
+				project,
+				registered,
+				registered === undefined ? undefined : this.deps.hub.connection(registered),
+			),
 		};
 	}
 
