@@ -22,16 +22,16 @@ run() { # 配置名 期望（pass | 违反的不变式名）
 	elif ((code == 12)); then
 		got=$(sed -n 's/^Error: Invariant \([A-Za-z0-9_]*\) is violated.*/\1/p' "$log" | head -1)
 	else
-		echo "ERROR $cfg：TLC 退出码 $code，看 $log"
+		echo "ERROR ${cfg}：TLC 退出码 ${code}，看 $log"
 		status=2
 		return
 	fi
 	local states
 	states=$(sed -nE 's/(^|.*[^0-9,])([0-9][0-9,]*) distinct states found.*/\2/p' "$log" | tail -1)
 	if [[ $got == "$want" ]]; then
-		echo "ok    $cfg：$got（${states:-?} 个不同状态）"
+		echo "ok    ${cfg}：${got}（${states:-?} 个不同状态）"
 	else
-		echo "DIFF  $cfg：期望 $want，实际 $got（反例在 $log）"
+		echo "DIFF  ${cfg}：期望 ${want}，实际 ${got}（反例在 ${log}）"
 		((status < 1)) && status=1
 	fi
 }

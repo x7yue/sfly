@@ -1,3 +1,4 @@
+import type { ErrorKind } from "@sfly/orchestration";
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
 import {
@@ -377,7 +378,7 @@ export interface TaskLogIssues {
 	text: string;
 }
 
-export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
+export type { ErrorKind };
 
 /** 运行：绑定一个编排版本。params 是填充默认值并覆盖后的入口参数。 */
 export const runs = pgTable(
@@ -1187,3 +1188,4 @@ export const platformAdminActions = pgTable(
 );
 
 export * from "./vault-schema.js";
+export * from "./version-conflict-schema.js";

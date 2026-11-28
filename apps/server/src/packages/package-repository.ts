@@ -1,18 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { newestVersion } from "@sfly/orchestration";
 import { PackageMetadata } from "@sfly/schema";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
-import {
-	DEFAULT_PROJECT,
-	type ProjectId,
-	PUBLIC_PROJECT,
-	readableProjects,
-} from "../projects/project-id.js";
+import { type ProjectId, PUBLIC_PROJECT, readableProjects } from "../projects/project-id.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
 import { sameVersion } from "./pep440.js";
 
@@ -50,8 +46,20 @@ export interface PackageVersionSummary {
 
 export interface PackageSummary {
 	name: string;
+	/** 最新版本：按版本号比较，不是发布时间（@sfly/orchestration 的 `newestVersion`，#434）。 */
+	latest_version: string;
 	/** 按发布时间从新到旧。 */
 	versions: PackageVersionSummary[];
+}
+
+/** 一个节点包的摘要：各版本按发布时间从新到旧（调用方排好），最新版本按版本号。 */
+function summaryOf(name: string, rows: readonly Row[]): PackageSummary {
+	const versions = rows.map(toSummary);
+	return {
+		name,
+		latest_version: newestVersion(versions.map((v) => v.version)) ?? "",
+		versions,
+	};
 }
 
 /** 发布人（ADR 0029）：显示名、用户 ID、经哪个令牌（令牌的名称）；没有带凭据的发布没有（升级之前发布不要任何身份）。 */
@@ -172,38 +180,36 @@ async function rejectEquivalentVersion(
 }
 
 /**
- * `名字@版本` 已经有了（不论哪个项目里）：说明已有的那个在哪个项目——只说公共项目和默认项目，不透露别的项目
- * 的 ID。要紧的是平台管理员往公共项目发布、而默认项目里先有了同名同版本：它不在包索引里，只写「已存在」看不出原因。
+ * 公共项目里的名字不和别的项目里的名字重（#501；名字这一步仍然全局唯一，第二步在 #502）：场景按名字引用节点包，同名时
+ * 先找本项目还是公共项目说不清。往别的项目发布公共项目里已有的名字、往公共项目发布别的项目里已有的名字都拒绝；
+ * 后一种不说是哪个项目。同一个名字的发布排队（和 {@link rejectEquivalentVersion} 同一把咨询锁），不会两边同时通过。
  */
-async function existingMessage(
-	tx: Tx,
-	project: ProjectId,
-	name: string,
-	version: string,
-): Promise<string> {
-	const base = `节点包 ${name}@${version} 已存在`;
-	const [existing] = await tx
+async function rejectNameAcrossPublic(tx: Tx, project: ProjectId, name: string): Promise<void> {
+	await tx.execute(
+		sql`select pg_advisory_xact_lock(hashtextextended(${publicPackageLockKey(name)}, 0))`,
+	);
+	const inPublic = eq(nodePackages.projectId, PUBLIC_PROJECT);
+	const [clash] = await tx
 		.select({ projectId: nodePackages.projectId })
 		.from(nodePackages)
-		.where(and(eq(nodePackages.name, name), eq(nodePackages.version, version)));
-	if (existing === undefined || existing.projectId === project) {
-		return `${base}，不能覆盖已发布的版本`;
-	}
-	if (existing.projectId === DEFAULT_PROJECT) {
-		const hint = project === PUBLIC_PROJECT ? "，它不在包索引里；换一个版本号发布到公共项目" : "";
-		return `${base}（在默认项目里），不能覆盖已发布的版本${hint}`;
-	}
-	if (existing.projectId === PUBLIC_PROJECT) return `${base}（在公共项目里），不能覆盖已发布的版本`;
-	return `${base}，不能覆盖已发布的版本`;
+		.where(and(eq(nodePackages.name, name), project === PUBLIC_PROJECT ? not(inPublic) : inPublic))
+		.limit(1);
+	if (clash === undefined) return;
+	throw new PackageError(
+		"conflict",
+		project === PUBLIC_PROJECT
+			? `已经有项目发布了名为 ${name} 的节点包：公共项目里不能发布和别的项目同名的包，换一个名字`
+			: `公共项目里已有节点包 ${name}（任何项目都能直接用它）：别的项目里不能发布同名的包，换一个名字；发布它的新版本要发布到公共项目（只有平台管理员能发布）`,
+	);
 }
 
 /**
  * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
  * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
  * （{@link readableProjects}）。`名字@版本` 仍然全局唯一（主键不变，第二步改成项目内唯一，#502），所以磁盘上的路径
- * （`packages/<名>/<版本>.sflypkg`）暂时不分项目。同一个名字的不同版本可以分属两个项目（例如升级前发布的 `sfly-std`
- * 在公共项目里，之后经默认项目发布的新版本在默认项目里）：按名字取时各版本合在一起。「先找本项目、再找公共项目」的优先顺序
- * （场景和 Agent 下载归档，#501）不在这里。
+ * （`packages/<名>/<版本>.sflypkg`）暂时不分项目。公共项目里的名字不能在别的项目里发布，反过来也一样
+ * （{@link rejectNameAcrossPublic}，#501），所以一个名字要么在公共项目里，要么在别的项目里（同一个名字的不同版本可以分属
+ * 别的几个项目）：按名字取时本项目和公共项目里的版本合在一起，不会两边都有。
  */
 export function createPackageRepository({ db, clock, dataDir }: PackageRepositoryDeps) {
 	return {
@@ -219,6 +225,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			const filePath = join("packages", metadata.name, `${metadata.version}.sflypkg`);
 
 			return db.transaction(async (tx) => {
+				await rejectNameAcrossPublic(tx, project, metadata.name);
 				if (project === PUBLIC_PROJECT) await rejectEquivalentVersion(tx, metadata);
 				const [row] = await tx
 					.insert(nodePackages)
@@ -240,7 +247,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				if (!row) {
 					throw new PackageError(
 						"conflict",
-						await existingMessage(tx, project, metadata.name, metadata.version),
+						`节点包 ${metadata.name}@${metadata.version} 已存在，不能覆盖已发布的版本`,
 					);
 				}
 				// 先写临时文件再改名；事务提交前失败会回滚记录。
@@ -265,16 +272,9 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				.from(nodePackages)
 				.where(inArray(nodePackages.projectId, readableProjects(project)))
 				.orderBy(asc(nodePackages.name), desc(nodePackages.publishedAt));
-			const byName = new Map<string, PackageSummary>();
-			for (const row of rows) {
-				let pkg = byName.get(row.name);
-				if (!pkg) {
-					pkg = { name: row.name, versions: [] };
-					byName.set(row.name, pkg);
-				}
-				pkg.versions.push(toSummary(row));
-			}
-			return [...byName.values()];
+			const byName = new Map<string, Row[]>();
+			for (const row of rows) byName.set(row.name, [...(byName.get(row.name) ?? []), row]);
+			return [...byName].map(([name, versions]) => summaryOf(name, versions));
 		},
 
 		/** 这个项目里按名字取节点包的各个版本（本项目的或公共项目的）；不存在或属于别的项目时返回 undefined。 */
@@ -289,7 +289,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 					),
 				)
 				.orderBy(desc(nodePackages.publishedAt));
-			return rows.length ? { name, versions: rows.map(toSummary) } : undefined;
+			return rows.length ? summaryOf(name, rows) : undefined;
 		},
 
 		/** 这个项目读得到的一个节点包版本；不存在或属于别的项目时返回 undefined。 */

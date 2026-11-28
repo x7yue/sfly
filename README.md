@@ -15,13 +15,13 @@
 
 ## 开发
 
-工具链：Node（当前 LTS，主版本只写在 `.node-version`，镜像和打包都读取它）、pnpm 10、Rust stable、protoc、uv；测试需要 PostgreSQL（`DATABASE_URL`，默认 `postgres://sfly:sfly@127.0.0.1:5432/sfly`，需要建库权限）。
+工具链：Node（当前 LTS，主版本只写在 `.node-version`，镜像和打包都读取它）、pnpm 10、Rust（版本只写在 `rust-toolchain.toml`，rustup 自动用它）、protoc、uv（CI 和 `pnpm linux` 用 `.tool-versions` 里的版本）；测试需要 PostgreSQL（`DATABASE_URL`，默认 `postgres://sfly:sfly@127.0.0.1:5432/sfly`，需要建库权限）。
 
 | 命令 | 作用 |
 |---|---|
 | `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前检查分支名前缀、Node 版本和依赖与锁文件是否一致，再运行版本号检查、gen:check、lint、typecheck（跳过用 `git push --no-verify`）；测试在 CI 里跑 |
 | `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema、路由清单和 API 客户端的类型（`pnpm gen:check` 检查这些生成物没有过期） |
-| `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint），以及手工抄在几处的版本号是否一致（`pnpm lint:node`：Node 主版本、CI 的 Playwright 镜像标签与 `@playwright/test`、Python 版本、PostgreSQL 镜像，不一致时报出是哪两处）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查；控制面里依赖真实 Agent 的测试文件在 macOS 上自动跳过（跑完时有提示），用 `pnpm linux pnpm --filter @sfly/server test` 运行 |
+| `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint）、仓库里的 shell 脚本（`pnpm lint:shell`：shellcheck，用同一个镜像，没有 docker 时用本机的 shellcheck；另查变量后面紧跟汉字的写法），以及手工抄在几处的版本号是否一致（`pnpm lint:versions`：Node 主版本、CI 的 Playwright 镜像标签与 `@playwright/test`、Python 版本、PostgreSQL 镜像，不一致时报出是哪两处）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查；控制面里依赖真实 Agent 的测试文件在 macOS 上自动跳过（跑完时有提示），用 `pnpm linux pnpm --filter @sfly/server test` 运行 |
 | `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh`。卷 `sfly-linux` 里每个工作区一份副本（0.7 GB 起，编译之后几个 GB）：工作区删掉之后留下的副本每次运行前自动清（也可以 `pnpm linux --prune [--dry-run]` 手动清，`--clean` 只清当前工作区自己的）；一个工作区的编译结果超过 4 GB（`SFLY_LINUX_TARGET_LIMIT_MB`）时先删增量编译的缓存、还超就整个删，uv 缓存超过 1 GB（`SFLY_LINUX_UV_CACHE_LIMIT_MB`）时让 uv 清掉不再被引用的部分。`pnpm linux` 里 cargo 的调试信息只留行号表（`CARGO_PROFILE_DEV_DEBUG`、`CARGO_PROFILE_TEST_DEBUG` 默认 `line-tables-only`，`scripts/linux/cargo-env.sh`）：从头构建的编译结果小一半多、快几倍，panic 的回溯里文件和行号还在，只是调试器看不到变量的类型信息；CI 和直接跑 cargo 不受影响，宿主上设了这两个变量就用设的（要完整的调试信息设成 `true`）。**升级后第一次 `pnpm linux` 会把这个工作区已有的 `target` 整个重编一次**（调试信息是编译指纹的一部分），几分钟。同步只写内容变了的文件，写过的文件修改时间是现在、没变的不动（`scripts/linux/sync-copy.sh`）：cargo 按修改时间判断要不要重编，所以在容器里改过源码再还原、或宿主上换了一份修改时间更早的内容，下一次运行都会重编，不再沿用改过的二进制 |
 | `pnpm heavy [--pg] <命令>` | 重型命令（完整测试、`pnpm test:e2e*`、`pnpm linux` 整套、`pnpm perf`）在本机同一把 flock 锁上排队、前台运行，并把 `TMPDIR`、`CARGO_TARGET_DIR` 指向按工作区区分的短目录（Unix socket 路径不能超过 108 字节）。多个工作区同时跑时用它。`--pg` 为这次运行单独起一个 PostgreSQL 容器并设置 `DATABASE_URL`，结束时删掉，避免共用的库超过连接上限；`pnpm heavy --clean` 删掉短目录和这个工作区没人在用的 PostgreSQL 容器（还有 heavy 在跑时保留短目录和它的容器）。同名、位置不同的两个检出会共用短目录和容器标签，目录名要不同。macOS 的 flock 用 `brew install flock` 安装，CI 上不加锁；锁文件和目录用 `SFLY_HEAVY_LOCK`、`SFLY_HEAVY_TMP_ROOT` 改，见 `scripts/heavy.sh`。`--pg` 的容器连它的匿名数据卷一起删（`docker rm -f -v`）；#525 修好之前的版本每跑一次留下一个没有容器引用的卷（50 到 80 MB），升级后清一次：先 `docker volume ls -qf dangling=true` 看一眼，再 `docker volume prune`（Docker 23 及以上只删匿名卷；更老的版本还会删没有容器在用的命名卷，例如 `pnpm linux` 的 `sfly-linux`，那时改用 `docker volume ls -qf dangling=true \| grep -E '^[0-9a-f]{64}$' \| xargs docker volume rm`）。没有容器引用的匿名卷里也包括本机别的项目留下的，不需要的再删 |
 | `pnpm proto:breaking` | buf breaking 检查 |
@@ -29,7 +29,7 @@
 | `pnpm test:e2e` | 构建 API 客户端和前端并运行 Playwright 端到端测试（`apps/web/e2e`；视觉回归只在设了 `SFLY_VISUAL=1` 时跑（`pnpm test:e2e:docker` 和 CI 的 e2e job 设了它），直接在本机运行时跳过；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
 | `pnpm test:e2e:docker` | 在 Playwright 官方镜像中运行（与 CI 相同，视觉基线以它为准；加 `--update-snapshots` 更新基线） |
 | `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0；Linux 用 `taskset`，macOS 在 Playwright 镜像里用 `docker --cpus=2`。CI 上失败的用例用 `pnpm ci:failures` 查 |
-| `pnpm test:e2e:changed [基准 [Playwright 参数…]]` | 把相比基准（默认 `origin/main`）新增或改动的 e2e spec 重复运行 2–5 次，基准后面的参数交给 Playwright（CI 分片时传 `--shard=i/4`）；CI 在 PR 上自动运行。`bash scripts/e2e-changed.sh --list` 只列出选中的 spec |
+| `pnpm test:e2e:changed [基准 [Playwright 参数…]]` | 把相比基准（默认是 `origin/dev`、`origin/main` 里离当前提交更近的那个）新增或改动的 e2e spec 重复运行 2–5 次，基准后面的参数交给 Playwright（CI 分片时传 `--shard=i/4`）；CI 在 PR 上自动运行。`bash scripts/e2e-changed.sh --list` 只列出选中的 spec |
 | `pnpm test:stress [-n 次数] <命令>` | 复现其他测试的偶发失败：限制在 2 个 CPU 上把同一条测试命令重复运行（默认 30 次），失败那几次的输出留在临时目录。例如 `pnpm test:stress cargo test --locked -p sfly-agent --test retention` |
 | `pnpm ci:failures <运行 ID>` | 只看 CI 一次运行里失败的测试（vitest、Playwright、pytest、cargo test 的失败块和断言差异），不用翻完整日志。运行 ID 在 `gh pr checks <PR>` 给出的链接里（`.../actions/runs/<运行 ID>/job/...`） |
 | `pnpm --filter @sfly/server dev` / `pnpm --filter @sfly/web dev` | 启动控制面 / 前端开发服务器（端口 3000，`/api` 代理到控制面） |

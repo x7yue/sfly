@@ -371,7 +371,13 @@ class Stack:
         copy_scripts(self.dev, "dev", self.evals_dir)
         copy_scripts(self.sut, "sut", self.evals_dir)
         log("安装 Agent（按用户文档的 install.sh）")
-        self._install_agents()
+        try:
+            self._install_agents()
+        except d.DockerError:
+            # 下载 uv、Python、包失败时，上游回了什么只在镜像站的日志里（#847）。
+            mirror_log = d.docker("logs", "--tail", "30", self.name("mirror"), check=False)
+            log(f"镜像站最后的日志：\n{mirror_log.stderr}{mirror_log.stdout}")
+            raise
         self.start_agents()
         self.wait_agents()
         # 共享 venv 的基线：每次重置恢复成它，`sfly dev` 和装过的节点包都不会留到下一次会话。

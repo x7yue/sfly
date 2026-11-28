@@ -1,6 +1,6 @@
 {
-  "id": "8f812d78-da98-409d-8454-7024ba650778",
-  "prevId": "373c84df-98fa-46d4-ad7e-7184a3402618",
+  "id": "f79712f8-b8d0-44c6-8d70-3db5d6cfa54d",
+  "prevId": "73acb052-25e6-4aa1-9fa1-35dede464708",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2076,33 +2076,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "masked_on_write": {
-          "name": "masked_on_write",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "secrets_oversize": {
-          "name": "secrets_oversize",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "vault_deleted_at": {
-          "name": "vault_deleted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "late_reports_dropped": {
-          "name": "late_reports_dropped",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         }
       },
       "indexes": {
@@ -3203,37 +3176,9 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "abandoned_at": {
-          "name": "abandoned_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "released_at": {
-          "name": "released_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "tasks_unreleased": {
-          "name": "tasks_unreleased",
-          "columns": [
-            {
-              "expression": "agent_name",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"tasks\".\"lease_expires_at\" is not null and \"tasks\".\"released_at\" is null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "tasks_lease": {
           "name": "tasks_lease",
           "columns": [
@@ -3509,6 +3454,88 @@
         "vault_key_single": {
           "name": "vault_key_single",
           "value": "\"vault_key\".\"id\" = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.package_version_conflicts": {
+      "name": "package_version_conflicts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "at": {
+          "name": "at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agent_name": {
+          "name": "agent_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "package": {
+          "name": "package",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "package_version_conflicts_at": {
+          "name": "package_version_conflicts_at",
+          "columns": [
+            {
+              "expression": "at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "package_version_conflicts_stage": {
+          "name": "package_version_conflicts_stage",
+          "value": "\"package_version_conflicts\".\"stage\" in ('trigger', 'dispatch')"
         }
       },
       "isRLSEnabled": false

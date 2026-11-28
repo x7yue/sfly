@@ -2,7 +2,6 @@
 // 问题的说明和 details 里写出的值要打码，写成 ******。
 // 另外：触发时 secret 参数的值恰好是读取接口打的码 ******，拒绝；运行预设保存时同理。
 // 测试里的值都是明显的假值；断言整个响应的文本（message 和 details 都在里面）里没有它。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { orchestrationsApi, runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";

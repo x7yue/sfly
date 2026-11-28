@@ -247,10 +247,17 @@ export interface AgentView {
 	/** 本次连接还没有安装过节点包时为 null。 */
 	install: InstallProgressView | null;
 	dev_packages: DevPackageView[];
-	/** 按派发顺序排列；长度即占用的槽位数。 */
+	/** 按派发顺序排列；只列读者项目里的，占用的槽位数是它的长度加上 `other_project_running`。 */
 	running_tasks: RunningTaskView[];
 	/** 在等这台 Agent 的任务，按排队顺序（也是派发顺序）。 */
 	queued_tasks: QueuedTaskView[];
+	/**
+	 * 别的项目的运行占着这台 Agent 的槽位数（#500）：`running_tasks` 只列读者项目里的，占用的槽位数是两者之和。
+	 * 不给别的项目的场景、运行、节点、任务。派发只用场景所在项目的 Agent，正常情况下是 0。
+	 */
+	other_project_running: number;
+	/** 别的项目的运行在等这台 Agent 的任务数（`queued_tasks` 只列读者项目里的）。 */
+	other_project_queued: number;
 	/**
 	 * Agent 版本与控制面版本（列表响应的 control_plane_version）不一致：控制面不给它派新任务（ADR 0014），
 	 * 它手上的任务照常跑完。按最近一次连接上报的版本判断。
@@ -1185,6 +1192,7 @@ export interface InstallProgressView {
 	package: string;
 	version: string;
 	state: "installing" | "installed" | "failed";
+	/** 为哪个任务安装的；不为任务装的为空字符串。确认不了是读者项目里的任务时它和 package、version 都是空字符串，只给 state（#500）。 */
 	task_id: string;
 }
 
@@ -1717,6 +1725,11 @@ export interface PackageNodeInput {
 
 export interface PackageSummary {
 	name: string;
+	/**
+	 * 最新版本（#434）：按版本号比较，不是发布时间（先发 1.10.0 再发 1.9.1，最新的是 1.10.0）；预发布版本排在同号正式版之前，
+	 * 版本号相等（`1.0` 和 `1.0.0`）时取字符串排在后面的。比较规则只在 `@sfly/orchestration` 的 `newestVersion`，画布和命令行读这个字段。
+	 */
+	latest_version: string;
 	/** 按发布时间从新到旧。 */
 	versions: PackageVersionSummary[];
 }

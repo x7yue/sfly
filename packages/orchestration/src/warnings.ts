@@ -1,5 +1,10 @@
 import type { StoredOrchestrationDocument } from "@sfly/schema";
-import { type AgentInputWarning, agentInputWarnings } from "./agent-inputs.js";
+import {
+	type AgentInputWarning,
+	agentInputWarnings,
+	type NodeAgentWarning,
+	nodeAgentWarnings,
+} from "./agent-inputs.js";
 import {
 	type AnnotationWarning,
 	annotationWarnings,
@@ -26,6 +31,7 @@ type NodeWarning = (
 	| RunStateWarning
 	| InputWarning
 	| AgentInputWarning
+	| NodeAgentWarning
 	| FeishuBotWarning
 	| RemovedNodeWarning
 ) & { annotation_id?: undefined };
@@ -41,13 +47,18 @@ export const blocksTrigger = (warning: WarningShape): boolean => !isAnnotationWa
  * 「Agent」类型的常量是已注册的 Agent）、「飞书机器人」类型的常量选了已登记的飞书机器人、
  * 子流程参数映射、已移除种类的节点（ADR 0028）、注释框的成员（注释框的警告只提示，不阻断触发，见 `blocksTrigger`）。
  * 保存时作为警告返回；触发时必须全部通过。控制面和画布都调用这个函数。
- * `agents`：已注册的 Agent 名称；不知道时（例如画布还在加载）不检查「Agent」类型的输入。
+ * `agents`：已注册的 Agent 名称；不知道时（例如画布还在加载）不检查包节点派发到的 Agent 和「Agent」类型的输入。
  * `feishuBots`：已登记的飞书机器人名称；不知道时不检查登记情况。
  */
 export function documentWarnings(
 	doc: StoredOrchestrationDocument,
 	catalog: PackageCatalog,
-	options: { agents?: ReadonlySet<string>; feishuBots?: ReadonlySet<string> } = {},
+	options: {
+		agents?: ReadonlySet<string>;
+		feishuBots?: ReadonlySet<string>;
+		/** 检查节点派发到的 Agent 是不是本项目注册过的：只在控制面保存时，画布上不显示（先建场景、后装 Agent 是正常顺序）。 */
+		nodeAgents?: boolean;
+	} = {},
 ): OrchestrationWarning[] {
 	return [
 		...structureWarnings(doc),
@@ -55,6 +66,7 @@ export function documentWarnings(
 		...referenceWarnings(doc, catalog),
 		...runStateWarnings(doc, catalog),
 		...inputWarnings(doc, catalog),
+		...(options.agents && options.nodeAgents ? nodeAgentWarnings(doc, options.agents) : []),
 		...(options.agents ? agentInputWarnings(doc, catalog, options.agents) : []),
 		...(options.feishuBots ? feishuBotInputWarnings(doc, catalog, options.feishuBots) : []),
 		...subflowParamWarnings(doc),
@@ -107,6 +119,7 @@ export const DOCUMENT_WARNING_CODES = [
 	"input_required",
 	"input_type_mismatch",
 	"input_not_declared",
+	"agent_not_registered",
 	"agent_input_not_registered",
 	"feishu_bot_not_registered",
 	"node_kind_removed",
