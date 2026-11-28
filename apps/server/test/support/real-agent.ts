@@ -1,11 +1,11 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { agentBinary, repoRoot } from "./agent-binary.js";
 import { credentialFor } from "./fake-agent.js";
+import { makeTempDir } from "./temp-dir.js";
 
 /** 以子进程运行的真实 Rust Agent。标准输出是 JSON 事件流，标准错误直接透传。 */
 export interface RealAgent {
@@ -46,7 +46,7 @@ export async function startRealAgent(options: {
 	const credential = explicitToken
 		? undefined
 		: (options.credential ?? (await credentialFor(options.grpcUrl, options.name)));
-	const workDir = await mkdtemp(join(tmpdir(), "sfly-agent-work-"));
+	const workDir = await makeTempDir("sfly-agent-work-");
 	const child = spawn(
 		bin,
 		[
@@ -121,7 +121,7 @@ export async function startRealAgent(options: {
 export async function createStubVenv(
 	options: { sdkOnly?: boolean } = {},
 ): Promise<{ path: string; remove(): Promise<void> }> {
-	const dir = await mkdtemp(join(tmpdir(), "sfly-stub-venv-"));
+	const dir = await makeTempDir("sfly-stub-venv-");
 	const path = join(dir, "venv");
 	const args = options.sdkOnly ? [path, "--sdk-only"] : [path];
 	await promisify(execFile)(join(repoRoot, "scripts", "stub-venv.sh"), args, { cwd: repoRoot });

@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import ts from "typescript";
 import { repoRoot } from "./agent-binary.js";
+import { makeTempDir } from "./temp-dir.js";
 
 export interface ExampleBlock {
 	firstMarkdownLine: number;
@@ -74,7 +74,7 @@ export function typecheckPageExamples(
 }
 
 export async function workspaceClientProject(): Promise<{ dir: string; close(): Promise<void> }> {
-	const dir = await mkdtemp(join(tmpdir(), "sfly-doc-examples-"));
+	const dir = await makeTempDir("sfly-doc-examples-");
 	await mkdir(join(dir, "node_modules", "@sfly"), { recursive: true });
 	await symlink(join(repoRoot, "packages", "client"), join(dir, "node_modules", "@sfly", "client"));
 	await writeFile(join(dir, "package.json"), JSON.stringify({ type: "module" }));

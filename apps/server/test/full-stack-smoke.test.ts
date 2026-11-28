@@ -1,8 +1,7 @@
 // 全栈冒烟：真实的控制面、真实的 Rust Agent、真实的 SDK 执行器，
 // 在装好桩节点包的共享 venv 中跑通一条两个节点的链，后一个节点引用前一个节点的输出。
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -11,11 +10,12 @@ import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 用真实的 sfly CLI 构建桩节点包，经 HTTP API 发布（触发前的预检要求锁定的包版本已发布）。 */
 async function publishStubPackage(cp: TestControlPlane): Promise<void> {
-	const out = await mkdtemp(join(tmpdir(), "sfly-stub-pkg-"));
+	const out = await makeTempDir("sfly-stub-pkg-");
 	try {
 		await promisify(execFile)(
 			"uv",
@@ -220,7 +220,7 @@ describeWithAgent("全栈冒烟：两个节点的链", () => {
 
 	it("取消运行：正在运行的节点感知到 ctx.cancelled() 并被终止，普通节点 cancelled，always 节点照常执行", async () => {
 		const api = new ApiClient(cp);
-		const dir = await mkdtemp(join(tmpdir(), "sfly-cancel-"));
+		const dir = await makeTempDir("sfly-cancel-");
 		const ready = join(dir, "ready");
 		const report = join(dir, "report");
 		const id = await api.orchestrationWith({
@@ -344,7 +344,7 @@ describeWithAgent("全栈冒烟：开发模式 sfly dev", () => {
 	beforeAll(async () => {
 		const bin = agentBinary();
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv({ sdkOnly: true })]);
-		project = await mkdtemp(join(tmpdir(), "sfly-dev-project-"));
+		project = await makeTempDir("sfly-dev-project-");
 		await mkdir(join(project, "src", "smoke_dev"), { recursive: true });
 		await writeFile(
 			join(project, "pyproject.toml"),

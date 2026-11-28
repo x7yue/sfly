@@ -2,11 +2,12 @@
 // 数据库地址故意填一个连不上的：过了检查的值会走到连数据库那一步（ECONNREFUSED），没过的在那之前就退出（退出码 1）。
 // 说明写目录、当前用户和怎么改，不打印堆栈；和别的环境变量的问题一起报。以 root 运行时目录权限拦不住，那几条跳过。
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir, userInfo } from "node:os";
+import { chmod, readdir, rm } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 
 const run = promisify(execFile);
 const serverDir = join(import.meta.dirname, "..");
@@ -38,7 +39,7 @@ describe("main.ts：数据目录写不了", () => {
 	let root: string;
 
 	beforeEach(async () => {
-		root = await mkdtemp(join(tmpdir(), "sfly-main-data-dir-"));
+		root = await makeTempDir("sfly-main-data-dir-");
 	});
 	afterEach(async () => {
 		await chmod(root, 0o755).catch(() => {});

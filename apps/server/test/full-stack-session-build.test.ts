@@ -1,7 +1,6 @@
 // 会话构建能否不改 Agent 和协议（#456）：版本号带本地标签（`0.3.1+s<会话>.<序号>`）的节点包，用现有的 sfly build、
 // sfly publish 发布，经现有的派发链路到真实 Agent 上下载、安装、执行；和正式版本交替使用、Agent 重启之后都执行锁定的那个版本。
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { ApiClient, type AttemptView } from "./support/api-client.js";
@@ -9,6 +8,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "session-demo";
@@ -99,7 +99,7 @@ describeWithAgent("会话构建：带本地版本标签的节点包经现有链�
 		(await agentInfo()).installed_packages.filter((p) => p.name === PACKAGE);
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-session-build-"));
+		dir = await makeTempDir("sfly-session-build-");
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv({ sdkOnly: true })]);
 		api = new ApiClient(cp);
 		scenario = await api.createOrchestration("会话构建");

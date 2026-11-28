@@ -1,12 +1,12 @@
 // sfly api：真实的 sfly 进程按路由清单校验后调用测试控制面，以及 --list。
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { createQueuedRun } from "./support/queued-run.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import { repoRoot, sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const MANIFEST = join(repoRoot, "sdk/python/src/sfly/schemas/routes.json");
@@ -40,7 +40,7 @@ describe("sfly api → 控制面", () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
 		proxy = await startRecordingProxy(cp.httpUrl);
-		dir = await mkdtemp(join(tmpdir(), "sfly-api-"));
+		dir = await makeTempDir("sfly-api-");
 		alphaId = await api.createOrchestration("阿尔法");
 		await api.createOrchestration("贝塔");
 	}, 120_000);

@@ -18,10 +18,9 @@
 // 助手服务和控制面之间隔一个转发：控制面写死工作区在 `/work`（骨架期间的桩，#549 换掉），而这里的 Agent 是普通用户起的进程，建不了
 // `/work`；转发把交给助手服务的 `prompt` 里的工作区换成测试自己的临时目录，别的请求原样转发。
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { inspect } from "node:util";
@@ -37,6 +36,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { repoRoot } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import { asUsers } from "./support/user-api.js";
 
@@ -130,7 +130,7 @@ describeWithAgent("全栈：会话令牌（真的 pi、假的模型、真的 Age
 	const spies: Array<{ mockRestore(): void }> = [];
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-full-session-token-"));
+		dir = await makeTempDir("sfly-full-session-token-");
 		workdir = join(dir, "work");
 		const bin = join(dir, "bin");
 		await mkdir(workdir, { recursive: true });

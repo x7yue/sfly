@@ -3,9 +3,8 @@
 // sfly-std 由平台管理员发布到公共项目，真实的 Agent 从控制面的包索引装上它，依赖（psutil）从 PyPI 镜像桩安装。
 // 覆盖删掉的 14 个节点里「逻辑还在」的那些：资源采样、拉文件、持续拉文件（含来源 Agent 重启），和文档里的示例节点。
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { type AddressInfo, createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi, metricsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -23,6 +22,7 @@ import {
 	wheelhouse,
 } from "./support/std-package.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const AGENT = "std-helpers-agent";
@@ -39,7 +39,7 @@ describeWithAgent("全栈：用 sfly-std 的辅助函数写的节点", () => {
 
 	beforeAll(async () => {
 		const bin = agentBinary();
-		dir = await mkdtemp(join(tmpdir(), "sfly-full-std-helpers-"));
+		dir = await makeTempDir("sfly-full-std-helpers-");
 		let wheels: Awaited<ReturnType<typeof wheelhouse>>;
 		// 指标点的时间戳来自真实 Agent 的系统时钟，控制面也用系统时钟：否则超出保留期的可接收范围而被丢弃（#32）。
 		[cp, venv, std, wheels] = await Promise.all([

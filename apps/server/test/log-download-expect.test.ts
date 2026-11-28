@@ -9,12 +9,12 @@
 //   都读到了。任务下载读到文件此刻的内容（可能还在追加），读到的只会不少于。
 // 测试里用一个以 HTTP/1.0 连上游的代理（`net`，把读到连接关闭的内容当完整的响应转出去），命令行走真实的 `sfly` 进程。
 import { appendFileSync, truncateSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 
 /** 按运行下载：第 `at` 次（从 1 数）打开这个文件之前做的事；用完（触发一次）就清掉。 */
 const hooks = vi.hoisted(() => ({
@@ -113,7 +113,7 @@ describe("下载带上可以核对的结尾信息，命令行读完核对（#721
 	const MANY = 25;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-expect-"));
+		dir = await makeTempDir("sfly-expect-");
 		cp = await startTestControlPlane();
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 64 });

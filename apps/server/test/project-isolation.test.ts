@@ -2,9 +2,7 @@
 // 用项目甲（默认项目）调用按项目查询的入口，列表里没有项目乙的任何一行，按 ID 或名字取项目乙的资源得到「不存在」；
 // 项目乙自己调用时只看得到自己的（对照：证明上面的断言不是因为什么都查不到）。
 // 入口的签名里项目是必填参数：漏传的调用过不了类型检查（文件末尾的 `@ts-expect-error`，`pnpm typecheck` 检查）。
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { agentsApi } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -27,6 +25,7 @@ import { Mutex } from "../src/util/mutex.js";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishPackage } from "./support/package-archive.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
@@ -97,7 +96,7 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 			"insert into projects (id, display_name, created_at) values ($1, '项目乙', $2)",
 			[OTHER, AT],
 		);
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-isolation-"));
+		dataDir = await makeTempDir("sfly-isolation-");
 		const { db } = database;
 		scenarios = new OrchestrationStore({ db, clock, sessions: new SessionStore({ db, clock }) });
 		hub = new AgentHub({ db, clock, mutex: new Mutex(), version: "1.0.0" });

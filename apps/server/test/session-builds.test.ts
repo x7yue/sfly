@@ -2,8 +2,7 @@
 // 不进包列表、最新和默认版本；会话结束之后不能再引用，没有没结束的运行用它之后周期清理删掉行和归档文件。
 // 会话令牌只能访问自己的会话（安全修复：之前同一个项目里别的会话的读接口也放行）。
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sessionBuildTag } from "@sfly/schema";
 import pg from "pg";
@@ -13,6 +12,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PKG = "demo-checks";
@@ -242,7 +242,7 @@ describe("会话构建", () => {
 	});
 
 	it("sfly publish --session-build：按会话加上标签、序号递增，不改源码；没有会话时说明要在工作台上用", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-session-build-"));
+		const dir = await makeTempDir("sfly-session-build-");
 		try {
 			await mkdir(join(dir, "src", "demo_session"), { recursive: true });
 			const pyproject = '[project]\nname = "demo-session"\nversion = "0.3.1"\ndependencies = []\n';
@@ -291,7 +291,7 @@ describe("会话构建", () => {
 		expect(again.status).toBe(409);
 		expect(((await again.json()) as { error: Problem }).error.code).toBe("conflict");
 
-		const dir = await mkdtemp(join(tmpdir(), "sfly-session-build-"));
+		const dir = await makeTempDir("sfly-session-build-");
 		try {
 			await mkdir(join(dir, "src", "demo_session"), { recursive: true });
 			await writeFile(

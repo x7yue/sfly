@@ -2,8 +2,7 @@
 // fw-runner 上的节点用 ctx.agent(source).files.watch 监听 fw-source 上的日志目录，调用路径是 SDK → fw-runner → fw-source，
 // 数据不经过控制面。模拟一次日志轮转：节点先收到快照，再收到改名、新建、写完关闭的事件。
 // 节点包是 testdata/agent-files-package（sfly_agent_files.watch）。
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { type AgentPair, startAgentPair } from "./support/agent-pair.js";
@@ -11,6 +10,7 @@ import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "sfly-agent-files";
@@ -26,7 +26,7 @@ describeWithAgent("全栈：Agent 能力 files.watch", () => {
 		api = new ApiClient(cp);
 		await publishTestPackage(cp, "testdata/agent-files-package", `${PACKAGE}-0.1.0.sflypkg`);
 		pair = await startAgentPair({ grpcUrl: cp.grpcUrl, runner: "fw-runner", source: "fw-source" });
-		dir = await mkdtemp(join(tmpdir(), "sfly-agent-watch-"));
+		dir = await makeTempDir("sfly-agent-watch-");
 	}, 600_000);
 
 	afterAll(async () => {

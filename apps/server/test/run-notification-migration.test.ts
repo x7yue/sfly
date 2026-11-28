@@ -1,14 +1,14 @@
 // 运行通知的触发条件去掉了「总是」（always，#446）：升级时一次性的数据迁移把存量的「总是」改成「失败和取消」，
 // 读取时没有兼容分支。触发条件只存在场景表的 `run_notify_trigger` 列里（不属于场景版本），所以历史版本和运行不受影响。
 // 模拟旧库：只含这条迁移之前的迁移，往里插「总是」的场景，再用全部迁移重新启动。
-import { cp as copy, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp as copy, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
 import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { ApiClient } from "./support/api-client.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const MIGRATION = "0034_run_notify_always_to_failed_or_cancelled";
@@ -26,7 +26,7 @@ describe("升级：运行通知的触发条件「总是」改成「失败和取�
 
 	/** 只含这条迁移之前的迁移的目录，模拟旧版控制面的数据库。 */
 	const migrationsBeforeThis = async () => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
+		const dir = await makeTempDir("sfly-migrations-");
 		await copy(defaultMigrationsDir, dir, { recursive: true });
 		const journalPath = join(dir, "meta", "_journal.json");
 		const journal = JSON.parse(await readFile(journalPath, "utf8")) as {

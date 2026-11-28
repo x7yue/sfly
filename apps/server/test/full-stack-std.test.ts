@@ -2,8 +2,7 @@
 // 场景锁定它的版本，真实的 Agent 从控制面安装它（依赖从 PyPI 镜像桩安装，不访问外网）并执行三个标准节点
 // （shell、start_process、stop_process）。辅助函数在业务节点里的用法在 full-stack-std-helpers.test.ts。
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -22,6 +21,7 @@ import {
 	wheelhouse,
 } from "./support/std-package.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const AGENT = "std-agent";
@@ -36,7 +36,7 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 
 	beforeAll(async () => {
 		const bin = agentBinary();
-		dir = await mkdtemp(join(tmpdir(), "sfly-full-std-"));
+		dir = await makeTempDir("sfly-full-std-");
 		let wheels: Awaited<ReturnType<typeof wheelhouse>>;
 		// 指标点的时间戳来自真实 Agent 的系统时钟，控制面也用系统时钟：否则超出保留期的可接收范围而被丢弃（#32）。
 		[cp, venv, std, wheels] = await Promise.all([

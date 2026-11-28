@@ -2,12 +2,12 @@
 // 几个 PR 同时加迁移、后合入的一方重新排号时，只改编号不改 `when`，这个迁移在已经执行过前一条的库上会被静默跳过，
 // 而 CI 每次从空库开始、抓不到。这里先迁到倒数第二个，再执行全部，确认最后一个确实被执行了。
 // 对「最后一个」通用，不写死编号：以后加迁移时它照样检查新加的那个。不连数据库的检查在 scripts/check_migrations.py。
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { defaultMigrationsDir, openDatabase } from "../src/db/database.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 interface JournalEntry {
@@ -21,7 +21,7 @@ let workDir: string;
 
 beforeAll(async () => {
 	database = await createTestDatabase("sfly_migrate");
-	workDir = await mkdtemp(join(tmpdir(), "sfly-migration-upgrade-"));
+	workDir = await makeTempDir("sfly-migration-upgrade-");
 });
 afterAll(async () => {
 	await database?.drop();

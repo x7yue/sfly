@@ -1,7 +1,6 @@
 // 注释框的警告（#316）：真实的 sfly 进程对着测试控制面，`scenario push` 引用了不存在成员、没有成员、
 // 成员写了两次的注释框，打印指出注释框和成员的警告，`--json` 里带 annotation_id；这些警告不阻断触发。
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -9,6 +8,7 @@ import { echo } from "./support/chains.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const baseDocument = {
@@ -77,7 +77,7 @@ describe("sfly scenario push：注释框的警告 → 控制面", () => {
 		// 触发前的预检要求节点包已发布、Agent 已注册（不必在线）。
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 		await (await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" })).disconnect();
-		dir = await mkdtemp(join(tmpdir(), "sfly-annotation-warnings-"));
+		dir = await makeTempDir("sfly-annotation-warnings-");
 	}, 120_000);
 
 	afterAll(async () => {

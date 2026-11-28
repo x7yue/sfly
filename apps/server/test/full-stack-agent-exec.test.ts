@@ -2,8 +2,7 @@
 // ex-runner 上的节点用 ctx.agent(source).exec.run 在 ex-source 上执行命令：拿到退出码，命令的输出逐行进入 ex-runner 上
 // 这个任务的日志并标明来自 ex-source；ctx.agent() 对 ex-runner 自己同样可用。命令不占 ex-source 的槽位、不产生任务；
 // 超时、运行被取消时命令连同它的子进程一起结束。节点包是 testdata/agent-files-package（commands.py）。
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { agentsApi, logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -12,6 +11,7 @@ import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { publishTestPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "sfly-agent-files";
@@ -49,7 +49,7 @@ describeWithAgent("全栈：Agent 能力 exec", () => {
 		api = new ApiClient(cp);
 		await publishTestPackage(cp, "testdata/agent-files-package", `${PACKAGE}-0.1.0.sflypkg`);
 		pair = await startAgentPair({ grpcUrl: cp.grpcUrl, runner: "ex-runner", source: "ex-source" });
-		dir = await mkdtemp(join(tmpdir(), "sfly-agent-exec-"));
+		dir = await makeTempDir("sfly-agent-exec-");
 	}, 600_000);
 
 	afterAll(async () => {

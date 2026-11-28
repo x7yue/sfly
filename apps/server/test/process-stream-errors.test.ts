@@ -4,9 +4,8 @@
 //    是读的时候才出错，而且不依赖测试是不是以 root 运行。
 // 2. 收到停止信号时关闭被调用两次，第二次的拒绝没有人接；重复的信号只记一句，关闭只做一次。
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
 import ts from "typescript";
@@ -16,6 +15,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type SourceServer, startSourceServer } from "./support/source-server.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const DOC = {
@@ -47,7 +47,7 @@ describe("真实的控制面进程", () => {
 
 	const start = async () => {
 		database = await createTestDatabase();
-		dataDir = await mkdtemp(join(tmpdir(), "sfly-proc-"));
+		dataDir = await makeTempDir("sfly-proc-");
 		server = await startSourceServer({
 			databaseUrl: database.url,
 			dataDir,

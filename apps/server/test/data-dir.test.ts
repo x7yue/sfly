@@ -1,11 +1,12 @@
 // 数据目录启动时就检查写不写得了（#651）：不存在就建、里面试写一个文件（写完删掉）、下面已经存在的子目录各试写一次。
 // 写不了的写明哪个目录、当前用户和怎么改（按原因说）。用真的文件系统（临时目录、chmod、符号链接）；以 root 运行时 chmod 拦不住，那几条跳过。
 // 系统报的原因里真的文件系统造不出来的（只读的挂载、磁盘满）在 data-dir-reasons.test.ts 里用钩子做。
-import { chmod, lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir, userInfo } from "node:os";
+import { chmod, lstat, mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dataDirProblems } from "../src/config/data-dir.js";
+import { makeTempDir } from "./support/temp-dir.js";
 
 const isRoot = process.getuid?.() === 0;
 const SUBDIRS = ["logs", "artifacts", "packages"] as const;
@@ -15,7 +16,7 @@ describe("dataDirProblems", () => {
 	let root: string;
 
 	beforeEach(async () => {
-		root = await mkdtemp(join(tmpdir(), "sfly-data-dir-"));
+		root = await makeTempDir("sfly-data-dir-");
 	});
 	afterEach(async () => {
 		// 只读的目录要先改回来才删得掉。

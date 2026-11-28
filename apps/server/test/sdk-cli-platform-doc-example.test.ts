@@ -1,13 +1,13 @@
 // 「用命令行操作平台」页「编辑场景」里的完整场景文档示例（#320）：它同时是 sfly-platform skill 的参考文档，
 // AI 编程助手照它写场景。真实的 sfly 进程对着测试控制面，`scenario create --from` 经过本地和服务端的校验、
 // 不产生警告，`scenario show` 列出显示名称、备注、注释框和入口参数说明。
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
 import { registerAgents } from "./support/registered-agents.js";
 import { sfly } from "./support/sfly-cli.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 interface Param {
@@ -58,7 +58,7 @@ describe("「用命令行操作平台」页的场景文档示例 → sfly scenar
 		cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ version: cliVersion });
 		await registerAgents(cp.database.url, ["test-agent"]);
-		dir = await mkdtemp(join(tmpdir(), "sfly-doc-example-"));
+		dir = await makeTempDir("sfly-doc-example-");
 		example = await exampleFile();
 	}, 120_000);
 

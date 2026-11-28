@@ -5,8 +5,7 @@
 // 改好代码再运行（沿用同一份副本、不用重新 sfly dev）：退出码 0。
 // 节点包是测试里现写的小项目（loop-demo），原场景锁定它已发布的版本、跑在另一台 Agent 上。
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -19,6 +18,7 @@ import { FakeAgent } from "./support/fake-agent.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { type SflyResult, sfly } from "./support/sfly-cli.js";
 import { publishArchive } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const run = promisify(execFile);
@@ -113,7 +113,7 @@ describeWithAgent("全栈：AI 编程助手只用 sfly 命令行走完联调闭�
 
 	beforeAll(async () => {
 		const bin = agentBinary();
-		dir = await mkdtemp(join(tmpdir(), "sfly-full-platform-cli-"));
+		dir = await makeTempDir("sfly-full-platform-cli-");
 		project = join(dir, PACKAGE);
 		file = join(dir, "联调.scenario.json");
 		await mkdir(join(project, "src", "loop_demo"), { recursive: true });

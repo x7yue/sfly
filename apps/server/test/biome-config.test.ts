@@ -3,11 +3,11 @@
 // 测试目录和源码旁边的测试文件（*.test.ts）整体关掉这条规则，而不是在每个文件顶上写 biome-ignore-all。应用代码（apps/web/src、apps/server/src）里仍然开着。
 // 做法：把真实 biome.json 的 linter 和 overrides 原样放进临时目录的配置，在对应路径下放样例文件，用 biome lint 看报不报。
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
+import { makeTempDirSync } from "./support/temp-dir.js";
 
 const biomeBin = join(repoRoot, "node_modules", ".bin", "biome");
 const RULE = "lint/suspicious/noTemplateCurlyInString";
@@ -18,7 +18,7 @@ const real = JSON.parse(readFileSync(join(repoRoot, "biome.json"), "utf8")) as {
 	overrides?: unknown;
 };
 
-const scratch = mkdtempSync(join(tmpdir(), "sfly-biome-config-"));
+const scratch = makeTempDirSync("sfly-biome-config-");
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 writeFileSync(
 	join(scratch, "biome.json"),

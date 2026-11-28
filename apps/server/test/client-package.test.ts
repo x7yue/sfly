@@ -1,11 +1,12 @@
 // API 客户端安装包（ADR 0022）：打成包管理器可以直接安装的 tarball，控制面提供它的列表与下载。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describe("API 客户端安装包", () => {
@@ -14,7 +15,7 @@ describe("API 客户端安装包", () => {
 	let cp: TestControlPlane;
 
 	beforeAll(async () => {
-		dir = await mkdtemp(join(tmpdir(), "sfly-client-"));
+		dir = await makeTempDir("sfly-client-");
 		execFileSync("pnpm", ["--filter", "@sfly/client", "run", "tarball", dir], {
 			cwd: repoRoot,
 			stdio: ["ignore", "ignore", "inherit"],

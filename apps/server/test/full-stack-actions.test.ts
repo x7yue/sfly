@@ -1,8 +1,7 @@
 // 全栈（#356、#357）：真实的控制面、Rust Agent 和 SDK 执行器，桩节点 actions 用 ctx.action 嵌套记录动作、记一个标记、
 // 失败一次，最后在嵌套的「等待放行」「检查放行文件」里等测试放行。动作摘要经事件管道、Agent 的 ActionSummary 到达控制面：
 // 执行中能读到摘要和此刻在做的动作，任务结束后正在做的清空、计数保留。明细经 Agent 的 ActionBatch 到达，和摘要对得上。
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { actionsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -12,6 +11,7 @@ import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describeWithAgent("全栈：动作摘要", () => {
@@ -25,7 +25,7 @@ describeWithAgent("全栈：动作摘要", () => {
 		[cp, venv, dir] = await Promise.all([
 			startTestControlPlane(),
 			createStubVenv(),
-			mkdtemp(join(tmpdir(), "sfly-actions-")),
+			makeTempDir("sfly-actions-"),
 		]);
 		await publishStubPackage(cp);
 		agent = await startRealAgent({

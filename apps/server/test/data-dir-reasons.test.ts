@@ -2,10 +2,10 @@
 // 路径里有一段是文件也不能；递归建目录失败时 Node 报的是「不存在」（不是真正的原因），要看路径上最深的那个已经存在的位置到底是什么。
 // 这几种原因真的文件系统（临时目录）造不出来：把 `open`（试写）、`mkdir` 换成按路径抛出指定错误码的钩子，别的照常做。
 // 真的文件系统能造出来的（权限、路径里有一段是文件、断掉的符号链接）在 data-dir.test.ts。
-import { mkdtemp, mkdir as realMkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir as realMkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeTempDir } from "./support/temp-dir.js";
 
 /** 钩子：按路径抛出错误（抛出的错误的 `message` 里带着不该出现在说明里的原文）。 */
 const hooks = vi.hoisted(() => ({
@@ -38,7 +38,7 @@ describe("数据目录：按原因说怎么改", () => {
 	let root: string;
 
 	beforeEach(async () => {
-		root = await mkdtemp(join(tmpdir(), "sfly-data-dir-reasons-"));
+		root = await makeTempDir("sfly-data-dir-reasons-");
 	});
 	afterEach(async () => {
 		hooks.open = undefined;

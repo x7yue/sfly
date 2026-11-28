@@ -1,8 +1,7 @@
 // 全栈（#31）：真实的控制面、Rust Agent 和 SDK 执行器。桩节点 metrics 声明并用 ctx.metric 上报指标，
 // 经 Agent 合并转发后，能从运行的指标目录和序列查询端到端查到；带标签的指标（#78）按序列查到，SSE 推送也带标签。
 // Agent 时间拨快 613 天（#174，ADR 0018）时指标照常查到，按控制面时间存储并带着 Agent 时间。
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type MetricIncrement, metricsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -14,6 +13,7 @@ import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { SseClient } from "./support/sse-client.js";
 import { publishStubPackage } from "./support/stub-package.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describeWithAgent("全栈：指标", () => {
@@ -213,7 +213,7 @@ describeWithAgent("全栈：Agent 时间比控制面快 613 天时的指标", ()
 		[cp, venv, offsetDir] = await Promise.all([
 			startTestControlPlane({ clock: systemClock }),
 			createStubVenv(),
-			mkdtemp(join(tmpdir(), "sfly-agent-time-")),
+			makeTempDir("sfly-agent-time-"),
 		]);
 		await publishStubPackage(cp);
 		// 只供测试使用的隐藏选项：Agent 每次读 Agent 时间都加上文件里的偏移量，相当于把系统时间拨快 613 天。

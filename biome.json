@@ -54,6 +54,7 @@
 		"./biome-plugins/raw-version-document.grit",
 		"./biome-plugins/pi-only-in-assistant.grit",
 		"./biome-plugins/no-direct-output.grit",
-		"./biome-plugins/test-nickname-header.grit"
+		"./biome-plugins/test-nickname-header.grit",
+		"./biome-plugins/test-temp-dir.grit"
 	]
 }

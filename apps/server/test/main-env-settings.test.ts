@@ -6,9 +6,8 @@
 // 总表里的形状都是检查不认的（数据库地址连不上，走不到监听）；两个监听地址里检查认、监听时才失败的写法（令牌像主机名、IPv6 的区域标识）
 // 要连真的数据库才走得到监听那一步，在 main-startup-with-database.test.ts（输出全文里没有填的值的任何一段）。
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import ts from "typescript";
@@ -18,6 +17,7 @@ import {
 	readEnvSettings,
 	STRING_ENV_NAMES,
 } from "../src/config/env-settings.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { createTestDatabase } from "./support/test-database.js";
 
 const run = promisify(execFile);
@@ -642,7 +642,7 @@ async function spawnControlPlane(
 	databaseUrl: (url: string) => string = (url) => url,
 ) {
 	const database = await createTestDatabase("sfly_main_env");
-	const dataDir = await mkdtemp(join(tmpdir(), "sfly-main-env-"));
+	const dataDir = await makeTempDir("sfly-main-env-");
 	const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
 		cwd: serverDir,
 		env: {

@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createClient } from "@sfly/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -10,6 +9,7 @@ import {
 	typeScriptBlocks,
 	workspaceClientProject,
 } from "./support/doc-examples.js";
+import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PAGE = "api-client.md";
@@ -33,7 +33,7 @@ describe("API 客户端的文档页", () => {
 		let cp: TestControlPlane;
 
 		beforeAll(async () => {
-			dir = await mkdtemp(join(tmpdir(), "sfly-client-doc-"));
+			dir = await makeTempDir("sfly-client-doc-");
 			await writeFile(join(dir, `sfly-client-${version}.tgz`), tarball);
 			cp = await startTestControlPlane({
 				docsDir: join(repoRoot, "docs", "guide"),
