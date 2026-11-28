@@ -71,7 +71,7 @@ fail() {
 
 for image in "$server_image" "$assistant_image" "$workbench_image" postgres:18; do
 	docker image inspect "$image" >/dev/null 2>&1 ||
-		fail "没有镜像 $image：断网的环境不能拉取；先 pnpm test:image、test:image:assistant、test:image:workbench 构建，postgres:18 要事先 docker pull"
+		fail "没有镜像 ${image}：断网的环境不能拉取；先 pnpm test:image、test:image:assistant、test:image:workbench 构建，postgres:18 要事先 docker pull"
 done
 mkdir -p "$cache"
 
@@ -132,7 +132,7 @@ for _ in $(seq 60); do
 	[[ $status == healthy ]] && break
 	sleep 2
 done
-[[ $status == healthy ]] || fail "控制面的健康检查没有转为 healthy（$status）"
+[[ $status == healthy ]] || fail "控制面的健康检查没有转为 healthy（${status}）"
 
 # ---- 客户端：在网络里运行（断网的网络不映射端口），复用评测集的函数 ----
 client() { # <参数…>：评测集只读挂在 /aeval，初始管理员的密码经环境变量名交给容器
@@ -180,7 +180,7 @@ checked=$(client session workbench-check --results) || fail "workbench-check 会
 for expected in user=workbench home=/home/workbench pwd=/work token-env=unset workbench-token-env=unset \
 	/home/workbench/.local/bin/sfly /home/workbench/.local/bin/uv /usr/bin/git /usr/bin/rg /usr/local/bin/fd /usr/bin/jq \
 	'Python 3.'; do
-	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「$expected」：$(grep '^结果' <<<"$checked" | head -c 600)"
+	grep -qF -- "$expected" <<<"$checked" || fail "助手的命令看到的环境里没有「${expected}」：$(grep '^结果' <<<"$checked" | head -c 600)"
 done
 # 凭据经进程替换给 grep（不进它的命令行参数，ps 看不到）。
 if grep -qF -f <(printf '%s\n' "$token") <<<"$checked"; then fail "凭据出现在会话的工具结果里"; fi
@@ -197,8 +197,9 @@ issued=$(workbench sfly agent credentials issue doc-check-2 --token-only) || fai
 # README 里登记工作台的命令（`sfly api PUT /projects/default/workbench --body '{"agent": "<名字>"}'`）：已经登记过同一台，幂等，没有换。
 registered=$(workbench sfly api PUT /projects/default/workbench --body "{\"agent\": \"$agent\"}") ||
 	fail "sfly api PUT /projects/default/workbench（README 里登记工作台的命令）"
-grep -Eq "\"agent\": *\"$agent\"" <<<"$registered" && grep -Eq '"previous_agent": *null' <<<"$registered" ||
+if ! grep -Eq "\"agent\": *\"$agent\"" <<<"$registered" || ! grep -Eq '"previous_agent": *null' <<<"$registered"; then
 	fail "登记工作台的响应不对：$registered"
+fi
 workbench rm -f /home/workbench/.sfly/credentials.json # 管理员的登录只为这一步，不留在工作台的卷上
 
 # ---- 删掉工作台容器再建：工作区还在，Agent 不重装，助手照样就绪 ----
@@ -211,4 +212,4 @@ client ready 300 || fail "重建工作台之后助手没有就绪"
 [[ $(fingerprint) == "$before" ]] || fail "重建工作台之后 Agent 二进制变了：重装了"
 grep -q '已经装好，直接启动' <(docker logs "$prefix-wb" 2>&1) || fail "重建之后入口脚本没有说「已经装好，直接启动」"
 
-echo "整套冒烟通过（$([[ $record == 1 ]] && echo '联网，镜像站录制' || echo '断网，镜像站只用缓存')）：sfly $version，控制面 $server_image，助手 $assistant_image，工作台 $workbench_image"
+echo "整套冒烟通过（$([[ $record == 1 ]] && echo '联网，镜像站录制' || echo '断网，镜像站只用缓存')）：sfly ${version}，控制面 ${server_image}，助手 ${assistant_image}，工作台 $workbench_image"

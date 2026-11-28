@@ -37,7 +37,7 @@ if [[ ${1:-} == --simulate ]]; then
 	wheel=out/server/sdk/sfly-$current-py3-none-any.whl
 	for file in "$agent" "$wheel"; do
 		[[ -f $file ]] || {
-			echo "缺少 $file：先运行 pnpm bundle:server" >&2
+			echo "缺少 ${file}：先运行 pnpm bundle:server" >&2
 			exit 1
 		}
 	done
@@ -45,7 +45,7 @@ if [[ ${1:-} == --simulate ]]; then
 	printf '\nsimulated previous agent %s\n' "$version" >>"$out/sfly-agent"
 	cp "$wheel" "$out/"
 	echo "$version" >"$out/version"
-	echo "$out：用当前构建的 Agent 扮演 $version"
+	echo "${out}：用当前构建的 Agent 扮演 $version"
 	exit 0
 fi
 
@@ -73,4 +73,4 @@ fi
 tar -C "$out" -xzf "$download/$tarball" sfly-agent
 cp "$download/$wheel" "$out/"
 echo "$previous" >"$out/version"
-echo "$out：v$previous 的 Agent（$arch）"
+echo "${out}：v$previous 的 Agent（${arch}）"

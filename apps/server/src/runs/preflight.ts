@@ -2,7 +2,6 @@ import {
 	agentInputs,
 	blocksTrigger,
 	feishuBotInputs,
-	nodeAgentNotRegistered,
 	nodeNameWithId,
 	referencedAgents,
 	referencesIn,
@@ -118,23 +117,16 @@ export function createPreflight(deps: { version: string }): Preflight {
 		const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
 		for (const [nodeId, agent] of wanted) {
 			const disabled = known.get(agent);
-			if (disabled === false) continue;
+			// 没有注册过的由文档的静态检查（`agent_not_registered`，上面的 checkDocument）指出，这里只补停用的。
+			if (disabled !== true) continue;
 			const node = nodeById.get(nodeId);
 			const shown = node ? nodeNameWithId(node) : nodeId;
 			// 停用的 Agent 连不上、不参与派发（ADR 0029「迁移与过渡」）：触发了任务也只会排到超时，不如在这里说清楚。
-			problems.push(
-				disabled === undefined
-					? {
-							code: "agent_not_registered",
-							message: nodeAgentNotRegistered(shown, agent),
-							node_id: nodeId,
-						}
-					: {
-							code: "agent_disabled",
-							message: `节点 ${shown} 派发到的 Agent ${agent} 已被停用：让项目管理员恢复它，或把节点换到别的 Agent`,
-							node_id: nodeId,
-						},
-			);
+			problems.push({
+				code: "agent_disabled",
+				message: `节点 ${shown} 派发到的 Agent ${agent} 已被停用：让项目管理员恢复它，或把节点换到别的 Agent`,
+				node_id: nodeId,
+			});
 		}
 		problems.push(...(await checkDevPackagesLoaded(db, project, doc)));
 

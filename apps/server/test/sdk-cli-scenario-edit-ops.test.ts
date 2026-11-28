@@ -8,6 +8,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { packageMetadata, publishPackage } from "./support/package-archive.js";
 import { startRecordingProxy } from "./support/recording-proxy.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { sfly } from "./support/sfly-cli.js";
 import { makeTempDir } from "./support/temp-dir.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -67,6 +68,7 @@ describe("sfly scenario edit → 控制面", () => {
 		const version = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ version });
 		api = new ApiClient(cp);
+		await registerAgents(cp.database.url, ["agent-a"]);
 		await publishPackage(cp, "http", "1.0.0", {
 			get: {
 				outputs: ["body"],

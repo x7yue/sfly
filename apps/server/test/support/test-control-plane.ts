@@ -15,6 +15,7 @@ import { DEFAULT_PROJECT } from "../../src/projects/project-id.js";
 import { TestUsers } from "./credentials.js";
 import { registerCredentialIssuer } from "./fake-agent.js";
 import { ManualClock } from "./manual-clock.js";
+import { prepareVaultTables } from "./migrations.js";
 import { registerCliCredentials } from "./sfly-cli.js";
 import { makeTempDir } from "./temp-dir.js";
 import { createTestDatabase, type TestDatabase } from "./test-database.js";
@@ -148,8 +149,9 @@ export async function startTestControlPlane(
 	const clock = options.clock ?? new ManualClock();
 	const database = await createTestDatabase("sfly_test", { template: options.template });
 	const dataDir = await makeTempDir("sfly-test-");
-	const start = (ports = { http: 0, grpc: 0 }) =>
-		startControlPlane({
+	const start = async (ports = { http: 0, grpc: 0 }) => {
+		await prepareVaultTables(database.url, migrationsDir);
+		return startControlPlane({
 			databaseUrl: database.url,
 			dataDir,
 			clock,
@@ -214,6 +216,7 @@ export async function startTestControlPlane(
 			http: { host: "127.0.0.1", port: ports.http },
 			grpc: { host: "127.0.0.1", port: ports.grpc },
 		});
+	};
 
 	const users = new TestUsers(database.url);
 	// 用旧的迁移目录起的控制面（升级测试）：库里还没有用户和令牌的表，或者是旧的样子，默认凭据建不出来；换回源码里的迁移

@@ -7,6 +7,7 @@ import { addDocumentFields } from "./support/legacy-document.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
+import { registerAgents } from "./support/registered-agents.js";
 import { sfly } from "./support/sfly-cli.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { storeNodeField } from "./support/stored-over-limit.js";
@@ -99,8 +100,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ clock, version: cliVersion });
 		api = new ApiClient(cp);
-		// 文档里的包节点锁定的版本已发布：保存时没有警告。
+		// 文档里的包节点锁定的版本已发布、派发到的 Agent 注册过：保存时没有警告。
 		await publishPackage(cp, "demo", "1.0.0", { echo: ["v"] });
+		await registerAgents(cp.database.url, ["agent-a", "agent-b", "agent-c"]);
 		dir = await makeTempDir("sfly-scenario-edit-");
 	}, 120_000);
 

@@ -53,7 +53,7 @@ for _ in $(seq 60); do
 	[[ $(docker inspect --format '{{.State.Running}}' "$container") == true ]] || fail "容器已退出"
 	sleep 2
 done
-[[ $status == healthy ]] || fail "健康检查没有转为 healthy（$status）"
+[[ $status == healthy ]] || fail "健康检查没有转为 healthy（${status}）"
 
 # 容器里用 node 请求 /health：status 参数 anonymous 不带密钥，否则带上容器自己的 SFLY_ASSISTANT_SECRET。
 request() {
@@ -70,7 +70,7 @@ body=$(request authenticated)
 json=${body#* }
 # 先取完整输出再检查，不用 `cmd | grep -q`：grep -q 匹配到就退出，还在输出的 cmd 收到 SIGPIPE，在 pipefail 下整条管道失败。
 contains() { grep -q "${@:2}" <<<"$1"; }
-contains "$json" "\"assistant\":\"$version\"" || fail "/health 里助手服务的版本不是 $version：$json"
+contains "$json" "\"assistant\":\"$version\"" || fail "/health 里助手服务的版本不是 ${version}：$json"
 contains "$json" '"pi":"[0-9][0-9.]*' || fail "/health 里没有 pi 的版本：$json"
 contains "$json" '"configured":false' || fail "没有挂模型文件时 /health 应当写没有配置模型：$json"
 
@@ -91,4 +91,4 @@ done
 [[ $(docker inspect --format '{{.State.ExitCode}}' "$container-short") != 0 ]] ||
 	fail "共享密钥太短时助手服务应当以非零退出码退出"
 
-echo "助手镜像冒烟通过：$image（助手服务 $version）"
+echo "助手镜像冒烟通过：${image}（助手服务 ${version}）"

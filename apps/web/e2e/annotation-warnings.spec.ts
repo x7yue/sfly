@@ -98,7 +98,10 @@ test("画框时跳过不存在的成员；一个有效成员都没有的注释�
 test("打开这样的场景什么都不改就不算有修改：保存提示没有未保存的修改，不产生新版本；改了别处再保存，写错的成员原样保留", async ({
 	page,
 	controlPlane,
+	connectAgent,
 }) => {
+	// 节点派发到的 Agent 注册过：保存的提示里只有注释框的 5 条警告。
+	await connectAgent({ name: "agent-linux" });
 	const id = await scenarioWith(controlPlane);
 	await openEditor(page, id);
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
