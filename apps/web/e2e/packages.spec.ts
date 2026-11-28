@@ -1,4 +1,6 @@
 import type { Locator } from "@playwright/test";
+import { packageArchive, packageMetadata } from "../../server/test/support/package-archive.js";
+import { publishIntoPublicProject } from "../../server/test/support/std-package.js";
 import { expect, test } from "./fixtures";
 import {
 	createScenario,
@@ -293,4 +295,32 @@ test("包列表宽 22%（夹在 220 到 300px 之间）并吸在页面顶部；�
 	expect(new Set(lines.map((l) => l.first)).size).toBeGreaterThan(1);
 	expect(lines.every((l) => l.first === l.last)).toBe(true);
 	expect(lines.slice(0, -1).every((l) => l.text.endsWith(" ·"))).toBe(true);
+});
+
+test("公共项目里的包单独列在后面，标着「公共项目」（#501）；只有本项目的包时不分组", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { name: "my-checks", version: "1.0.0" });
+	await page.goto("/packages");
+	const list = page.getByRole("navigation", { name: "节点包" });
+	await expect(list.getByRole("link")).toHaveText([/my-checks/]);
+	await expect(list.getByRole("heading")).toHaveCount(0);
+
+	await publishIntoPublicProject(
+		controlPlane,
+		packageArchive(packageMetadata({ name: "sfly-std", version: "0.4.0" })),
+		{ name: "sfly-std", version: "0.4.0" },
+	);
+	await page.reload();
+	await expect(list.getByRole("heading")).toHaveText(["本项目", "公共项目"]);
+	await expect(list.getByRole("region", { name: "本项目" }).getByRole("link")).toHaveText([
+		/my-checks/,
+	]);
+	const shared = list.getByRole("region", { name: "公共项目" }).getByRole("link");
+	await expect(shared).toHaveText([/sfly-std\s*0\.4\.0/]);
+	await expect(page.getByRole("region", { name: "my-checks 详情" })).not.toContainText("公共项目");
+
+	await shared.click();
+	await expect(page.getByRole("region", { name: "sfly-std 详情" })).toContainText("公共项目");
 });

@@ -1726,6 +1726,11 @@ export interface PackageNodeInput {
 export interface PackageSummary {
 	name: string;
 	/**
+	 * 在公共项目里（平台维护的标准节点包，任何项目都能用，只有平台管理员能发布，#501）；false 是本项目发布的。
+	 * 公共项目和别的项目之间不能同名，所以一个包的版本都在同一边。
+	 */
+	public: boolean;
+	/**
 	 * 最新版本（#434）：按版本号比较，不是发布时间（先发 1.10.0 再发 1.9.1，最新的是 1.10.0）；预发布版本排在同号正式版之前，
 	 * 版本号相等（`1.0` 和 `1.0.0`）时取字符串排在后面的。比较规则只在 `@sfly/orchestration` 的 `newestVersion`，画布和命令行读这个字段。
 	 */
