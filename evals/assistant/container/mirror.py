@@ -32,6 +32,22 @@ UPSTREAMS = {
 
 JSON_SIMPLE = "application/vnd.pypi.simple.v1+json"
 
+# 录缓存时 uv 用的固定版本（#847）。Agent 和 install.sh 按产品的写法从
+# `astral-sh/uv/LatestRelease/` 取 uv；中科大镜像只留最新的一个版本，`LatestRelease` 跟着上游变。
+# 录缓存时这个路径下的文件取固定版本的：先从中科大取，中科大没取到（已经换成新版本，或者出错）时
+# 从 GitHub 上这个版本的 Release 取。缓存仍按 `LatestRelease` 的路径存，离线时照样命中。
+UV_VERSION = "0.13.10"
+UV_LATEST = "/github-release/astral-sh/uv/LatestRelease/"
+UV_GITHUB = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/"
+
+
+def upstream_urls(path: str, prefix: str) -> list[str]:
+    """录缓存时这个路径依次去哪里取：前一个没取到才取下一个（uv 的固定版本有两个来源）。"""
+    if path.startswith(UV_LATEST):
+        name = path[len(UV_LATEST) :]
+        return [f"{UPSTREAMS[prefix]}/astral-sh/uv/{UV_VERSION}/{name}", UV_GITHUB + name]
+    return [UPSTREAMS[prefix] + path[len(prefix) + 1 :]]
+
 
 def cache_key(path: str, accept: str) -> str:
     """缓存文件名：路径的哈希，simple 页面再按要的格式区分。"""
@@ -83,11 +99,13 @@ class Handler(BaseHTTPRequestHandler):
         prefix = path.lstrip("/").split("/", 1)[0]
         accept = self.headers.get("accept", "")
         key = cache_key(path, accept)
-        hit = self.store.get(key)
+        hit: tuple[Path, dict[str, Any]] | int | None = self.store.get(key)
         if hit is None and self.record and prefix in UPSTREAMS:
             hit = self._fetch(path, prefix, accept, key)
-        if hit is None:
-            self._status(404, f"镜像里没有 {path}")
+        if hit is None or isinstance(hit, int):
+            code = 404 if hit is None else hit
+            where = "镜像里没有" if hit is None else f"上游没有取到（{code}，原因在镜像站的日志里）"
+            self._status(code, f"{where} {path}")
             return
         body, meta = hit
         self.send_response(200)
@@ -100,22 +118,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def _fetch(
         self, path: str, prefix: str, accept: str, key: str
-    ) -> tuple[Path, dict[str, Any]] | None:
-        url = UPSTREAMS[prefix] + path[len(prefix) + 1 :]
-        request = urllib.request.Request(
-            url, headers={"accept": accept or "*/*", "user-agent": "sfly-aeval-mirror/1"}
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=120) as resp:
-                meta = {"content_type": resp.headers.get("content-type", ""), "url": url}
-                body = self.store.put(key, resp, meta)
-        except urllib.error.HTTPError as error:
-            sys.stderr.write(f"上游 {url} 返回 {error.code}\n")
-            return None
-        except OSError as error:
-            sys.stderr.write(f"上游 {url} 失败：{error}\n")
-            return None
-        return body, meta
+    ) -> tuple[Path, dict[str, Any]] | int:
+        """取到了返回缓存的文件；都没取到返回给客户端的状态码（看最后一个来源）：上游 404 是 404，
+        别的失败（5xx、限流、连不上）是 502。"""
+        code = 404
+        for url in upstream_urls(path, prefix):
+            request = urllib.request.Request(
+                url, headers={"accept": accept or "*/*", "user-agent": "sfly-aeval-mirror/1"}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=120) as resp:
+                    meta = {
+                        "content_type": resp.headers.get("content-type", ""),
+                        "url": resp.geturl(),
+                    }
+                    return self.store.put(key, resp, meta), meta
+            except urllib.error.HTTPError as error:
+                sys.stderr.write(f"上游 {url} 返回 {error.code}（最后的地址 {error.geturl()}）\n")
+                code = 404 if error.code == 404 else 502
+            except OSError as error:
+                sys.stderr.write(f"上游 {url} 失败：{error}\n")
+                code = 502
+        return code
 
     def _status(self, code: int, message: str) -> None:
         data = message.encode()

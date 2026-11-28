@@ -750,7 +750,11 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		}[];
 
 	it("路径参数含 NUL：和不带凭据一样是 404，不是 500，也不留记录（NUL 存不进 PostgreSQL 的文本）", async () => {
-		for (const path of ["/feishu-bots/%00x", "/feishu-bots/a%00", "/feishu-bots/%00"]) {
+		for (const path of [
+			"/projects/default/feishu-bots/%00x",
+			"/projects/default/feishu-bots/a%00",
+			"/projects/default/feishu-bots/%00",
+		]) {
 			const withToken = await call("DELETE", path);
 			const anonymous = await cp.fetch(path, { method: "DELETE" });
 			expect(withToken.status, path).toBe(404);
@@ -764,7 +768,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		// 再长的在进访问检查之前就被 Fastify 拒绝。
 		const names = ["a\u0001b", "机器人😀", "line\nbreak", "n".repeat(128)];
 		for (const name of names) {
-			const res = await call("DELETE", `/feishu-bots/${encodeURIComponent(name)}`);
+			const res = await call("DELETE", `/projects/default/feishu-bots/${encodeURIComponent(name)}`);
 			expect(res.status, JSON.stringify(name)).toBe(404);
 		}
 		await vi.waitFor(async () => {
@@ -774,7 +778,10 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("非法的 UTF-8（%FF）和超长的参数在进访问检查之前就被 Fastify 拒绝（400、414）：这条守的是「不会是 500」，测到的是框架", async () => {
-		for (const path of ["/feishu-bots/%FF", `/feishu-bots/${"n".repeat(129)}`]) {
+		for (const path of [
+			"/projects/default/feishu-bots/%FF",
+			`/projects/default/feishu-bots/${"n".repeat(129)}`,
+		]) {
 			const res = await call("DELETE", path);
 			expect(res.status, path).toBeGreaterThanOrEqual(400);
 			expect(res.status, path).toBeLessThan(500);
@@ -783,31 +790,34 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("记录带着响应的状态码：成功的、请求不合格的（400）、找不到的（404）各一条，先记后回填", async () => {
-		const ok = await call("POST", "/feishu-bots", {
+		const ok = await call("POST", "/projects/default/feishu-bots", {
 			name: "机器人",
 			webhook_url: "https://open.feishu.cn/hook/abc",
 		});
 		expect(ok.status).toBe(201);
 		// 记录按时间排序：每个请求之间推进一下手动时钟。
 		(cp.clock as ManualClock).advance(1000);
-		const invalid = await call("POST", "/feishu-bots", { name: "", webhook_url: "不是地址" });
+		const invalid = await call("POST", "/projects/default/feishu-bots", {
+			name: "",
+			webhook_url: "不是地址",
+		});
 		expect(invalid.status).toBe(400);
 		(cp.clock as ManualClock).advance(1000);
-		const missing = await call("DELETE", "/feishu-bots/不存在");
+		const missing = await call("DELETE", "/projects/default/feishu-bots/不存在");
 		expect(missing.status).toBe(404);
 		// onResponse 在响应发出之后才回填，等一下。
 		await vi.waitFor(async () => {
 			expect((await records()).map((r) => r.status)).toEqual([201, 400, 404]);
 		});
 		expect((await records()).map((r) => [r.route, r.resource_id])).toEqual([
-			["POST /feishu-bots", null],
-			["POST /feishu-bots", null],
-			["DELETE /feishu-bots/:name", "不存在"],
+			["POST /projects/:project/feishu-bots", null],
+			["POST /projects/:project/feishu-bots", null],
+			["DELETE /projects/:project/feishu-bots/:name", "不存在"],
 		]);
 	});
 
 	it("他是成员、但这次写靠的是管理员的权限：记录里有他当时的角色；不是成员为空", async () => {
-		await call("POST", "/feishu-bots", {
+		await call("POST", "/projects/default/feishu-bots", {
 			name: "甲",
 			webhook_url: "https://open.feishu.cn/hook/a",
 		});
@@ -816,7 +826,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 		await call("POST", "/projects/default/orchestrations", { name: "场景" });
 		await vi.waitFor(async () => {
 			expect((await records()).map((r) => [r.route, r.member_role])).toEqual([
-				["POST /feishu-bots", null],
+				["POST /projects/:project/feishu-bots", null],
 				["POST /projects/:project/orchestrations", "read_only"],
 			]);
 		});

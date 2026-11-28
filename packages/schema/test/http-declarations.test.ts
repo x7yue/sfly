@@ -102,10 +102,10 @@ describe("契约里全部接口的声明", () => {
 			.map((def) => `${def.method} ${def.path}`);
 		expect(removing.sort()).toEqual([
 			"DELETE /account/tokens/:id",
-			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
 			"DELETE /projects/:project/agents/:name/credentials/:id",
 			"DELETE /projects/:project/dev-agents/:name",
+			"DELETE /projects/:project/feishu-bots/:name",
 			"DELETE /projects/:project/tokens/:id",
 			"POST /orchestrations/:id/archive",
 		]);
@@ -234,18 +234,6 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(at({ kind: "system", target: "global" }, "/projects/:project/things").join()).toContain(
 			"system 不属于项目",
 		);
-		// 还没有搬过去的接口登记在 projectPathPending 里，先不报。
-		const pending = broken({
-			resource: { kind: "scenario", target: "collection" },
-			path: "/things",
-			params: undefined,
-		});
-		expect(
-			checkRouteDeclarations([pending], {
-				...rulesFor(pending),
-				projectPathPending: { "GET /things": "测试" },
-			}),
-		).toEqual([]);
 	});
 
 	it("没有 summary、是空的、不止一行、太长", () => {
@@ -755,7 +743,7 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 	it("写接口的 kind 写错：拦住（飞书测试消息写成 agent）", () => {
 		const wrong = withResource(feishuBotsApi.test, { kind: "agent", target: { params: "name" } });
 		expect(problems(wrong).join("\n")).toContain(
-			"resource.kind 写的是 agent，PATH_KINDS 里 /feishu-bots 对应 feishu_bot",
+			"resource.kind 写的是 agent，PATH_KINDS 里 /projects/:project/feishu-bots 对应 feishu_bot",
 		);
 	});
 
@@ -853,20 +841,12 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		const own = Object.fromEntries(
 			Object.entries(PATH_KINDS).filter(([prefix]) => ["/health", "/runs"].includes(prefix)),
 		);
-		expect(tables({ pathKinds: own, nonGetReads: {}, projectPathPending: {} })).toEqual([]);
-		expect(
-			tables({
-				pathKinds: own,
-				nonGetReads: {},
-				projectPathPending: { "GET /gone": "测试" },
-			}).join(),
-		).toContain("PROJECT_PATH_PENDING 的 GET /gone 不在契约里");
+		expect(tables({ pathKinds: own, nonGetReads: {} })).toEqual([]);
 		const cover = checkPathKindsCover({ pathKinds: own, nonGetReads: {} }).join("\n");
 		expect(cover).toContain("资源类别 scenario 在 PATH_KINDS 里没有任何路径前缀");
 		expect(cover).not.toContain("资源类别 run ");
 
 		const stale = tables({
-			projectPathPending: {},
 			pathKinds: { ...own, "/old": { kind: "run", why: "旧的" } },
 			nonGetReads: { "POST /gone": "没有这个接口", "GET /runs/:id": "不是写" },
 		}).join("\n");
@@ -875,7 +855,6 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		expect(stale).not.toContain("没有声明为只读");
 
 		const notRead = tables({
-			projectPathPending: {},
 			pathKinds: own,
 			nonGetReads: { "GET /runs/:id": "" },
 		}).join("\n");

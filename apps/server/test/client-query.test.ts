@@ -223,7 +223,7 @@ describe("API 客户端查询测试控制面", () => {
 		expect(dashboard.agents).toMatchObject({ online: 0, offline: 2 });
 
 		expect(await client.system.health()).toMatchObject({ status: "ok", database: "ok" });
-		expect((await client.feishuBots.list()).bots).toEqual([]);
+		expect((await client.feishuBots.list({ params: { project: "default" } })).bots).toEqual([]);
 	});
 
 	it("必填的输入不能省略：类型检查报错，运行时抛出 TypeError 而不发请求", async () => {

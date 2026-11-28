@@ -2051,6 +2051,16 @@
                     ]
                   }
                 },
+                "other_project_running": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "other_project_queued": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
                 "version_mismatch": {
                   "type": "boolean"
                 },
@@ -2216,6 +2226,8 @@
                 "dev_packages",
                 "running_tasks",
                 "queued_tasks",
+                "other_project_running",
+                "other_project_queued",
                 "version_mismatch",
                 "update",
                 "clock_offset",
@@ -4799,17 +4811,29 @@
     },
     {
       "method": "GET",
-      "path": "/feishu-bots",
+      "path": "/projects/:project/feishu-bots",
       "key": [
         "feishu-bots",
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出全部飞书机器人（Webhook 地址已打码）",
+      "summary": "列出项目里的飞书机器人（Webhook 地址已打码）",
       "effect": "read",
       "resource": {
         "kind": "feishu_bot",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "response": {
         "type": "object",
@@ -4885,7 +4909,7 @@
     },
     {
       "method": "POST",
-      "path": "/feishu-bots",
+      "path": "/projects/:project/feishu-bots",
       "key": [
         "feishu-bots",
         "create"
@@ -4896,6 +4920,18 @@
       "resource": {
         "kind": "feishu_bot",
         "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
       },
       "body": {
         "type": "object",
@@ -4995,7 +5031,7 @@
     },
     {
       "method": "PATCH",
-      "path": "/feishu-bots/:name",
+      "path": "/projects/:project/feishu-bots/:name",
       "key": [
         "feishu-bots",
         "replace-webhook"
@@ -5012,6 +5048,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5019,6 +5059,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5114,7 +5155,7 @@
     },
     {
       "method": "GET",
-      "path": "/feishu-bots/:name/references",
+      "path": "/projects/:project/feishu-bots/:name/references",
       "key": [
         "feishu-bots",
         "references"
@@ -5131,6 +5172,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5138,6 +5183,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5213,7 +5259,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/feishu-bots/:name",
+      "path": "/projects/:project/feishu-bots/:name",
       "key": [
         "feishu-bots",
         "remove"
@@ -5231,6 +5277,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5238,6 +5288,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -5245,7 +5296,7 @@
     },
     {
       "method": "POST",
-      "path": "/feishu-bots/:name/test",
+      "path": "/projects/:project/feishu-bots/:name/test",
       "key": [
         "feishu-bots",
         "test"
@@ -5262,6 +5313,10 @@
       "params": {
         "type": "object",
         "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
           "name": {
             "type": "string",
             "minLength": 1,
@@ -5269,6 +5324,7 @@
           }
         },
         "required": [
+          "project",
           "name"
         ]
       },
@@ -14392,6 +14448,25 @@
               }
             ],
             "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            "description": "修改以后的运行通知设置的问题，只提示、不阻止保存（#501）：要发给的机器人不是这个项目里登记的时，\n一条 `run_notification_bot_not_registered`。触发前的预检在 `warnings` 里给同一条，不阻断触发。"
           }
         },
         "required": [
@@ -14403,7 +14478,8 @@
           "archived_at",
           "run_notification",
           "focus_items",
-          "focus_edit"
+          "focus_edit",
+          "warnings"
         ]
       },
       "notes": [
@@ -15224,6 +15300,9 @@
                 "name": {
                   "type": "string"
                 },
+                "latest_version": {
+                  "type": "string"
+                },
                 "versions": {
                   "type": "array",
                   "items": {
@@ -15285,6 +15364,7 @@
               },
               "required": [
                 "name",
+                "latest_version",
                 "versions"
               ]
             }
@@ -15334,6 +15414,10 @@
         "properties": {
           "name": {
             "type": "string"
+          },
+          "latest_version": {
+            "type": "string",
+            "description": "最新版本（#434）：按版本号比较，不是发布时间（先发 1.10.0 再发 1.9.1，最新的是 1.10.0）；预发布版本排在同号正式版之前，\n版本号相等（`1.0` 和 `1.0.0`）时取字符串排在后面的。比较规则只在 `@sfly/orchestration` 的 `newestVersion`，画布和命令行读这个字段。"
           },
           "versions": {
             "type": "array",
@@ -15397,6 +15481,7 @@
         },
         "required": [
           "name",
+          "latest_version",
           "versions"
         ]
       },
