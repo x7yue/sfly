@@ -20,12 +20,14 @@ LATEST = "/github-release/astral-sh/uv/LatestRelease/uv-installer.sh"
 
 class Upstream:
     """假的上游：`files` 里有的 200，`failing` 里的回那个状态码，其余 404；`truncated` 里的
-    content-length 比内容长、发完内容就断开。记下每个请求的路径。"""
+    content-length 比内容长、发完内容就断开；`bad_length` 里的 content-length 写成 `unknown`。
+    记下每个请求的路径。"""
 
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
         self.failing: dict[str, int] = {}
         self.truncated: set[str] = set()
+        self.bad_length: set[str] = set()
         self.requests: list[str] = []
         upstream = self
 
@@ -39,7 +41,9 @@ class Upstream:
                 code = upstream.failing.get(self.path, 200 if body is not None else 404)
                 self.send_response(code)
                 extra = 100 if self.path in upstream.truncated else 0
-                self.send_header("content-length", str(len(body or b"") + extra))
+                length = str(len(body or b"") + extra)
+                bad = self.path in upstream.bad_length
+                self.send_header("content-length", "unknown" if bad else length)
                 self.end_headers()
                 self.wfile.write(body or b"")
                 self.close_connection = True
@@ -121,15 +125,17 @@ def test_mirror_error_on_the_pinned_version_also_falls_back_to_github(
         server.shutdown()
 
 
-@pytest.mark.parametrize("broken", ["empty", "truncated"])
-def test_a_200_with_an_empty_or_cut_off_body_falls_back_and_is_not_cached(
+@pytest.mark.parametrize("broken", ["empty", "truncated", "bad_length"])
+def test_a_200_with_an_empty_or_cut_off_body_or_a_bad_length_falls_back_and_is_not_cached(
     upstream: Upstream, tmp_path: Path, broken: str
 ) -> None:
     # CI 上中科大对 GitHub 的机器回过 200 但内容是空的：uv 的安装脚本随后报校验和对不上。
     pinned = f"/ustc/astral-sh/uv/{mirror.UV_VERSION}/uv-installer.sh"
-    upstream.files[pinned] = b"" if broken == "empty" else b"cut"
+    upstream.files[pinned] = b"cut" if broken == "truncated" else b""
     if broken == "truncated":
         upstream.truncated.add(pinned)
+    if broken == "bad_length":
+        upstream.bad_length.add(pinned)
     upstream.files[f"/github/{mirror.UV_VERSION}/uv-installer.sh"] = b"from github"
     base, server = start_mirror(tmp_path, record=True)
     try:

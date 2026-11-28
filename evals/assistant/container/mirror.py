@@ -142,6 +142,10 @@ class Handler(BaseHTTPRequestHandler):
                         "url": resp.geturl(),
                     }
                     length = resp.headers.get("content-length")
+                    if length is not None and not length.strip().isdigit():
+                        sys.stderr.write(f"上游 {url} 的 content-length 不是数字（{length!r}）\n")
+                        code = 502
+                        continue
                     body = self.store.put(key, resp, meta, int(length) if length else None)
                     if body is not None:
                         return body, meta
