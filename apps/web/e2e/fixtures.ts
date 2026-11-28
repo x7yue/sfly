@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { test as base, expect } from "@playwright/test";
+import { DEFAULT_TESTER } from "../../server/test/support/credentials.js";
 // 沿用控制面测试基建（apps/server/test/support）：真实控制面、假 Agent（真实 gRPC）、
 // 每个控制面独立的临时 PostgreSQL 数据库（DATABASE_URL）、手动时钟。
 import { FakeAgent, type HelloInit } from "../../server/test/support/fake-agent.js";
@@ -32,6 +33,9 @@ export const CONTROL_PLANE_FIXTURE_TIMEOUT_MS = 120_000;
  */
 export const START_TIME = "2026-01-01T00:00:00.000Z";
 
+/** e2e 里登录的空闲期限：一年。 */
+const LOGIN_IDLE_MS = 365 * 24 * 3_600_000;
+
 export interface E2eFixtures {
 	/** 注入控制面的手动时钟。 */
 	clock: ManualClock;
@@ -49,7 +53,12 @@ export interface E2eFixtures {
 	) => Promise<FakeAgent>;
 	/** 假的飞书 Webhook 服务（ADR 0020）：飞书机器人的 Webhook 地址指向它；测试结束时自动关闭。 */
 	feishu: FakeFeishu;
-	/** 浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；设为 null 时不写。 */
+	/**
+	 * 浏览器以哪个用户登录着（#493）：用例开始前为这个昵称的用户（`TestUsers`，平台管理员、默认项目的项目管理员）
+	 * 建一个登录，Cookie 放进浏览器。测没登录时的样子（登录页、初始化、昵称弹窗）的用例设为 null：空的登录状态。
+	 */
+	loginAs: string | null;
+	/** 没登录时浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；默认不写。登录着时页面不用它。 */
 	nickname: string | null;
 	/**
 	 * 覆盖控制面的选项：对外地址、版本号（默认是实际监听地址和 package.json 的版本；视觉回归里固定它们，
@@ -96,6 +105,8 @@ export const test = base.extend<E2eFixtures>({
 				template: process.env[E2E_TEMPLATE_ENV],
 				// SSE 心跳调快：推进手动时钟后，页面很快就从心跳里得到新的控制面时间。
 				sseHeartbeatMs: 250,
+				// 用例会把控制面时钟拨过几小时、几天：浏览器的登录不因空闲失效。
+				loginIdleMs: LOGIN_IDLE_MS,
 				...controlPlaneOptions,
 			});
 			try {
@@ -132,10 +143,19 @@ export const test = base.extend<E2eFixtures>({
 			await feishu.close();
 		}
 	},
-	nickname: ["tester", { option: true }],
-	page: async ({ page, clock, nickname }, use) => {
+	loginAs: [DEFAULT_TESTER, { option: true }],
+	nickname: [null, { option: true }],
+	page: async ({ page, clock, controlPlane, loginAs, nickname }, use) => {
 		// Date.now() / new Date() 固定在手动时钟的当前时刻（定时器照常运行）。
 		await page.clock.setFixedTime(clock.now());
+		if (loginAs !== null) {
+			const value = await controlPlane.users.loginCookie(loginAs);
+			await page
+				.context()
+				.addCookies([
+					{ name: "sfly_login", value, url: controlPlane.httpUrl, httpOnly: true, sameSite: "Lax" },
+				]);
+		}
 		if (nickname !== null) {
 			await page.addInitScript((name) => {
 				window.localStorage.setItem("sfly.nickname", name);

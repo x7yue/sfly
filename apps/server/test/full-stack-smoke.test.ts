@@ -23,7 +23,7 @@ async function publishStubPackage(cp: TestControlPlane): Promise<void> {
 			{ cwd: repoRoot },
 		);
 		const archive = await readFile(join(out, "sfly-stub-0.1.0.sflypkg"));
-		const res = await cp.fetch("/packages", {
+		const res = await cp.fetch("/projects/default/packages", {
 			method: "POST",
 			headers: { "content-type": "application/octet-stream" },
 			body: archive,
@@ -96,7 +96,9 @@ describeWithAgent("全栈冒烟：两个节点的链", () => {
 		expect(b.outputs).toEqual({ text: "你好，世界！" });
 
 		const [registered] = (
-			await api.getJson<{ agents: Array<{ info: { installed_packages: unknown } }> }>("/agents")
+			await api.getJson<{ agents: Array<{ info: { installed_packages: unknown } }> }>(
+				"/projects/default/agents",
+			)
 		).agents;
 		expect(registered?.info.installed_packages).toEqual([{ name: "sfly-stub", version: "0.1.0" }]);
 	}, 60_000);
@@ -298,7 +300,7 @@ describeWithAgent("全栈冒烟：Agent 从控制面下载并安装节点包", (
 		const api = new ApiClient(cp);
 		const before = await api.getJson<{
 			agents: Array<{ installed_packages: unknown }>;
-		}>("/agents");
+		}>("/projects/default/agents");
 		expect(before.agents[0]?.installed_packages).toEqual([]);
 
 		const id = await api.orchestrationWith({
@@ -319,7 +321,7 @@ describeWithAgent("全栈冒烟：Agent 从控制面下载并安装节点包", (
 		});
 		const after = await api.getJson<{
 			agents: Array<{ installed_packages: unknown; install: unknown }>;
-		}>("/agents");
+		}>("/projects/default/agents");
 		expect(after.agents[0]).toMatchObject({
 			installed_packages: [{ name: "sfly-stub", version: "0.1.0" }],
 			install: { package: "sfly-stub", version: "0.1.0", state: "installed" },
@@ -398,7 +400,7 @@ describeWithAgent("全栈冒烟：开发模式 sfly dev", () => {
 		await eventually(async () => {
 			const { agents } = await api.getJson<{
 				agents: Array<{ name: string; dev_packages: Array<{ name: string }> }>;
-			}>("/agents");
+			}>("/projects/default/agents");
 			expect(agents.find((a) => a.name === "dev-agent")?.dev_packages).toMatchObject([
 				{ name: "smoke-dev" },
 			]);
@@ -426,7 +428,7 @@ describeWithAgent("全栈冒烟：开发模式 sfly dev", () => {
 		await otherAgent.close();
 		await eventually(async () => {
 			const { agents } = await api.getJson<{ agents: Array<{ name: string; status: string }> }>(
-				"/agents",
+				"/projects/default/agents",
 			);
 			expect(agents.find((a) => a.name === "other-agent")?.status).toBe("offline");
 		});

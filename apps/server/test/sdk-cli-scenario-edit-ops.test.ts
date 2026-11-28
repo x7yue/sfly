@@ -268,7 +268,7 @@ describe("sfly scenario edit → 控制面", () => {
 				await eventually(async () => {
 					const { agents: listed } = await api.getJson<{
 						agents: Array<{ name: string; status: string }>;
-					}>("/agents");
+					}>("/projects/default/agents");
 					for (const name of ["build1", "build-2"]) {
 						expect(listed.find((a) => a.name === name)?.status).toBe("online");
 					}

@@ -1,7 +1,7 @@
 // 运行通知、`ctx.notify`、保存和预检的检查、引用列表、投递，按名字找飞书机器人只看场景（运行）所在的项目（#621，ADR 0029）：
 // 别的项目的机器人和没有登记过一样，说明是同一句，通知不会发给它的 Webhook。和 #610（按名字找 Agent 和节点包）同一类。
 //
-// 真实控制面和数据库，假的飞书 Webhook 服务。HTTP 接口现在还只认默认项目（#488 之前路径里没有项目），所以别的项目的资源
+// 真实控制面和数据库，假的飞书 Webhook 服务。请求都发在默认项目的路径下（建项目的接口在 #499），所以别的项目的资源
 // 用库里的一条 `update` 造出来：机器人先登记，再改到项目 `alpha`。每条断言都有对照：同样的做法用本项目的机器人，照常发。
 import { feishuBotsApi } from "@sfly/schema";
 import pg from "pg";
@@ -65,7 +65,10 @@ describe("按项目找飞书机器人（保存、检查、预检、运行通知�
 		await accounts.project("alpha");
 		feishu = await startFakeFeishu();
 		for (const name of ["alerts", "alerts-alpha"]) {
-			const res = await cp.fetch("/packages", publishInit(packageArchive(scopeMetadata(name))));
+			const res = await cp.fetch(
+				"/projects/default/packages",
+				publishInit(packageArchive(scopeMetadata(name))),
+			);
 			expect(res.status, name).toBe(201);
 		}
 		await sql.query("update node_packages set project_id = 'alpha' where name = 'alerts-alpha'");
@@ -140,7 +143,7 @@ describe("按项目找飞书机器人（保存、检查、预检、运行通知�
 	it("引用列表只列本项目的：别的项目的场景选了同名机器人不列；别的项目发布的包里的「飞书机器人」类型的输入认不出", async () => {
 		const references = async (bot: string) =>
 			feishuBotsApi.references.response.parse(
-				await api.getJson(`/feishu-bots/${encodeURIComponent(bot)}/references`),
+				await api.getJson(`/projects/default/feishu-bots/${encodeURIComponent(bot)}/references`),
 			).scenarios;
 		const own = await scenario(alertDoc("ops"), "引用列表：本项目的包");
 		// 默认项目的场景锁定了别的项目发布的包：认不出它的「飞书机器人」类型的输入，不列。

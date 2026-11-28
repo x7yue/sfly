@@ -83,7 +83,9 @@ describe("会话令牌下的 sfly run … latest", { timeout: 60_000 }, () => {
 		expect((JSON.parse(personal.stdout) as { id: string }).id).toBe(byPerson);
 
 		// 控制面按会话筛（`GET /runs?session_id=`）。
-		const res = await cp.fetch(`/runs?session_id=${sessionId}`, { headers: bearer(sessionToken) });
+		const res = await cp.fetch(`/projects/default/runs?session_id=${sessionId}`, {
+			headers: bearer(sessionToken),
+		});
 		expect(res.status).toBe(200);
 		const { runs } = (await res.json()) as { runs: { id: string }[] };
 		expect(runs.map((run) => run.id)).toEqual([mine]);

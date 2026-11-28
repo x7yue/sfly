@@ -184,9 +184,12 @@ async function sessionEvents(page: Page, sessionId: string): Promise<SessionEven
 const sessionIdOf = (page: Page) => page.url().split("/").at(-1) ?? "";
 
 type RunRow = { id: string; status: string };
-/** 这个会话触发的运行（`GET /runs?session_id=`）。 */
+/** 这个会话触发的运行（`GET /projects/:project/runs?session_id=`）。 */
 async function sessionRuns(page: Page, sessionId: string): Promise<RunRow[]> {
-	const { runs } = await api<{ runs: RunRow[] }>(page, `/runs?session_id=${sessionId}`);
+	const { runs } = await api<{ runs: RunRow[] }>(
+		page,
+		`/projects/${PROJECT}/runs?session_id=${sessionId}`,
+	);
 	return runs.map(({ id, status }) => ({ id, status }));
 }
 

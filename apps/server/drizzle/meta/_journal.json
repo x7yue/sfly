@@ -302,6 +302,13 @@
       "when": 1795735574453,
       "tag": "0043_project_workbench",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1795787754968,
+      "tag": "0044_run_vaults",
+      "breakpoints": true
     }
   ]
 }

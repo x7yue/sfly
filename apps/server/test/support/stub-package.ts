@@ -77,7 +77,7 @@ export async function publishArchive(
 	cp: Pick<TestControlPlane, "fetch">,
 	archive: Uint8Array,
 ): Promise<void> {
-	const res = await cp.fetch("/packages", {
+	const res = await cp.fetch("/projects/default/packages", {
 		method: "POST",
 		headers: { "content-type": "application/octet-stream" },
 		body: archive,

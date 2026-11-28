@@ -1,7 +1,6 @@
 // 会话的测试里，每个昵称是一个登录的用户（#547）：控制面的 `fetch` 本来就按昵称请求头带上这个用户的个人令牌（#493，
 // `TestUsers`），这里只多给出用户 ID 和令牌，并让用户也成为别的项目的编辑者。
-import { NICKNAME_HEADER } from "@sfly/schema";
-import { DEFAULT_TESTER } from "./credentials.js";
+import { nicknameIn } from "./credentials.js";
 import type { TestControlPlane } from "./test-control-plane.js";
 
 /** 控制面的 `fetch`，加上昵称对应的用户。 */
@@ -40,8 +39,8 @@ export function asUsers(
 			return cp.users.token(nickname);
 		},
 		async fetch(path, init = {}) {
-			const raw = new Headers(init.headers).get(NICKNAME_HEADER);
-			await join(raw === null ? DEFAULT_TESTER : decodeURIComponent(raw));
+			const nickname = nicknameIn(new Headers(init.headers));
+			if (nickname !== undefined) await join(nickname);
 			return cp.fetch(path, init);
 		},
 	};

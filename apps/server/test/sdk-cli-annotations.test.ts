@@ -84,7 +84,7 @@ describe("sfly scenario show / push：注释框 → 控制面", () => {
 	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl]);
 
 	const createScenario = async (name: string, document: unknown): Promise<string> => {
-		const res = await api.post("/orchestrations", { name });
+		const res = await api.post("/projects/default/orchestrations", { name });
 		const { id } = (await res.json()) as { id: string };
 		await api.saveVersion(id, document);
 		clock.advance(1000);

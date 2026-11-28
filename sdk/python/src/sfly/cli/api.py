@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import time
 from collections.abc import Mapping, Sequence
 from http.client import HTTPException
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
-from sfly.cli.client import READ_CHUNK, ApiError
+from sfly.cli.client import READ_CHUNK, ApiError, segment
 from sfly.cli.errors import EXIT_INTERRUPTED, CliError
 from sfly.cli.input_source import read_source
 from sfly.cli.output import dump_json, format_table
@@ -104,8 +105,8 @@ def _api(session: Session, args: argparse.Namespace) -> int:
         )
     method, raw_path = args.target[0].upper(), args.target[1]
     path, inline_query = _split_path(raw_path)
-    route, params = _locate(routes, method, path)
     query = _parse_query(args.query, inline_query)
+    route, params = _locate(routes, method, path, query, session.client.project)
     problems = [
         *_check_params(route, params),
         *_check_query(route, query),
@@ -168,7 +169,7 @@ def _describe_route(session: Session, routes: Sequence[Route], target: Sequence[
     path, _ = _split_path(raw_path)
     resolution = resolve(routes, method, path)
     if resolution.route is None:
-        raise _not_in_manifest(routes, method, path, resolution)
+        raise _not_in_manifest(routes, method, path, resolution, {}, session.client.project)
     session.out.emit(resolution.route.to_json(), describe_route(resolution.route))
     return 0
 
@@ -204,7 +205,9 @@ def _split_path(raw: str) -> tuple[str, list[tuple[str, str]]]:
     return parts.path, parse_qsl(parts.query, keep_blank_values=True)
 
 
-def _locate(routes: Sequence[Route], method: str, path: str) -> tuple[Route, dict[str, str]]:
+def _locate(
+    routes: Sequence[Route], method: str, path: str, query: dict[str, str], project: str
+) -> tuple[Route, dict[str, str]]:
     resolution = resolve(routes, method, path)
     if resolution.route is not None:
         for value in resolution.params.values():
@@ -215,12 +218,87 @@ def _locate(routes: Sequence[Route], method: str, path: str) -> tuple[Route, dic
                     next="sfly api --list",
                 )
         return resolution.route, resolution.params
-    raise _not_in_manifest(routes, method, path, resolution)
+    raise _not_in_manifest(routes, method, path, resolution, query, project)
+
+
+#: 搬到 `/projects/<项目>/…` 下的旧路由（#488）：只有它们给 `route_moved` 的提示，
+#: 别的对不上的路径照常报不在清单里。
+_MOVED_ROUTES: tuple[tuple[str, str], ...] = (
+    ("GET", "/agents"),
+    ("POST", "/agents/:name/update-now"),
+    ("GET", "/agents/:name/credentials"),
+    ("POST", "/agents/:name/credentials"),
+    ("DELETE", "/agents/:name/credentials/:id"),
+    ("POST", "/agents/:name/disable"),
+    ("POST", "/agents/:name/enable"),
+    ("GET", "/packages"),
+    ("POST", "/packages"),
+    ("GET", "/packages/:name"),
+    ("GET", "/packages/:name/versions/:version"),
+    ("GET", "/packages/:name/versions/:version/nodes/:node"),
+    ("GET", "/packages/:name/versions/:version/archive"),
+    ("GET", "/orchestrations"),
+    ("POST", "/orchestrations"),
+    ("GET", "/runs"),
+    ("GET", "/dashboard"),
+    ("GET", "/feishu-bots"),
+    ("POST", "/feishu-bots"),
+    ("PATCH", "/feishu-bots/:name"),
+    ("GET", "/feishu-bots/:name/references"),
+    ("DELETE", "/feishu-bots/:name"),
+    ("POST", "/feishu-bots/:name/test"),
+)
+#: 旧写法里用查询参数 `project` 选项目的路由（发布到公共项目的过渡参数，#565）：新写法的项目取它。
+_PROJECT_QUERY_ROUTES = frozenset({("POST", "/packages")})
+
+
+def _moved_route(
+    method: str, path: str, query: dict[str, str], project: str
+) -> tuple[str, dict[str, str], bool] | None:
+    """旧路由的新写法：新路径、剩下的查询参数、项目是不是取自旧写法的 `?project=`。
+
+    不是搬过的旧路由时为 None。
+    """
+    segments = path.strip("/").split("/")
+    for old_method, template in _MOVED_ROUTES:
+        parts = template.strip("/").split("/")
+        if old_method != method or len(parts) != len(segments):
+            continue
+        if not all(
+            (part.startswith(":") and given != "") or part == given
+            for part, given in zip(parts, segments, strict=True)
+        ):
+            continue
+        rest = dict(query)
+        from_query = (old_method, template) in _PROJECT_QUERY_ROUTES and bool(rest.get("project"))
+        if from_query:
+            project = rest.pop("project")
+        return f"/projects/{segment(project)}{path}", rest, from_query
+    return None
 
 
 def _not_in_manifest(
-    routes: Sequence[Route], method: str, path: str, resolution: Resolution
+    routes: Sequence[Route],
+    method: str,
+    path: str,
+    resolution: Resolution,
+    query: dict[str, str],
+    project: str,
 ) -> CliError:
+    moved = _moved_route(method, path, query, project)
+    if moved is not None and resolve(routes, method, moved[0]).route is not None:
+        new_path, rest, from_query = moved
+        target = new_path + (f"?{urlencode(rest)}" if rest else "")
+        where = (
+            "项目取自旧写法的 ?project="
+            if from_query
+            else "项目写在路径里，取 SFLY_PROJECT，默认是 default"
+        )
+        return CliError(
+            "route_moved",
+            f"{method} {path} 已经移到项目下：写成 {method} {target}（{where}）",
+            next=f"sfly api {method} {shlex.quote(target)}",
+        )
     if resolution.other_methods:
         allowed = "、".join(resolution.other_methods)
         return CliError(

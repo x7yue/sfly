@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	addMenu,
 	createEditorScenario,
@@ -134,7 +135,7 @@ test("版本对比显示子流程名称的变化：旧版本以节点 ID 作为�
 	const id = await createEditorScenario(controlPlane);
 	const res = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		headers: { "content-type": "application/json", ...actAs("bob") },
 		body: JSON.stringify({
 			base_version: 1,
 			document: {

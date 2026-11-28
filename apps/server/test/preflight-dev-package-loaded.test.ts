@@ -60,7 +60,7 @@ describe("触发前预检：开发版本没有加载", () => {
 		await agent.close();
 		await eventually(async () => {
 			const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-				"/agents",
+				"/projects/default/agents",
 			);
 			expect(list.find((a) => a.name === name)?.status).toBe("offline");
 		});

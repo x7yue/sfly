@@ -87,6 +87,7 @@ import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { dialogOpen } from "#/lib/focus";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { useNow } from "#/lib/use-now";
 import {
 	notifyInvalidatedPresets,
@@ -262,11 +263,17 @@ function Editor({
 	useShortcut("canvas-mode-edit", () => setMode("edit"));
 	useShortcut("canvas-mode-run", () => setMode("run"));
 
-	const packages = useQuery(apiQuery(packagesApi.list));
+	const packages = useQuery(apiQuery(packagesApi.list, { params: { project: PROJECT } }));
 	// 开发版本的声明取自 Agent 上报的元信息：保存成功后再刷新一次（下面的 onSuccess），不等下一轮轮询（BACKGROUND_POLL_MS）。
-	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
+	const agents = useQuery({
+		...apiQuery(agentsApi.list, { params: { project: PROJECT } }),
+		refetchInterval: BACKGROUND_POLL_MS,
+	});
 	const agentList = agents.data?.agents ?? [];
-	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), refetchInterval: BACKGROUND_POLL_MS });
+	const bots = useQuery({
+		...apiQuery(feishuBotsApi.list, { params: { project: PROJECT } }),
+		refetchInterval: BACKGROUND_POLL_MS,
+	});
 	const botList = bots.data?.bots ?? [];
 	const titleOf = usePackageTitles();
 

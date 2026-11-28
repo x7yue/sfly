@@ -2,6 +2,7 @@
 import { orchestrationsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
@@ -52,12 +53,12 @@ describe("场景", () => {
 			method: "PATCH",
 			headers: {
 				"content-type": "application/json",
-				"x-sfly-nickname": encodeURIComponent(nickname),
+				...actAs(nickname),
 			},
 			body: JSON.stringify(body),
 		});
 	const list = async (query = "") => {
-		const body = await api.getJson(`/orchestrations${query}`);
+		const body = await api.getJson(`/projects/default/orchestrations${query}`);
 		return orchestrationsApi.list.response.parse(body);
 	};
 
@@ -74,7 +75,10 @@ describe("场景", () => {
 
 	describe("说明与改名", () => {
 		it("新建时可以写说明；不写时说明为空", async () => {
-			const res = await api.post("/orchestrations", { name: "日终", description: "每日 18:00" });
+			const res = await api.post("/projects/default/orchestrations", {
+				name: "日终",
+				description: "每日 18:00",
+			});
 			expect(res.status).toBe(201);
 			expect(await res.json()).toMatchObject({
 				name: "日终",
@@ -126,7 +130,10 @@ describe("场景", () => {
 		});
 
 		it("复制场景时带上说明", async () => {
-			const res = await api.post("/orchestrations", { name: "源", description: "说明" });
+			const res = await api.post("/projects/default/orchestrations", {
+				name: "源",
+				description: "说明",
+			});
 			const { id } = (await res.json()) as { id: string };
 			const copy = await api.post(`/orchestrations/${id}/copy`, { name: "副本" });
 			expect(await copy.json()).toMatchObject({ name: "副本", description: "说明" });
@@ -212,7 +219,7 @@ describe("场景", () => {
 			).toBe(404);
 			const del = await cp.fetch(`/orchestrations/${id}`, {
 				method: "DELETE",
-				headers: { "x-sfly-nickname": "tester" },
+				headers: { ...actAs("tester") },
 			});
 			expect(del.status).toBe(404);
 			expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ id });
@@ -223,7 +230,10 @@ describe("场景", () => {
 		it("返回卡片所需的数据：说明、版本、节点与子流程数、结构、引用的 Agent 与在线状态", async () => {
 			await connect({ name: "agent-a" });
 			await (await connect({ name: "agent-b" })).disconnect();
-			const res = await api.post("/orchestrations", { name: "压测", description: "高并发下单" });
+			const res = await api.post("/projects/default/orchestrations", {
+				name: "压测",
+				description: "高并发下单",
+			});
 			const { id } = (await res.json()) as { id: string };
 			clock.advance(60_000);
 			await api.saveVersion(id, withSubflow("agent-a", "agent-b"));
@@ -332,7 +342,10 @@ describe("场景", () => {
 			await (await connect({ name: "agent-b" })).disconnect();
 			const daily = (
 				(await (
-					await api.post("/orchestrations", { name: "日终数据处理", description: "每日跑批" })
+					await api.post("/projects/default/orchestrations", {
+						name: "日终数据处理",
+						description: "每日跑批",
+					})
 				).json()) as { id: string }
 			).id;
 			await api.saveVersion(daily, single("agent-a"));
@@ -356,7 +369,7 @@ describe("场景", () => {
 			expect(await names("?q=巡检&archived=true")).toEqual([]);
 			expect(idle).toBeTruthy();
 
-			const bad = await api.get("/orchestrations?status=nope");
+			const bad = await api.get("/projects/default/orchestrations?status=nope");
 			expect(bad.status).toBe(400);
 		});
 	});

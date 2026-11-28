@@ -30,7 +30,7 @@ def wait_agent(name: str, seconds: float) -> int:
     deadline = time.monotonic() + seconds
     seen = "还没有连上来"
     while time.monotonic() < deadline:
-        for agent in e2e._request(s, "GET", "/agents")["agents"]:
+        for agent in e2e._request(s, "GET", f"/projects/{stack_e2e.PROJECT}/agents")["agents"]:
             if agent.get("name") == name:
                 seen = f"状态 {agent.get('status')}，准备环境 {agent.get('preparing_since')}"
                 if agent.get("status") == "online" and not agent.get("preparing_since"):

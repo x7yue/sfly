@@ -3,7 +3,6 @@
 import {
 	PROJECT_PARAM,
 	pathParamNames,
-	queryParamNames,
 	type ResourceKind,
 	type ResourceTarget,
 	type RouteDef,
@@ -15,18 +14,14 @@ import type { z } from "zod";
  *
  * - `none`：不属于项目（`system`：健康检查、文档、SDK 与 Agent 二进制、安装脚本、API 客户端安装包、Python 索引），不需要凭据；
  * - `account`：账号类接口（登录、登出、当前用户、改密码、管理账号），不属于项目，不走范围表：认哪种凭据看 {@link ACCOUNT_ROUTES}；
- * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人）：取路径里的 `:project`。
- *   #488 把这些接口的路径改成 `/projects/:project/…` 之前，路径里没有项目，`param` 是 null，项目就是默认项目；
- * - `query`：路径里没有项目，项目写在查询参数里（过渡，#565：发布节点包的 `project=public`；路径带项目之后由 `path` 替代）：
- *   不写是默认项目，写了只认公共项目；
+ * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人，#488）：取路径里的 `:project`；
  * - `scenario`、`run`、`task`、`session`：经场景、运行、任务或会话（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
  *   （任务经它所属的运行）。`param` 是路径里 ID 的参数名。
  */
 export type ProjectLocator =
 	| { from: "none" }
 	| { from: "account" }
-	| { from: "path"; param: string | null }
-	| { from: "query"; param: string }
+	| { from: "path"; param: typeof PROJECT_PARAM }
 	| { from: "scenario" | "run" | "task" | "session"; param: string };
 
 /**
@@ -68,15 +63,12 @@ function locatorOfScoped(
 	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "dev_agent" | "feishu_bot",
 	target: ResourceTarget,
 ): ProjectLocator | undefined {
+	// 列表、新建、上传和按名字定位的，路径一定带 `:project`（契约检查 `checkProjectInPath` 保证）；按 ID 定位的一定不带。
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
 		return { from: "path", param: PROJECT_PARAM };
-	if (target === "upload" && queryParamNames(def).includes(PROJECT_PARAM)) {
-		return { from: "query", param: PROJECT_PARAM };
-	}
-	if (target === "collection" || target === "upload") return { from: "path", param: null };
 	if (typeof target === "object" && "params" in target) {
 		if (kind === "agent" || kind === "dev_agent" || kind === "package" || kind === "feishu_bot") {
-			return { from: "path", param: null };
+			return undefined;
 		}
 		return { from: kind, param: target.params };
 	}
@@ -168,11 +160,11 @@ export const REQUIRES_CREDENTIAL: ReadonlySet<ResourceKind> = new Set<ResourceKi
  * 这几个不走「不带凭据照旧放行」的过渡，不能匿名；范围照常要「管理」。Agent 的别的接口（列表、更新……）在 #494 之前照旧。
  */
 export const REQUIRES_CREDENTIAL_ROUTES: ReadonlySet<string> = new Set([
-	"GET /agents/:name/credentials",
-	"POST /agents/:name/credentials",
-	"DELETE /agents/:name/credentials/:id",
-	"POST /agents/:name/disable",
-	"POST /agents/:name/enable",
+	"GET /projects/:project/agents/:name/credentials",
+	"POST /projects/:project/agents/:name/credentials",
+	"DELETE /projects/:project/agents/:name/credentials/:id",
+	"POST /projects/:project/agents/:name/disable",
+	"POST /projects/:project/agents/:name/enable",
 	// 建会话（#547）：会话令牌代发起人干活，发起人是用户（`sessions.created_by_user_id` 从凭据取），所以只认用户的凭据
 	// （登录 Cookie、个人令牌）。会话的别的接口在 #494 之前照旧。
 	"POST /projects/:project/sessions",
@@ -209,7 +201,7 @@ export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
  * 项目的写法见 {@link locatorOf}：这些接口的项目都经过同样的得出方式，#488 改路径时清单的键跟着改（测试检查清单里的接口都在契约里）。
  */
 export const AGENT_CREDENTIAL_ROUTES = {
-	"GET /packages/:name/versions/:version/archive": "package_archive",
+	"GET /projects/:project/packages/:name/versions/:version/archive": "package_archive",
 	"PUT /tasks/:id/artifacts/*": "assigned_task",
 } as const satisfies Record<string, "package_archive" | "assigned_task">;
 

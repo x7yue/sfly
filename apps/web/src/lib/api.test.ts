@@ -15,14 +15,16 @@ describe("开发环境下按契约校验响应", () => {
 			Response.json({ agents: "不是列表", control_plane_version: "0.3.0" }),
 		);
 
-		const error = await callApi(agentsApi.list).catch((e: unknown) => e);
+		const error = await callApi(agentsApi.list, { params: { project: "default" } }).catch(
+			(e: unknown) => e,
+		);
 
 		expect(error).toBeInstanceOf(ApiError);
 		expect(error).toMatchObject({
 			status: 200,
 			code: "contract_violation",
 			method: "GET",
-			path: "/agents",
+			path: "/projects/default/agents",
 			details: [expect.objectContaining({ path: ["agents"] })],
 		});
 	});
@@ -31,7 +33,9 @@ describe("开发环境下按契约校验响应", () => {
 		const body = { agents: [], control_plane_version: "0.3.0" };
 		vi.stubGlobal("fetch", async () => Response.json(body));
 
-		await expect(callApi(agentsApi.list)).resolves.toEqual(body);
+		await expect(callApi(agentsApi.list, { params: { project: "default" } })).resolves.toEqual(
+			body,
+		);
 	});
 
 	it("事件不符合契约时在控制台报错并丢弃，符合的照常分发", async () => {
@@ -86,12 +90,16 @@ describe("请求拿到 401：登录着的人回到登录页", () => {
 		vi.stubGlobal("fetch", async () => unauthorized());
 
 		setCurrentUser(null);
-		await expect(callApi(agentsApi.list)).rejects.toMatchObject({ status: 401 });
+		await expect(callApi(agentsApi.list, { params: { project: "default" } })).rejects.toMatchObject(
+			{ status: 401 },
+		);
 		expect(expired).not.toHaveBeenCalled();
 
 		// 本来登录着：这个 401 之后问一次 GET /auth/me，也是 401（登录真的失效了）才通知。
 		setCurrentUser(USER);
-		await expect(callApi(agentsApi.list)).rejects.toMatchObject({ status: 401 });
+		await expect(callApi(agentsApi.list, { params: { project: "default" } })).rejects.toMatchObject(
+			{ status: 401 },
+		);
 		await vi.waitFor(() => expect(expired).toHaveBeenCalledTimes(1));
 	});
 

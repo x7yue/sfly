@@ -172,7 +172,7 @@ Agent 在 Hello 里报的文字存下来之后会显示在别人的命令行和�
 |---|---|---|
 | `name`（Agent 的名称） | 身份 | 和令牌的名称、显示名同一个检查，不合格的连接被拒（`InvalidArgument`，说第几个字符、哪个码位） |
 | `name`（Agent 的名称）的长度 | 身份 | 上限 64 个字符，超过的拒绝连接（和令牌的名称一样）；名称的检查在凭据检查之前，不合格的名称不进任何报错和日志 |
-| 签发 Agent 凭据的名称（`POST /agents/:name/credentials`） | 身份 | 同一张表、同一个 64 个字符的上限，不合格的是 400，说第几个字符、哪个码位或上限，不回显名称；不合格的名称签发不出凭据（Agent 也就连不上来） |
+| 签发 Agent 凭据的名称（`POST /projects/:project/agents/:name/credentials`） | 身份 | 同一张表、同一个 64 个字符的上限，不合格的是 400，说第几个字符、哪个码位或上限，不回显名称；不合格的名称签发不出凭据（Agent 也就连不上来） |
 | `agent_version`、`os`、`arch` | 短的标识类（上限 64 个字符） | 含表里的字符或超长：整段换成空串 |
 | `installed_packages[].name`、`dev_packages[].name` | 短的标识类（上限 128） | 同上 |
 | `installed_packages[].version`、`capabilities[].name` | 短的标识类（上限 64） | 同上 |
@@ -288,7 +288,7 @@ queued / dispatched / running / waiting / pending ──▶ stopped（所在子�
 
 排队超时的报错写明排队了多久和原因：任务排队超时那一刻它的 Agent 在线、还在准备环境时是「排队超过 N 秒仍未派发：Agent X 一直在准备环境」，其他情况（Agent 不在线、槽位一直满着）是「排队超过 N 秒仍未派发：Agent X 不在线或没有空闲槽位」。
 
-排队中的任务在等什么，由控制面在读取运行的那一刻按派发的条件判断（运行视图里排队中的尝试的 `queue_wait`，不是任务自己存下来的状态）：Agent 被管理员停用（`disabled`，写明停用的时间；排在最前：停用到连接真的关掉之间还在线也是，停用的 Agent 不参与派发，和「不在线」分开说）；Agent 不在线（写明最后在线的时间）；在线但还在准备环境（写明开始准备的时间）；版本与控制面不一致，不派新任务；在线、已准备好但槽位用满（写明占着槽位的任务，`agents/slot-holders.ts` 的 `slotHolders(db, agent, 读者的项目)`）；条件都满足、正在派发。这几条就是派发（`engine.ts` 的 `#dispatch`）用的闸门，两边调用同一个纯函数（`agents/dispatch-gate.ts`），页面上说的原因不会和实际派发不一致。占着槽位的任务写明是哪次运行（运行编号的前 8 位），并且按读这个运行的人所在的项目过滤：同一台 Agent 上别的项目的任务只给个数（`other_project_holders`），不给场景名、运行编号和节点名。再加排队超时的时间（`queue_timeout` 到期的控制面时间）和读取这一刻的控制面时间，排了多久、离线了多久、多久后超时都按它算。Agent 的上下线、槽位的占用和释放不让运行本身变化，运行的事件流不会因此推送：界面在尝试排队期间定时重新读取运行，命令行的 `run start --wait` 同样，`sfly run show` 读一次。控制台运行块（`GET /dashboard` 的 `running_runs[].active_nodes[]`）里排队中的节点带同一份 `queue_wait` 和进入排队的时间 `queued_at`，同样在读取那一刻判断（`dashboard/queued-waits.ts`）。
+排队中的任务在等什么，由控制面在读取运行的那一刻按派发的条件判断（运行视图里排队中的尝试的 `queue_wait`，不是任务自己存下来的状态）：Agent 被管理员停用（`disabled`，写明停用的时间；排在最前：停用到连接真的关掉之间还在线也是，停用的 Agent 不参与派发，和「不在线」分开说）；Agent 不在线（写明最后在线的时间）；在线但还在准备环境（写明开始准备的时间）；版本与控制面不一致，不派新任务；在线、已准备好但槽位用满（写明占着槽位的任务，`agents/slot-holders.ts` 的 `slotHolders(db, agent, 读者的项目)`）；条件都满足、正在派发。这几条就是派发（`engine.ts` 的 `#dispatch`）用的闸门，两边调用同一个纯函数（`agents/dispatch-gate.ts`），页面上说的原因不会和实际派发不一致。占着槽位的任务写明是哪次运行（运行编号的前 8 位），并且按读这个运行的人所在的项目过滤：同一台 Agent 上别的项目的任务只给个数（`other_project_holders`），不给场景名、运行编号和节点名。再加排队超时的时间（`queue_timeout` 到期的控制面时间）和读取这一刻的控制面时间，排了多久、离线了多久、多久后超时都按它算。Agent 的上下线、槽位的占用和释放不让运行本身变化，运行的事件流不会因此推送：界面在尝试排队期间定时重新读取运行，命令行的 `run start --wait` 同样，`sfly run show` 读一次。控制台运行块（`GET /projects/:project/dashboard` 的 `running_runs[].active_nodes[]`）里排队中的节点带同一份 `queue_wait` 和进入排队的时间 `queued_at`，同样在读取那一刻判断（`dashboard/queued-waits.ts`）。
 
 ### 3.4 取消
 

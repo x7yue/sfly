@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { ERROR_LOCATION_LABEL } from "@sfly/schema";
+import { actAs } from "../../server/test/support/credentials.js";
 import {
 	type AssignedTask,
 	ErrorKind,
@@ -125,7 +126,7 @@ export async function failedRun(
 	}
 	const res = await controlPlane.fetch(`/orchestrations/${scenarioId}/runs`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify(body),
 	});
 	if (!res.ok) throw new Error(`触发运行：HTTP ${res.status} ${await res.text()}`);

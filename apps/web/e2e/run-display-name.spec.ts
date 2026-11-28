@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { actAs } from "../../server/test/support/credentials.js";
 import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
@@ -50,7 +51,8 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 
 	const verify = await driveToRetry(agent, clock, fetch);
 	await expect(active.getByRole("listitem")).toHaveText([/^执行中核对结果（verify）agent-a/]);
-	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
+	const runId = (await (await controlPlane.fetch("/projects/default/runs?limit=1")).json()).runs[0]
+		.id as string;
 	await page.keyboard.press("Escape");
 
 	await page.clock.setFixedTime(clock.now());
@@ -210,7 +212,7 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 
 	const saved = await controlPlane.fetch(`/orchestrations/${scenarioId}/versions`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		headers: { "content-type": "application/json", ...actAs("tester") },
 		body: JSON.stringify({ base_version: 1, document: namedDocument(RENAMED) }),
 	});
 	expect(saved.status).toBe(201);

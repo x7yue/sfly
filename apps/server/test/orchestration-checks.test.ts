@@ -76,7 +76,10 @@ describe("保存时的静态检查", () => {
 			["1.0.0", ["body", "status"]],
 			["2.0.0", ["content", "status"]],
 		] as const) {
-			const res = await cp.fetch("/packages", publishInit(checksPackage(version, [...outputs])));
+			const res = await cp.fetch(
+				"/projects/default/packages",
+				publishInit(checksPackage(version, [...outputs])),
+			);
 			expect(res.status).toBe(201);
 		}
 	});

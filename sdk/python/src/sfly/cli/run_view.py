@@ -337,7 +337,9 @@ def resolve_run(client: Client, ref: str, *, allow_latest: bool = True) -> str:
         )
     # 控制面按编号前缀筛（`id_prefix`）；比命令行旧的控制面不认它、返回最近的一批，
     # 所以这里仍然再筛一遍。
-    listing = client.get("/runs", {"id_prefix": text, "limit": _RUN_LOOKUP_LIMIT})
+    listing = client.get(
+        client.in_project("/runs"), {"id_prefix": text, "limit": _RUN_LOOKUP_LIMIT}
+    )
     found = [r for r in listing["runs"] if str(r["id"]).lower().startswith(text.lower())]
     if not found:
         raise run_not_found(ref)
@@ -364,13 +366,13 @@ def _latest_run(client: Client) -> str:
     # 「自己」是 `client.owner_name()`：有令牌时是令牌所属用户的显示名（控制面记在运行上的触发人），
     # 没有令牌时是昵称（昵称不校验，谁都能写别人的昵称；强制鉴权之后只剩令牌，#494）。
     owner = client.owner_name()
-    listing = client.get("/runs", {"triggered_by": owner, "limit": 1})
+    listing = client.get(client.in_project("/runs"), {"triggered_by": owner, "limit": 1})
     mine = [r for r in listing["runs"] if r["triggered_by"] == owner]
     if listing["runs"] and not mine:
         # 控制面不认 `triggered_by`（比命令行旧），返回的是别人的最近一次：
         # 退回到按关键字取一批再筛。
         # `q` 是包含匹配（昵称是别人昵称的一部分时也会返回），只要触发人就是自己的。
-        listing = client.get("/runs", {"q": owner, "limit": _RUN_LOOKUP_LIMIT})
+        listing = client.get(client.in_project("/runs"), {"q": owner, "limit": _RUN_LOOKUP_LIMIT})
         mine = [r for r in listing["runs"] if r["triggered_by"] == owner]
     if not mine:
         raise CliError(
@@ -393,7 +395,7 @@ def _latest_in_session(client: Client) -> str:
             "或者给出运行的 id",
             next="sfly run list",
         )
-    listing = client.get("/runs", {"session_id": session, "limit": 1})
+    listing = client.get(client.in_project("/runs"), {"session_id": session, "limit": 1})
     # 比命令行旧的控制面不认 `session_id`，返回的是项目里最近的一次：只认这个会话的。
     mine = [r for r in listing["runs"] if (r.get("session") or {}).get("id") == session]
     if not mine:

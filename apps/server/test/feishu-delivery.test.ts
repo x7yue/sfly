@@ -8,11 +8,12 @@
 // - 要「恰好推进到下一次重试的时刻」时，先等控制面记下上一次的结果（管理页上的「最近一次投递」，和排下一次重试在同一个事务里），
 //   再推进时钟，这样间隔是确定的；
 // - 「不会发出」这类否定的结论，靠同一个机器人按顺序串行投递来证明：后面的消息到了，前面该重试的早就重试过了。
-import { type FeishuBotView, feishuBotsApi, NICKNAME_HEADER } from "@sfly/schema";
+import { type FeishuBotView, feishuBotsApi } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Clock } from "../src/clock.js";
 import { ApiClient } from "./support/api-client.js";
+import { actAs } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type FakeFeishu, type FeishuReply, startFakeFeishu } from "./support/fake-feishu.js";
 import {
@@ -99,7 +100,9 @@ describe("投递的可靠性", () => {
 	};
 	const warnOf = (text: string) => (l: LogLine) => l.level === "warn" && l.text.includes(text);
 	const botView = async (name = "ops"): Promise<FeishuBotView> => {
-		const { bots } = feishuBotsApi.list.response.parse(await api.getJson("/feishu-bots"));
+		const { bots } = feishuBotsApi.list.response.parse(
+			await api.getJson("/projects/default/feishu-bots"),
+		);
 		const bot = bots.find((b) => b.name === name);
 		expect(bot, `机器人「${name}」`).toBeDefined();
 		return bot as FeishuBotView;
@@ -107,16 +110,16 @@ describe("投递的可靠性", () => {
 	/** 等积压降到这个条数：最后一条请求到达假飞书之后，控制面还要记下它的结果。 */
 	const backlogReaches = (count: number, bot = "ops") =>
 		eventually(async () => expect((await botView(bot)).backlog).toBe(count));
-	const botUrl = (name: string) => `/feishu-bots/${encodeURIComponent(name)}`;
+	const botUrl = (name: string) => `/projects/default/feishu-bots/${encodeURIComponent(name)}`;
 	const removeBot = (name: string) =>
 		cp.fetch(botUrl(name), {
 			method: "DELETE",
-			headers: { [NICKNAME_HEADER]: "tester" },
+			headers: actAs("tester"),
 		});
 	const replaceWebhook = (name: string, webhookUrl: string) =>
 		cp.fetch(botUrl(name), {
 			method: "PATCH",
-			headers: { "content-type": "application/json", [NICKNAME_HEADER]: "tester" },
+			headers: { "content-type": "application/json", ...actAs("tester") },
 			body: JSON.stringify({ webhook_url: webhookUrl }),
 		});
 	/** 开一次新的运行，按顺序把这些文本消息放进发送队列；消息的投递结果写进这次运行的任务日志。 */

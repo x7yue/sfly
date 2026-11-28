@@ -54,7 +54,7 @@ describe("sfly package show：输入和输出的说明", () => {
 			],
 		});
 		const res = await cp.fetch(
-			"/packages",
+			"/projects/default/packages",
 			publishInit(
 				packageArchive(metadata, { "documented-1.0.0-py3-none-any.whl": strToU8("wheel") }),
 			),

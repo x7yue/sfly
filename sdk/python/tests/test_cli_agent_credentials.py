@@ -34,7 +34,7 @@ class FakeControlPlane:
         self.requests: list[dict[str, Any]] = []
         # 非空时 POST /projects/default/dev-agents 回这个错误：(状态码, 错误码, 说明)。
         self.dev_error: tuple[int, str, str] | None = None
-        # 非空时 POST /agents/:name/credentials 回这个错误。
+        # 非空时 POST /projects/:project/agents/:name/credentials 回这个错误。
         self.issue_error: tuple[int, str, str] | None = None
         outer = self
 
@@ -67,7 +67,7 @@ class FakeControlPlane:
             def do_POST(self) -> None:
                 body = self._body()
                 self._record(body)
-                if re.fullmatch(r"/agents/[^/]+/credentials", self.path):
+                if re.fullmatch(r"/projects/default/agents/[^/]+/credentials", self.path):
                     if outer.issue_error:
                         status, code, message = outer.issue_error
                         return self._send(status, {"error": {"code": code, "message": message}})
@@ -94,7 +94,7 @@ class FakeControlPlane:
 
             def do_GET(self) -> None:
                 self._record()
-                if re.fullmatch(r"/agents/[^/]+/credentials", self.path):
+                if re.fullmatch(r"/projects/default/agents/[^/]+/credentials", self.path):
                     return self._send(
                         200,
                         {
@@ -113,9 +113,9 @@ class FakeControlPlane:
 
             def do_DELETE(self) -> None:
                 self._record()
-                if re.fullmatch(r"/agents/[^/]+/credentials/[^/]+", self.path) or re.fullmatch(
-                    r"/projects/default/dev-agents/[^/]+", self.path
-                ):
+                if re.fullmatch(
+                    r"/projects/default/agents/[^/]+/credentials/[^/]+", self.path
+                ) or re.fullmatch(r"/projects/default/dev-agents/[^/]+", self.path):
                     return self._send(204)
                 self._send(404, {"error": {"code": "not_found", "message": "没有这个接口"}})
 
@@ -182,7 +182,10 @@ class TestIssue:
         assert AGENT_TOKEN not in err and "sfly_agt_" + "0123456789abcdef"[:4] not in err[20:]
         assert "worker-1" in err and "只显示这一次" in err
         request = logged_in.requests[0]
-        assert (request["method"], request["path"]) == ("POST", "/agents/worker-1/credentials")
+        assert (request["method"], request["path"]) == (
+            "POST",
+            "/projects/default/agents/worker-1/credentials",
+        )
         assert request["authorization"] == f"Bearer {PERSONAL}"
 
     def test_text_shows_the_token_on_its_own_line_and_how_to_install_without_arguments(
@@ -211,7 +214,10 @@ class TestIssue:
     ) -> None:
         code, out, _ = run(capsys, "agent", "credentials", "issue", "测试 机")
         assert code == 0
-        assert logged_in.requests[0]["path"] == "/agents/%E6%B5%8B%E8%AF%95%20%E6%9C%BA/credentials"
+        assert (
+            logged_in.requests[0]["path"]
+            == "/projects/default/agents/%E6%B5%8B%E8%AF%95%20%E6%9C%BA/credentials"
+        )
         assert "--name '测试 机'" in out
 
     def test_json_has_the_token_and_the_credential(
@@ -265,7 +271,7 @@ class TestListAndRevoke:
         request = logged_in.requests[-1]
         assert (request["method"], request["path"]) == (
             "DELETE",
-            f"/agents/worker-1/credentials/{CREDENTIAL_ID}",
+            f"/projects/default/agents/worker-1/credentials/{CREDENTIAL_ID}",
         )
         assert "已吊销" in out and CREDENTIAL_ID in out
 
@@ -275,7 +281,10 @@ class TestListAndRevoke:
         # 有斜杠、问号、空格的 id 不能变成别的路径（也不能带出查询参数）。
         code, _, err = run(capsys, "agent", "credentials", "revoke", "worker 1", "a/b?c d")
         assert code == 0, err
-        assert logged_in.requests[-1]["path"] == "/agents/worker%201/credentials/a%2Fb%3Fc%20d"
+        assert (
+            logged_in.requests[-1]["path"]
+            == "/projects/default/agents/worker%201/credentials/a%2Fb%3Fc%20d"
+        )
 
 
 class TestRegisterDev:

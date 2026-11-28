@@ -58,7 +58,9 @@ describe("触发前检查的文案里的节点", () => {
 	const start = async (version: string) => {
 		cp = await startTestControlPlane({ version });
 		api = new ApiClient(cp);
-		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		expect(
+			(await cp.fetch("/projects/default/packages", publishInit(packageArchive(metadata)))).status,
+		).toBe(201);
 	};
 	const connect = async (name: string, agentVersion: string) => {
 		const agent = await FakeAgent.connect(cp.grpcUrl, { name, agentVersion });

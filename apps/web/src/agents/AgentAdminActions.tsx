@@ -10,12 +10,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRoundIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AdminErrorText } from "#/agents/admin-error";
+import { queuedCount, usedSlots } from "#/agents/agent-status";
 import { CredentialsDialog } from "#/agents/credentials/CredentialsDialog";
 import { useCanAdminAgents } from "#/agents/use-agent-admin";
 import { notify } from "#/components/feedback/notify";
 import { UntrustedText } from "#/components/untrusted-text";
 import { callApi } from "#/lib/api";
 import { AGENT_DISABLE } from "#/lib/copy";
+import { PROJECT } from "#/lib/project";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,7 +109,9 @@ function DisableDialog({
 	const invalidate = useInvalidateAfterToggle();
 	const toggle = useMutation({
 		mutationFn: () =>
-			callApi(disabled ? agentsApi.enable : agentsApi.disable, { params: { name: agent.name } }),
+			callApi(disabled ? agentsApi.enable : agentsApi.disable, {
+				params: { project: PROJECT, name: agent.name },
+			}),
 		onSuccess: () => {
 			invalidate();
 			onOpenChange(false);
@@ -117,7 +121,8 @@ function DisableDialog({
 	useEffect(() => {
 		if (open) toggle.reset();
 	}, [open, toggle.reset]);
-	const running = agent.running_tasks.length;
+	const running = usedSlots(agent);
+	const queued = queuedCount(agent);
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="w-[520px]" finalFocus={returnFocus}>
@@ -145,10 +150,8 @@ function DisableDialog({
 								{running > 0 ? AGENT_DISABLE.disable.running(running) : AGENT_DISABLE.disable.idle}
 							</li>
 							<li data-slot="disable-task-credentials">{AGENT_DISABLE.disable.taskCredentials}</li>
-							{agent.queued_tasks.length > 0 && (
-								<li data-slot="disable-queued">
-									{AGENT_DISABLE.disable.queued(agent.queued_tasks.length)}
-								</li>
+							{queued > 0 && (
+								<li data-slot="disable-queued">{AGENT_DISABLE.disable.queued(queued)}</li>
 							)}
 							{agent.referencing_orchestrations > 0 && (
 								<li>{AGENT_DISABLE.disable.referenced(agent.referencing_orchestrations)}</li>

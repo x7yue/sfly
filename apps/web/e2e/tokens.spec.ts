@@ -7,7 +7,7 @@ import { expect, test } from "./fixtures";
 
 const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
 
-test.use({ nickname: null, controlPlaneOptions: { initialAdmin: ADMIN } });
+test.use({ loginAs: null, controlPlaneOptions: { initialAdmin: ADMIN } });
 
 async function signIn(page: Page) {
 	await page.goto("/login");

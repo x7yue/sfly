@@ -316,7 +316,7 @@ describe("动作摘要", () => {
 		const agent = await connect();
 		const { task } = await start(agent);
 		const listed = async () => {
-			const res = await cp.fetch("/agents");
+			const res = await cp.fetch("/projects/default/agents");
 			const [a] = agentsApi.list.response.parse(await res.json()).agents;
 			return a?.running_tasks.map((t) => t.current_action);
 		};
@@ -386,7 +386,7 @@ describe("动作摘要", () => {
 				.find((n) => n.node_id === "a")
 				?.attempts.at(-1);
 		const listed = async () => {
-			const res = await cp.fetch("/agents");
+			const res = await cp.fetch("/projects/default/agents");
 			const [first] = agentsApi.list.response.parse(await res.json()).agents;
 			return first?.running_tasks.find((t) => t.node_id === "a");
 		};

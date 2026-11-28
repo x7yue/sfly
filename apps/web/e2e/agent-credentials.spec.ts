@@ -22,7 +22,7 @@ const issuedToken = (page: Page) => dialog(page).locator("[data-issued-credentia
  * 登录 Cookie 只对同源的请求有效：`route.fetch` 是测试进程发的，不带浏览器的 `Sec-Fetch-Site`，这里补上。
  */
 async function dropIssueResponse(page: Page, agent: string) {
-	await page.route(`**/api/agents/${agent}/credentials`, async (route) => {
+	await page.route(`**/api/projects/default/agents/${agent}/credentials`, async (route) => {
 		if (route.request().method() !== "POST") return route.continue();
 		await route.fetch({
 			headers: { ...route.request().headers(), "sec-fetch-site": "same-origin" },
@@ -158,7 +158,10 @@ test.describe("签发、吊销、轮换", () => {
 		expect(await pageHolds(page, secret)).toBe(false);
 
 		// 列表接口（带管理员的令牌直接读）和 Agent 列表接口的响应里没有原值，也没有 token 字段。
-		for (const path of ["/agents/agent-a/credentials", "/agents"]) {
+		for (const path of [
+			"/projects/default/agents/agent-a/credentials",
+			"/projects/default/agents",
+		]) {
 			const body = await (await controlPlane.fetch(path, { headers })).text();
 			expect(body).not.toContain(secret);
 			expect(body).not.toContain('"token"');
@@ -181,7 +184,7 @@ test.describe("签发、吊销、轮换", () => {
 			release = resolve;
 		});
 		const posts: string[] = [];
-		await page.route("**/api/agents/agent-a/credentials", async (route) => {
+		await page.route("**/api/projects/default/agents/agent-a/credentials", async (route) => {
 			if (route.request().method() !== "POST") return route.continue();
 			posts.push(route.request().url());
 			await gate;
@@ -231,7 +234,7 @@ test.describe("签发、吊销、轮换", () => {
 			release = resolve;
 		});
 		const posts: string[] = [];
-		await page.route("**/api/agents/worker-5/credentials", async (route) => {
+		await page.route("**/api/projects/default/agents/worker-5/credentials", async (route) => {
 			if (route.request().method() !== "POST") return route.continue();
 			posts.push(route.request().url());
 			await gate;
@@ -585,7 +588,8 @@ test.describe("谁看得到这些按钮", () => {
 			await expect(page.getByRole("button", { name: "停用 agent-a" })).toHaveCount(want);
 			// 同一个登录在页面里（同源）调管理类接口：恢复一台没有停用的 Agent，什么都不改。
 			const status = await page.evaluate(
-				async () => (await fetch("/api/agents/agent-a/enable", { method: "POST" })).status,
+				async () =>
+					(await fetch("/api/projects/default/agents/agent-a/enable", { method: "POST" })).status,
 			);
 			expect(status).toBe(who.shown ? 204 : 403);
 		});
@@ -652,26 +656,30 @@ test.describe("谁看得到这些按钮", () => {
 		await expect(page).toHaveURL(/\/login\?/, { timeout: 30_000 });
 	});
 
-	test("没有登录（昵称模式）的人看不到凭据、停用的按钮，也看不到「为新 Agent 签发凭据」；接口也要登录", async ({
-		page,
-		controlPlane,
-		connectAgent,
-	}) => {
-		await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
-		await page.goto("/agents");
-		await expect(rack(page, "agent-a")).toBeVisible();
-		await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
-		await expect(rack(page, "agent-a").getByRole("button", { name: "agent-a 的凭据" })).toHaveCount(
-			0,
-		);
-		await expect(rack(page, "agent-a").getByRole("button", { name: "停用 agent-a" })).toHaveCount(
-			0,
-		);
-		// 页面不给看，接口本来就拒绝：不带凭据的请求是 401。
-		const refused = await controlPlane.fetch("/agents/agent-a/credentials", {
-			credentials: "omit",
+	test.describe("没有登录", () => {
+		test.use({ loginAs: null, nickname: "tester" });
+
+		test("没有登录（昵称模式）的人看不到凭据、停用的按钮，也看不到「为新 Agent 签发凭据」；接口也要登录", async ({
+			page,
+			controlPlane,
+			connectAgent,
+		}) => {
+			await connectAgent({ name: "agent-a", agentVersion: "1.2.3" });
+			await page.goto("/agents");
+			await expect(rack(page, "agent-a")).toBeVisible();
+			await expect(page.getByRole("button", { name: "为新 Agent 签发凭据" })).toHaveCount(0);
+			await expect(
+				rack(page, "agent-a").getByRole("button", { name: "agent-a 的凭据" }),
+			).toHaveCount(0);
+			await expect(rack(page, "agent-a").getByRole("button", { name: "停用 agent-a" })).toHaveCount(
+				0,
+			);
+			// 页面不给看，接口本来就拒绝：不带凭据的请求是 401。
+			const refused = await controlPlane.fetch("/projects/default/agents/agent-a/credentials", {
+				credentials: "omit",
+			});
+			expect(refused.status).toBe(401);
 		});
-		expect(refused.status).toBe(401);
 	});
 });
 

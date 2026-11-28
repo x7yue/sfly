@@ -21,6 +21,7 @@ import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery, callApi } from "#/lib/api";
 import { AGENT_CREDENTIAL, MESSAGE } from "#/lib/copy";
 import { formatDateTimeWithYear } from "#/lib/format";
+import { PROJECT } from "#/lib/project";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -154,7 +155,9 @@ function useIssue(dispatch: React.Dispatch<FlowAction>) {
 		setPending(true);
 		setError(null);
 		try {
-			const created = await callApi(agentsApi.issueCredential, { params: { name } });
+			const created = await callApi(agentsApi.issueCredential, {
+				params: { project: PROJECT, name },
+			});
 			dispatch({ type: "issued", name, credential: created.credential, token: created.token });
 		} catch (caught) {
 			setError(caught);
@@ -267,7 +270,9 @@ function ListStep({
 	issuing: Issuing;
 	dispatch: React.Dispatch<FlowAction>;
 }) {
-	const credentials = useQuery(apiQuery(agentsApi.listCredentials, { params: { name } }));
+	const credentials = useQuery(
+		apiQuery(agentsApi.listCredentials, { params: { project: PROJECT, name } }),
+	);
 	const { issue, pending, error } = issuing;
 	const active = credentials.data?.credentials.filter((c) => c.revoked_at === null).length ?? 0;
 	return (
@@ -507,12 +512,17 @@ function RevokeStep({
 	dispatch: React.Dispatch<FlowAction>;
 }) {
 	const queryClient = useQueryClient();
-	const credentials = useQuery(apiQuery(agentsApi.listCredentials, { params: { name } }));
+	const credentials = useQuery(
+		apiQuery(agentsApi.listCredentials, { params: { project: PROJECT, name } }),
+	);
 	const onlyActive =
 		credentials.data !== undefined &&
 		credentials.data.credentials.filter((c) => c.revoked_at === null).length <= 1;
 	const revoke = useMutation({
-		mutationFn: () => callApi(agentsApi.revokeCredential, { params: { name, id: credential.id } }),
+		mutationFn: () =>
+			callApi(agentsApi.revokeCredential, {
+				params: { project: PROJECT, name, id: credential.id },
+			}),
 		onSuccess: async () => {
 			notify.success(`已吊销凭据 ${credential.prefix}…`);
 			await queryClient.invalidateQueries({ queryKey: domainKey(agentsApi.listCredentials) });

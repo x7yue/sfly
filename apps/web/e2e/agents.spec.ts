@@ -255,7 +255,7 @@ test("排队的任务：列在格子下面，写排队了多久、多久后排�
 });
 
 test("加载中：骨架是每台 Agent 一个面板，外面没有再套一层面板", async ({ page }) => {
-	await holdApi(page, "/agents");
+	await holdApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	const skeleton = page.getByRole("status", { name: "加载中" });
 	await expect(skeleton).toBeVisible();
@@ -347,9 +347,11 @@ test.describe("凭据种类和停用（#492）", () => {
 		await expect(header(page, "agent-none").getByText("没有凭据", { exact: true })).toHaveClass(
 			/text-warn-fg/,
 		);
+		// 登录着的管理员在标题栏里还有「凭据」「停用」按钮：只看连接凭据的那几句。
 		for (const name of ["agent-own", "agent-unknown"]) {
-			await expect(header(page, name)).not.toContainText("凭据");
-			await expect(header(page, name)).not.toContainText("共享令牌");
+			for (const said of ["共享令牌", "没有凭据", "自己的凭据"]) {
+				await expect(header(page, name)).not.toContainText(said);
+			}
 		}
 	});
 
@@ -464,7 +466,7 @@ test("对外地址与能力：显式配置的地址标明来源；端口被占�
 	await expect(header(page, "agent-busy-port").locator("[data-status]")).toHaveText("在线");
 });
 
-test("节点包安装：安装中的 Agent 状态写「安装中」和包名；安装失败在状态后面写哪个包失败，Agent 仍然在线", async ({
+test("节点包安装：安装中的 Agent 状态写「安装中」和包名；安装失败在状态后面写哪个包失败，Agent 仍然在线；为查不到的任务装的不写包名", async ({
 	page,
 	connectAgent,
 }) => {
@@ -475,7 +477,7 @@ test("节点包安装：安装中的 Agent 状态写「安装中」和包名；�
 			package: "demo-checks",
 			version: "1.2.0",
 			state: 1, // INSTALLING
-			taskId: "t-1",
+			taskId: "",
 			installedPackages: [],
 		},
 	});
@@ -486,7 +488,7 @@ test("节点包安装：安装中的 Agent 状态写「安装中」和包名；�
 			package: "demo-checks",
 			version: "1.3.0",
 			state: 3, // FAILED
-			taskId: "t-2",
+			taskId: "",
 			output: "依赖冲突",
 			installedPackages: [],
 		},
@@ -499,6 +501,24 @@ test("节点包安装：安装中的 Agent 状态写「安装中」和包名；�
 	await expect(header(page, "agent-installing")).toContainText("demo-checks@1.2.0");
 	await expect(header(page, "agent-failed-install").locator("[data-status]")).toHaveText("在线");
 	await expect(header(page, "agent-failed-install")).toContainText("安装 demo-checks@1.3.0 失败");
+
+	// 为库里没有的任务装的（确认不了是本项目的任务，#500）：只给状态，不写包名。
+	const other = await connectAgent({ name: "agent-other-install" });
+	other.send({
+		case: "install",
+		value: {
+			package: "alpha-private",
+			version: "9.9.9",
+			state: 3, // FAILED
+			taskId: crypto.randomUUID(),
+			output: "依赖冲突",
+			installedPackages: [],
+		},
+	});
+	await other.sync();
+	await page.reload();
+	await expect(header(page, "agent-other-install")).toContainText("安装节点包失败");
+	await expect(header(page, "agent-other-install")).not.toContainText("alpha-private");
 });
 
 test("状态后面的告警按固定顺序排：时钟偏差、能力不可调用、节点包安装失败", async ({
@@ -518,7 +538,7 @@ test("状态后面的告警按固定顺序排：时钟偏差、能力不可调�
 			package: "demo-checks",
 			version: "1.3.0",
 			state: 3, // FAILED
-			taskId: "t-3",
+			taskId: "",
 			output: "依赖冲突",
 			installedPackages: [],
 		},
@@ -755,19 +775,19 @@ test("「如何接入 Agent」弹窗：Esc 关闭后焦点回到按钮", async (
 
 test("加载中显示骨架，加载失败显示错误详情，重试后恢复", async ({ page, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
-	const hold = await holdApi(page, "/agents");
+	const hold = await holdApi(page, "/projects/default/agents");
 	await page.goto("/agents");
 	await expect(page.getByRole("status", { name: "加载中" })).toBeVisible();
 	hold.release();
 	await expect(rack(page, "agent-a")).toBeVisible();
 
 	await page.unrouteAll();
-	const outage = await failApi(page, "/agents");
+	const outage = await failApi(page, "/projects/default/agents");
 	await page.reload();
 	const error = page.getByRole("alert");
 	await expect(error).toContainText("无法加载 Agent");
 	await expect(error).toContainText("控制面暂时不可用");
-	await expect(error).toContainText("GET /api/agents → 503 unavailable");
+	await expect(error).toContainText("GET /api/projects/default/agents → 503 unavailable");
 
 	await outage.restore();
 	await error.getByRole("button", { name: "重试" }).click();
@@ -857,7 +877,7 @@ test("立即更新失败时，原因写在确认框里，不发通知", async ({
 		},
 	});
 	await agent.sync();
-	await page.route("**/api/agents/agent-waiting/update-now", (route) =>
+	await page.route("**/api/projects/default/agents/agent-waiting/update-now", (route) =>
 		route.fulfill({
 			status: 503,
 			contentType: "application/json",

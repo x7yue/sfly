@@ -7,8 +7,8 @@ import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { PAGE, SESSION } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { PROJECT } from "#/lib/project";
 import { NewSession } from "#/sessions/NewSession";
-import { SESSION_PROJECT } from "#/sessions/project";
 import { SessionList } from "#/sessions/SessionList";
 
 export const Route = createFileRoute("/_shell/sessions/")({
@@ -23,7 +23,7 @@ export const Route = createFileRoute("/_shell/sessions/")({
  */
 function AssistantPage() {
 	const sessions = useQuery({
-		...apiQuery(sessionsApi.list, { params: { project: SESSION_PROJECT } }),
+		...apiQuery(sessionsApi.list, { params: { project: PROJECT } }),
 		refetchOnWindowFocus: true,
 		// 有会话在做或排队时每 5 秒重新查询；标签页在后台时不查（`refetchIntervalInBackground` 默认就是 false，写明白）；
 		// 没有在做或排队的会话时不轮询，只在获得焦点和建会话之后刷新。
