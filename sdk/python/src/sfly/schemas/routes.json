@@ -19629,6 +19629,10 @@
             "type": "boolean",
             "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
           },
+          "secrets_withheld": {
+            "type": "boolean",
+            "description": "会话令牌触发、会话没勾选「联调时可以使用项目密钥」的运行（#497）：secret 参数不解析，场景里的默认值、运行预设里的值都当作没有提供，\n只用触发请求里给的值。在触发时定下，之后改勾选不影响这次运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
           "late_reports_dropped": {
             "type": "integer",
             "minimum": 0,
@@ -20587,6 +20591,10 @@
             "type": "boolean",
             "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
           },
+          "secrets_withheld": {
+            "type": "boolean",
+            "description": "会话令牌触发、会话没勾选「联调时可以使用项目密钥」的运行（#497）：secret 参数不解析，场景里的默认值、运行预设里的值都当作没有提供，\n只用触发请求里给的值。在触发时定下，之后改勾选不影响这次运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
           "late_reports_dropped": {
             "type": "integer",
             "minimum": 0,
@@ -21475,6 +21483,10 @@
             "type": "boolean",
             "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
           },
+          "secrets_withheld": {
+            "type": "boolean",
+            "description": "会话令牌触发、会话没勾选「联调时可以使用项目密钥」的运行（#497）：secret 参数不解析，场景里的默认值、运行预设里的值都当作没有提供，\n只用触发请求里给的值。在触发时定下，之后改勾选不影响这次运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+          },
           "late_reports_dropped": {
             "type": "integer",
             "minimum": 0,
@@ -22360,6 +22372,10 @@
             "secrets_oversize": {
               "type": "boolean",
               "description": "这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、\n输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，\n缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。"
+            },
+            "secrets_withheld": {
+              "type": "boolean",
+              "description": "会话令牌触发、会话没勾选「联调时可以使用项目密钥」的运行（#497）：secret 参数不解析，场景里的默认值、运行预设里的值都当作没有提供，\n只用触发请求里给的值。在触发时定下，之后改勾选不影响这次运行。旧版本的控制面没有这个字段，读不到时当作 false。"
             },
             "late_reports_dropped": {
               "type": "integer",
@@ -23519,6 +23535,9 @@
                       "type": "null"
                     }
                   ]
+                },
+                "use_project_secrets": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -23529,7 +23548,8 @@
                 "created_at",
                 "last_activity_at",
                 "queue_position",
-                "last_turn_outcome"
+                "last_turn_outcome",
+                "use_project_secrets"
               ]
             }
           },
@@ -23578,6 +23598,9 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 20000
+          },
+          "use_project_secrets": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -23647,6 +23670,10 @@
                 "type": "null"
               }
             ]
+          },
+          "use_project_secrets": {
+            "type": "boolean",
+            "description": "「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。\n人建会话时勾选、在会话页改；会话令牌改不了。"
           },
           "project": {
             "type": "string"
@@ -23734,6 +23761,7 @@
           "last_activity_at",
           "queue_position",
           "last_turn_outcome",
+          "use_project_secrets",
           "project",
           "readiness",
           "waiting_for"
@@ -23857,6 +23885,10 @@
                 "type": "null"
               }
             ]
+          },
+          "use_project_secrets": {
+            "type": "boolean",
+            "description": "「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。\n人建会话时勾选、在会话页改；会话令牌改不了。"
           },
           "project": {
             "type": "string"
@@ -24529,6 +24561,9 @@
                         "scenario_name": {
                           "type": "string"
                         },
+                        "secrets_withheld": {
+                          "type": "boolean"
+                        },
                         "seq": {
                           "type": "integer",
                           "minimum": 1,
@@ -24596,6 +24631,7 @@
           "last_activity_at",
           "queue_position",
           "last_turn_outcome",
+          "use_project_secrets",
           "project",
           "readiness",
           "waiting_for",
@@ -24610,6 +24646,206 @@
           "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
         }
       ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/sessions/:id",
+      "key": [
+        "sessions",
+        "update"
+      ],
+      "kind": "endpoint",
+      "summary": "改会话的「联调时可以使用项目密钥」",
+      "effect": "write",
+      "resource": {
+        "kind": "session",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "use_project_secrets": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "use_project_secrets"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "running",
+              "queued",
+              "ended"
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "最近一次活动（新建、发话、事件落库）的时间。"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_turn_outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "stopped",
+                  "limit",
+                  "model_unavailable",
+                  "interrupted",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "use_project_secrets": {
+            "type": "boolean",
+            "description": "「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。\n人建会话时勾选、在会话页改；会话令牌改不了。"
+          },
+          "project": {
+            "type": "string"
+          },
+          "readiness": {
+            "type": "object",
+            "properties": {
+              "ready": {
+                "type": "boolean"
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_not_configured",
+                        "assistant_unreachable",
+                        "workbench_not_set",
+                        "workbench_offline",
+                        "model_not_configured",
+                        "model_unreachable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "message"
+                  ]
+                }
+              },
+              "workbench": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "ready",
+              "problems",
+              "workbench"
+            ]
+          },
+          "waiting_for": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "created_by": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "title",
+                  "created_by"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "created_by",
+          "created_at",
+          "last_activity_at",
+          "queue_position",
+          "last_turn_outcome",
+          "use_project_secrets",
+          "project",
+          "readiness",
+          "waiting_for"
+        ]
+      },
+      "notes": []
     },
     {
       "method": "GET",
@@ -25371,6 +25607,10 @@
                 "scenario_name": {
                   "type": "string"
                 },
+                "secrets_withheld": {
+                  "type": "boolean",
+                  "description": "这次运行不解析 secret 参数（会话没勾选「联调时可以使用项目密钥」，#497）；成果栏据此标出哪些运行用了密钥。#497 之前的记录没有。"
+                },
                 "seq": {
                   "type": "integer",
                   "minimum": 1,
@@ -25720,6 +25960,10 @@
               }
             ]
           },
+          "use_project_secrets": {
+            "type": "boolean",
+            "description": "「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。\n人建会话时勾选、在会话页改；会话令牌改不了。"
+          },
           "project": {
             "type": "string"
           },
@@ -25806,6 +26050,7 @@
           "last_activity_at",
           "queue_position",
           "last_turn_outcome",
+          "use_project_secrets",
           "project",
           "readiness",
           "waiting_for"
@@ -25904,6 +26149,10 @@
               }
             ]
           },
+          "use_project_secrets": {
+            "type": "boolean",
+            "description": "「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。\n人建会话时勾选、在会话页改；会话令牌改不了。"
+          },
           "project": {
             "type": "string"
           },
@@ -25990,6 +26239,7 @@
           "last_activity_at",
           "queue_position",
           "last_turn_outcome",
+          "use_project_secrets",
           "project",
           "readiness",
           "waiting_for"

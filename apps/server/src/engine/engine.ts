@@ -62,6 +62,12 @@ import type {
 	TriggerRejection,
 	TriggerRequest,
 } from "../runs/trigger-admission.js";
+import {
+	planFor,
+	WITHHELD_REASON,
+	withheldNote,
+	withholdsSecrets,
+} from "../runs/withheld-secrets.js";
 import type { SessionStore } from "../sessions/session-store.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
@@ -223,6 +229,8 @@ export class Engine implements AgentSessionHandler {
 	#documents = new Map<string, StoredOrchestrationDocument>();
 	/** 场景版本 ID → 执行计划。 */
 	#plans = new Map<string, RunPlan>();
+	/** 不解析 secret 参数的运行的计划，按版本（{@link Engine.#runPlan}）。 */
+	#withheldPlans = new Map<string, RunPlan>();
 
 	constructor(
 		private readonly deps: {
@@ -281,7 +289,12 @@ export class Engine implements AgentSessionHandler {
 		return this.#event(async (step) => {
 			// 会话令牌的触发：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
 			if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(step.tx);
-			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
+			// 会话没勾选「联调时可以使用项目密钥」时这次运行不解析 secret 参数（#497），按会话此刻的勾选定下、记在运行上。
+			const withholdSecrets = await withholdsSecrets(step.tx, actor.sessionId);
+			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, {
+				...request,
+				withholdSecrets,
+			});
 			if (!admitted.ok) {
 				// 版本冲突的拒绝要计数（#449）：这一步没有别的写入，提交的只有这几行。
 				await recordVersionConflicts(
@@ -297,7 +310,7 @@ export class Engine implements AgentSessionHandler {
 			const mainId = chainInstanceId(runId);
 			const masked = this.deps.masking.firstVault({
 				document: version.document,
-				plan,
+				plan: planFor(plan, withholdSecrets),
 				chainInstanceId: mainId,
 				params,
 			});
@@ -315,6 +328,7 @@ export class Engine implements AgentSessionHandler {
 					triggeredToken: actor.token,
 					// 经哪个会话触发：依据是请求带的会话令牌（访问检查给出），不是模型在对话里怎么说。
 					sessionId: actor.sessionId,
+					secretsWithheld: withholdSecrets,
 					params: masked.params,
 					...runPreset,
 					status: "running",
@@ -345,6 +359,7 @@ export class Engine implements AgentSessionHandler {
 					kind: "run",
 					run_id: runId,
 					scenario_name: admitted.scenarioName,
+					secrets_withheld: withholdSecrets,
 				});
 				step.afterCommit.push(() => this.deps.sessions.announce(sessionId, event));
 			}
@@ -700,6 +715,19 @@ export class Engine implements AgentSessionHandler {
 
 	/** 运行的执行计划；场景版本不可变，计划可以缓存。 */
 	async #runPlan(tx: Tx, run: RunRow): Promise<RunPlan> {
+		const plan = await this.#versionPlan(tx, run);
+		if (!run.secretsWithheld) return plan;
+		// 不解析 secret 参数的运行（#497）用去掉默认值和常量的计划，按版本另存一份，原计划不变。
+		let withheld = this.#withheldPlans.get(run.orchestrationVersionId);
+		if (!withheld) {
+			withheld = planFor(plan, true);
+			this.#withheldPlans.set(run.orchestrationVersionId, withheld);
+		}
+		return withheld;
+	}
+
+	/** 运行绑定的版本的执行计划（按版本缓存）。 */
+	async #versionPlan(tx: Tx, run: RunRow): Promise<RunPlan> {
 		const cached = this.#plans.get(run.orchestrationVersionId);
 		if (cached) return cached;
 		// 升级前开始、还没跑完的运行绑定的版本里可以有已移除种类的节点（ADR 0028）：照常排出计划，
@@ -879,10 +907,13 @@ export class Engine implements AgentSessionHandler {
 		let problem: string | undefined;
 		let params: Record<string, unknown> = {};
 		try {
+			// 不解析 secret 参数的运行（#497）的计划里，子流程 secret 参数的默认值、传给它的常量已经去掉（`#runPlan`）。
 			const mapped = resolveInputs(node.params, await this.#scope(step, run, chain, plan, index));
 			const filled = fillParams(subflow.entry.params, mapped);
-			if ("errors" in filled) problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}`;
-			else params = filled.params;
+			if ("errors" in filled) {
+				const why = run.secretsWithheld ? `（${WITHHELD_REASON}）` : "";
+				problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}${why}`;
+			} else params = filled.params;
 		} catch (error) {
 			if (!(error instanceof InvalidReferenceError)) throw error;
 			problem = error.message;
@@ -1514,11 +1545,15 @@ export class Engine implements AgentSessionHandler {
 			packageVersion,
 		});
 		if (!content.ok) {
+			let message = content.message;
 			if (content.inputs) {
 				const inputs = await this.deps.masking.record(step, run, content.inputs);
 				await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
+				if (run.secretsWithheld) {
+					message += withheldNote(node.inputs, content.inputs, chain.params, plan.entry.params);
+				}
 			}
-			await this.#failTask(step, task, content.kind, content.message);
+			await this.#failTask(step, task, content.kind, message);
 			return undefined;
 		}
 

@@ -407,6 +407,8 @@ export const runs = pgTable(
 		 * 会话只能取消自己触发的运行，会话页的成果栏也只认它。不是会话触发的为空。会话删除时置空：运行不随会话删除。
 		 */
 		sessionId: uuid("session_id").references(() => sessions.id, { onDelete: "set null" }),
+		/** 会话令牌触发、会话没勾选「联调时可以使用项目密钥」：secret 参数不解析（#497），触发时定下。 */
+		secretsWithheld: boolean("secrets_withheld").notNull().default(false),
 		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
 		/**
 		 * 触发时选用的运行预设：ID（不是外键，预设删除后仍保留）、触发时的名称、预设参数的名单。
@@ -938,6 +940,8 @@ export const sessions = pgTable(
 		 * 排队的会话按它先后轮流开始（最早的先开始，同一时刻的按 ID，按说话的时刻排，不插队），控制面记的时间，不是助手服务盖的。
 		 */
 		queuedAt: timestamptz("queued_at"),
+		/** 「联调时可以使用项目密钥」（#497）：人勾选；没勾选时会话令牌触发的运行不解析 secret 参数。 */
+		useProjectSecrets: boolean("use_project_secrets").notNull().default(false),
 	},
 	(t) => [
 		check("sessions_current_turn", sql`${t.currentTurn} >= 0`),

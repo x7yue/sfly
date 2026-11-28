@@ -577,9 +577,13 @@ export interface CountOnlyPeriod {
 	count: number;
 }
 
-/** `POST /projects/:project/sessions`：新建会话，`text` 是它的第一句话，作为第一轮。 */
+/**
+ * `POST /projects/:project/sessions`：新建会话，`text` 是它的第一句话，作为第一轮；`use_project_secrets` 是
+ * 「联调时可以使用项目密钥」（#497，不写是 false）。
+ */
 export interface CreateSessionBody {
 	text: SessionMessageText;
+	use_project_secrets?: boolean;
 }
 
 /**
@@ -1921,6 +1925,8 @@ export type PersistedSessionEvent = {
 	turn: number;
 	run_id: string;
 	scenario_name: string;
+	/** 这次运行不解析 secret 参数（会话没勾选「联调时可以使用项目密钥」，#497）；成果栏据此标出哪些运行用了密钥。#497 之前的记录没有。 */
+	secrets_withheld?: boolean;
 	seq: number;
 	at: Timestamp;
 } | {
@@ -2919,6 +2925,11 @@ export interface RunView {
 	 */
 	secrets_oversize?: boolean;
 	/**
+	 * 会话令牌触发、会话没勾选「联调时可以使用项目密钥」的运行（#497）：secret 参数不解析，场景里的默认值、运行预设里的值都当作没有提供，
+	 * 只用触发请求里给的值。在触发时定下，之后改勾选不影响这次运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_withheld?: boolean;
+	/**
 	 * 运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，
 	 * 每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。
 	 */
@@ -3040,6 +3051,11 @@ export interface SessionDetailResponse {
 	last_activity_at: Timestamp;
 	queue_position: number | null;
 	last_turn_outcome: TurnOutcome | null;
+	/**
+	 * 「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。
+	 * 人建会话时勾选、在会话页改；会话令牌改不了。
+	 */
+	use_project_secrets: boolean;
 	project: string;
 	readiness: Readiness;
 	waiting_for: WaitingFor | null;
@@ -3073,6 +3089,11 @@ export interface SessionListItem {
 	last_activity_at: Timestamp;
 	queue_position: number | null;
 	last_turn_outcome: TurnOutcome | null;
+	/**
+	 * 「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。
+	 * 人建会话时勾选、在会话页改；会话令牌改不了。
+	 */
+	use_project_secrets: boolean;
 }
 
 /**
@@ -3126,6 +3147,11 @@ export interface SessionView {
 	last_activity_at: Timestamp;
 	queue_position: number | null;
 	last_turn_outcome: TurnOutcome | null;
+	/**
+	 * 「联调时可以使用项目密钥」（#497）：没勾选时，会话令牌触发的运行不解析 secret 参数（场景里的默认值、运行预设里的值当作没有提供）。
+	 * 人建会话时勾选、在会话页改；会话令牌改不了。
+	 */
+	use_project_secrets: boolean;
 	project: string;
 	readiness: Readiness;
 	waiting_for: WaitingFor | null;
@@ -3397,6 +3423,11 @@ export interface TurnQueuedEvent {
 	type: "turn_queued";
 	position: number;
 	waiting_for: WaitingFor | null;
+}
+
+/** `PATCH /sessions/:id`：改「联调时可以使用项目密钥」（#497）。 */
+export interface UpdateSessionBody {
+	use_project_secrets: boolean;
 }
 
 /** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */

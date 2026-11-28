@@ -503,6 +503,7 @@ const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
 
 /** 0012 之后的迁移加在当前代码会读写的表上的列：表名、列名、类型。 */
 const LATER_COLUMNS: [string, string, string][] = [
+	["runs", "secrets_withheld", "boolean DEFAULT false NOT NULL"],
 	["node_packages", "session_id", "uuid"],
 	["tasks", "metric_series_capped", "boolean DEFAULT false NOT NULL"],
 	["agents", "clock_offset_ms", "bigint"],

@@ -146,6 +146,7 @@ const JSON_BODIES: Record<string, unknown> = {
 	// 登记项目的工作台（#549）：项目甲的凭据对项目乙的这个接口，和别的项目的管理面一样是 404（不透露有没有这个项目）。
 	"PUT /projects/:project/workbench": { agent: "workbench" },
 	"POST /sessions/:id/messages": { text: "你好" },
+	"PATCH /sessions/:id": { use_project_secrets: true },
 };
 
 /** 没有请求体的写接口。 */

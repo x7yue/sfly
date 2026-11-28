@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ParamDeclaration, PresetChanges, PresetParamInput, PresetView } from "@sfly/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
@@ -136,6 +136,25 @@ export async function copyPresets(
 	const rows = await tx.select().from(runPresets).where(eq(runPresets.orchestrationId, sourceId));
 	if (rows.length === 0) return;
 	await tx.insert(runPresets).values(rows.map((row) => newPresetRow(targetId, row, actor, now)));
+}
+
+/**
+ * 新版本把入口的 secret 参数改成普通参数（或删掉了它）时，在同一个事务里去掉这个场景各个预设里这个参数的值（#497）：
+ * 按 secret 存下的值不跟着声明降成普通的值（复制场景之后在副本里改声明也一样），预设从此不再固定这个参数。
+ */
+export async function forgetDowngradedSecrets(
+	tx: Tx,
+	orchestrationId: string,
+	before: readonly ParamDeclaration[],
+	after: readonly ParamDeclaration[],
+): Promise<void> {
+	const stillSecret = new Set(after.filter((d) => d.secret).map((d) => d.name));
+	const downgraded = before.filter((d) => d.secret && !stillSecret.has(d.name)).map((d) => d.name);
+	if (downgraded.length === 0) return;
+	await tx
+		.update(runPresets)
+		.set({ values: sql`${runPresets.values} - ${sql.param(downgraded)}::text[]` })
+		.where(eq(runPresets.orchestrationId, orchestrationId));
 }
 
 /**
