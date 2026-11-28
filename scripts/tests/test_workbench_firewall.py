@@ -115,6 +115,11 @@ BAD = [
     ("SFLY_WORKBENCH_EGRESS", "0x7f.1:80", IPV4),
     ("SFLY_WORKBENCH_EGRESS", "1.2.3:80", IPV4),
     ("SFLY_WORKBENCH_EGRESS", f"{MARK}.300:80", IPV4),
+    # 整段十六进制、八进制：标准库不查 DNS 就认作 192.0.2.1，不是四段十进制的写法。
+    ("SFLY_WORKBENCH_EGRESS", "0xc0000201:80", IPV4),
+    ("SFLY_WORKBENCH_EGRESS", "0XC0000201:80", IPV4),
+    ("SFLY_WORKBENCH_EGRESS", "0300.0.2.1:80", IPV4),
+    ("SFLY_PYPI_MIRROR", f"https://0xc0000201/{MARK}", IPV4),
     ("SFLY_PYPI_MIRROR", f"http://[{MARK}/simple", "地址写得不对"),
     ("SFLY_PYPI_MIRROR", f"https://[{MARK}]/simple", "地址写得不对"),
     ("SFLY_PYPI_MIRROR", f"https://[fd00::1]/{MARK}", IPV6),
@@ -251,6 +256,51 @@ def test_a_mirror_keeps_addresses_seen_within_an_hour_and_a_failure_renews_nothi
         set(),
         {("3.3.3.3", 443)},
     ]
+
+
+def test_a_mirror_whose_name_no_longer_exists_is_revoked_at_once() -> None:
+    cdn = "mirror.internal"
+    got = check_rounds(
+        [Entry(cdn, 443, cdn=True), Entry("other.internal", 443, cdn=True)],
+        [
+            (0, {cdn: {"10.0.0.1"}, "other.internal": {"10.0.0.9"}}),
+            (60, {cdn: {"10.0.0.2"}, "other.internal": {"10.0.0.9"}}),
+            # 名字不存在（权威的否定）：这个名单项自己的地址全部撤销，不等一小时；
+            # 别的名单项不受影响。
+            (120, {cdn: set(), "other.internal": {"10.0.0.9"}}),
+            (180, {cdn: {"10.0.0.3"}, "other.internal": {"10.0.0.9"}}),
+        ],
+    )
+    assert got == [
+        {("10.0.0.1", 443), ("10.0.0.9", 443)},
+        {("10.0.0.1", 443), ("10.0.0.2", 443), ("10.0.0.9", 443)},
+        {("10.0.0.9", 443)},
+        {("10.0.0.3", 443), ("10.0.0.9", 443)},
+    ]
+
+
+def test_terms_start_when_a_lookup_returns_and_expiry_is_judged_when_the_round_ends() -> None:
+    # 旧授权第 180 秒到期；刷新在第 179 秒开始，解析慢、第 181 秒才失败返回：
+    # 这一轮的规则里不能再有它。
+    now = [0.0]
+    answers: list[set[str] | None] = [{"172.18.0.3"}, None, {"172.18.0.3"}]
+
+    def lookup(host: str, port: int) -> set[str]:
+        answer = answers.pop(0)
+        now[0] += 2
+        if answer is None:
+            raise OSError("Temporary failure in name resolution")
+        return answer
+
+    grants = firewall.Grants([Entry("sfly", 8080)], lookup, lambda: now[0])
+    now[0] = -2  # 第一次解析在第 0 秒返回：期限到第 180 秒。
+    assert grants.allowed() == {("172.18.0.3", 8080)}
+    now[0] = 179
+    assert grants.allowed() == set()
+    # 成功的解析按返回的时刻续期：第 300 秒开始、第 302 秒返回，期限到第 482 秒。
+    now[0] = 300
+    assert grants.allowed() == {("172.18.0.3", 8080)}
+    assert grants.expiry == {(Entry("sfly", 8080), "172.18.0.3"): 302 + GRACE}
 
 
 def test_entries_sharing_a_port_are_granted_independently() -> None:

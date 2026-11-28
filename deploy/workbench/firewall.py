@@ -26,7 +26,8 @@ Docker 按 restart 策略恢复还是手工 docker start，本次的规则写好
 授权（Grants）：每个放行的地址都有到期时间，只有成功的解析能加入或续期，解析失败什么都不续。
 每 60 秒解析一轮，整套规则用 iptables-restore 原子替换。控制面和 SFLY_WORKBENCH_EGRESS：
 这次结果里没有的地址立刻撤销，有的续 GRACE_SECONDS；名字不存在是成功的空结果，全部撤销。
-包镜像（CDN，每次给的地址不一样）：只续这次见到的，KEEP_SECONDS，不删别的。
+包镜像（CDN，每次给的地址不一样）：只续这次见到的，KEEP_SECONDS，不删别的；名字不存在时也全部撤销。
+期限从每次解析成功返回的时刻算；写规则之前按那一刻的时钟筛掉到期的。
 """
 
 from __future__ import annotations
@@ -74,6 +75,23 @@ class Invalid(ValueError):
     """名单写错了。消息里只有变量名、第几条和原因，没有原文。"""
 
 
+def numeric(host: str) -> bool:
+    """标准库不查 DNS 就认得出是数字地址（AI_NUMERICHOST）：整段十六进制、八进制的写法也算。"""
+    try:
+        socket.getaddrinfo(host, None, socket.AF_INET, flags=socket.AI_NUMERICHOST)
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return True
+
+
+def canonical_ipv4(host: str) -> bool:
+    """四段十进制、没有多余的 0 的 IPv4 地址。"""
+    try:
+        return str(ipaddress.IPv4Address(host)) == host
+    except ValueError:
+        return False
+
+
 def endpoint(text: str, url: bool, cdn: bool = False) -> Entry | str | None:
     """部署者写的一项（URL 或「主机:端口」）的名单项；写错时是原因（不含原文）；不出网时是 None。
 
@@ -103,10 +121,8 @@ def endpoint(text: str, url: bool, cdn: bool = False) -> Entry | str | None:
         host, port = text, str(default)
     host = host.lower()
     labels = host.split(".")
-    if labels[-1].isascii() and labels[-1].isdigit():
-        try:
-            ipaddress.IPv4Address(host)
-        except ValueError:
+    if (labels[-1].isascii() and labels[-1].isdigit()) or numeric(host):
+        if not canonical_ipv4(host):
             return "IP 地址要写成四段十进制"
     elif len(host) > 253 or not all(LABEL.fullmatch(label) for label in labels):
         return "主机名写得不对"
@@ -204,19 +220,22 @@ class Grants:
         self.expiry: dict[tuple[Entry, str], float] = {}
 
     def allowed(self) -> set[tuple[str, int]]:
-        now = self.clock()
+        """解析一轮、续期，返回此刻没到期的。期限从每次解析成功返回的时刻算，到期按返回之前再读一次的时钟判断。"""
         for entry in self.entries:
             try:
                 addresses = self.lookup(entry.host, entry.port)
             except OSError as error:
                 print(f"出网名单：这一轮解析不了 {entry.host}（{error}），不续期", file=sys.stderr)
                 continue
-            if not entry.cdn:
+            at = self.clock()
+            # 普通项只放行这次的结果；包镜像只续不删，但名字不存在（空结果）时也全部撤销。
+            if not entry.cdn or not addresses:
                 for key in [k for k in self.expiry if k[0] == entry and k[1] not in addresses]:
                     del self.expiry[key]
             term = KEEP_SECONDS if entry.cdn else GRACE_SECONDS
             for ip in addresses:
-                self.expiry[(entry, ip)] = now + term
+                self.expiry[(entry, ip)] = at + term
+        now = self.clock()
         self.expiry = {key: until for key, until in self.expiry.items() if until > now}
         return {(ip, entry.port) for entry, ip in self.expiry}
 
