@@ -490,12 +490,5 @@ export class ArtifactStore {
 	}
 }
 
-/** 任务产物的上传 / 下载地址前缀（以 / 结尾），后面接按路径段编码的产物名称。 */
-export function artifactBaseUrl(publicHttpUrl: string, taskId: string): string {
-	return `${publicHttpUrl}/tasks/${taskId}/artifacts/`;
-}
-
-/** 某个产物的下载地址（也是 SDK 返回给节点的产物引用）。 */
-export function artifactUrl(publicHttpUrl: string, taskId: string, name: string): string {
-	return artifactBaseUrl(publicHttpUrl, taskId) + name.split("/").map(encodeURIComponent).join("/");
-}
+/** 产物的地址：拼和认在 `@sfly/schema` 的同一个模块里（运行监控用它认出输出里的产物引用）。 */
+export { artifactBaseUrl, artifactUrl } from "@sfly/schema";
