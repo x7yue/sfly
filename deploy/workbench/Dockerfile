@@ -21,14 +21,15 @@ FROM debian:trixie-slim
 # **不要带用户名和密码**：构建参数会留在镜像历史里（`docker history`），拿到镜像的人都读得到。
 ARG DEBIAN_MIRROR=
 
-# curl、ca-certificates：入口脚本和安装脚本下载用；procps：模型常用的 ps、pkill，也给健康检查用 pgrep。
+# curl、ca-certificates：入口脚本和安装脚本下载用；procps：模型常用的 ps、pkill，也给健康检查用 pgrep；
+# iptables：出网名单（firewall.py）用，工作台的用户没有 NET_ADMIN，用不了它。
 # install.sh 要的 sh、sed、sha256sum、flock、tar 都是基础系统自带的。
 RUN if [ -n "$DEBIAN_MIRROR" ]; then \
       sed -i "s|http://deb.debian.org|$DEBIAN_MIRROR|g" /etc/apt/sources.list.d/debian.sources; \
     fi \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl fd-find git jq procps python-is-python3 python3 ripgrep \
+      ca-certificates curl fd-find git iptables jq procps python-is-python3 python3 ripgrep \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
  && rm -rf /var/lib/apt/lists/*
 
@@ -36,6 +37,8 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash workbench \
  && install -d -o workbench -g workbench /work
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/sfly-workbench-entrypoint
+# 出网名单（#498）：compose 的 sfly-workbench-firewall 用同一个镜像以 root 运行它，工作台自己不运行。
+COPY --chmod=0755 firewall.py /usr/local/bin/sfly-workbench-firewall
 
 USER workbench
 # --dev 装的 uv 和 sfly 在 ~/.local/bin：放在 PATH 最后，系统目录里有的命令不会被家目录（卷，模型写得了）里的盖掉。

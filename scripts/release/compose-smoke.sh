@@ -4,6 +4,8 @@
 #   - 工作台在控制面的 Agent 页上在线，用自己的 Agent 凭据（auth_kind 为 agent），版本和控制面一致；登记为默认项目的工作台
 #     （PUT /projects/default/workbench，之后控制面只接受 Agent 凭据）；
 #   - 助手就绪，假的模型端点照剧本做完一个会话（事件顺序对，复用评测集 #543 的检查，scripts/release/stack_e2e.py）；
+#   - 出网名单（#498）：工作台连得上控制面（装 Agent 走的就是它和镜像），名单外的被拒，包括一台「项目外的 Agent」的
+#     能力端口（另一个容器在 50052 上监听，网络里别的容器连得到它）；把它加进 SFLY_WORKBENCH_EGRESS 之后连得上；
 #   - `docker compose rm -sf` 删掉工作台容器再 `up -d`：工作区里的文件还在，Agent 不重装。
 # compose 文件之外只加一个 override：一个 PostgreSQL（compose 里没有数据库）、一个假的模型端点、初始管理员和镜像站的环境；
 # 项目名、端口、卷都是这一次随机的，不碰别的 compose 部署。
@@ -62,6 +64,11 @@ services:
     entrypoint: [python3, /fake/fake_model.py, --port, "8100"]
     healthcheck: {disable: true} # 工作台镜像的健康检查（pgrep sfly-agent）不适用于它
     volumes: ["$evals:/aeval:ro", "$work_dir/fake:/fake:ro"]
+  other-agent:
+    profiles: [assistant]
+    image: ghcr.io/x7yue/sfly-workbench:$tag
+    entrypoint: [python3, -m, http.server, "50052"]
+    healthcheck: {disable: true}
   sfly:
     depends_on: {db: {condition: service_healthy}}
     environment:
@@ -83,9 +90,11 @@ compose() {
 		SFLY_WORKBENCH_NAME=$agent SFLY_WORKBENCH_TOKEN=${token:-} SFLY_ASSISTANT_MODEL=fake/fake MODEL_API_KEY=k \
 		SFLY_ASSISTANT_MODELS_FILE=$work_dir/models.json \
 		SFLY_PYPI_MIRROR=${SFLY_PYPI_MIRROR:-} SFLY_GITHUB_RELEASE_MIRROR=${SFLY_GITHUB_RELEASE_MIRROR:-} \
+		SFLY_WORKBENCH_EGRESS=$egress \
 		docker compose --env-file /dev/null -p "$project" -f deploy/docker-compose.yml -f "$work_dir/override.yml" "$@"
 }
 token=
+egress=
 
 cleanup() {
 	compose --profile assistant down -v --remove-orphans >/dev/null 2>&1 || true
@@ -125,8 +134,9 @@ compose --profile assistant up -d --wait --wait-timeout 180 sfly-assistant fake-
 	fail "助手服务没有起来"
 compose --profile assistant up -d --wait --wait-timeout 600 >/dev/null || fail "--profile assistant 没有起来"
 running=$(compose --profile assistant ps --format '{{.Service}}' | sort | tr '\n' ' ')
-[[ $running == "db fake-model sfly sfly-assistant sfly-workbench " ]] || fail "带 profile 的服务不对：$running"
-for service in sfly-assistant sfly-workbench; do
+expected="db fake-model other-agent sfly sfly-assistant sfly-workbench sfly-workbench-firewall "
+[[ $running == "$expected" ]] || fail "带 profile 的服务不对：$running"
+for service in sfly-assistant sfly-workbench sfly-workbench-firewall; do
 	ports=$(compose --profile assistant ps --format '{{.Ports}}' "$service")
 	[[ $ports != *"->"* ]] || fail "$service 发布了端口：$ports"
 done
@@ -152,6 +162,55 @@ workbench=$(compose --profile assistant ps -q sfly-workbench)
 [[ $(docker exec "$workbench" sfly --version) == "sfly $version" ]] || fail "工作台上 sfly 命令行的版本不是 $version"
 docker exec "$workbench" sh -c 'test -x ~/.local/bin/uv && test -f ~/.sfly/.workbench-installed' || fail "uv 或安装标记不在"
 [[ $(docker exec "$workbench" git -C /work rev-list --count HEAD) -ge 1 ]] || fail "工作区没有被提交"
+
+# ---- 出网名单（#498）----
+# 连 主机:端口，打印 ok 或失败的种类（被拒是 ConnectionRefusedError，不是超时）。
+dial='import socket, sys
+try:
+    socket.create_connection((sys.argv[1], int(sys.argv[2])), 5).close()
+    print("ok")
+except OSError as error:
+    print(type(error).__name__)'
+from_workbench() { docker exec "$(compose --profile assistant ps -q sfly-workbench)" python3 -c "$dial" "$1" "$2"; }
+from_network() {
+	docker run --rm --network "${project}_default" --entrypoint python3 "ghcr.io/x7yue/sfly-workbench:$tag" -c "$dial" "$1" "$2"
+}
+[[ $(from_workbench sfly 8080) == ok ]] || fail "工作台连不上控制面"
+[[ $(from_workbench sfly.example.com 50051) == ok ]] || fail "工作台连不上控制面的网关（公开地址的主机）"
+[[ $(from_network other-agent 50052) == ok ]] || fail "网络里连不上「项目外的 Agent」：这一项没有意义"
+for target in "other-agent 50052" "sfly-assistant 8090" "1.1.1.1 443"; do
+	# shellcheck disable=SC2086 # 主机和端口两个参数
+	got=$(from_workbench $target)
+	[[ $got == ConnectionRefusedError ]] || fail "工作台连 $target 应当被出网名单拒绝，实际：$got"
+done
+# 加进名单：出网名单的容器重建，工作台跟着重启（共用它的网络命名空间）。
+egress="other-agent:50052"
+compose --profile assistant up -d --wait --wait-timeout 300 sfly-workbench-firewall sfly-workbench >/dev/null ||
+	fail "改了名单之后没有起来"
+[[ $(from_workbench other-agent 50052) == ok ]] || fail "加进名单之后工作台仍连不上 other-agent:50052"
+[[ $(from_workbench sfly-assistant 8090) == ConnectionRefusedError ]] || fail "名单之外的地址不再被拒"
+client ready 300 || fail "改了名单之后助手没有就绪"
+workbench=$(compose --profile assistant ps -q sfly-workbench) # 共用的网络命名空间换了，工作台容器可能重建过
+echo "出网名单：名单外被拒，加进名单之后连得上"
+# 宿主机重启时 Docker 按 restart 策略直接恢复这两个容器，不经过 compose 的健康等待。这里用 docker stop、docker start
+# 走同一条路：工作台的入口脚本要等本次的规则写好（本网络命名空间的 127.0.0.1:47123 应答）才启动 Agent。
+firewall=$(compose --profile assistant ps -q sfly-workbench-firewall)
+docker stop "$workbench" "$firewall" >/dev/null || fail "停工作台和出网名单"
+restarted=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+docker start "$firewall" >/dev/null || fail "docker start 出网名单"
+docker start "$workbench" >/dev/null || fail "docker start 工作台"
+# 等工作台起到 Agent（就绪状态可能还停在停之前的连接上），再看它之前的几行是不是先等了规则。
+for _ in $(seq 300); do
+	log=$(docker logs --since "$restarted" "$workbench" 2>&1)
+	[[ $log != *前台启动\ Agent* ]] || break
+	sleep 1
+done
+[[ $log == *等出网名单的规则写好*出网名单的规则已写好*前台启动\ Agent* ]] ||
+	fail "docker start 之后工作台没有先等出网名单的规则：$log"
+client ready 300 || fail "docker start 之后助手没有就绪"
+[[ $(from_workbench sfly-assistant 8090) == ConnectionRefusedError ]] || fail "docker start 之后名单之外的地址不再被拒"
+[[ $(from_workbench other-agent 50052) == ok ]] || fail "docker start 之后名单里的地址连不上"
+echo "出网名单：docker start 恢复时工作台等规则写好才启动 Agent"
 
 # ---- 删掉工作台容器再建：工作区和环境都在，Agent 不重装 ----
 fingerprint() { docker exec "$1" sh -c 'stat -c "%i %Y" ~/.sfly/bin/sfly-agent; sha256sum ~/.sfly/bin/sfly-agent'; }
