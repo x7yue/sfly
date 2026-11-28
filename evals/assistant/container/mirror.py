@@ -16,6 +16,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import shutil
 import socketserver
 import sys
@@ -40,6 +41,21 @@ JSON_SIMPLE = "application/vnd.pypi.simple.v1+json"
 UV_VERSION = "0.13.10"
 UV_LATEST = "/github-release/astral-sh/uv/LatestRelease/"
 UV_GITHUB = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/"
+
+
+LENGTH = re.compile(r"[0-9]+")
+
+
+def content_length(raw: str | None) -> tuple[bool, int | None]:
+    """上游的 content-length：(合法, 长度)。没有这个头是 (True, None)。
+    去掉两头空白后整串只有 ASCII 的 0–9 才合法；校验和转换用同一条规则，转换不会失败。
+    别的写法（`unknown`、`-1`、`1.0`、`+5`、非 ASCII 的数字）是 (False, None)。"""
+    if raw is None:
+        return True, None
+    text = raw.strip()
+    if LENGTH.fullmatch(text) is None:
+        return False, None
+    return True, int(text)
 
 
 def upstream_urls(path: str, prefix: str) -> list[str]:
@@ -129,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
         self, path: str, prefix: str, accept: str, key: str
     ) -> tuple[Path, dict[str, Any]] | int:
         """取到了返回缓存的文件；都没取到返回给客户端的状态码（看最后一个来源）：上游 404 是 404，
-        别的失败（5xx、限流、连不上、200 但内容是空的或不完整）是 502。"""
+        别的失败（5xx、限流、连不上、200 但内容是空的或不完整、长度头不合法）是 502。"""
         code = 404
         for url in upstream_urls(path, prefix):
             request = urllib.request.Request(
@@ -141,12 +157,13 @@ class Handler(BaseHTTPRequestHandler):
                         "content_type": resp.headers.get("content-type", ""),
                         "url": resp.geturl(),
                     }
-                    length = resp.headers.get("content-length")
-                    if length is not None and not length.strip().isdigit():
-                        sys.stderr.write(f"上游 {url} 的 content-length 不是数字（{length!r}）\n")
+                    raw = resp.headers.get("content-length")
+                    valid, length = content_length(raw)
+                    if not valid:
+                        sys.stderr.write(f"上游 {url} 的 content-length 不合法（{raw!r}）\n")
                         code = 502
                         continue
-                    body = self.store.put(key, resp, meta, int(length) if length else None)
+                    body = self.store.put(key, resp, meta, length)
                     if body is not None:
                         return body, meta
                     sys.stderr.write(f"上游 {url} 返回 200，但内容是空的或和长度对不上\n")
