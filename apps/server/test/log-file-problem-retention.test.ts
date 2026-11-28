@@ -11,9 +11,9 @@ import { logsApi } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
-import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
+import { writeRecordedLogs } from "./support/recorded-logs.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane } from "./support/test-control-plane.js";
 
@@ -93,16 +93,7 @@ describe("保留期清理正在删文件时的日志读取（#734）", () => {
 	const newRun = async (lines = 3) => {
 		const runId = await api.triggerOk(scenario);
 		const task = await agent.nextAssign();
-		agent.logs(
-			task,
-			Array.from({ length: lines }, (_, i): [number, string] => [i + 1, `第 ${i + 1} 行`]),
-		);
-		await eventually(async () => {
-			const page = (await (await cp.fetch(`/tasks/${task.taskId}/logs?limit=1`)).json()) as {
-				last_seq: number;
-			};
-			expect(page.last_seq).toBe(lines);
-		}, 30_000);
+		await writeRecordedLogs(cp, agent, task, lines);
 		return { runId, task, dir: join(cp.dataDir, "logs", runId) };
 	};
 
@@ -248,13 +239,7 @@ describe("等保留期清理提交的上界（#734）", () => {
 	it("锁一直不放：认出问题的请求最多等上界，然后按「正在清理」回 expired（六条路都在上界之内回来）", async () => {
 		const runId = await api.triggerOk(scenario);
 		const task = await agent.nextAssign();
-		agent.logs(task, [[1, "一行"]]);
-		await eventually(async () => {
-			const page = (await (await cp.fetch(`/tasks/${task.taskId}/logs?limit=1`)).json()) as {
-				last_seq: number;
-			};
-			expect(page.last_seq).toBe(1);
-		}, 30_000);
+		await writeRecordedLogs(cp, agent, task, 1);
 		const live = ((await (await cp.fetch(`/runs/${runId}/logs`)).json()) as { live_after: string })
 			.live_after;
 		const lock = await holdRunLock(cp.database.url, runId);

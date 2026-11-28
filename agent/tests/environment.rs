@@ -199,12 +199,8 @@ async fn shared_venv_is_created_with_python_3_13_downloaded_from_the_release_mir
         .envs(mirror.python_env(&dir.path().join("pythons")))
         .spawn_agent();
     cp.hello(0).await;
+    wait_venv(&home).await;
     let venv_python = home.join("venv/bin/python");
-    let deadline = tokio::time::Instant::now() + WAIT * 3;
-    while !venv_python.exists() {
-        assert!(tokio::time::Instant::now() < deadline, "venv 没有创建");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
     let version = std::process::Command::new(&venv_python)
         .args(["-c", "import sys; print('%d.%d' % sys.version_info[:2])"])
         .output()
@@ -349,11 +345,7 @@ fn python_mirror_of(mirror: &ReleaseMirror) -> String {
 /// 等共享 venv 的 Python 出现。
 async fn wait_venv(home: &Path) {
     let venv_python = home.join("venv/bin/python");
-    let deadline = tokio::time::Instant::now() + WAIT * 3;
-    while !venv_python.exists() {
-        assert!(tokio::time::Instant::now() < deadline, "venv 没有创建");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    support::wait_until_within("共享 venv 创建好", WAIT * 3, || venv_python.exists()).await;
 }
 
 #[tokio::test]

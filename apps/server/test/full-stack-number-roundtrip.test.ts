@@ -9,7 +9,6 @@
 // - 超过 2^53 的整数按最接近的双精度数保存；写法保留到 1e21，再大的写成带指数的小数，下游收到的是 float；
 // - 负零的符号丢掉（jsonb 里没有负零）；
 // - 整数值的小数（3.0）到下游是整数 3（JSON 里没有区别）。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";

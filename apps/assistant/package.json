@@ -16,7 +16,7 @@
 		"@earendil-works/pi-coding-agent": "1.6.0"
 	},
 	"devDependencies": {
-		"@bufbuild/protobuf": "2.16.0",
+		"@bufbuild/protobuf": "catalog:",
 		"@connectrpc/connect": "2.3.0",
 		"@connectrpc/connect-node": "2.3.0",
 		"@sfly/proto": "workspace:*",
@@ -26,6 +26,6 @@
 		"tsx": "^4.23.15",
 		"typescript": "^6.0.2",
 		"vitest": "^5.1.0",
-		"zod": "4.6.7"
+		"zod": "catalog:"
 	}
 }

@@ -1,7 +1,7 @@
 // 运行的加密副本（#505，ADR 0029「密钥」）：AES-256-GCM，附加数据是运行 ID，一个运行的副本挪到别的运行上解不开。
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import type { Tx } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { runVaults } from "../db/vault-schema.js";
 
 /** 副本的内容：原值集合、secret 参数的原值（按链实例 ID）、和打码后不一样的原样输出（按任务 ID）。 */
@@ -54,8 +54,8 @@ export class RunVaults {
 		this.#key = key;
 	}
 
-	async get(tx: Tx, runId: string): Promise<RunVault | undefined> {
-		const [row] = await tx
+	async get(db: Db | Tx, runId: string): Promise<RunVault | undefined> {
+		const [row] = await db
 			.select({ sealed: runVaults.sealed })
 			.from(runVaults)
 			.where(eq(runVaults.runId, runId));
@@ -70,7 +70,12 @@ export class RunVaults {
 			.onConflictDoUpdate({ target: runVaults.runId, set: { sealed } });
 	}
 
-	async delete(tx: Tx, runId: string): Promise<void> {
-		await tx.delete(runVaults).where(eq(runVaults.runId, runId));
+	/** 删除副本；没有这个运行的副本时返回 false。 */
+	async delete(tx: Tx, runId: string): Promise<boolean> {
+		const removed = await tx
+			.delete(runVaults)
+			.where(eq(runVaults.runId, runId))
+			.returning({ runId: runVaults.runId });
+		return removed.length > 0;
 	}
 }

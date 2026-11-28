@@ -33,7 +33,7 @@
 	},
 	"overrides": [
 		{
-			"includes": ["**/test/**", "apps/web/e2e/**"],
+			"includes": ["**/test/**", "apps/web/e2e/**", "**/*.test.ts"],
 			"linter": { "rules": { "suspicious": { "noTemplateCurlyInString": "off" } } }
 		}
 	],

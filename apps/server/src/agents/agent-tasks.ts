@@ -45,6 +45,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 			orchestrationId: runs.orchestrationId,
 			orchestrationName: orchestrations.name,
 			versionId: runs.orchestrationVersionId,
+			maskedOnWrite: runs.maskedOnWrite,
 			nodeId: tasks.nodeId,
 			chainInstanceId: tasks.chainInstanceId,
 			chainId: chainInstances.chainId,
@@ -75,9 +76,11 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 				).map((v) => [v.id, v.document]),
 	);
 
-	// 占着槽位的任务的进度说明和正在做的动作按运行此刻的 secret 值打码（和运行视图同一个口径）。
+	// 占着槽位的任务的进度说明和正在做的动作按运行此刻的 secret 值打码（和运行视图同一个口径）；写入时打码的运行（#505）不用再打。
 	const occupied = new Map(
-		rows.filter((r) => r.status !== "queued").map((r) => [r.runId, documents.get(r.versionId)]),
+		rows
+			.filter((r) => r.status !== "queued" && !r.maskedOnWrite)
+			.map((r) => [r.runId, documents.get(r.versionId)]),
 	);
 	const secrets = await runSecretValues(
 		db,

@@ -39,6 +39,19 @@ describe("指标上报与存储", () => {
 		agents.push(agent);
 		return agent;
 	};
+	/** 控制面重启之后重连：Hello 里列出手上的任务（不列出就是离开了 Agent 之手，之后的上报丢弃，#505）。 */
+	const reconnect = async (task: AssignedTask) => {
+		const agent = await FakeAgent.connect(
+			cp.grpcUrl,
+			{
+				name: "agent-a",
+				runningTasks: [{ taskId: task.taskId, attempt: task.attempt, started: true }],
+			},
+			{ clock: cp.clock },
+		);
+		agents.push(agent);
+		return agent;
+	};
 	const start = async (
 		agent: FakeAgent,
 		document: unknown = ORCHESTRATION,
@@ -203,7 +216,7 @@ describe("指标上报与存储", () => {
 		await agent.disconnect();
 		agents.splice(0);
 		await cp.restart();
-		const again = await connect();
+		const again = await reconnect(task);
 		again.metrics(task, [conn("a", 2, 98), conn("b", 2, 6), conn("a", 3, 30)]);
 		await again.succeed(task);
 
@@ -263,7 +276,7 @@ describe("指标上报与存储", () => {
 			series_capped: true,
 			dropped_points: 2,
 		});
-		const again = await connect();
+		const again = await reconnect(task);
 		again.metrics(task, [conn("h0", 2, 20), conn("h999", 2, 1), ["requests", at(2), 5]]);
 		await again.succeed(task);
 
@@ -349,7 +362,7 @@ describe("指标上报与存储", () => {
 		await cp.restart();
 		expect((await metricsOf(runId)).tps).toMatchObject({ points: 2, last: 20 });
 
-		const again = await connect();
+		const again = await reconnect(task);
 		again.metrics(task, [
 			["tps", at(2), 99],
 			["tps", at(3), 30],
@@ -506,6 +519,12 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["orchestrations", "run_notify_note", "text DEFAULT '' NOT NULL"],
 	["runs", "notification_bot", "text"],
 	["runs", "notification_not_sent", "text"],
+	["runs", "masked_on_write", "boolean DEFAULT false NOT NULL"],
+	["runs", "secrets_oversize", "boolean DEFAULT false NOT NULL"],
+	["runs", "vault_deleted_at", "timestamp with time zone"],
+	["runs", "late_reports_dropped", "integer DEFAULT 0 NOT NULL"],
+	["tasks", "abandoned_at", "timestamp with time zone"],
+	["tasks", "released_at", "timestamp with time zone"],
 	["tasks", "referenced_feishu_bots", "text[] DEFAULT '{}' NOT NULL"],
 	["tasks", "log_agent_seq", "bigint DEFAULT 0 NOT NULL"],
 	["runs", "triggered_via", "text"],

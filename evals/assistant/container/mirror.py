@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
+import re
 import shutil
 import socketserver
 import sys
@@ -39,6 +41,22 @@ JSON_SIMPLE = "application/vnd.pypi.simple.v1+json"
 UV_VERSION = "0.13.10"
 UV_LATEST = "/github-release/astral-sh/uv/LatestRelease/"
 UV_GITHUB = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/"
+
+
+# 18 位够表示任何真实的大小，也远在 Python 整数转换的位数上限之内。
+LENGTH = re.compile(r"[0-9]{1,18}")
+
+
+def content_length(raw: str | None) -> tuple[bool, int | None]:
+    """上游的 content-length：(合法, 长度)。没有这个头是 (True, None)。
+    去掉两头空白后整串是 1 到 18 位 ASCII 的 0–9 才合法；校验和转换用同一条规则，转换不会失败。
+    别的写法（`unknown`、`-1`、`1.0`、`+5`、非 ASCII 的数字、超过 18 位）是 (False, None)。"""
+    if raw is None:
+        return True, None
+    text = raw.strip()
+    if LENGTH.fullmatch(text) is None:
+        return False, None
+    return True, int(text)
 
 
 def upstream_urls(path: str, prefix: str) -> list[str]:
@@ -70,12 +88,20 @@ class Store:
             return body, json.loads(meta.read_text())
         return None
 
-    def put(self, key: str, source: Any, meta: dict[str, Any]) -> Path:
+    def put(self, key: str, source: Any, meta: dict[str, Any], length: int | None) -> Path | None:
+        """存下来返回文件；取到的是空的，或者和 content-length 对不上时不存，返回 None。"""
         body, meta_path = self._paths(key)
         body.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=body.parent, delete=False) as tmp:
-            shutil.copyfileobj(source, tmp, 1 << 20)
-        os.replace(tmp.name, body)
+        tmp = tempfile.NamedTemporaryFile(dir=body.parent, delete=False)
+        try:
+            with tmp:
+                shutil.copyfileobj(source, tmp, 1 << 20)
+            size = Path(tmp.name).stat().st_size
+            if size == 0 or (length is not None and size != length):
+                return None
+            os.replace(tmp.name, body)
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
         meta_path.write_text(json.dumps(meta))
         return body
 
@@ -120,7 +146,7 @@ class Handler(BaseHTTPRequestHandler):
         self, path: str, prefix: str, accept: str, key: str
     ) -> tuple[Path, dict[str, Any]] | int:
         """取到了返回缓存的文件；都没取到返回给客户端的状态码（看最后一个来源）：上游 404 是 404，
-        别的失败（5xx、限流、连不上）是 502。"""
+        别的失败（5xx、限流、连不上、200 但内容是空的或不完整、长度头不合法）是 502。"""
         code = 404
         for url in upstream_urls(path, prefix):
             request = urllib.request.Request(
@@ -132,12 +158,22 @@ class Handler(BaseHTTPRequestHandler):
                         "content_type": resp.headers.get("content-type", ""),
                         "url": resp.geturl(),
                     }
-                    return self.store.put(key, resp, meta), meta
+                    raw = resp.headers.get("content-length")
+                    valid, length = content_length(raw)
+                    if not valid:
+                        sys.stderr.write(f"上游 {url} 的 content-length 不合法（{raw!r}）\n")
+                        code = 502
+                        continue
+                    body = self.store.put(key, resp, meta, length)
+                    if body is not None:
+                        return body, meta
+                    sys.stderr.write(f"上游 {url} 返回 200，但内容是空的或和长度对不上\n")
+                    code = 502
             except urllib.error.HTTPError as error:
                 sys.stderr.write(f"上游 {url} 返回 {error.code}（最后的地址 {error.geturl()}）\n")
                 code = 404 if error.code == 404 else 502
-            except OSError as error:
-                sys.stderr.write(f"上游 {url} 失败：{error}\n")
+            except (OSError, http.client.HTTPException) as error:
+                sys.stderr.write(f"上游 {url} 失败：{error!r}\n")
                 code = 502
         return code
 

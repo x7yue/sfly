@@ -184,6 +184,27 @@ describe("触发前检查清单", () => {
 		]);
 	});
 
+	it("节点派发到的 Agent 上同一个节点包的另一个版本正在执行：列在 Agent 那一行，阻断触发", () => {
+		const p: Preflight = {
+			...passed,
+			problems: [
+				{
+					code: "package_version_in_use",
+					message:
+						"节点 a 用的是 pkg@1.1，但它派发到的 Agent a-01 上正在执行 pkg@1.0（场景「长跑」的运行 /runs/r1，已经跑了 12 分钟）：同一台 Agent 上一个节点包只能装一个版本，装上 1.1 会换掉正在执行的代码。等那次运行结束再触发，或者把这个节点换到另一台 Agent",
+					node_id: "a",
+				},
+			],
+		};
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows.map((r) => [r.key, r.state])).toEqual([
+			["structure", "ok"],
+			["packages", "ok"],
+			["agents", "blocked"],
+		]);
+	});
+
 	it("场景还没有版本或已归档时只列出这一条原因", () => {
 		const p: Preflight = {
 			version: 0,

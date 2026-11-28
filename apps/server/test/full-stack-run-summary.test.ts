@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 // 全栈（#452，ADR 0031）：真实的控制面、Rust Agent 和 SDK 执行器，「运行汇总」示例节点（sfly-stub 的 run_summary，
 // 同样的代码写在 docs/guide/sdk-reference.md「运行汇总」）放在链末尾、总是执行，用 ${{ run.state }} 拿到整个运行的状态，
 // 给假飞书发一张卡片。三种运行各一个：有节点失败（写出失败的节点和失败原因一行）、被取消（写「已取消」和取消的人，
