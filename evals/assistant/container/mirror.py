@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -70,12 +71,20 @@ class Store:
             return body, json.loads(meta.read_text())
         return None
 
-    def put(self, key: str, source: Any, meta: dict[str, Any]) -> Path:
+    def put(self, key: str, source: Any, meta: dict[str, Any], length: int | None) -> Path | None:
+        """存下来返回文件；取到的是空的，或者和 content-length 对不上时不存，返回 None。"""
         body, meta_path = self._paths(key)
         body.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=body.parent, delete=False) as tmp:
-            shutil.copyfileobj(source, tmp, 1 << 20)
-        os.replace(tmp.name, body)
+        tmp = tempfile.NamedTemporaryFile(dir=body.parent, delete=False)
+        try:
+            with tmp:
+                shutil.copyfileobj(source, tmp, 1 << 20)
+            size = Path(tmp.name).stat().st_size
+            if size == 0 or (length is not None and size != length):
+                return None
+            os.replace(tmp.name, body)
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
         meta_path.write_text(json.dumps(meta))
         return body
 
@@ -120,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
         self, path: str, prefix: str, accept: str, key: str
     ) -> tuple[Path, dict[str, Any]] | int:
         """取到了返回缓存的文件；都没取到返回给客户端的状态码（看最后一个来源）：上游 404 是 404，
-        别的失败（5xx、限流、连不上）是 502。"""
+        别的失败（5xx、限流、连不上、200 但内容是空的或不完整）是 502。"""
         code = 404
         for url in upstream_urls(path, prefix):
             request = urllib.request.Request(
@@ -132,12 +141,17 @@ class Handler(BaseHTTPRequestHandler):
                         "content_type": resp.headers.get("content-type", ""),
                         "url": resp.geturl(),
                     }
-                    return self.store.put(key, resp, meta), meta
+                    length = resp.headers.get("content-length")
+                    body = self.store.put(key, resp, meta, int(length) if length else None)
+                    if body is not None:
+                        return body, meta
+                    sys.stderr.write(f"上游 {url} 返回 200，但内容是空的或和长度对不上\n")
+                    code = 502
             except urllib.error.HTTPError as error:
                 sys.stderr.write(f"上游 {url} 返回 {error.code}（最后的地址 {error.geturl()}）\n")
                 code = 404 if error.code == 404 else 502
-            except OSError as error:
-                sys.stderr.write(f"上游 {url} 失败：{error}\n")
+            except (OSError, http.client.HTTPException) as error:
+                sys.stderr.write(f"上游 {url} 失败：{error!r}\n")
                 code = 502
         return code
 

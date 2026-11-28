@@ -19,11 +19,13 @@ LATEST = "/github-release/astral-sh/uv/LatestRelease/uv-installer.sh"
 
 
 class Upstream:
-    """假的上游：`files` 里有的 200，`failing` 里的回那个状态码，其余 404；记下每个请求的路径。"""
+    """假的上游：`files` 里有的 200，`failing` 里的回那个状态码，其余 404；`truncated` 里的
+    content-length 比内容长、发完内容就断开。记下每个请求的路径。"""
 
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
         self.failing: dict[str, int] = {}
+        self.truncated: set[str] = set()
         self.requests: list[str] = []
         upstream = self
 
@@ -36,9 +38,11 @@ class Upstream:
                 body = upstream.files.get(self.path)
                 code = upstream.failing.get(self.path, 200 if body is not None else 404)
                 self.send_response(code)
-                self.send_header("content-length", str(len(body or b"")))
+                extra = 100 if self.path in upstream.truncated else 0
+                self.send_header("content-length", str(len(body or b"") + extra))
                 self.end_headers()
                 self.wfile.write(body or b"")
+                self.close_connection = True
 
         self.server = HTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_port}"
@@ -115,6 +119,26 @@ def test_mirror_error_on_the_pinned_version_also_falls_back_to_github(
         assert get(base + LATEST) == (200, b"from github")
     finally:
         server.shutdown()
+
+
+@pytest.mark.parametrize("broken", ["empty", "truncated"])
+def test_a_200_with_an_empty_or_cut_off_body_falls_back_and_is_not_cached(
+    upstream: Upstream, tmp_path: Path, broken: str
+) -> None:
+    # CI 上中科大对 GitHub 的机器回过 200 但内容是空的：uv 的安装脚本随后报校验和对不上。
+    pinned = f"/ustc/astral-sh/uv/{mirror.UV_VERSION}/uv-installer.sh"
+    upstream.files[pinned] = b"" if broken == "empty" else b"cut"
+    if broken == "truncated":
+        upstream.truncated.add(pinned)
+    upstream.files[f"/github/{mirror.UV_VERSION}/uv-installer.sh"] = b"from github"
+    base, server = start_mirror(tmp_path, record=True)
+    try:
+        assert get(base + LATEST) == (200, b"from github")
+    finally:
+        server.shutdown()
+    # 坏的那份没有留在缓存目录里（临时文件也删了）：缓存里只有 GitHub 的那份。
+    files = [p for p in (tmp_path / "objects").rglob("*") if p.is_file()]
+    assert sorted(p.suffix for p in files) == ["", ".meta"]
 
 
 def test_upstream_errors_are_502_not_404_and_are_not_cached(
