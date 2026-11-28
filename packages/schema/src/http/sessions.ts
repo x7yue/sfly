@@ -9,6 +9,7 @@ import {
 	SessionListResponse,
 	SessionView,
 	sessionEventSchemas,
+	UpdateSessionBody,
 } from "../sessions.js";
 import { endpoint, stream } from "./contract.js";
 
@@ -75,6 +76,22 @@ export const sessionsApi = {
 		params: IdParams,
 		query: SessionDetailQuery,
 		response: SessionDetailResponse,
+	}),
+	/**
+	 * 改会话的「联调时可以使用项目密钥」（#497）：只影响之后触发的运行。会话的写要「凭据是人」（ADR 0032），会话令牌、项目令牌都是 403。
+	 * 已结束的会话也可以改（不影响任何东西）。
+	 */
+	update: endpoint({
+		method: "PATCH",
+		path: "/sessions/:id",
+		summary: "改会话的「联调时可以使用项目密钥」",
+		effect: "write",
+		resource: { kind: "session", target: { params: "id" } },
+		client: true,
+		key: ["sessions", "update"],
+		params: IdParams,
+		body: UpdateSessionBody,
+		response: SessionView,
 	}),
 	/**
 	 * 实时推送一个会话的事件（SSE）：先按 `after` 和 `Last-Event-ID` 里较大的一个从库里补发，再接实时。

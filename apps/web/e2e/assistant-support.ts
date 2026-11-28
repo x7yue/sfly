@@ -47,6 +47,7 @@ export function sessionView(over: Record<string, unknown> = {}) {
 		last_activity_at: "2026-01-01T00:00:05.000Z",
 		queue_position: null,
 		last_turn_outcome: null,
+		use_project_secrets: false,
 		project: "default",
 		readiness: READY,
 		waiting_for: null,

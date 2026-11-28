@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { AgentHub } from "../agents/agent-hub.js";
 import { agentWaits } from "../agents/queue-wait.js";
 import type { Db } from "../db/database.js";
+import { planRun } from "../engine/chain.js";
 import type { Engine } from "../engine/engine.js";
 import { runNotificationBotWarnings } from "../feishu/bot-checks.js";
 import type { ProgressEvent } from "../logs/task-logs.js";
@@ -17,10 +18,18 @@ import { listRuns } from "../runs/run-list.js";
 import { getRunView, readTaskIo } from "../runs/run-read.js";
 import { secretLeafWarnings } from "../runs/secret-leaf-warnings.js";
 import { secretSizePreflight } from "../runs/secret-size-preflight.js";
+import {
+	SECRET_PARAM_WITHHELD,
+	SECRETS_WITHHELD,
+	withheldSubflowProblems,
+	withheldWarnings,
+	withholdsSecrets,
+} from "../runs/withheld-secrets.js";
+import { allowsSecretsOnWorkbench } from "../runs/workbench-secrets.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
-import { requireActor } from "./actor.js";
+import { requireActor, sessionOf } from "./actor.js";
 import { contractRoute, contractStream } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
@@ -54,7 +63,7 @@ export function registerRunRoutes(
 
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent，
 	// 以及场景的运行预设（对照这次检查用的最新版本）。
-	contractRoute(app, runsApi.preflight, async ({ params }, reply) => {
+	contractRoute(app, runsApi.preflight, async ({ params }, reply, request) => {
 		const head = isUuid(params.id) ? await deps.orchestrations.head(params.id) : undefined;
 		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
 		const orchestration = await deps.orchestrations.get(params.id);
@@ -87,6 +96,11 @@ export function registerRunRoutes(
 		// 默认值和运行预设的原始值，一次预检只读一次，传给要看它们的几项检查。
 		const raw = await rawScenario(deps.db, params.id);
 		const secretSize = raw ? await secretSizePreflight(raw) : { problems: [], warnings: [] };
+		// 会话（没勾选「联调时可以使用项目密钥」）读预检：它触发的运行不解析 secret 参数（#497），和触发时同一个判断。
+		const requester = sessionOf(request);
+		const withholding = await withholdsSecrets(deps.db, requester);
+		const planned = withholding ? planRun(head.document) : undefined;
+		const withheld = planned && !("errors" in planned) ? planned : undefined;
 		return {
 			version: head.number,
 			params: declarations,
@@ -96,8 +110,15 @@ export function registerRunRoutes(
 					project,
 					head.document,
 					await deps.orchestrations.versionSession(params.id, head.number),
+					allowsSecretsOnWorkbench({ sessionId: requester, secretsWithheld: withholding }),
 				)),
 				...secretSize.problems,
+				...(withheld
+					? withheldSubflowProblems(withheld).map((message) => ({
+							code: SECRETS_WITHHELD,
+							message,
+						}))
+					: []),
 			],
 			warnings: [
 				...preflightWarnings(head.document),
@@ -106,6 +127,9 @@ export function registerRunRoutes(
 					: []),
 				...(raw ? secretLeafWarnings(raw) : []),
 				...secretSize.warnings,
+				...(withheld
+					? withheldWarnings(withheld).map((message) => ({ code: SECRET_PARAM_WITHHELD, message }))
+					: []),
 			],
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, project, head.document)).map((agent) => ({

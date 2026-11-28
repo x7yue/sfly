@@ -60,7 +60,7 @@ const client = createClient({
 | `agents`（sfly Agent） | `list`、`updateNow` |
 | `packages`（节点包） | `list`、`get`、`version`、`nodeType` |
 | `feishuBots`（飞书机器人） | `list`、`create`、`replaceWebhook`、`references`、`remove`、`test` |
-| `sessions`（助手会话） | `list`、`create`、`get`、`events`、`message`、`stop`、`end` |
+| `sessions`（助手会话） | `list`、`create`、`get`、`update`、`events`、`message`、`stop`、`end` |
 | `sessionBuilds`（会话构建） | `list` |
 | `dashboard`（控制台统计） | `get` |
 | `system` | `health` |

@@ -77,6 +77,8 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"POST /sessions/:id/messages": "edit",
 	"POST /sessions/:id/stop": "edit",
 	"POST /sessions/:id/end": "edit",
+	// 改会话的「联调时可以使用项目密钥」（会话，写）→ 编辑，凭据是人（#497）
+	"PATCH /sessions/:id": "edit",
 	// 登记会话构建（会话，写，creates: session_build）：会话只被读，新建的是会话构建 → 会话构建（ADR 0029 范围表，#795）
 	"POST /sessions/:id/builds": "session_build",
 };
@@ -185,7 +187,8 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		}
 		// 只读不受影响。
 		expect(writeNeedsPerson({ effect: "read", resource: { kind: "session" } })).toBe(false);
-		// 契约里恰好是会话的三个写接口（建会话在 /projects/:project/sessions）、项目令牌的签发和吊销、登记工作台、开发 Agent 的注册和吊销。
+		// 契约里恰好是会话的写接口（建会话在 /projects/:project/sessions，改「联调时可以使用项目密钥」）、项目令牌的签发和吊销、登记工作台、
+		// 开发 Agent 的注册和吊销。
 		expect(
 			httpContract
 				.filter((def) => def.effect === "write" && writeNeedsPerson(def))
@@ -194,6 +197,7 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		).toEqual([
 			"DELETE /projects/:project/dev-agents/:name",
 			"DELETE /projects/:project/tokens/:id",
+			"PATCH /sessions/:id",
 			"POST /projects/:project/dev-agents",
 			"POST /projects/:project/sessions",
 			"POST /projects/:project/tokens",

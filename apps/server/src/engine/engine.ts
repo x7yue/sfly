@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { create } from "@bufbuild/protobuf";
 import {
 	effectiveQueueTimeout,
@@ -56,12 +57,21 @@ import {
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { workbenchOf } from "../projects/project-workbench.js";
 import { RunStateError, runStateForDispatch, type SelfNode } from "../runs/run-state-source.js";
 import type {
 	TriggerAdmission,
 	TriggerRejection,
 	TriggerRequest,
 } from "../runs/trigger-admission.js";
+import {
+	WITHHELD_REASON,
+	withheldNote,
+	withholdsSecrets,
+	withoutSecretConstants,
+	withoutSecretDefaults,
+} from "../runs/withheld-secrets.js";
+import { allowsSecretsOnWorkbench, workbenchDispatchProblem } from "../runs/workbench-secrets.js";
 import type { SessionStore } from "../sessions/session-store.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
@@ -281,7 +291,16 @@ export class Engine implements AgentSessionHandler {
 		return this.#event(async (step) => {
 			// 会话令牌的触发：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
 			if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(step.tx);
-			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
+			// 会话没勾选「联调时可以使用项目密钥」时这次运行不解析 secret 参数（#497），按会话此刻的勾选定下、记在运行上。
+			const withholdSecrets = await withholdsSecrets(step.tx, actor.sessionId);
+			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, {
+				...request,
+				withholdSecrets,
+				secretsOnWorkbench: allowsSecretsOnWorkbench({
+					sessionId: actor.sessionId,
+					secretsWithheld: withholdSecrets,
+				}),
+			});
 			if (!admitted.ok) {
 				// 版本冲突的拒绝要计数（#449）：这一步没有别的写入，提交的只有这几行。
 				await recordVersionConflicts(
@@ -315,6 +334,7 @@ export class Engine implements AgentSessionHandler {
 					triggeredToken: actor.token,
 					// 经哪个会话触发：依据是请求带的会话令牌（访问检查给出），不是模型在对话里怎么说。
 					sessionId: actor.sessionId,
+					secretsWithheld: withholdSecrets,
 					params: masked.params,
 					...runPreset,
 					status: "running",
@@ -345,6 +365,7 @@ export class Engine implements AgentSessionHandler {
 					kind: "run",
 					run_id: runId,
 					scenario_name: admitted.scenarioName,
+					secrets_withheld: withholdSecrets,
 				});
 				step.afterCommit.push(() => this.deps.sessions.announce(sessionId, event));
 			}
@@ -879,10 +900,19 @@ export class Engine implements AgentSessionHandler {
 		let problem: string | undefined;
 		let params: Record<string, unknown> = {};
 		try {
-			const mapped = resolveInputs(node.params, await this.#scope(step, run, chain, plan, index));
-			const filled = fillParams(subflow.entry.params, mapped);
-			if ("errors" in filled) problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}`;
-			else params = filled.params;
+			// 不解析 secret 参数的运行（#497）：子流程 secret 参数的默认值、传给它的常量都当作没有提供，触发时定下、记在运行上。
+			const withheld = run.secretsWithheld;
+			const mapping = withheld
+				? withoutSecretConstants(node.params, subflow.entry.params)
+				: node.params;
+			const mapped = resolveInputs(mapping, await this.#scope(step, run, chain, plan, index));
+			const declarations = withheld
+				? withoutSecretDefaults(subflow.entry.params)
+				: subflow.entry.params;
+			const filled = fillParams(declarations, mapped);
+			if ("errors" in filled) {
+				problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}${withheld ? `（${WITHHELD_REASON}）` : ""}`;
+			} else params = filled.params;
 		} catch (error) {
 			if (!(error instanceof InvalidReferenceError)) throw error;
 			problem = error.message;
@@ -1514,11 +1544,28 @@ export class Engine implements AgentSessionHandler {
 			packageVersion,
 		});
 		if (!content.ok) {
+			let message = content.message;
 			if (content.inputs) {
 				const inputs = await this.deps.masking.record(step, run, content.inputs);
 				await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
+				if (run.secretsWithheld) {
+					message += withheldNote(node.inputs, content.inputs, chain.params, plan.entry.params);
+				}
 			}
-			await this.#failTask(step, task, content.kind, content.message);
+			await this.#failTask(step, task, content.kind, message);
+			return undefined;
+		}
+
+		const inputs = await this.deps.masking.record(step, run, content.inputs);
+		// 带 secret 值的任务不派到工作台（#497）：输入打码前后不一样就是带着原值（secret 参数、经子流程参数传进来的、上游的原样输出）。
+		if (
+			!allowsSecretsOnWorkbench(run) &&
+			!isDeepStrictEqual(inputs, content.inputs) &&
+			conn.name === (await workbenchOf(step.tx, run.projectId))
+		) {
+			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
+			const problem = workbenchDispatchProblem(nodeNameWithId(node), conn.name);
+			await this.#failTask(step, task, "config_error", problem);
 			return undefined;
 		}
 
@@ -1527,7 +1574,7 @@ export class Engine implements AgentSessionHandler {
 			.update(tasks)
 			.set({
 				status: "dispatched",
-				inputs: await this.deps.masking.record(step, run, content.inputs),
+				inputs,
 				referencedFeishuBots: content.referencedFeishuBots,
 				leaseExpiresAt: this.#leaseFrom(step.now),
 			})

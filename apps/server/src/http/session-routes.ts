@@ -85,7 +85,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (project === undefined || !(await sessions.projectExists(project))) {
 			return projectNotFound(reply);
 		}
-		const created = await service.create(project, actor, body.text);
+		const created = await service.create(
+			project,
+			actor,
+			body.text,
+			body.use_project_secrets ?? false,
+		);
 		if (!created.ok) return refuse(reply, created);
 		return reply.code(201).send(await view(created.value));
 	});
@@ -103,6 +108,15 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 			has_more: snapshot.hasMore,
 		};
 		return detail;
+	});
+
+	// 「联调时可以使用项目密钥」（#497）：会话的写要「凭据是人」（ADR 0032，访问检查已经拦下会话令牌和项目令牌）。
+	contractRoute(app, sessionsApi.update, async ({ params, body }, reply) => {
+		const found = await sessions.find(params.id);
+		if (!found) return sessionNotFound(reply);
+		const updated = await sessions.setUseProjectSecrets(found.id, body.use_project_secrets);
+		if (!updated) return sessionNotFound(reply);
+		return view(updated);
 	});
 
 	contractStream(app, sse, sessionsApi.events, async ({ params, query }, open, reply, request) => {

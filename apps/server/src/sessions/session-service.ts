@@ -483,7 +483,12 @@ export class SessionService {
 	 * （{@link SessionStore.createWithTurn}），再把这一轮交给助手服务。项目里有别的会话在做（或在排队）时，这个会话排队
 	 * （`queued`）：这句话照常写 `user_message`，不交给助手服务，轮到它时才交（{@link SessionService.#promote}）。
 	 */
-	async create(project: ProjectId, actor: Actor, text: string): Promise<Outcome<SessionRow>> {
+	async create(
+		project: ProjectId,
+		actor: Actor,
+		text: string,
+		useProjectSecrets = false,
+	): Promise<Outcome<SessionRow>> {
 		const { sessions } = this.deps;
 		// 建会话要有发起人的用户（会话令牌代他干活，`created_by_user_id` 从凭据取）：路由在这之前已经对不带凭据的请求回 401，
 		// 到这里没有用户是调用方的错，不是请求的错。
@@ -498,6 +503,7 @@ export class SessionService {
 				title: titleOf(text),
 				createdBy: actor.nickname,
 				createdByUserId: actor.userId,
+				useProjectSecrets,
 			},
 			userMessage(messageId, actor, text),
 			(id, turn) => this.#openGate(id, turn),

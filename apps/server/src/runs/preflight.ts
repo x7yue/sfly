@@ -19,12 +19,14 @@ import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { workbenchOf } from "../projects/project-workbench.js";
 import { asStoredJson } from "../util/jsonb.js";
 import { checkDevPackagesLoaded } from "./dev-package-loaded.js";
 import { knownParams, resolved, secretTexts } from "./known-params.js";
 import { type ParamOrigins, paramInputTypeProblems } from "./param-input-type.js";
 import { fixedSecretSizeProblem, secretSizeProblem } from "./secret-size.js";
 import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
+import { workbenchSecretProblems } from "./workbench-secrets.js";
 
 /**
  * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
@@ -53,6 +55,8 @@ export type Preflight = (
 	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 	session: string | null,
+	/** 能不能把带 secret 值的任务派到工作台（#497）：勾选了「联调时可以使用项目密钥」的会话触发（或读预检）时为 true。 */
+	secretsOnWorkbench: boolean,
 ) => Promise<PreflightProblem[]>;
 
 /** 文档锁定的节点包版本的元信息（包名 → 元信息；控制面没有这个版本的不在里面）。每个包查一次，一个一个地查。 */
@@ -103,7 +107,7 @@ export function createPreflight(deps: {
 	/** 运行的链接（控制台里的运行页）。 */
 	runLink: (runId: string) => string;
 }): Preflight {
-	return async (db, project, doc, session) => {
+	return async (db, project, doc, session, secretsOnWorkbench) => {
 		// 注释框的警告只提示，不阻断触发（docs/SEMANTICS.md §1.6）。
 		const problems: PreflightProblem[] = (await checkDocument(db, project, doc, session))
 			.filter(blocksTrigger)
@@ -140,6 +144,8 @@ export function createPreflight(deps: {
 		}
 		problems.push(...(await checkDevPackagesLoaded(db, project, doc)));
 		problems.push(...(await versionsInUseProblems(db, project, doc, wanted, deps)));
+		const workbench = secretsOnWorkbench ? undefined : await workbenchOf(db, project);
+		if (workbench !== undefined) problems.push(...workbenchSecretProblems(doc, wanted, workbench));
 
 		const locked = await lockedPackages(db, project, doc, session);
 		// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。

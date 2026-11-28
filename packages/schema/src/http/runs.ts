@@ -298,6 +298,11 @@ export const RunView = z.object({
 	 */
 	secrets_oversize: z.boolean().optional(),
 	/**
+	 * 会话令牌触发、会话没勾选「联调时可以使用项目密钥」的运行（#497）：secret 参数不解析，场景里的默认值、运行预设里的值都当作没有提供，
+	 * 只用触发请求里给的值。在触发时定下，之后改勾选不影响这次运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_withheld: z.boolean().optional(),
+	/**
 	 * 运行的加密副本删除之后（运行结束、每次尝试都离开了 Agent 之手，#505）才到达、被丢弃的上报条数（日志、进度、动作、通知、指标、结果，
 	 * 每条消息算一条）。旧版本的控制面没有这个字段，读不到时当作 0。
 	 */
@@ -422,6 +427,9 @@ export const runsApi = {
 	 * 之后修改预设不影响这次运行。`params` 里给 secret 预设参数传了任何值（即使和预设相同，以免调用方猜测原值），或给其他预设参数传了不同的值
 	 * （按 JSON 深比较）时 400 `preset_param_locked`（details 是 `{ param, preset }`：参数名和预设名），其他预设参数传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
 	 * 时 409 `preset_invalid`（details 是问题清单，每项 `{ param, reason }`），不产生运行。
+	 *
+	 * 会话令牌触发、会话没勾选「联调时可以使用项目密钥」时不解析 secret 参数（#497）：场景里的默认值、预设里的 secret 值、传给子流程 secret 参数的
+	 * 常量都当作没有提供（预设里的 secret 参数因此可以在 `params` 里给值），缺了必填的 400 `secret_params_withheld`（details 是每个参数一句说明）。
 	 */
 	trigger: endpoint({
 		method: "POST",
