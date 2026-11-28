@@ -321,6 +321,7 @@ async fn wait_for_result(
         if tokio::time::Instant::now() > deadline {
             return None;
         }
+        #[allow(clippy::disallowed_methods)] // 轮询到时返回 None，由调用方判断（不是断言超时）
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -442,6 +443,7 @@ async fn a_connection_that_lasted_long_enough_is_retried_after_the_shortest_wait
     for session in 0..3 {
         cp.hello(session).await;
         // 连上之后撑过 1 秒再断开
+        #[allow(clippy::disallowed_methods)] // 造场景：连上之后撑过 1 秒再断开
         tokio::time::sleep(Duration::from_millis(1300)).await;
         let ended = tokio::time::Instant::now();
         cp.end_session();

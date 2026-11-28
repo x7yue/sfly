@@ -1,0 +1,8 @@
+# 测试里不直接 sleep 固定时长再断言（CODING_STANDARDS.md「测试」，#432）：等条件用 agent/tests/support 的
+# `wait_until`、`wait_until_within`、`wait_for_file`、`wait_for_path`。产品代码（agent/src）在 crate 开头放行了。
+# 确实要 sleep 的（假的服务端、按时间表造场景、确认某件事没有发生），在那一处写
+# `#[allow(clippy::disallowed_methods)] // <原因>`。
+disallowed-methods = [
+	{ path = "std::thread::sleep", reason = "测试里等条件用 support::wait_until；确实要 sleep 时写 #[allow(clippy::disallowed_methods)] 和原因" },
+	{ path = "tokio::time::sleep", reason = "测试里等条件用 support::wait_until；确实要 sleep 时写 #[allow(clippy::disallowed_methods)] 和原因" },
+]
