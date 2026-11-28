@@ -33,6 +33,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7 # Python 版本取自 .python-version
+        with:
+          version-file: .tool-versions # uv 的版本只写在这里
       # sfly-std 的测试在 main 的 CI 里和平台一起运行（ci.yml 的 py）。
       - name: Commit is on main and CI passed
         run: bash scripts/release/wait-ci.sh "$GITHUB_SHA"

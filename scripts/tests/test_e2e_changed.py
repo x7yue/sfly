@@ -109,3 +109,41 @@ def test_without_changed_specs_the_run_is_skipped_with_the_reason(repo: Path) ->
 
     assert result.returncode == 0, result.stderr
     assert "没有新增或改动的 e2e spec，跳过" in result.stdout
+
+
+def test_without_a_base_the_nearer_of_origin_dev_and_origin_main_is_used(repo: Path) -> None:
+    git(repo, "update-ref", "refs/remotes/origin/main", "base")
+    git(repo, "switch", "-c", "dev")
+    write(repo, f"{E2E}/on-dev.spec.ts", "on dev\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "merged into dev")
+    git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
+    git(repo, "switch", "-c", "feature")
+    write(repo, f"{E2E}/feature.spec.ts", "feature\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "feature")
+
+    # 从 dev 拉出来的分支和 dev 比：dev 上已经有的 spec 不算这个分支的改动。
+    assert listed(repo) == ["e2e/feature.spec.ts"]
+    result = run(repo)
+    assert "基准：origin/dev" in result.stdout
+
+    # 从 main 拉出来的分支和 main 比：main 上有、dev 上还没有的 spec 不算这个分支的改动。
+    git(repo, "switch", "-c", "main-ahead", "base")
+    write(repo, f"{E2E}/on-main.spec.ts", "on main\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "merged into main")
+    git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(repo, "switch", "-c", "hotfix")
+    write(repo, f"{E2E}/hotfix.spec.ts", "hotfix\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "hotfix")
+    assert listed(repo) == ["e2e/hotfix.spec.ts"]
+
+
+def test_without_origin_dev_the_base_is_origin_main(repo: Path) -> None:
+    git(repo, "update-ref", "refs/remotes/origin/main", "base")
+    write(repo, f"{E2E}/added.spec.ts", "added\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "branch")
+    assert listed(repo) == ["e2e/added.spec.ts"]
