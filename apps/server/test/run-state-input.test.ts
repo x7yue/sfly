@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：节点输入里的运行状态 `${{ run.state }}`（docs/SEMANTICS.md §2.7，ADR 0031）。
 // HTTP API + 讲真实 gRPC 的假 Agent + 手动时钟 + 独立的 PostgreSQL；通过派发给 Agent 的输入和运行视图观察。
 

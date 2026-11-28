@@ -41,15 +41,16 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false # 这个 job 不装依赖：不要按 package.json 的 packageManager 自动缓存
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Rust toolchain
+        run: rustup toolchain install # 版本和组件取自 rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: sfly-test
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-protoc # agent/build.rs 需要 protoc
       - uses: astral-sh/setup-uv@v7 # Agent 的测试用 uv 建节点包环境；Python 版本取自 .python-version
+        with:
+          version-file: .tool-versions # uv 的版本只写在这里
 
       - name: Lint
         run: pnpm lint:rust
@@ -68,6 +69,8 @@ jobs:
           node-version-file: .node-version
           package-manager-cache: false # 这个 job 不装依赖：不要按 package.json 的 packageManager 自动缓存
       - uses: astral-sh/setup-uv@v7
+        with:
+          version-file: .tool-versions # uv 的版本只写在这里
 
       - name: Install
         run: uv sync --locked --all-packages
@@ -110,13 +113,16 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain
+        run: rustup toolchain install # 版本和组件取自 rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: sfly-server
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-protoc
       - uses: astral-sh/setup-uv@v7
+        with:
+          version-file: .tool-versions # uv 的版本只写在这里
 
       - name: Install
         run: pnpm bootstrap
@@ -125,7 +131,7 @@ jobs:
       - name: Generated code is up to date
         run: pnpm gen:check
       - name: Lint
-        run: pnpm lint:ts && pnpm lint:proto && pnpm lint:node && pnpm lint:docs && pnpm lint:migrations && pnpm lint:actions && pnpm lint:shell
+        run: pnpm lint:ts && pnpm lint:proto && pnpm lint:versions && pnpm lint:docs && pnpm lint:migrations && pnpm lint:actions && pnpm lint:shell
         env:
           # PR 和它的目标分支比：两个都合向 dev 的 PR 各拿了同一个 ADR 编号，和 main 比看不出来。
           ADR_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'origin/main' }}
@@ -167,10 +173,11 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          # 打包后的控制面带两个架构的 musl Agent（ADR 0011）；aarch64 用 rust-lld 交叉编译。
-          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      # 版本取自 rust-toolchain.toml。打包后的控制面带两个架构的 musl Agent（ADR 0011）；aarch64 用 rust-lld 交叉编译。
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
       # Release 的 agent job 用同一个 shared-key 读这份缓存。
       - uses: Swatinem/rust-cache@v2
         with:
@@ -178,6 +185,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-protoc
       - uses: astral-sh/setup-uv@v7
+        with:
+          version-file: .tool-versions # uv 的版本只写在这里
 
       - name: Install
         run: pnpm bootstrap
@@ -267,7 +276,7 @@ jobs:
 
   # 前端端到端测试与视觉回归（apps/web/e2e）：在 Playwright 官方镜像中运行，与本机
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
-  # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致（pnpm lint:node 检查）。
+  # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致（pnpm lint:versions 检查）。
   # PR 上完整的一遍之后，再把这个 PR 新增或改动的 spec 重复运行几次（scripts/e2e-changed.sh）：
   # 不稳定的用例在合入前暴露，而不是之后在 CI 或 main 上随机失败。main 和 dev 上的 push 不跑这一步。
   #
