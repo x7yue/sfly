@@ -54,7 +54,7 @@ usage() {
 	cat <<EOF
 用法：curl -fsSL $SFLY_URL/install.sh | sh -s -- --name <名称> [选项]
 
-安装 sfly Agent $SFLY_VERSION，连接控制面 $SFLY_URL（Agent 网关 $SFLY_GRPC_URL）。
+安装 sfly Agent ${SFLY_VERSION}，连接控制面 ${SFLY_URL}（Agent 网关 ${SFLY_GRPC_URL}）。
 
 选项：
   --name <名称>      Agent 名称，全局唯一（必填；--dev 不给 --name 时由控制面生成：dev-<你的登录名>-<主机>）
@@ -68,7 +68,7 @@ usage() {
                      其它 Agent 连接这台 Agent 用的地址（IP 地址或主机名，不带端口）；
                      默认用控制面看到的连接来源地址，多网卡或经过地址转换时设置
   --no-auto-update   不自动更新（agent.env 写入 SFLY_NO_AUTO_UPDATE=1）
-  --dev              同时安装开发用的 uv（没有时）和 sfly CLI $SFLY_VERSION（uv tool install）；
+  --dev              同时安装开发用的 uv（没有时）和 sfly CLI ${SFLY_VERSION}（uv tool install）；
                      不给 --name 时再用你的登录向控制面注册自己的开发 Agent，名字和凭据写进 agent.env：
                      已经登录（sfly login）或设置了 SFLY_API_TOKEN 就直接注册；没有、而且有终端，运行 sfly login；
                      没有终端又没有凭据时直接失败并说明怎么办（不会等着输入）
@@ -101,7 +101,7 @@ usage() {
   （上面两个地址不带用户名和密码：这个脚本不用登录就能下载。镜像要认证时，把凭据写进这台机器的 ~/.netrc，
   权限 600；也可以用上面的环境变量设一个带用户名和密码的地址，只对这台机器有效。）
 
-  SFLY_USER_AGENT             下载时 curl、wget 带的 User-Agent（默认 sfly-agent/$SFLY_VERSION）；
+  SFLY_USER_AGENT             下载时 curl、wget 带的 User-Agent（默认 sfly-agent/${SFLY_VERSION}）；
                               镜像站封禁默认 User-Agent 时换成能看出机构或用途的值，例如 acme-lab-sfly/1.0。
                               同样写进 agent.env，Agent 安装和更新 uv 时也用它。
 EOF
@@ -307,10 +307,10 @@ resolve_user_agent() {
 install_agent() {
 	mkdir -p "$bin"
 	url=$SFLY_URL/agent/binaries/$SFLY_VERSION/$arch
-	echo "下载 sfly Agent $SFLY_VERSION（$arch）：$url"
+	echo "下载 sfly Agent ${SFLY_VERSION}（${arch}）：$url"
 	download "$url" "$tmp" || die "下载失败：$url"
 	actual=$(sha256_of "$tmp")
-	[ "$actual" = "$sha256" ] || die "sha256 校验失败：应为 $sha256，下载的文件是 $actual"
+	[ "$actual" = "$sha256" ] || die "sha256 校验失败：应为 ${sha256}，下载的文件是 $actual"
 	chmod 755 "$tmp"
 	"$tmp" --version >/dev/null 2>&1 || die "下载的 Agent 无法运行：$url"
 
@@ -318,7 +318,7 @@ install_agent() {
 	if command -v flock >/dev/null 2>&1; then
 		exec 9>>"$lock"
 		if ! flock -n 9; then
-			echo "等待 $lock：同一 SFLY_HOME 下的 Agent 正在替换二进制……"
+			echo "等待 ${lock}：同一 SFLY_HOME 下的 Agent 正在替换二进制……"
 			flock 9
 		fi
 	else
@@ -395,7 +395,7 @@ write_env_file() {
 		} >"$env_file.tmp"
 	)
 	mv -f "$env_file.tmp" "$env_file"
-	echo "已安装 $agent，配置写入 $env_file"
+	echo "已安装 ${agent}，配置写入 $env_file"
 }
 
 # --dev：开发用的 uv 和 sfly CLI（ADR 0011）。镜像只以环境变量传给这一次的命令，不写进任何 uv 配置；
@@ -423,7 +423,7 @@ install_dev() {
 		else
 			installer_url=https://astral.sh/uv/install.sh
 		fi
-		echo "安装 uv 到 $user_bin：$installer_url"
+		echo "安装 uv 到 ${user_bin}：$installer_url"
 		download "$installer_url" "$uv_installer" ${mirror:+netrc} || die "下载 uv 安装脚本失败：$installer_url"
 		user_agent_config "$user_agent_dir"
 		(
@@ -431,14 +431,14 @@ install_dev() {
 			export CURL_HOME="$user_agent_dir" WGETRC="$user_agent_dir/wgetrc"
 			if [ -n "$mirror" ]; then export UV_DOWNLOAD_URL="$mirror/astral-sh/uv/LatestRelease"; fi
 			sh "$uv_installer"
-		) || die "安装 uv 失败（安装脚本 $installer_url）"
+		) || die "安装 uv 失败（安装脚本 ${installer_url}）"
 		uv=$user_bin/uv
 		[ -x "$uv" ] || die "uv 安装脚本没有生成 $uv"
 	fi
 
 	# sfly 只从控制面的 sfly 索引解析（uv 默认只用第一个有这个包的索引），其余依赖走 PyPI 镜像。
 	# 版本锁定为控制面版本：重新运行时要求变了，uv tool install 会换成新版本。
-	echo "安装 sfly CLI $SFLY_VERSION：$SFLY_URL/simple/"
+	echo "安装 sfly CLI ${SFLY_VERSION}：$SFLY_URL/simple/"
 	(
 		if [ -n "$python_mirror" ]; then export UV_PYTHON_INSTALL_MIRROR="$python_mirror"; fi
 		set -- tool install --index "sfly=$SFLY_URL/simple/"
@@ -446,7 +446,7 @@ install_dev() {
 		"$uv" "$@" "sfly[cli]==$SFLY_VERSION"
 	) || die "安装 sfly CLI 失败"
 	tool_bin=$("$uv" tool dir --bin)
-	echo "已安装 sfly CLI $SFLY_VERSION：$tool_bin/sfly"
+	echo "已安装 sfly CLI ${SFLY_VERSION}：$tool_bin/sfly"
 	path_hint "$tool_bin"
 	[ "$(dirname "$uv")" = "$tool_bin" ] || path_hint "$(dirname "$uv")"
 }
@@ -470,7 +470,7 @@ register_dev_agent() {
 		case $existing_token in
 		"$AGENT_CREDENTIAL_PREFIX"?*)
 			name=$existing_name
-			echo "沿用 $env_file 里已有的开发 Agent $name（要换成新的：先 sfly agent revoke-dev $name，再删掉其中的 SFLY_AGENT_NAME 和 SFLY_TOKEN 两行，重新运行）"
+			echo "沿用 $env_file 里已有的开发 Agent ${name}（要换成新的：先 sfly agent revoke-dev ${name}，再删掉其中的 SFLY_AGENT_NAME 和 SFLY_TOKEN 两行，重新运行）"
 			return 0
 			;;
 		esac
@@ -478,7 +478,7 @@ register_dev_agent() {
 	esac
 
 	sfly=$tool_bin/sfly
-	[ -x "$sfly" ] || die "找不到 $sfly：sfly CLI 没有装好，无法注册开发 Agent"
+	[ -x "$sfly" ] || die "找不到 ${sfly}：sfly CLI 没有装好，无法注册开发 Agent"
 	attempt=1
 	while :; do
 		status=0
@@ -492,7 +492,7 @@ register_dev_agent() {
 		[ "$status" != 0 ] || break
 		if [ "$status" = 5 ] && [ "$attempt" = 1 ] && have_terminal; then
 			# 没有登录：有终端就让他登录（sfly login 问登录名和密码，从终端读），再注册一次。
-			echo "注册开发 Agent 要用你自己的身份，先登录 $SFLY_URL："
+			echo "注册开发 Agent 要用你自己的身份，先登录 ${SFLY_URL}："
 			SFLY_HOME=$SFLY_HOME "$sfly" login --server "$SFLY_URL" </dev/tty || die "登录没有成功，没有注册开发 Agent。重新运行同一条命令即可（Agent 二进制和 sfly CLI 已经装好）"
 			attempt=2
 			continue
@@ -525,7 +525,7 @@ EOF
 	token=$(printf '%s\n' "$registered" | sed -n 's/^SFLY_TOKEN=//p')
 	registered=
 	[ -n "$name" ] && [ -n "$token" ] || die "sfly agent register-dev 的输出里没有 Agent 名字和凭据：sfly CLI 和控制面的版本是否一致？"
-	echo "已注册开发 Agent $name，凭据写进 $env_file（只有你读得到）"
+	echo "已注册开发 Agent ${name}，凭据写进 ${env_file}（只有你读得到）"
 }
 
 register_service() {

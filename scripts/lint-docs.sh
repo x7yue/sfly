@@ -6,7 +6,7 @@
 # 中间两项都在 check_doc_references.py 里。
 # 每一项都跑完再报，前一项失败不挡住后面的；推送前钩子和 CI 的 ts job 都跑它。
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 status=0
 bash scripts/check-adr-numbers.sh || status=1

@@ -35,7 +35,8 @@ export function fieldLabel(node: DocNode | undefined, field: string): string {
 /** 英文（`secret`）和前面的中文之间留一个空格。 */
 const spaced = (item: string) => (/^[A-Za-z]/.test(item) ? ` ${item}` : item);
 
-const PARAM_ITEM: Record<string, string> = {
+/** 入口参数声明里的一项（检查器的字段错误、版本对比的差异共用一张表，#434）。 */
+export const PARAM_ITEM: Record<string, string> = {
 	name: "名称",
 	type: "类型",
 	description: "说明",
@@ -44,8 +45,11 @@ const PARAM_ITEM: Record<string, string> = {
 	secret: TERM.secret,
 };
 
-/** 节点上的单个字段：名称与检查器里的字段标签一致。 */
-const NODE_FIELD: Record<string, string> = {
+/**
+ * 节点上的单个字段：名称与检查器里的字段标签一致。检查器的字段错误、版本对比的差异共用这一张表（#434），
+ * 不再各写一份、措辞分叉。
+ */
+export const NODE_FIELD: Record<string, string> = {
 	display_name: TERM.displayName,
 	agent: "节点 Agent",
 	timeout: "超时",
@@ -55,15 +59,18 @@ const NODE_FIELD: Record<string, string> = {
 	name: "子流程名称",
 	subflow: "要停止的子流程",
 	package: "节点包",
-	kind: "节点类型",
+	kind: "节点种类",
 	node: "节点类型",
 	note: TERM.note,
 };
 
+/** 场景的默认 Agent。 */
+export const DEFAULT_AGENT_LABEL = "默认 Agent";
+
 const EDGE_END: Record<string, string> = { from: "起点", to: "终点", kind: "类型" };
 
 function sceneField(head: string, second?: string, third?: string): string | undefined {
-	if (head === "default_agent") return "默认 Agent";
+	if (head === "default_agent") return DEFAULT_AGENT_LABEL;
 	if (head === "packages" && second !== undefined) return `节点包 ${second} 的版本`;
 	if (head === "edges" && second !== undefined && third !== undefined) {
 		const index = Number(second);

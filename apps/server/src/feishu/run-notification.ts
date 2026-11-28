@@ -4,7 +4,7 @@
  * 场景、运行、状态、第一个失败的节点和失败原因、出错位置、触发人、打开运行的链接。日常的结果（关注项的值、耗时、各节点的输出）
  * 由场景自己的节点用 `ctx.notify` 发，平台不替用户决定「运行结束该看什么」。
  */
-import { chainLabel, FEISHU_BODY_LIMIT_LABEL, nameWithId } from "@sfly/orchestration";
+import { chainLabel, FEISHU_BODY_LIMIT_LABEL, nameWithId, shortId } from "@sfly/orchestration";
 import { ERROR_LOCATION_LABEL, errorHeadline, type RunNotificationTrigger } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import { orchestrations, type RunStatus, runs } from "../db/schema.js";
@@ -84,7 +84,7 @@ export function runNotificationCard(facts: RunNotificationFacts) {
 	const text = escapeCardMarkdown;
 	const lines = [
 		`**场景**：${text(facts.scenarioName)}`,
-		`**运行编号**：${facts.runId.slice(0, 8)}`,
+		`**运行编号**：${shortId(facts.runId)}`,
 		`**触发人**：${text(facts.triggeredBy)}`,
 	];
 	const failure: CardElement[] = facts.failure
