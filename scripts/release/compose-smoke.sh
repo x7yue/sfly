@@ -4,6 +4,8 @@
 #   - 工作台在控制面的 Agent 页上在线，用自己的 Agent 凭据（auth_kind 为 agent），版本和控制面一致；登记为默认项目的工作台
 #     （PUT /projects/default/workbench，之后控制面只接受 Agent 凭据）；
 #   - 助手就绪，假的模型端点照剧本做完一个会话（事件顺序对，复用评测集 #543 的检查，scripts/release/stack_e2e.py）；
+#   - 出网名单（#498）：工作台连得上控制面（装 Agent 走的就是它和镜像），名单外的被拒，包括一台「项目外的 Agent」的
+#     能力端口（另一个容器在 50052 上监听，网络里别的容器连得到它）；把它加进 SFLY_WORKBENCH_EGRESS 之后连得上；
 #   - `docker compose rm -sf` 删掉工作台容器再 `up -d`：工作区里的文件还在，Agent 不重装。
 # compose 文件之外只加一个 override：一个 PostgreSQL（compose 里没有数据库）、一个假的模型端点、初始管理员和镜像站的环境；
 # 项目名、端口、卷都是这一次随机的，不碰别的 compose 部署。
@@ -62,6 +64,11 @@ services:
     entrypoint: [python3, /fake/fake_model.py, --port, "8100"]
     healthcheck: {disable: true} # 工作台镜像的健康检查（pgrep sfly-agent）不适用于它
     volumes: ["$evals:/aeval:ro", "$work_dir/fake:/fake:ro"]
+  other-agent:
+    profiles: [assistant]
+    image: ghcr.io/x7yue/sfly-workbench:$tag
+    entrypoint: [python3, -m, http.server, "50052"]
+    healthcheck: {disable: true}
   sfly:
     depends_on: {db: {condition: service_healthy}}
     environment:
@@ -83,9 +90,13 @@ compose() {
 		SFLY_WORKBENCH_NAME=$agent SFLY_WORKBENCH_TOKEN=${token:-} SFLY_ASSISTANT_MODEL=fake/fake MODEL_API_KEY=k \
 		SFLY_ASSISTANT_MODELS_FILE=$work_dir/models.json \
 		SFLY_PYPI_MIRROR=${SFLY_PYPI_MIRROR:-} SFLY_GITHUB_RELEASE_MIRROR=${SFLY_GITHUB_RELEASE_MIRROR:-} \
-		docker compose --env-file /dev/null -p "$project" -f deploy/docker-compose.yml -f "$work_dir/override.yml" "$@"
+		SFLY_WORKBENCH_EGRESS=$egress \
+		docker compose --env-file /dev/null -p "$project" -f deploy/docker-compose.yml -f "$work_dir/override.yml" \
+		${extra:+-f "$extra"} "$@"
 }
 token=
+egress=
+extra=
 
 cleanup() {
 	compose --profile assistant down -v --remove-orphans >/dev/null 2>&1 || true
@@ -125,8 +136,9 @@ compose --profile assistant up -d --wait --wait-timeout 180 sfly-assistant fake-
 	fail "助手服务没有起来"
 compose --profile assistant up -d --wait --wait-timeout 600 >/dev/null || fail "--profile assistant 没有起来"
 running=$(compose --profile assistant ps --format '{{.Service}}' | sort | tr '\n' ' ')
-[[ $running == "db fake-model sfly sfly-assistant sfly-workbench " ]] || fail "带 profile 的服务不对：$running"
-for service in sfly-assistant sfly-workbench; do
+expected="db fake-model other-agent sfly sfly-assistant sfly-workbench sfly-workbench-firewall "
+[[ $running == "$expected" ]] || fail "带 profile 的服务不对：$running"
+for service in sfly-assistant sfly-workbench sfly-workbench-firewall; do
 	ports=$(compose --profile assistant ps --format '{{.Ports}}' "$service")
 	[[ $ports != *"->"* ]] || fail "$service 发布了端口：$ports"
 done
@@ -153,6 +165,58 @@ workbench=$(compose --profile assistant ps -q sfly-workbench)
 docker exec "$workbench" sh -c 'test -x ~/.local/bin/uv && test -f ~/.sfly/.workbench-installed' || fail "uv 或安装标记不在"
 [[ $(docker exec "$workbench" git -C /work rev-list --count HEAD) -ge 1 ]] || fail "工作区没有被提交"
 
+# 工作台到这里的峰值（装 Agent、做完会话）：README「工作台容器的资源」按它定上限（#763）。
+echo "工作台的峰值：内存 $(docker exec "$workbench" cat /sys/fs/cgroup/memory.peak) 字节，进程数 $(docker exec "$workbench" cat /sys/fs/cgroup/pids.peak)"
+
+# ---- 出网名单（#498）----
+# 连 主机:端口，打印 ok 或失败的种类（被拒是 ConnectionRefusedError，不是超时）。
+dial='import socket, sys
+try:
+    socket.create_connection((sys.argv[1], int(sys.argv[2])), 5).close()
+    print("ok")
+except OSError as error:
+    print(type(error).__name__)'
+from_workbench() { docker exec "$(compose --profile assistant ps -q sfly-workbench)" python3 -c "$dial" "$1" "$2"; }
+from_network() {
+	docker run --rm --network "${project}_default" --entrypoint python3 "ghcr.io/x7yue/sfly-workbench:$tag" -c "$dial" "$1" "$2"
+}
+[[ $(from_workbench sfly 8080) == ok ]] || fail "工作台连不上控制面"
+[[ $(from_workbench sfly.example.com 50051) == ok ]] || fail "工作台连不上控制面的网关（公开地址的主机）"
+[[ $(from_network other-agent 50052) == ok ]] || fail "网络里连不上「项目外的 Agent」：这一项没有意义"
+for target in "other-agent 50052" "sfly-assistant 8090" "1.1.1.1 443"; do
+	# shellcheck disable=SC2086 # 主机和端口两个参数
+	got=$(from_workbench $target)
+	[[ $got == ConnectionRefusedError ]] || fail "工作台连 $target 应当被出网名单拒绝，实际：$got"
+done
+# 加进名单：出网名单的容器重建，工作台跟着重启（共用它的网络命名空间）。
+egress="other-agent:50052"
+compose --profile assistant up -d --wait --wait-timeout 300 sfly-workbench-firewall sfly-workbench >/dev/null ||
+	fail "改了名单之后没有起来"
+[[ $(from_workbench other-agent 50052) == ok ]] || fail "加进名单之后工作台仍连不上 other-agent:50052"
+[[ $(from_workbench sfly-assistant 8090) == ConnectionRefusedError ]] || fail "名单之外的地址不再被拒"
+client ready 300 || fail "改了名单之后助手没有就绪"
+workbench=$(compose --profile assistant ps -q sfly-workbench) # 共用的网络命名空间换了，工作台容器可能重建过
+echo "出网名单：名单外被拒，加进名单之后连得上"
+# 宿主机重启时 Docker 按 restart 策略直接恢复这两个容器，不经过 compose 的健康等待。这里用 docker stop、docker start
+# 走同一条路：工作台的入口脚本要等本次的规则写好（本网络命名空间的 127.0.0.1:47123 应答）才启动 Agent。
+firewall=$(compose --profile assistant ps -q sfly-workbench-firewall)
+docker stop "$workbench" "$firewall" >/dev/null || fail "停工作台和出网名单"
+restarted=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+docker start "$firewall" >/dev/null || fail "docker start 出网名单"
+docker start "$workbench" >/dev/null || fail "docker start 工作台"
+# 等工作台起到 Agent（就绪状态可能还停在停之前的连接上），再看它之前的几行是不是先等了规则。
+for _ in $(seq 300); do
+	log=$(docker logs --since "$restarted" "$workbench" 2>&1)
+	[[ $log != *前台启动\ Agent* ]] || break
+	sleep 1
+done
+[[ $log == *等出网名单的规则写好*出网名单的规则已写好*前台启动\ Agent* ]] ||
+	fail "docker start 之后工作台没有先等出网名单的规则：$log"
+client ready 300 || fail "docker start 之后助手没有就绪"
+[[ $(from_workbench sfly-assistant 8090) == ConnectionRefusedError ]] || fail "docker start 之后名单之外的地址不再被拒"
+[[ $(from_workbench other-agent 50052) == ok ]] || fail "docker start 之后名单里的地址连不上"
+echo "出网名单：docker start 恢复时工作台等规则写好才启动 Agent"
+
 # ---- 删掉工作台容器再建：工作区和环境都在，Agent 不重装 ----
 fingerprint() { docker exec "$1" sh -c 'stat -c "%i %Y" ~/.sfly/bin/sfly-agent; sha256sum ~/.sfly/bin/sfly-agent'; }
 before=$(fingerprint "$workbench")
@@ -164,5 +228,62 @@ new=$(compose --profile assistant ps -q sfly-workbench)
 [[ $(docker exec "$new" cat /work/probe.txt) == kept ]] || fail "重建之后工作区里的文件不见了"
 [[ $(fingerprint "$new") == "$before" ]] || fail "重建之后 Agent 二进制变了：重装了"
 client ready 300 || fail "重建工作台之后助手没有就绪"
+
+# ---- 工作台的资源上限和不能提权（#763）：起来的容器上真的有，峰值打印出来（README「工作台容器的资源」）----
+limits=$(docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.PidsLimit}} {{json .HostConfig.SecurityOpt}} {{json .HostConfig.CapDrop}}' "$new")
+echo "工作台的上限：$limits"
+[[ $limits =~ ^[1-9][0-9]*\ [1-9][0-9]*\  ]] || fail "工作台没有内存或进程数的上限：$limits"
+[[ $limits == *'"no-new-privileges:true"'* && $limits == *'["ALL"]'* ]] || fail "工作台没有 no-new-privileges 或没有去掉全部能力：$limits"
+[[ $(docker exec "$new" sh -c 'grep NoNewPrivs /proc/self/status') == *1 ]] || fail "工作台里的进程没有 NoNewPrivs"
+
+# 超了上限时（#763）：用小的上限重建工作台，负载有固定的上界，不去耗尽宿主机。进程数满了新进程起不来，内存超了进程被内核杀掉；
+# 这期间控制面照常应答，工作台上的 Agent 还在，助手照常就绪。
+printf 'services:\n  sfly-workbench:\n    mem_limit: 256m\n    memswap_limit: 256m\n    pids_limit: 64\n' >"$work_dir/limits.yml"
+extra=$work_dir/limits.yml
+compose --profile assistant up -d --wait --wait-timeout 300 sfly-workbench >/dev/null || fail "用小的上限重建工作台"
+small=$(compose --profile assistant ps -q sfly-workbench)
+got=$(docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}' "$small")
+[[ $got == "268435456 268435456 64" ]] || fail "小的上限没有生效：$got"
+client ready 300 || fail "小的上限下助手没有就绪"
+cp_up() { curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:$http_port/api/health"; }
+agent_up() { docker exec "$small" pgrep -x sfly-agent >/dev/null; }
+# 进程数：最多起 200 个 sleep；起不来时（EAGAIN）留着已经起的 15 秒（这期间查控制面），再全部杀掉。
+fork_log=$work_dir/fork.log
+docker exec "$small" python3 -I -c '
+import subprocess, time
+procs = []
+try:
+    for _ in range(200):
+        procs.append(subprocess.Popen(["sleep", "60"]))
+    print("all", len(procs), flush=True)
+except OSError as error:
+    print("blocked", len(procs), error.errno, flush=True)
+    time.sleep(15)
+finally:
+    for proc in procs:
+        proc.kill()
+' >"$fork_log" 2>&1 &
+forker=$!
+for _ in $(seq 30); do
+	[[ ! -s $fork_log ]] || break
+	sleep 1
+done
+[[ $(cat "$fork_log") == blocked* ]] || fail "进程数到了上限还能起新进程：$(cat "$fork_log")"
+cp_up || fail "工作台的进程数满了时控制面没有应答"
+wait "$forker" || true
+read -r _ started errno <"$fork_log"
+[[ $started -lt 64 && $errno == 11 ]] || fail "进程数的上限不是这里设的 64：$(cat "$fork_log")"
+agent_up || fail "进程数满过之后工作台的 Agent 不在了"
+# 内存：一个进程写满 512 MiB（上限的两倍，不能换出），被内核杀掉（137），memory.events 记一次 oom_kill。
+kills() { docker exec "$small" sed -n 's/^oom_kill //p' /sys/fs/cgroup/memory.events; }
+before=$(kills)
+status=0
+docker exec "$small" python3 -I -c 'b = b"x" * (512 << 20); print(len(b))' >/dev/null 2>&1 || status=$?
+[[ $status == 137 ]] || fail "内存超了上限的进程没有被杀掉：退出码 $status"
+[[ $(kills) -gt $before ]] || fail "memory.events 里没有记下这次 oom_kill"
+cp_up || fail "工作台内存超限之后控制面没有应答"
+agent_up || fail "内存超限时被杀的是工作台的 Agent，不是超限的进程"
+client ready 300 || fail "工作台超过上限之后助手没有就绪"
+echo "工作台超限：进程数满了起不来（起了 $started 个）、内存超了被杀；控制面照常应答，Agent 还在"
 
 echo "compose 冒烟通过：docker compose --profile assistant up（sfly ${version}）"

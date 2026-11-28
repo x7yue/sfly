@@ -97,7 +97,7 @@ flowchart LR
 
 前端只负责页面，不写业务逻辑；引擎需要常驻进程（Agent 长连接、租约扫描、故障恢复），所以控制面独立部署。
 
-**助手和工作台是可选的部署部件**：compose 里放在 `assistant` profile 里（`deploy/docker-compose.yml`），不带这个 profile 时只有控制面，不用助手的部署不带 pi。两个服务都不映射端口：助手服务只让控制面连（共享密钥），工作台 Agent 的能力端口没有认证（`agent/src/peer.rs`），只让同一个网络里的控制面和助手服务连得到。工作台用自己的 Agent 凭据（管理员按名字签发，ADR 0029），不用共享令牌；**哪台 Agent 是项目的工作台由项目管理员登记**（`PUT /projects/:project/workbench`，存在 `projects.workbench_agent`，要部署里所有没有停用的 Agent 都已经换成 Agent 凭据，登记之后控制面只接受 Agent 凭据：共享令牌和不带凭据的连接都被拒绝，5.1「项目的工作台」）；它出网现在不受限（出网名单是 #498）。三个镜像（控制面、助手、工作台）都随 Release 发布，多架构，各有 `docker save` 的离线附件（README「发布」）；部署和设置见 README「部署与运维」的「助手和工作台」。
+**助手和工作台是可选的部署部件**：compose 里放在 `assistant` profile 里（`deploy/docker-compose.yml`），不带这个 profile 时只有控制面，不用助手的部署不带 pi。这几个服务都不映射端口：助手服务只让控制面连（共享密钥），工作台 Agent 的能力端口没有认证（`agent/src/peer.rs`），只让同一个网络里的控制面和助手服务连得到。工作台用自己的 Agent 凭据（管理员按名字签发，ADR 0029），不用共享令牌；**哪台 Agent 是项目的工作台由项目管理员登记**（`PUT /projects/:project/workbench`，存在 `projects.workbench_agent`，要部署里所有没有停用的 Agent 都已经换成 Agent 凭据，登记之后控制面只接受 Agent 凭据：共享令牌和不带凭据的连接都被拒绝，5.1「项目的工作台」）。**工作台出网只放行名单**（#498）：`sfly-workbench-firewall`（同一个工作台镜像，root，只加 `NET_ADMIN`）拥有工作台的网络命名空间，在里面用 iptables 只放行控制面、包镜像和部署者写在 `SFLY_WORKBENCH_EGRESS` 里的「主机:端口」，其余出站连接被拒（`deploy/workbench/firewall.py`）；工作台自己没有 `NET_ADMIN`。它写好本次的 IPv4、IPv6 规则之后才在共用网络命名空间的 `127.0.0.1:47123` 上应答，工作台的入口脚本等到应答才启动 Agent：Docker 不经 compose 恢复容器（宿主机重启）时也是先有规则。它按 IP 放行、DNS 不限，被测机之间不隔离：能力端口的凭据（#504）之前不宣称机器层面的项目隔离（ADR 0029「隔离做到哪一层」，README「助手和工作台」）。三个镜像（控制面、助手、工作台）都随 Release 发布，多架构，各有 `docker save` 的离线附件（README「发布」）；部署和设置见 README「部署与运维」的「助手和工作台」。
 
 ---
 
