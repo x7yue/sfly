@@ -1,6 +1,11 @@
 // 助手服务协议的 HTTP 一侧：鉴权、请求的校验、健康检查、事件流的第一行。
 import { join } from "node:path";
-import { ASSISTANT_STREAM_HEARTBEAT_MS, AssistantHealth, AssistantStreamLine } from "@sfly/schema";
+import {
+	ASSISTANT_ROUTES,
+	ASSISTANT_STREAM_HEARTBEAT_MS,
+	AssistantHealth,
+	AssistantStreamLine,
+} from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HEARTBEAT_MS } from "../src/server.js";
 import { eventually } from "./support/eventually.js";
@@ -69,6 +74,34 @@ describe("请求", () => {
 		expect((await h.abort(crypto.randomUUID())).status).toBe(202);
 		expect(h.sessions.abortMarks).toBe(before + 1);
 		expect(h.sessions.activeProcesses).toBe(0);
+	});
+});
+
+describe("路由表", () => {
+	it("ASSISTANT_ROUTES 里的每条都有处理（不是 404），不在表里的是 404：文档检查按这张表对照（#802）", async () => {
+		const id = crypto.randomUUID();
+		for (const route of ASSISTANT_ROUTES) {
+			const [method, path] = route.split(" ") as [string, string];
+			const abort = new AbortController();
+			const res = await fetch(`${h.url}${path.replace(":id", id)}`, {
+				method,
+				headers: { authorization: `Bearer ${SECRET}` },
+				signal: abort.signal,
+			});
+			expect(res.status, route).not.toBe(404);
+			abort.abort();
+		}
+		for (const [method, path] of [
+			["GET", "/sessions"],
+			["POST", `/sessions/${id}/resume`],
+			["DELETE", `/sessions/${id}`],
+		] as const) {
+			const res = await fetch(`${h.url}${path}`, {
+				method,
+				headers: { authorization: `Bearer ${SECRET}` },
+			});
+			expect(res.status, `${method} ${path}`).toBe(404);
+		}
 	});
 });
 
