@@ -130,6 +130,7 @@ export async function startTestControlPlane(
 		| "sessionSweepIntervalMs"
 		| "exposureSweepIntervalMs"
 		| "workbenchProbe"
+		| "workbenchProbes"
 		| "onSessionEnded"
 		| "initialAdmin"
 		| "loginIdleMs"
@@ -193,6 +194,7 @@ export async function startTestControlPlane(
 			sessionSweepIntervalMs: options.sessionSweepIntervalMs ?? 3_600_000,
 			exposureSweepIntervalMs: options.exposureSweepIntervalMs ?? 3_600_000,
 			// 测试里不去连真的探测服务：默认一台也连不通，要测探测的用例自己传。
+			workbenchProbes: options.workbenchProbes,
 			workbenchProbe:
 				options.workbenchProbe ?? (async (_host, targets) => targets.map(() => "closed" as const)),
 			onSessionEnded: options.onSessionEnded,

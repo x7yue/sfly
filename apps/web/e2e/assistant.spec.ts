@@ -222,8 +222,9 @@ const measured = (over: Record<string, unknown> = {}) => ({
 	exposure: {
 		checked_at: "2026-01-01T00:00:00.000Z",
 		agents: [],
-		unmeasured: [],
+		unmeasured: 0,
 		failed_at: null,
+		failure: null,
 		...over,
 	},
 });
@@ -262,28 +263,36 @@ test("工作台连得到项目外 Agent 的能力端口（#498）：助手页和
 	await expect(page.getByTestId("exposure")).toHaveCount(0);
 });
 
-test("探测没测成（#498）：没测成的目标单独列出，不当成连不通；一轮整个没测成写明时间和上次测成的结果", async ({
+test("探测没测成（#498）：没测成的目标只写个数、不列别的项目的 Agent；一轮整个没测成写明时间、原因和上次测成的结果", async ({
 	page,
 }) => {
 	await stubSessionList(
 		page,
-		measured({ unmeasured: [beta], failed_at: "2026-01-01T00:10:00.000Z", agents: [alpha] }),
+		measured({
+			agents: [alpha],
+			unmeasured: 3,
+			failed_at: "2026-01-01T00:10:00.000Z",
+			failure: "probe_failed",
+		}),
 	);
 	await page.goto("/sessions");
 	const line = page.getByTestId("exposure");
 	await expect(line.getByTestId("exposed-agent")).toHaveText(["alpha-agent（10.0.0.9:50052）"]);
-	await expect(line).toContainText("这几台没测成（不算连不通）：");
-	await expect(line.getByTestId("unmeasured-agent")).toHaveText(["beta-agent（[fd00::7]:50052）"]);
-	await expect(line.getByTestId("exposure-failed")).toContainText("那一轮没测成");
+	await expect(line.getByTestId("exposure-unmeasured")).toHaveText(
+		"另有 3 台项目外的 Agent 没测成（不算连不通）。",
+	);
+	await expect(line).not.toContainText("beta-agent");
+	await expect(line.getByTestId("exposure-failed")).toContainText("探测服务连不上");
 	await expect(line.getByTestId("exposure-failed")).toContainText("测成的结果");
 
-	// 从来没有测成过：只写没测成，没有「一台也连不通」的假象。
+	// 没有给这台工作台配置探测地址：写明是这个原因，没有「一台也连不通」的假象。
 	await page.unroute("**/api/projects/*/sessions");
 	await stubSessionList(
 		page,
-		measured({ checked_at: null, failed_at: "2026-01-01T00:10:00.000Z" }),
+		measured({ checked_at: null, failed_at: "2026-01-01T00:10:00.000Z", failure: "no_probe" }),
 	);
 	await page.goto("/sessions");
+	await expect(page.getByTestId("exposure-failed")).toContainText("SFLY_FIREWALL_PROBES");
 	await expect(page.getByTestId("exposure-failed")).toContainText("之前也没有测成过");
 	await expect(page.getByTestId("exposed-agent")).toHaveCount(0);
 });

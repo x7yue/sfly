@@ -23483,22 +23483,9 @@
                         }
                       },
                       "unmeasured": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "agent": {
-                              "type": "string"
-                            },
-                            "address": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "agent",
-                            "address"
-                          ]
-                        }
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       },
                       "failed_at": {
                         "anyOf": [
@@ -23511,13 +23498,28 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "failure": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "no_probe",
+                              "probe_failed"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
                       "checked_at",
                       "agents",
                       "unmeasured",
-                      "failed_at"
+                      "failed_at",
+                      "failure"
                     ]
                   },
                   {
@@ -23804,22 +23806,9 @@
                         }
                       },
                       "unmeasured": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "agent": {
-                              "type": "string"
-                            },
-                            "address": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "agent",
-                            "address"
-                          ]
-                        }
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       },
                       "failed_at": {
                         "anyOf": [
@@ -23832,13 +23821,28 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "failure": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "no_probe",
+                              "probe_failed"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
                       "checked_at",
                       "agents",
                       "unmeasured",
-                      "failed_at"
+                      "failed_at",
+                      "failure"
                     ]
                   },
                   {
@@ -24093,22 +24097,9 @@
                         }
                       },
                       "unmeasured": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "agent": {
-                              "type": "string"
-                            },
-                            "address": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "agent",
-                            "address"
-                          ]
-                        }
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       },
                       "failed_at": {
                         "anyOf": [
@@ -24121,13 +24112,28 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "failure": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "no_probe",
+                              "probe_failed"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
                       "checked_at",
                       "agents",
                       "unmeasured",
-                      "failed_at"
+                      "failed_at",
+                      "failure"
                     ]
                   },
                   {
@@ -26034,22 +26040,9 @@
                         }
                       },
                       "unmeasured": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "agent": {
-                              "type": "string"
-                            },
-                            "address": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "agent",
-                            "address"
-                          ]
-                        }
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       },
                       "failed_at": {
                         "anyOf": [
@@ -26062,13 +26055,28 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "failure": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "no_probe",
+                              "probe_failed"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
                       "checked_at",
                       "agents",
                       "unmeasured",
-                      "failed_at"
+                      "failed_at",
+                      "failure"
                     ]
                   },
                   {
@@ -26297,22 +26305,9 @@
                         }
                       },
                       "unmeasured": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "agent": {
-                              "type": "string"
-                            },
-                            "address": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "agent",
-                            "address"
-                          ]
-                        }
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       },
                       "failed_at": {
                         "anyOf": [
@@ -26325,13 +26320,28 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "failure": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "no_probe",
+                              "probe_failed"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
                       "checked_at",
                       "agents",
                       "unmeasured",
-                      "failed_at"
+                      "failed_at",
+                      "failure"
                     ]
                   },
                   {

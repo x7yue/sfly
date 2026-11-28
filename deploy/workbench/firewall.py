@@ -31,9 +31,10 @@ Docker 按 restart 策略恢复还是手工 docker start，本次的规则写好
 
 探测（PROBE_PORT，#498）：控制面定期请这个进程在同一个网络命名空间里、同一套规则下
 只试连接别的项目里 Agent 的能力端口，连得通说明名单没有挡住它们。测量方是这个进程，
-工作台上的模型改不了、停不了它；只应答 SFLY_WORKBENCH_URL 的主机此刻解析到的地址（控制面）
-发来的请求，工作台自己发的拒绝。每个目标的结果：open 连上了；closed 被拒、超时、不可达；
-error 没测成（写法不对、解析不了、本机资源不够……），控制面不把它当成连不通。
+工作台上的模型改不了、停不了它，也抢不了这个端口（它不是 root；端口在应答就绪之前就占住）。
+只接受控制面的连接：来源要是授权表里 SFLY_WORKBENCH_URL 那一项此刻的地址，别的连接不读就关。
+每个目标的结果：open 连上了；closed 被拒、超时、不可达；error 没测成（写法不对、IPv6、
+回环段的数字地址、解析不了、本机资源不够……），控制面不把它当成连不通。
 """
 
 from __future__ import annotations
@@ -231,6 +232,11 @@ class Grants:
         self.clock = clock
         self.expiry: dict[tuple[Entry, str], float] = {}
 
+    def granted(self, entry: Entry | None) -> set[str]:
+        """这个名单项此刻没到期的地址（探测服务的线程读；表在主线程里换，先复制一份再看）。"""
+        now = self.clock()
+        return {ip for (e, ip), until in list(self.expiry.items()) if e == entry and until > now}
+
     def allowed(self) -> set[tuple[str, int]]:
         """解析一轮、续期，返回此刻没到期的。期限从每次解析成功返回的时刻算，到期按返回之前再读一次的时钟判断。"""
         for entry in self.entries:
@@ -268,13 +274,17 @@ def serve_ready() -> None:
 
 
 def dial(target: str) -> str:
-    """试连接「主机:端口」（IPv6 写成「[地址]:端口」）：open、closed 或 error（见文件开头）。"""
-    host, sep, port = target.rpartition(":")
-    host = host[1:-1] if host.startswith("[") and host.endswith("]") else host
-    if not sep or not host or not PORT.fullmatch(port) or not 0 < int(port) < 65536:
+    """试连接「主机:端口」：open、closed 或 error（见文件开头）。
+
+    目标是别的项目的 Agent 自报的地址，先过名单同一个判断（endpoint）：不合规的、IPv6 的、
+    回环段的数字地址（会连到工作台自己）都是 error，不去连。过了这一关，连接只会抛 OSError。"""
+    entry = endpoint(target, url=False)
+    if not isinstance(entry, Entry) or (
+        canonical_ipv4(entry.host) and ipaddress.IPv4Address(entry.host).is_loopback
+    ):
         return "error"
     try:
-        socket.create_connection((host, int(port)), PROBE_TIMEOUT_SECONDS).close()
+        socket.create_connection((entry.host, entry.port), PROBE_TIMEOUT_SECONDS).close()
     except (ConnectionRefusedError, TimeoutError):
         return "closed"
     except OSError as error:
@@ -284,24 +294,20 @@ def dial(target: str) -> str:
 
 class Probe(BaseHTTPRequestHandler):
     """POST /probe，`{"targets": ["主机:端口", ...]}`（至多 PROBE_MAX_TARGETS 个）
-    → `{"results": [...]}`，和 targets 同序。"""
+    → `{"results": [...]}`，和 targets 同序。来源在接受连接时就核对过（ProbeServer）。"""
 
-    control: Entry
+    #: 读请求的期限（秒）：没发完的请求不会一直占着唯一的处理线程。
+    timeout = 10
 
     def do_POST(self) -> None:
-        try:
-            allowed = resolve(self.control.host, self.control.port)
-        except OSError:
-            self.reply(503, {"error": "解析不了控制面的地址"})
-            return
-        if self.client_address[0] not in allowed:
-            self.reply(403, {"error": "只应答控制面"})
-            return
-        length = int(self.headers.get("content-length") or 0)
-        try:
-            body = json.loads(self.rfile.read(length)) if 0 < length <= 1 << 20 else None
-        except ValueError:
-            body = None
+        length = self.headers.get("content-length") or ""
+        size = int(length) if length.isascii() and length.isdigit() else -1
+        body = None
+        if 0 < size <= 1 << 20:
+            try:
+                body = json.loads(self.rfile.read(size))
+            except ValueError:
+                body = None
         targets = body.get("targets") if isinstance(body, dict) else None
         if (
             self.path != "/probe"
@@ -326,11 +332,37 @@ class Probe(BaseHTTPRequestHandler):
         pass
 
 
-def serve_probe(control: Entry, port: int = PROBE_PORT) -> HTTPServer:
-    handler = type("ProbeFor", (Probe,), {"control": control})
-    server = HTTPServer(("0.0.0.0", port), handler)
+class ProbeServer(HTTPServer):
+    """只接受控制面的连接：来源要是授权表里控制面那一项（SFLY_WORKBENCH_URL）此刻没到期的地址，
+    接受连接时就核对，不读任何字节就关掉别的（verify_request），不另外查 DNS。"""
+
+    def __init__(self, port: int, allowed: Callable[[], set[str]]) -> None:
+        self.allowed = allowed
+        super().__init__(("0.0.0.0", port), Probe)
+
+    def verify_request(self, request: object, client_address: object) -> bool:
+        return isinstance(client_address, tuple) and client_address[0] in self.allowed()
+
+
+def serve_probe(allowed: Callable[[], set[str]], port: int = PROBE_PORT) -> HTTPServer:
+    """绑定探测端口（绑不上就抛错：进程退出，不应答就绪），在后台应答。"""
+    server = ProbeServer(port, allowed)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+def serving(
+    allowed: Callable[[], set[str]],
+    probe: Callable[[Callable[[], set[str]]], object] = serve_probe,
+    ready: Callable[[], None] = serve_ready,
+) -> Callable[[], None]:
+    """规则写好之后做的事：先占住探测端口（工作台的用户不是 root，抢不了），再应答就绪。"""
+
+    def start() -> None:
+        probe(allowed)
+        ready()
+
+    return start
 
 
 def apply(command: str, rules: str) -> None:
@@ -365,13 +397,9 @@ def main() -> int:
         return 1
     print("出网名单：" + " ".join(f"{e.host}:{e.port}" for e in entries), flush=True)
     control = endpoint(os.environ.get("SFLY_WORKBENCH_URL", ""), url=True)
-
-    def ready() -> None:
-        serve_ready()
-        if isinstance(control, Entry):
-            serve_probe(control)
-
-    run(Grants(entries), ready=ready)
+    grants = Grants(entries)
+    owner = control if isinstance(control, Entry) else None
+    run(grants, ready=serving(lambda: grants.granted(owner)))
     return 0
 
 

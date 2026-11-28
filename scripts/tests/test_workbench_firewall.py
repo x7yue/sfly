@@ -377,32 +377,30 @@ def test_a_failing_rule_write_never_answers_ready() -> None:
     assert ready == []
 
 
-# ---- 探测（#498）：测量方是出网名单这个进程，只应答控制面 ----
+# ---- 探测（#498）：测量方是出网名单这个进程，只接受控制面的连接 ----
 
 
-def listening() -> tuple[socket.socket, str]:
+def listening() -> tuple[socket.socket, int]:
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
     server.listen()
-    return server, f"127.0.0.1:{server.getsockname()[1]}"
+    return server, server.getsockname()[1]
 
 
-def closed_port() -> str:
-    server, address = listening()
+def closed_port() -> int:
+    server, port = listening()
     server.close()
-    return address
+    return port
 
 
 def test_dial_tells_open_closed_and_unmeasured_apart(monkeypatch: pytest.MonkeyPatch) -> None:
-    server, open_address = listening()
+    # 回环段的数字地址是 error（会连到工作台自己），这里经域名 localhost 连本机的端口。
+    server, port = listening()
     try:
-        assert firewall.dial(open_address) == "open"
-        assert firewall.dial(closed_port()) == "closed"
+        assert firewall.dial(f"localhost:{port}") == "open"
+        assert firewall.dial(f"localhost:{closed_port()}") == "closed"
     finally:
         server.close()
-    # 写法不对、解析不了：没测成，不是连不通。
-    for bad in ("x", "x:", "x:0", "x:http", ":80", "nosuch.invalid:80"):
-        assert firewall.dial(bad) == "error", bad
 
     def failing(error: OSError) -> Callable[..., object]:
         def connect(*_: object) -> object:
@@ -416,13 +414,54 @@ def test_dial_tells_open_closed_and_unmeasured_apart(monkeypatch: pytest.MonkeyP
         (OSError(firewall.errno.ENETUNREACH, "x"), "closed"),
         (OSError(firewall.errno.EMFILE, "x"), "error"),
         (OSError(firewall.errno.ENOBUFS, "x"), "error"),
+        (socket.gaierror(socket.EAI_NONAME, "x"), "error"),
     ):
         monkeypatch.setattr(firewall.socket, "create_connection", failing(error))
         assert firewall.dial("10.0.0.9:50052") == result
 
 
-def post(port: int, body: bytes) -> tuple[int, object]:
-    request = urllib.request.Request(f"http://127.0.0.1:{port}/probe", data=body, method="POST")
+def test_a_batch_mixing_good_and_bad_targets_keeps_count_and_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 目标是别的项目的 Agent 自报的地址，什么文字都可能有：坏的记 error、不去连，好的照常测。
+    dialed: list[tuple[str, int]] = []
+
+    def connect(address: tuple[str, int], timeout: float) -> socket.socket:
+        dialed.append(address)
+        if address[0] == "closed.internal":
+            raise ConnectionRefusedError
+        return socket.socket()
+
+    monkeypatch.setattr(firewall.socket, "create_connection", connect)
+    targets = [
+        "open.internal:50052",
+        f"{'a' * 64}.internal:50052",  # 标签超长（IDNA 编码会抛 UnicodeError）
+        "a..b:50052",  # 空标签
+        "[fd00::1]:50052",  # IPv6
+        "fd00::1:50052",
+        "open.internal:70000",  # 端口越界
+        "0x7f.1:50052",  # 数字写法的地址
+        "2130706433:50052",
+        "127.0.0.1:50052",  # 回环段：会连到工作台自己
+        "127.8.9.10:50052",
+        "closed.internal:50052",
+        "10.0.0.9:50052",
+        "",
+    ]
+    assert [firewall.dial(t) for t in targets] == [
+        "open",
+        *["error"] * 9,
+        "closed",
+        "open",
+        "error",
+    ]
+    assert dialed == [("open.internal", 50052), ("closed.internal", 50052), ("10.0.0.9", 50052)]
+
+
+def post(port: int, body: bytes, headers: dict[str, str] | None = None) -> tuple[int, object]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/probe", data=body, method="POST", headers=headers or {}
+    )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.status, json.loads(response.read())
@@ -430,29 +469,122 @@ def post(port: int, body: bytes) -> tuple[int, object]:
         return error.code, json.loads(error.read())
 
 
-def test_the_probe_answers_only_the_control_plane_in_order() -> None:
-    server, open_address = listening()
-    # 控制面就是本机（127.0.0.1 解析到它自己）：应答，结果和目标同序。
-    probe = firewall.serve_probe(Entry("127.0.0.1", 8080), port=0)
-    port = probe.server_address[1]
-    # 控制面在别处：本机（工作台）发的请求被拒。
-    other = firewall.serve_probe(Entry("192.0.2.10", 8080), port=0)
+def raw(port: int, data: bytes = b"", wait: float = 30) -> bytes:
+    """连上去（可选发一点），读到对面关为止；`wait` 秒内对面没关就抛 TimeoutError。"""
+    with socket.create_connection(("127.0.0.1", port), wait) as conn:
+        if data:
+            conn.sendall(data)
+        chunks = []
+        try:
+            while chunk := conn.recv(65536):
+                chunks.append(chunk)
+        except ConnectionResetError:
+            pass  # 对面没读就关了：我们发的字节它没收
+        return b"".join(chunks)
+
+
+@pytest.fixture
+def probe_server() -> Any:
+    """一个探测服务和它认的来源（测试里改它：控制面在不在本机）。"""
+    sources: set[str] = {"127.0.0.1"}
+    server = firewall.serve_probe(lambda: set(sources), port=0)
+    yield server, sources
+    server.shutdown()
+    server.server_close()
+
+
+def test_the_probe_answers_the_control_plane_in_order(probe_server: Any) -> None:
+    server, _ = probe_server
+    port = server.server_address[1]
+    listener, open_port = listening()
     try:
-        targets = [open_address, closed_port(), "x"]
+        targets = [f"localhost:{open_port}", f"localhost:{closed_port()}", "x", "127.0.0.1:1"]
         assert post(port, json.dumps({"targets": targets}).encode()) == (
             200,
-            {"results": ["open", "closed", "error"]},
+            {"results": ["open", "closed", "error", "error"]},
         )
-        assert post(other.server_address[1], b'{"targets": []}')[0] == 403
-        too_many = json.dumps({"targets": ["x:1"] * (firewall.PROBE_MAX_TARGETS + 1)}).encode()
-        assert post(port, too_many)[0] == 400
-        assert post(port, b"not json")[0] == 400
-        assert post(port, b'{"targets": [1]}')[0] == 400
     finally:
-        for running in (probe, other):
-            running.shutdown()
-            running.server_close()
-        server.close()
+        listener.close()
+    too_many = json.dumps({"targets": ["x:1"] * (firewall.PROBE_MAX_TARGETS + 1)}).encode()
+    assert post(port, too_many)[0] == 400
+    assert post(port, b"not json")[0] == 400
+    assert post(port, b'{"targets": [1]}')[0] == 400
+
+
+@pytest.mark.parametrize("length", ["+15", "15 ", "1_5", "١٥", "-1", "0x0f", "99999999999"])
+def test_a_bad_length_header_is_a_plain_400(probe_server: Any, length: str) -> None:
+    server, _ = probe_server
+    body = b'{"targets": []}'
+    request = (
+        b"POST /probe HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"
+        + f"Content-Length: {length}\r\n\r\n".encode()
+        + body
+    )
+    assert raw(server.server_address[1], request).startswith(b"HTTP/1.0 400")
+
+
+def test_other_sources_are_closed_before_any_byte_is_read(probe_server: Any) -> None:
+    server, sources = probe_server
+    port = server.server_address[1]
+    # 来源不在授权表里（比如工作台自己）：一个字节也不发，连接也马上被关；没有任何应答。
+    # 两秒内就被关（放进来的话，没发完的请求要等十秒的读取期限）。
+    sources.clear()
+    assert raw(port, wait=2) == b""
+    assert raw(port, b"POST /probe HTTP/1.1\r\n", wait=2) == b""
+    # 之后控制面的请求照常得到应答。
+    sources.add("127.0.0.1")
+    assert post(port, b'{"targets": []}') == (200, {"results": []})
+
+
+def test_a_slow_request_times_out_and_the_next_is_answered(
+    probe_server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server, _ = probe_server
+    monkeypatch.setattr(firewall.Probe, "timeout", 0.5)
+    port = server.server_address[1]
+    # 只发半个请求头就不动了：读请求的期限到了就关掉，不一直占着唯一的处理线程。
+    assert raw(port, b"POST /probe HTTP/1.1\r\nContent-") == b""
+    assert post(port, b'{"targets": []}') == (200, {"results": []})
+
+
+def test_the_probe_port_is_taken_before_ready_is_answered() -> None:
+    events: list[str] = []
+    start = firewall.serving(
+        lambda: set(), lambda _allowed: events.append("probe"), lambda: events.append("ready")
+    )
+    start()
+    assert events == ["probe", "ready"]
+
+    # 探测端口绑不上（被占了）：抛错，不应答就绪（进程退出，容器按 restart 策略重来）。
+    taken = socket.socket()
+    taken.bind(("0.0.0.0", 0))
+    taken.listen()
+    port = taken.getsockname()[1]
+    events.clear()
+    try:
+        bind = firewall.serving(
+            lambda: set(),
+            lambda allowed: firewall.serve_probe(allowed, port=port),
+            lambda: events.append("ready"),
+        )
+        with pytest.raises(OSError):
+            bind()
+        assert events == []
+    finally:
+        taken.close()
+
+
+def test_the_control_plane_sources_come_from_the_grants_table() -> None:
+    sfly = Entry("sfly", 8080)
+    now = [0.0]
+    grants = firewall.Grants([sfly], lambda host, port: {"172.18.0.3"}, lambda: now[0])
+    assert grants.granted(sfly) == set()
+    grants.allowed()
+    assert grants.granted(sfly) == {"172.18.0.3"}
+    assert grants.granted(Entry("other", 8080)) == set()
+    assert grants.granted(None) == set()
+    now[0] = GRACE  # 到期了：不再认它，哪怕还没到下一轮。
+    assert grants.granted(sfly) == set()
 
 
 def test_the_batch_size_matches_the_control_plane() -> None:

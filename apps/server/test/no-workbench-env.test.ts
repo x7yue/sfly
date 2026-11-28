@@ -3,6 +3,7 @@
 // （控制面读它、compose 和 .env.example 里传它）删干净：控制面的源码、部署的文件、评测环境和冒烟脚本里都不能再出现，
 // 也不能留一个换了名字、实际还是环境变量的选项（`workbenchAgent`）。工作台容器自己的名字是它自己的变量 `SFLY_WORKBENCH_NAME`
 // （`deploy/workbench/entrypoint.sh`），控制面不读。
+// 控制面读的 `SFLY_FIREWALL_PROBES`（#498）说的是「出网名单容器上的探测服务在哪」，按工作台的 Agent 名对应，不是「哪台 Agent 是工作台」。
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";

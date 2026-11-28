@@ -39,6 +39,9 @@ services:
       # 哪台 Agent 是项目的工作台不在环境变量里：项目管理员登记（PUT /projects/:project/workbench，README「登记工作台」，存在库里）。
       SFLY_ASSISTANT_URL: ${SFLY_ASSISTANT_URL:-}
       SFLY_ASSISTANT_SECRET: ${SFLY_ASSISTANT_SECRET:-}
+      # 工作台的出网名单容器上探测服务的地址（#498）：控制面把项目外 Agent 的地址只发到这里，不用 Agent 自报的地址。
+      # 说的是出网名单容器在哪（服务别名 sfly-workbench 挂在它上面），不是哪台 Agent 是工作台（那个由项目管理员登记，存在库里）。
+      SFLY_FIREWALL_PROBES: ${SFLY_WORKBENCH_NAME:-workbench}=sfly-workbench:47124
       # 保留期、各种上限和登录的空闲期限（#577）：留空用默认值；取值范围写在 .env.example，超出范围时控制面启动就报错退出。
       SFLY_RETENTION_DAYS: ${SFLY_RETENTION_DAYS:-}
       SFLY_METRIC_RETENTION_DAYS: ${SFLY_METRIC_RETENTION_DAYS:-}

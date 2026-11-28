@@ -132,10 +132,6 @@ const UNVERIFIED_ARRAYS: Record<string, string> = {
 		"工作台探测项目外 Agent 的结果（#498）在控制面的内存里，这里没有在线的工作台和别的项目的 Agent，按设计是 null；" +
 		"元素由 workbench-exposure.test.ts 经这个接口读出（响应按契约解析）",
 	"GET /sessions/:id response readiness.exposure.agents[]": "同上：会话视图里的就绪状态是同一份",
-	"GET /projects/:project/sessions response readiness.exposure.unmeasured[]":
-		"同上：没测成的目标，元素由 workbench-exposure.test.ts 经这个接口读出",
-	"GET /sessions/:id response readiness.exposure.unmeasured[]":
-		"同上：会话视图里的就绪状态是同一份",
 	"GET /sessions/:id/events snapshot steer_queue[]":
 		"快照（#545）里的插话队列取自控制面内存里的现场（助手服务发来的 `steer_queue`），这里的会话是直接写库的，没有助手服务的事件、" +
 		"也没有在做的一轮，快照里的队列按设计是空的；元素是 `SteerEntry`（和 `steer_queue` 事件的元素同一个 schema），" +

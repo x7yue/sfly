@@ -438,7 +438,11 @@ export class SessionService {
 			ready: problems.length === 0,
 			problems,
 			workbench: registered ?? null,
-			exposure: this.deps.exposure.get(project),
+			exposure: this.deps.exposure.get(
+				project,
+				registered,
+				registered === undefined ? undefined : this.deps.hub.connection(registered),
+			),
 		};
 	}
 

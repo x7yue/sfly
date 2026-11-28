@@ -475,14 +475,24 @@ describe("会话接口的类型", () => {
 		const exposure = {
 			checked_at: "2026-11-28T00:00:00.000Z",
 			agents: [{ agent: "alpha-agent", address: "10.0.0.9:50052" }],
-			unmeasured: [],
+			unmeasured: 0,
 			failed_at: null,
+			failure: null,
 		};
 		expect(check({ ready: true, problems: [], workbench: "w", exposure })).toBe(true);
-		// 从来没测成过：checked_at 为 null，failed_at 写明哪一轮没测成；没测成的目标和结果都不能缺。
-		const failed = { ...exposure, checked_at: null, agents: [], failed_at: exposure.checked_at };
+		// 从来没测成过：checked_at 为 null，failed_at、failure 写明哪一轮、为什么没测成。
+		const failed = {
+			...exposure,
+			checked_at: null,
+			agents: [],
+			failed_at: exposure.checked_at,
+			failure: "no_probe",
+		};
 		expect(check({ ready: true, problems: [], workbench: "w", exposure: failed })).toBe(true);
-		const { unmeasured: _, ...partial } = exposure;
+		// 没测成的只给个数，不是别的项目的 Agent 的列表；字段都不能缺。
+		const listed = { ...exposure, unmeasured: [{ agent: "beta", address: "10.0.0.8:1" }] };
+		expect(check({ ready: true, problems: [], workbench: "w", exposure: listed })).toBe(false);
+		const { failure: _, ...partial } = exposure;
 		expect(check({ ready: true, problems: [], workbench: "w", exposure: partial })).toBe(false);
 	});
 

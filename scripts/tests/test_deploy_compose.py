@@ -168,6 +168,9 @@ def test_the_workbench_is_named_by_its_own_variable_and_the_control_plane_reads_
     control_plane = environment(services["sfly"])
     assert "SFLY_WORKBENCH_AGENT" not in control_plane
     assert not [name for name in control_plane if name.startswith("SFLY_WORKBENCH")]
+    # 控制面读的是「出网名单容器上的探测服务在哪」（#498），按工作台的 Agent 名对应，
+    # 不是「哪台 Agent 是工作台」。
+    assert control_plane["SFLY_FIREWALL_PROBES"] == "workbench=sfly-workbench:47124"
     workbench = environment(services["sfly-workbench"])
     assert "SFLY_WORKBENCH_AGENT" not in workbench
     assert workbench["SFLY_WORKBENCH_NAME"] == "workbench"

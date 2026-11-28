@@ -9,8 +9,6 @@ import type { ProjectId } from "../projects/project-id.js";
 
 /** 同一台工作台多久重探一次（换了连接、换了登记的工作台时下一轮就探）。 */
 export const EXPOSURE_RECHECK_MS = 10 * 60 * 1000;
-/** 出网名单容器上探测服务的端口（`deploy/workbench/firewall.py` 的 PROBE_PORT）。 */
-export const PROBE_PORT = 47124;
 /** 一次请求至多多少个目标（firewall.py 的 PROBE_MAX_TARGETS，scripts/tests 核对两边一致）。 */
 export const PROBE_BATCH = 1_000;
 /** 每个目标的连接期限（firewall.py 的 PROBE_TIMEOUT_SECONDS），用来算一次请求等多久。 */
@@ -18,8 +16,8 @@ const PROBE_TIMEOUT_MS = 3_000;
 
 /** 一个目标的结果：连上了、连不通（被拒、超时、不可达）、没测成。 */
 export type ProbeResult = "open" | "closed" | "error";
-/** 在工作台的网络命名空间里试连接这些目标（`主机:端口`），结果同序；整次没测成时抛错。 */
-export type WorkbenchProbe = (host: string, targets: string[]) => Promise<ProbeResult[]>;
+/** 请 `address`（部署者配置的探测服务，`主机:端口`）试连接这些目标，结果同序；整次没测成时抛错。 */
+export type WorkbenchProbe = (address: string, targets: string[]) => Promise<ProbeResult[]>;
 
 /** 能力端口的地址 `主机:端口`（IPv6 写成 `[地址]:端口`）；没有上报端口或地址时为 undefined。 */
 export function capabilityAddress(conn: AgentConnection): string | undefined {
@@ -30,12 +28,12 @@ export function capabilityAddress(conn: AgentConnection): string | undefined {
 }
 
 /**
- * 请工作台前面的出网名单容器探测（`POST http://<工作台的主机>:47124/probe`）。测量方是那个容器里的进程，不是工作台上的 Agent：
- * 工作台上的模型改不了、停不了它（firewall.py 开头）。连不上（没有出网名单的部署）、回应不是约定的形状时抛错。
+ * 请出网名单容器上的探测服务（`POST http://<配置的地址>/probe`）探测。地址是部署者写在控制面这一侧的（`SFLY_FIREWALL_PROBES`），
+ * 不是 Agent 自报的：目标列表只发给部署者指定的地方。测量方是那个容器里的进程，工作台上的模型改不了、停不了它（firewall.py 开头）。
+ * 连不上（没有出网名单的部署）、回应不是约定的形状时抛错。
  */
-export const httpProbe: WorkbenchProbe = async (host, targets) => {
-	const base = host.includes(":") ? `[${host}]` : host;
-	const res = await fetch(`http://${base}:${PROBE_PORT}/probe`, {
+export const httpProbe: WorkbenchProbe = async (address, targets) => {
+	const res = await fetch(`http://${address}/probe`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ targets }),
@@ -58,26 +56,28 @@ export const httpProbe: WorkbenchProbe = async (host, targets) => {
 /** 按 {@link PROBE_BATCH} 分批探完全部目标；有一批没成就整轮没成（抛错），不把一部分当成整轮的结果。 */
 export async function probeAll(
 	probe: WorkbenchProbe,
-	host: string,
+	address: string,
 	targets: string[],
 ): Promise<ProbeResult[]> {
 	const results: ProbeResult[] = [];
 	for (let start = 0; start < targets.length; start += PROBE_BATCH) {
-		results.push(...(await probe(host, targets.slice(start, start + PROBE_BATCH))));
+		results.push(...(await probe(address, targets.slice(start, start + PROBE_BATCH))));
 	}
 	return results;
 }
 
 /**
- * 工作台够得着的项目外 Agent（#498，ADR 0029「隔离做到哪一层」）：定期请每个项目登记的、在线的工作台前面的出网名单容器
+ * 工作台够得着的项目外 Agent（#498，ADR 0029「隔离做到哪一层」）：定期请每个项目登记的、在线的工作台对应的探测服务（部署者配置的）
  * 只试连接别的项目里在线 Agent 的能力端口，就绪状态里带上结果（助手页、会话页告警）。结果只在内存里，重启后下一轮重探。
- * 一轮整个没测成（探测服务连不上、回应不对）时不发布新的结果：留着同一个连接上一次测成的结果，记下这次没测成的时间；
- * 工作台换了连接时旧的结果作废。没测成的目标单独列出，不算连不通。
+ *
+ * 结果属于它测的那条连接：探测回来时登记的工作台或它的连接变了，这次结果丢掉；读的时候不是当前连接的结果当作没有（null）。
+ * 一轮整个没测成（没有配置探测地址、探测服务连不上、回应不对）时不发布新的结果：留着同一条连接上次测成的，记下这次没测成的时间和原因。
+ * 没测成的目标只给个数（不列名字和地址：那是别的项目的 Agent）；连得通的才写明是哪台。
  */
 export class WorkbenchExposure {
 	readonly #results = new Map<
 		ProjectId,
-		{ conn: AgentConnection; at: number; exposure: Exposure }
+		{ name: string; conn: AgentConnection; at: number; exposure: Exposure }
 	>();
 
 	constructor(
@@ -87,13 +87,21 @@ export class WorkbenchExposure {
 			clock: Clock;
 			/** 没有开助手时不探（工作台只给助手用）。 */
 			enabled: boolean;
+			/** 工作台的 Agent 名 → 探测服务的地址（`SFLY_FIREWALL_PROBES`）。 */
+			probes: ReadonlyMap<string, string>;
 			probe: WorkbenchProbe;
 			log: (message: string, error: unknown) => void;
 		},
 	) {}
 
-	get(project: ProjectId): Exposure | null {
-		return this.#results.get(project)?.exposure ?? null;
+	/** 登记的工作台 `name` 当前的连接 `conn` 上的结果；不是这条连接测的、还没有结果时为 null。 */
+	get(
+		project: ProjectId,
+		name: string | undefined,
+		conn: AgentConnection | undefined,
+	): Exposure | null {
+		const result = this.#results.get(project);
+		return result && result.name === name && result.conn === conn ? result.exposure : null;
 	}
 
 	/** 探一轮：到期的（没探过、工作台换了连接、上次探过超过 {@link EXPOSURE_RECHECK_MS}）才探。 */
@@ -106,38 +114,57 @@ export class WorkbenchExposure {
 			.where(isNotNull(projects.workbenchAgent));
 		for (const row of rows) {
 			const project = row.id as ProjectId;
-			const conn = row.workbench ? hub.connection(row.workbench) : undefined;
-			const host = conn && capabilityAddress(conn) && agentEndpoint(conn.info).address;
-			let last = this.#results.get(project);
-			if (!conn || !host) {
+			const name = row.workbench as string;
+			const conn = hub.connection(name);
+			if (!conn) {
 				this.#results.delete(project);
 				continue;
 			}
-			if (last && last.conn !== conn) last = undefined;
+			const last = this.#results.get(project);
+			const same = last?.name === name && last.conn === conn ? last : undefined;
 			const now = clock.now();
-			if (last && now.getTime() - last.at < EXPOSURE_RECHECK_MS) continue;
-			const targets = await this.#targets(project);
-			let exposure: Exposure;
-			try {
-				const results = await probeAll(
-					this.deps.probe,
-					host,
-					targets.map((t) => t.address),
-				);
-				exposure = {
-					checked_at: now.toISOString(),
-					agents: targets.filter((_, i) => results[i] === "open"),
-					unmeasured: targets.filter((_, i) => results[i] === "error"),
-					failed_at: null,
-				};
-			} catch (error) {
-				this.deps.log(`工作台 ${row.workbench} 这一轮没有测成项目外 Agent 的能力端口`, error);
-				exposure = {
-					...(last?.exposure ?? { checked_at: null, agents: [], unmeasured: [] }),
-					failed_at: now.toISOString(),
-				};
-			}
-			this.#results.set(project, { conn, at: now.getTime(), exposure });
+			if (same && now.getTime() - same.at < EXPOSURE_RECHECK_MS) continue;
+			const exposure = await this.#measure(name, project, now, same?.exposure);
+			// 探测期间换了登记、换了连接、下线了：这次的结果不是现在这台的，丢掉。
+			const [current] = await db
+				.select({ workbench: projects.workbenchAgent })
+				.from(projects)
+				.where(eq(projects.id, project));
+			if (current?.workbench !== name || hub.connection(name) !== conn) continue;
+			this.#results.set(project, { name, conn, at: now.getTime(), exposure });
+		}
+	}
+
+	async #measure(
+		name: string,
+		project: ProjectId,
+		now: Date,
+		last: Exposure | undefined,
+	): Promise<Exposure> {
+		const failed = (failure: "no_probe" | "probe_failed"): Exposure => ({
+			...(last ?? { checked_at: null, agents: [], unmeasured: 0 }),
+			failed_at: now.toISOString(),
+			failure,
+		});
+		const address = this.deps.probes.get(name);
+		if (address === undefined) return failed("no_probe");
+		const targets = await this.#targets(project);
+		try {
+			const results = await probeAll(
+				this.deps.probe,
+				address,
+				targets.map((t) => t.address),
+			);
+			return {
+				checked_at: now.toISOString(),
+				agents: targets.filter((_, i) => results[i] === "open"),
+				unmeasured: results.filter((r) => r === "error").length,
+				failed_at: null,
+				failure: null,
+			};
+		} catch (error) {
+			this.deps.log(`工作台 ${name} 这一轮没有测成项目外 Agent 的能力端口`, error);
+			return failed("probe_failed");
 		}
 	}
 

@@ -70,6 +70,7 @@ import { openVaultKey } from "./secrets/vault-key.js";
 import { AssistantClient } from "./sessions/assistant-client.js";
 import { assistantSetup } from "./sessions/assistant-config.js";
 import { AssistantConnection } from "./sessions/assistant-connection.js";
+import { probeConfig } from "./sessions/probe-config.js";
 import { SessionService } from "./sessions/session-service.js";
 import type { SessionRow } from "./sessions/session-store.js";
 import { SessionStore } from "./sessions/session-store.js";
@@ -195,7 +196,12 @@ export interface ControlPlaneOptions {
 	sessionSweepIntervalMs?: number;
 	/** 多久看一次哪些工作台该探测项目外 Agent 的能力端口（#498，默认 30 秒；到期才探，见 `WorkbenchExposure`）：测试改短。 */
 	exposureSweepIntervalMs?: number;
-	/** 怎么探测（#498）：默认请工作台前面的出网名单容器（`httpProbe`）；测试换成假的。 */
+	/**
+	 * 每台工作台的探测服务在哪（`SFLY_FIREWALL_PROBES`，#498）：「工作台的 Agent 名=主机:端口」，见 `probe-config.ts`。
+	 * 说的是部署者的出网名单容器在哪，不是哪台 Agent 是工作台（那个只在库里）。
+	 */
+	workbenchProbes?: string;
+	/** 怎么探测（#498）：默认请配置的探测服务（`httpProbe`）；测试换成假的。 */
 	workbenchProbe?: WorkbenchProbe;
 	/**
 	 * 会话结束之后调用（#544 留好的接口）：抛的错只进日志，不影响结束。会话令牌的吊销不在这里：它在会话结束的事务里
@@ -566,11 +572,14 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 助手服务的事件连接（下面、网关起来之后才建）：HTTP 在那之前就开始监听了，这几毫秒里进来的请求走就绪状态会问「连着没有」，
 	// 所以先声明；还没建好当作没连上（503，不是引用还没初始化的 ReferenceError → 500）。
 	let assistantConnection: AssistantConnection | undefined;
+	const probes = probeConfig(options.workbenchProbes);
+	if (probes.problem) printWarning(`sfly: ${probes.problem}`);
 	const exposure = new WorkbenchExposure({
 		db: database.db,
 		hub,
 		clock,
 		enabled: assistantClient !== undefined,
+		probes: probes.probes,
 		probe: options.workbenchProbe ?? httpProbe,
 		log: (message, error) => logError(`sfly: ${message}`, error),
 	});

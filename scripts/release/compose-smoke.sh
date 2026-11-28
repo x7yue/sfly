@@ -5,7 +5,7 @@
 #     （PUT /projects/default/workbench，之后控制面只接受 Agent 凭据）；
 #   - 助手就绪，假的模型端点照剧本做完一个会话（事件顺序对，复用评测集 #543 的检查，scripts/release/stack_e2e.py）；
 #   - 出网名单（#498）：工作台连得上控制面（装 Agent 走的就是它和镜像），名单外的被拒，包括另一个项目里的 Agent agent-b 的
-#     能力端口（网络里别的容器连得到它）；控制面请出网名单的容器探测它，探不通、没有告警（工作台自己调探测服务被拒）；把它加进 SFLY_WORKBENCH_EGRESS 之后连得上，
+#     能力端口（网络里别的容器连得到它）；控制面请出网名单的容器探测它，探不通、没有告警（工作台自己连探测服务被直接关掉）；把它加进 SFLY_WORKBENCH_EGRESS 之后连得上，
 #     探测结果（就绪状态的 exposure，助手页和会话页的告警）里写着它和它的地址；
 #   - `docker compose rm -sf` 删掉工作台容器再 `up -d`：工作区里的文件还在，Agent 不重装。
 # compose 文件之外只加一个 override：一个 PostgreSQL（compose 里没有数据库）、一个假的模型端点、初始管理员和镜像站的环境；
@@ -203,10 +203,10 @@ since=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 compose --profile assistant restart sfly-workbench >/dev/null || fail "重启工作台"
 exposed=$(client exposure "$since" 300) || fail "重启工作台之后没有探测结果"
 [[ -z $exposed ]] || fail "名单外的 Agent 不该连得通：$exposed"
-# 测量方是出网名单的容器，只应答控制面：工作台自己调它的探测服务被拒（403）。
+# 测量方是出网名单的容器，只接受控制面的连接：工作台自己连它的探测服务，连接不读就被关（curl 拿不到任何应答，000）。
 code=$(docker exec "$(compose --profile assistant ps -q sfly-workbench)" curl -q --noproxy '*' -s -o /dev/null \
-	-w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"targets":[]}' http://127.0.0.1:47124/probe)
-[[ $code == 403 ]] || fail "工作台自己调探测服务应当被拒（403），实际：$code"
+	-w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"targets":[]}' http://127.0.0.1:47124/probe || true)
+[[ $code == 000 ]] || fail "工作台自己连探测服务应当被直接关掉（000），实际：$code"
 # 加进名单：出网名单的容器重建，工作台跟着重启（共用它的网络命名空间）。
 # 毫秒（GNU date）：上一次的探测结果可能就在同一秒里，按秒取整会把它当成这一次的。
 since=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)

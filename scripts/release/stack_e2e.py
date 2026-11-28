@@ -138,11 +138,11 @@ def wait_exposure(after: str, seconds: float) -> int:
         page = e2e._request(s, "GET", f"/projects/{PROJECT}/sessions")
         exposure = (page.get("readiness") or {}).get("exposure") or {}
         if str(exposure.get("failed_at") or "") > after:
-            print("这一轮探测整个没测成（出网名单的探测服务连不上？）", file=sys.stderr)
+            print(f"这一轮探测整个没测成：{exposure.get('failure')}", file=sys.stderr)
             return 1
         if str(exposure.get("checked_at") or "") > after:
             if exposure["unmeasured"]:
-                print(f"有没测成的目标：{exposure['unmeasured']}", file=sys.stderr)
+                print(f"有 {exposure['unmeasured']} 个没测成的目标", file=sys.stderr)
                 return 1
             for item in exposure["agents"]:
                 print(f"{item['agent']} {item['address']}")

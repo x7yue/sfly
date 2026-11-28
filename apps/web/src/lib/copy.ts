@@ -270,10 +270,18 @@ export const SESSION = {
 		hint: "出网名单没有挡住它们，工作台上模型的命令能读写这些 Agent 的文件、执行命令。请部署者把它们从出网名单（SFLY_WORKBENCH_EGRESS）里去掉，或检查网络。",
 		isolation:
 			"机器层面的项目隔离还没有做到：Agent 的能力端口没有认证，现在靠工作台的出网名单挡住（部署文档「助手和工作台」）。",
-		unmeasured: "这几台没测成（不算连不通）：",
-		/** 最近一轮整个没测成：工作台前面多半没有出网名单，或者它的探测服务连不上；`last` 是上次测成的时间。 */
-		failed: (at: string, last: string | null) =>
-			`${at} 那一轮没测成工作台够不够得着项目外的 Agent（工作台前面可能没有出网名单，请部署者检查）` +
+		/** 没测成的项目外 Agent 只给个数：名字和地址是别的项目的。 */
+		unmeasured: (count: number) => `另有 ${count} 台项目外的 Agent 没测成（不算连不通）。`,
+		/**
+		 * 最近一轮整个没测成：`noProbe` 是没有给这台工作台配置探测地址（SFLY_FIREWALL_PROBES），否则是探测服务连不上；
+		 * `last` 是上次测成的时间。
+		 */
+		failed: (at: string, noProbe: boolean, last: string | null) =>
+			`${at} 那一轮没测成工作台够不够得着项目外的 Agent（` +
+			(noProbe
+				? "没有给这台工作台配置出网名单的探测地址 SFLY_FIREWALL_PROBES"
+				: "出网名单容器上的探测服务连不上") +
+			"，请部署者检查）" +
 			(last === null ? "，之前也没有测成过。" : `，上面是 ${last} 测成的结果。`),
 	},
 	workbenchOffline: (workbench: string) => `工作台 ${workbench} 不在线`,
