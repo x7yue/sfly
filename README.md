@@ -151,12 +151,13 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 
 ### 助手和工作台
 
-助手（会话功能，ADR 0027）是可选的：compose 里放在 `assistant` profile 里，不带它时只有控制面（`docker compose config` 的输出和没有这两个服务时一样），不用助手的部署不带 pi。带上 `--profile assistant`（或 `COMPOSE_PROFILES=assistant`）多两个服务，**都不映射端口**：
+助手（会话功能，ADR 0027）是可选的：compose 里放在 `assistant` profile 里，不带它时只有控制面（`docker compose config` 的输出和没有这几个服务时一样），不用助手的部署不带 pi。带上 `--profile assistant`（或 `COMPOSE_PROFILES=assistant`）多三个服务，**都不映射端口**：
 
 | 服务 | 镜像 | 卷 | 谁连得到它 |
 |---|---|---|---|
 | `sfly-assistant` | `ghcr.io/x7yue/sfly-assistant:<SFLY_VERSION>`：助手服务和 pi（Node） | `sfly-assistant-data`（会话目录）；模型文件只读挂载到 `/config/models.json`；内存上限 2 GiB | 同一个网络里的容器（含工作台）都连得到它的端口，但每个请求要带共享密钥 `SFLY_ASSISTANT_SECRET`：只有控制面有它，工作台没有 |
-| `sfly-workbench` | `ghcr.io/x7yue/sfly-workbench:<SFLY_VERSION>`：Debian slim 加 git、ripgrep、fd、jq、curl、procps、python3；**没有 Node，没有 pi，没有 Agent**，非 root 用户（uid 1000） | `sfly-workbench-home`（家目录）、`sfly-workbench-work`（工作区 `/work`） | 同一个网络里的控制面和助手服务：Agent 的能力端口没有认证（`agent/src/peer.rs`），所以不映射 |
+| `sfly-workbench` | `ghcr.io/x7yue/sfly-workbench:<SFLY_VERSION>`：Debian slim 加 git、ripgrep、fd、jq、curl、procps、python3、iptables；**没有 Node，没有 pi，没有 Agent**，非 root 用户（uid 1000） | `sfly-workbench-home`（家目录）、`sfly-workbench-work`（工作区 `/work`） | 同一个网络里的控制面和助手服务：Agent 的能力端口没有认证（`agent/src/peer.rs`），所以不映射 |
+| `sfly-workbench-firewall` | 同一个工作台镜像，以 root 运行出网名单（`deploy/workbench/firewall.py`），只加 `NET_ADMIN` | 无 | 工作台的网络命名空间归它（工作台是 `network_mode: service:sfly-workbench-firewall`），网络别名 `sfly-workbench` 挂在它上面；见下面「出网名单」 |
 
 **开助手，按顺序做：**
 
@@ -220,9 +221,11 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 
     ```yaml
     services:
-      sfly-workbench:
+      sfly-workbench-firewall:
         extra_hosts: ["sfly.example.com:host-gateway"]   # 主机名换成 SFLY_PUBLIC_URL 里的
     ```
+
+    加在 `sfly-workbench-firewall` 上，不是 `sfly-workbench`：工作台共用它的网络命名空间和 `/etc/hosts`（Docker 不让共用网络的容器自己加 `extra_hosts`），出网名单也按它解析这个主机名。
 
   改了公开地址之后重启工作台容器（`docker compose --profile assistant restart sfly-workbench`）：入口脚本发现 `install.sh` 变了会重装，`agent.env` 里的地址随之更新。
 - **已经装好、控制面也没变就不重装。** 入口脚本的判断（全部满足才算装好）：`~/.sfly/.workbench-installed`（第一行 `name=` 是这台 Agent 的名字，第二行 `install_sh_sha256=` 是装的时候那份 `install.sh` 的 sha256）、`~/.sfly/bin/sfly-agent`、`~/.sfly/agent.env`、`~/.local/bin/sfly` 都在。标记是安装脚本成功结束之后才写的，所以上次装到一半被打断（容器在下载或装 uv 的中途被停掉）时下次启动会重装，不会把半套当成装好；卷里留着的下载到一半的临时文件会先清掉。装好之后每次启动再用几秒的超时取一次控制面的 `install.sh`（它的内容只取决于控制面的版本和配置，不随请求变）：和标记里的 sha256 不一样（控制面升级了，或改了 `SFLY_PUBLIC_URL`、镜像）就重装（幂等，工作区和装好的节点包环境不动）；一样就直接启动；取不到（控制面连不上）也直接启动，不挡着已经装好的 Agent。**重装失败也不挡着**（升级时镜像暂时不通、离线缓存缺新版 `sfly` 命令行的依赖、切到要认证的镜像还没挂 `.netrc`）：这条分支不先删标记，失败时打印原因，`sfly-agent` 和 `agent.env` 还在就照常启动已有的 Agent，标记不动、`sfly` 命令行还是旧版本，下次启动再试；看启动日志里的「重新安装没有成功」，解决之后重启容器。要强制重装：`docker compose --profile assistant exec sfly-workbench rm /home/workbench/.sfly/.workbench-installed` 再重启容器；要从头来，删掉 `sfly-workbench-home` 卷。
@@ -230,9 +233,15 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 - **换工作台凭据**：只是轮换（没有怀疑泄露）：签发新的、改 `.env`、`docker compose --profile assistant up -d` 重建工作台；每次启动都把环境里的凭据交给 Agent（环境变量优先于 `agent.env`），不用重装。**凭据可能已经在工作台上泄露时（最常见的是模型把它读走了），只换凭据不够**：家目录卷里的 Agent 二进制、`~/.local/bin`、`agent.env` 都是模型写得了的，入口脚本下次启动会执行卷里的 Agent 二进制、把新凭据交给它，模型换掉的程序就拿到了新凭据。要这样做：① 吊销旧凭据（`sfly agent credentials revoke <名称> <凭据 id>`）；② `docker compose --profile assistant rm -sf sfly-workbench`，再删掉家目录卷 `sfly-workbench-home`（`docker volume rm <compose 项目名>_sfly-workbench-home`）；**`/work` 里的内容当作不可信**（脚本、`.git` 里的钩子和配置都可能被改过），要留的先审过再拷出来；③ 签发新凭据、改 `.env`、`up -d`：第一次启动重新从控制面装。
 - **控制面升级之后**：`SFLY_VERSION` 改成新版本，`docker compose --profile assistant up -d`（三个服务的镜像标签都变了，都会重建）；工作台起来时发现控制面的 `install.sh` 变了，重装：Agent 二进制、`agent.env` 和 `sfly` 命令行换成新版本。**只升级了控制面、工作台容器没有重建时**（例如镜像标签用的是 `latest`），要自己重启它：`docker compose --profile assistant restart sfly-workbench`。不要省这一步：`sfly` 命令行和控制面版本不一致时会提示「重新运行 install.sh --dev」，工作台上的模型照做、又不带 `--name`，会向控制面注册一台新的开发 Agent、改掉 `agent.env`。
 - **凭据**：`SFLY_WORKBENCH_TOKEN` 只传给工作台这一个服务（不进控制面和助手容器的环境，不写进镜像、不进日志）；入口脚本经环境变量 `SFLY_TOKEN`（不是命令行参数，`ps` 看不到）把它交给安装脚本和 Agent，并把自己的变量从环境里去掉；Agent 起的命令的环境里没有它。**但同一枚凭据还在这几处，工作台上的模型（同一个系统用户）都读得到**：`~/.sfly/agent.env`；Agent 进程的环境（`/proc/<Agent 的 pid>/environ`）；容器的 1 号进程（`docker-init`）的环境（`/proc/1/environ`：容器创建时的环境，里面一直有 `SFLY_WORKBENCH_TOKEN`，入口脚本去不掉）。这是 ADR 0029 的已知边界：凭据只对这一个名字有效，不能用来冒充别的 Agent；泄露了怎么办见上面「换工作台凭据」。入口脚本自己用的命令（`cat`、`curl`、`sh`……）只在系统目录里找，不会执行家目录里模型放的同名程序；**但这只管入口脚本自己，卷里的程序碰得到凭据**：`install.sh` 重装时在系统目录里找不到 `uv` 会用 `~/.local/bin/uv`（模型改标记就能逼出一次重装），它和卷里的 Agent 二进制一样在 exec Agent 之前执行、环境里有 `SFLY_TOKEN`。这是同一个已知边界：家目录卷里模型写得了的程序会拿到凭据，所以凭据可能泄露时要删卷（上面「换工作台凭据」）。
-- **出网**：工作台现在出网不受限（出网名单是 #498）：模型的命令能访问工作台容器能访问到的一切网络，包括内网。控制面所在的网络里有不该被它碰到的东西时，现在要用网络本身（防火墙、单独的 Docker 网络）挡。
+- **出网名单**（#498）：工作台出网只放行名单，其余出站连接被拒（连接立即失败）。规则由 `sfly-workbench-firewall` 在工作台的网络命名空间里用 iptables 写（`deploy/workbench/firewall.py`，开头写全了规则）；工作台自己没有 `NET_ADMIN`，模型的命令改不了它。
+  - **默认放行**：控制面（`http://sfly:8080`、`SFLY_PUBLIC_URL`、网关 `SFLY_PUBLIC_GRPC_URL`，不设时公开地址的主机加 50051）和包镜像（`SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR` 的主机和端口；**没设镜像时**放行 uv 的官方来源：`pypi.org`、`files.pythonhosted.org`、`astral.sh`、`releases.astral.sh`、`github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com` 的 443）。镜像是 `file://` 地址时不出网，不用放行。
+  - **另外放行**：`.env` 的 `SFLY_WORKBENCH_EGRESS`，写「主机:端口」（TCP），空格分隔；改了之后 `docker compose --profile assistant up -d`（出网名单的容器重建，工作台跟着重启）。写错格式时 `sfly-workbench-firewall` 启动失败、日志写明哪一项，工作台不会在没有名单的情况下起来。
+  - **工作台上的节点够不着被测系统**：探测类的节点派到被测机那边的 Agent 上跑（会话构建，#456）；确实要从工作台连的地址才加进名单。
+  - **怎么生效**：只管出站，能力端口的入站照旧（控制面和助手服务连 `sfly-workbench`）。主机名每 60 秒重新解析一次，整套规则原子替换；一小时内解析到过的地址都放行（CDN 每次给的地址不一样）。只放行 TCP；IPv6 除回环外全拒。
+  - **已知边界**：按 IP 放行，名单里的主机和别的服务共用一个 IP（CDN、同一台机器）时，那些服务也一并放行；DNS 查询本身不限（经 Docker 内置的 DNS 出去，可能被当成隐蔽通道）；被测机之间不隔离，被测机上的节点代码仍然够得着别的 Agent 的能力端口。
+- **隔离做到哪一层**（ADR 0029）：数据和接口层做到了：每个请求都经契约路由的检查，Agent 只属于一个项目，派发前检查。机器层面还没做到：Agent 的能力端口没有认证（`agent/src/peer.rs`），网络上够得着它的进程（别的项目的节点代码、被测机上的程序）都能调用任何 Agent 的读文件、写文件和执行命令；能力端口的凭据是 #504。在那之前，工作台上模型的命令靠上面的出网名单挡住，**不宣称机器层面「项目之间互相读不到」**；同一个项目里的会话之间也不隔离。
 
-**离线部署**：先加载三个镜像附件（`gunzip -c sfly-server-X.Y.Z-linux-amd64.tar.gz | docker load`，助手和工作台同样）。工作台装 Agent、uv、Python 包走控制面下发的镜像（上面「镜像」一条的 `SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR`，内网用共享目录做镜像时写 `file://` 地址），Agent 本身来自控制面镜像，所以工作台容器不需要出网，只要连得到控制面和镜像；助手容器里的 pi 用 `--offline` 启动、只启用读、写、编辑、命令四个工具，不会去下载 `rg`、`fd`。只有助手容器要连得到模型端点（见下面「助手的模型」）。
+**离线部署**：先加载三个镜像附件（`gunzip -c sfly-server-X.Y.Z-linux-amd64.tar.gz | docker load`，助手和工作台同样）。工作台装 Agent、uv、Python 包走控制面下发的镜像（上面「镜像」一条的 `SFLY_PYPI_MIRROR`、`SFLY_GITHUB_RELEASE_MIRROR`，内网用共享目录做镜像时写 `file://` 地址），Agent 本身来自控制面镜像，所以工作台容器不需要出网，只要连得到控制面和镜像（出网名单默认就只放行这些）；助手容器里的 pi 用 `--offline` 启动、只启用读、写、编辑、命令四个工具，不会去下载 `rg`、`fd`。只有助手容器要连得到模型端点（见下面「助手的模型」）。
 
 **镜像要认证时怎么配工作台**（私有索引、内网镜像站要用户名密码）：控制面不再把带凭据的镜像地址写进不用登录就能读的 `/install.sh`（#755），工作台上的安装脚本靠 `~/.netrc` 认证。工作台的家目录是卷，第一次启动时里面没有 `.netrc`：装 uv 和 `sfly` 命令行会 401、安装失败、容器反复重启。所以在 `docker-compose.override.yml` 里把一个 uid 1000 读得到的 netrc 只读挂进去：
 

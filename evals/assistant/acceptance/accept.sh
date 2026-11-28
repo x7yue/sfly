@@ -5,7 +5,8 @@
 #
 # - 环境照 scripts/release/compose-smoke.sh：deploy/docker-compose.yml --profile assistant 起控制面、助手、工作台（开着登录，
 #   登记工作台），override 只加 PostgreSQL、假的模型端点（评测集的 fake_model.py 加这里的 accept-*.json 剧本）、被测机 sut
-#   （普通 Agent sut-01 和示例服务 http://sut:9000）、初始管理员。项目名、端口、卷都是这一次随机的。
+#   （普通 Agent sut-01 和示例服务 http://sut:9000，剧本里工作台要连它：放进出网名单 SFLY_WORKBENCH_EGRESS）、初始管理员。
+#   项目名、端口、卷都是这一次随机的。
 # - 准备：建一个编辑者账号（两人交替用），以评测集「编排」那道题的初始状态发布节点包 svc-probe、建场景「demo 巡检」。
 # - 浏览器：Playwright 官方镜像（版本取 apps/web 的 @playwright/test，和 e2e 同一个）在这套环境的网络里跑 acceptance.spec.ts。
 #   用例要重启、停掉容器时在控制目录里写请求，这个脚本在后台照做（compose stop、start、restart，或换助手的模型设置）。
@@ -120,6 +121,7 @@ compose() {
 		SFLY_WORKBENCH_NAME=$agent SFLY_WORKBENCH_TOKEN=$token SFLY_SUT_TOKEN=$sut_token \
 		SFLY_ASSISTANT_MODEL=$assistant_model MODEL_API_KEY=k SFLY_ASSISTANT_MODELS_FILE=$work_dir/models.json \
 		SFLY_PYPI_MIRROR=${SFLY_PYPI_MIRROR:-} SFLY_GITHUB_RELEASE_MIRROR=${SFLY_GITHUB_RELEASE_MIRROR:-} \
+		SFLY_WORKBENCH_EGRESS=sut:9000 \
 		docker compose --env-file /dev/null -p "$project" -f deploy/docker-compose.yml -f "$work_dir/override.yml" "$@"
 }
 
